@@ -774,6 +774,7 @@ mod tests {
             workspace.path(),
             workspace.path(),
             &crate::tools::policy::PolicySettings::default(),
+            None,
         )
         .expect("workspace entry resolves");
         assert_eq!(
