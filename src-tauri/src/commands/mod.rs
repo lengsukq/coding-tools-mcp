@@ -1,6 +1,8 @@
+mod agent_context;
 mod app_info;
 mod frp_profiles;
 mod health;
+mod global_gateway;
 mod logs;
 pub(crate) mod runtime;
 mod runtime_settings;
@@ -11,6 +13,7 @@ pub(crate) mod ui_memory;
 pub(crate) mod window_chrome;
 mod workspace;
 
+pub use agent_context::scan_agent_context;
 pub use app_info::{check_app_update, open_url};
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use window_chrome::{hide_to_tray, quit_app, show_main_window};
@@ -18,6 +21,7 @@ pub use frp_profiles::{
     delete_frp_profile, get_app_settings, get_last_workspace_id, get_proxy, list_frp_profiles,
     save_frp_profile, set_last_workspace, set_proxy,
 };
+pub use global_gateway::{check_global_gateway_health, get_global_gateway_config, get_global_gateway_status, set_global_gateway_config, start_global_gateway, stop_global_gateway};
 pub use health::run_health_checks;
 pub use logs::read_workspace_logs;
 pub use runtime::{

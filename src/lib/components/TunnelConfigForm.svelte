@@ -14,6 +14,7 @@
     frp_server_port: number;
     cloudflare_mode: string;
     use_proxy: boolean;
+    use_global_gateway: boolean;
   }
 
   export interface SaveTunnelOptions {
@@ -39,6 +40,7 @@
     frp_server_port: 7000,
     cloudflare_mode: "quick",
     use_proxy: true,
+    use_global_gateway: false,
   });
   let saving = $state(false);
   let testing = $state(false);
@@ -72,20 +74,22 @@
       draft.frp_server_port !== config.frp_server_port ||
       draft.cloudflare_mode !== config.cloudflare_mode ||
       draft.use_proxy !== config.use_proxy ||
+      draft.use_global_gateway !== config.use_global_gateway ||
       tokenPending,
   );
 
-  const showFrp = $derived(draft.type === "frp");
-  const showCloudflare = $derived(draft.type === "cloudflare");
+  const showFrp = $derived(!draft.use_global_gateway && draft.type === "frp");
+  const showCloudflare = $derived(!draft.use_global_gateway && draft.type === "cloudflare");
   const showCloudflareToken = $derived(showCloudflare && draft.cloudflare_mode === "named");
   const showLegacyFrpToken = $derived(showFrp && !useGlobalProfile);
-  const canTest = $derived(draft.type === "frp" || draft.type === "cloudflare");
+  const canTest = $derived(!draft.use_global_gateway && (draft.type === "frp" || draft.type === "cloudflare"));
 
   $effect(() => {
     draft = {
       ...config,
       frp_profile_id: config.frp_profile_id ?? "",
       use_proxy: config.use_proxy ?? true,
+      use_global_gateway: config.use_global_gateway ?? false,
     };
   });
 
@@ -163,6 +167,17 @@
     void save();
   }}
 >
+  <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
+    <input type="checkbox" class="mt-0.5 h-4 w-4" bind:checked={draft.use_global_gateway} />
+    <span class="grid gap-0.5">
+      <span class="text-xs font-medium text-[var(--color-text-secondary)]">使用全局共享公网入口</span>
+      <span class="text-[11px] text-[var(--color-text-muted)]">
+        使用 /w/&lt;workspace-id&gt; 前缀转发，不再为该 Workspace 单独启动公网 Tunnel。
+      </span>
+    </span>
+  </label>
+
+  {#if !draft.use_global_gateway}
   <label class="grid gap-1">
     <span class="text-xs text-[var(--color-text-muted)]">隧道类型</span>
     <select
@@ -318,6 +333,8 @@
       bind:value={draft.public_url}
     />
   </label>
+
+  {/if}
 
   <div class="flex justify-end gap-2 pt-1">
     {#if canTest}

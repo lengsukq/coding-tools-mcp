@@ -12,6 +12,7 @@ export interface TunnelConfig {
   frp_server_port?: number;
   cloudflare_mode: string;
   use_proxy?: boolean;
+  use_global_gateway?: boolean;
 }
 
 export interface AuthConfig {
@@ -28,6 +29,10 @@ export interface RuntimeConfig {
   allowed_commands?: string;
   executable_paths?: string;
   ai_instructions?: string;
+  instruction_sources?: string[];
+  skill_sources?: string[];
+  custom_instruction_paths?: string;
+  custom_skill_paths?: string;
   workspace_local_entries?: boolean;
   workspace_script_extensions?: string;
 }
@@ -42,6 +47,7 @@ export interface ActionsConfig {
   cloudflare_mode: string;
   cloudflare_token?: string;
   use_proxy?: boolean;
+  use_global_gateway?: boolean;
   local_port: number;
   permission_mode: string;
   runtime_command?: string;

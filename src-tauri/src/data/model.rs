@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::{DownloadConfig, FrpProfile, ProxyConfig};
+use crate::settings::{DownloadConfig, FrpProfile, GlobalGatewayConfig, ProxyConfig};
 use crate::workspace::WorkspaceProfile;
 
 /// Unified on-disk payload stored in `data/profiles.json`.
@@ -20,6 +20,16 @@ pub struct AppData {
     pub global_executable_paths: String,
     #[serde(default)]
     pub global_ai_instructions: String,
+    #[serde(default)]
+    pub global_instruction_sources: Vec<String>,
+    #[serde(default)]
+    pub global_skill_sources: Vec<String>,
+    #[serde(default)]
+    pub global_custom_instruction_paths: String,
+    #[serde(default)]
+    pub global_custom_skill_paths: String,
+    #[serde(default)]
+    pub global_gateway: GlobalGatewayConfig,
     #[serde(default)]
     pub shared_secrets: HashMap<String, String>,
     #[serde(default)]

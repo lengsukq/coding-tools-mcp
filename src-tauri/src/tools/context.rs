@@ -2,6 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::agent_context::SkillEntry;
 use crate::harness::Harness;
 use crate::tools::policy::PolicySettings;
 use crate::tools::session::SessionStore;
@@ -16,6 +17,7 @@ pub struct ToolContext {
     pub permission_mode: String,
     pub executable_paths: Vec<PathBuf>,
     pub ai_instructions: String,
+    pub skills: Vec<SkillEntry>,
     pub harness: Harness,
     default_cwd: Mutex<PathBuf>,
     pub sessions: Arc<SessionStore>,
@@ -74,6 +76,7 @@ impl ToolContext {
             permission_mode,
             executable_paths: Vec::new(),
             ai_instructions: String::new(),
+            skills: Vec::new(),
             harness: Harness::new(root.clone(), harness_root).expect("无法初始化 Harness"),
             default_cwd: Mutex::new(root),
             sessions: Arc::new(SessionStore::new()),
@@ -102,6 +105,11 @@ impl ToolContext {
     ) -> Self {
         self.executable_paths = executable_paths;
         self.ai_instructions = ai_instructions;
+        self
+    }
+
+    pub fn with_skills(mut self, skills: Vec<SkillEntry>) -> Self {
+        self.skills = skills;
         self
     }
 

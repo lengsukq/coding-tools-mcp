@@ -95,6 +95,7 @@
     frp_server_port: profile?.tunnel.frp_server_port ?? 7000,
     cloudflare_mode: profile?.tunnel.cloudflare_mode ?? "quick",
     use_proxy: profile?.tunnel.use_proxy ?? true,
+    use_global_gateway: profile?.tunnel.use_global_gateway ?? false,
   });
 
   const actionsTunnelForm = $derived<TunnelFormConfig>({
@@ -106,6 +107,7 @@
     frp_server_port: actions?.frp_server_port ?? 7000,
     cloudflare_mode: actions?.cloudflare_mode ?? "quick",
     use_proxy: actions?.use_proxy ?? true,
+    use_global_gateway: actions?.use_global_gateway ?? false,
   });
 
   function stateLabel(state: RuntimeState): string {
@@ -346,6 +348,7 @@
         frp_server_port: config.frp_server_port,
         cloudflare_mode: config.cloudflare_mode,
         use_proxy: config.use_proxy,
+        use_global_gateway: config.use_global_gateway,
       },
     };
     await updateWorkspace(next);
@@ -381,6 +384,7 @@
         frp_server_port: config.frp_server_port,
         cloudflare_mode: config.cloudflare_mode,
         use_proxy: config.use_proxy,
+        use_global_gateway: config.use_global_gateway,
       },
     };
     await updateWorkspace(next);
@@ -410,6 +414,10 @@
         allowed_commands: draft.allowedCommands,
         executable_paths: draft.executablePaths,
         ai_instructions: draft.aiInstructions,
+        instruction_sources: draft.instructionSources,
+        skill_sources: draft.skillSources,
+        custom_instruction_paths: draft.customInstructionPaths,
+        custom_skill_paths: draft.customSkillPaths,
         workspace_local_entries: draft.workspaceLocalEntries,
         workspace_script_extensions: draft.workspaceScriptExtensions,
       },
@@ -645,11 +653,16 @@
             <div>
               <p class="tx-section-label">策略</p>
               <RuntimePolicyForm
+                workspaceId={workspaceId!}
                 toolProfile={profile.runtime.tool_profile}
                 permissionMode={profile.runtime.permission_mode}
                 allowedCommands={profile.runtime.allowed_commands ?? ""}
                 executablePaths={profile.runtime.executable_paths ?? ""}
                 aiInstructions={profile.runtime.ai_instructions ?? ""}
+                instructionSources={profile.runtime.instruction_sources ?? []}
+                skillSources={profile.runtime.skill_sources ?? []}
+                customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
+                customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
                 workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
                 workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
                 onSave={saveMcpPolicy}

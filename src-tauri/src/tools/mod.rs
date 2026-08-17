@@ -9,6 +9,7 @@ pub mod patch;
 pub mod policy;
 pub mod registry;
 pub mod session;
+pub mod skill;
 pub mod workspace;
 
 pub use context::{SharedToolContext, ToolContext};

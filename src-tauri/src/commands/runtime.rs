@@ -7,6 +7,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
+use crate::global_gateway;
 use crate::platform::platform;
 use crate::runtime::{
     await_listener_shutdown, port_busy_message, try_reclaim_previous_macos_app_port,
@@ -114,6 +115,10 @@ async fn start_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatu
     validate_start_resources(state, id, WorkspaceService::Mcp)?;
     let profile = profile_by_id(state, id)?;
     ensure_port_available(profile.runtime.local_port, "本地 MCP").await?;
+    if profile.tunnel.use_global_gateway {
+        global_gateway::ensure_started().await?;
+    }
+    let profile = profile_by_id(state, id)?;
     state.with_runtime(|runtime| runtime.start_mcp(&profile))?;
     sync_tunnel_routes_from_runtime(state).await?;
 
@@ -153,6 +158,10 @@ async fn start_actions_service(state: &AppState, id: &str) -> AppResult<RuntimeS
     validate_start_resources(state, id, WorkspaceService::Actions)?;
     let profile = profile_by_id(state, id)?;
     ensure_port_available(profile.actions.local_port, "本地 Actions").await?;
+    if profile.actions.use_global_gateway {
+        global_gateway::ensure_started().await?;
+    }
+    let profile = profile_by_id(state, id)?;
     state.with_runtime(|runtime| runtime.start_actions(&profile))?;
     sync_tunnel_routes_from_runtime(state).await?;
 

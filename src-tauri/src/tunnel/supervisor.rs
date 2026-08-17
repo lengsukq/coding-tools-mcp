@@ -817,6 +817,8 @@ fn proxy_already_exists(error: &AppError) -> bool {
 
 fn tunnel_type_for(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> &str {
     match kind {
+        TunnelServiceKind::Mcp if profile.tunnel.use_global_gateway => "none",
+        TunnelServiceKind::Actions if profile.actions.use_global_gateway => "none",
         TunnelServiceKind::Mcp => profile.tunnel.tunnel_type.as_str(),
         TunnelServiceKind::Actions => profile.actions.tunnel_type.as_str(),
     }

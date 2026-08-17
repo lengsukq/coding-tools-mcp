@@ -28,3 +28,28 @@ src-tauri/icons/logo-design.png
 
 docs/history-session/
 tmp-run
+
+# MCP / Agent local runtime
+.mcp/
+.mcp-cache/
+.agent/
+.agents/
+.codex/
+.claude/
+.opencode/
+.zcode/
+.reasonix/
+.idea/
+
+# IDE local settings
+.idea/
+
+# Temporary development files
+.scratch/
+scratch/
+.tmp/
+
+# Local runtime configuration
+*.local.json
+*.local.yaml
+*.local.yml

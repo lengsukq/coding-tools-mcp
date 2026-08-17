@@ -64,6 +64,49 @@ impl Default for ProxyConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalGatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_global_gateway_port")]
+    pub local_port: u16,
+    /// none | cloudflare | frp
+    #[serde(default = "default_global_gateway_tunnel_type")]
+    pub tunnel_type: String,
+    #[serde(default)]
+    pub public_url: String,
+    #[serde(default = "default_global_gateway_cloudflare_mode")]
+    pub cloudflare_mode: String,
+    #[serde(default)]
+    pub frp_profile_id: String,
+    #[serde(default)]
+    pub frp_server: String,
+    #[serde(default)]
+    pub frp_subdomain: String,
+    #[serde(default = "default_frp_server_port")]
+    pub frp_server_port: u16,
+    #[serde(default = "default_global_gateway_use_proxy")]
+    pub use_proxy: bool,
+}
+
+impl Default for GlobalGatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            local_port: default_global_gateway_port(),
+            tunnel_type: default_global_gateway_tunnel_type(),
+            public_url: String::new(),
+            cloudflare_mode: default_global_gateway_cloudflare_mode(),
+            frp_profile_id: String::new(),
+            frp_server: String::new(),
+            frp_subdomain: String::new(),
+            frp_server_port: default_frp_server_port(),
+            use_proxy: default_global_gateway_use_proxy(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -81,6 +124,16 @@ pub struct AppSettings {
     /// Global agent instructions prepended to workspace-specific instructions.
     #[serde(default)]
     pub global_ai_instructions: String,
+    #[serde(default)]
+    pub global_instruction_sources: Vec<String>,
+    #[serde(default)]
+    pub global_skill_sources: Vec<String>,
+    #[serde(default)]
+    pub global_custom_instruction_paths: String,
+    #[serde(default)]
+    pub global_custom_skill_paths: String,
+    #[serde(default)]
+    pub global_gateway: GlobalGatewayConfig,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
     /// Persisted alongside other app settings in app_settings.json.
     #[serde(default)]
@@ -105,6 +158,11 @@ fn default_proxy_mode() -> String {
     "system".to_string()
 }
 
+fn default_global_gateway_port() -> u16 { 28765 }
+fn default_global_gateway_tunnel_type() -> String { "none".to_string() }
+fn default_global_gateway_cloudflare_mode() -> String { "quick".to_string() }
+fn default_global_gateway_use_proxy() -> bool { true }
+
 impl AppSettings {
     pub fn from_data(data: &AppData) -> Self {
         Self {
@@ -114,6 +172,11 @@ impl AppSettings {
             proxy: data.proxy.clone(),
             global_executable_paths: data.global_executable_paths.clone(),
             global_ai_instructions: data.global_ai_instructions.clone(),
+            global_instruction_sources: data.global_instruction_sources.clone(),
+            global_skill_sources: data.global_skill_sources.clone(),
+            global_custom_instruction_paths: data.global_custom_instruction_paths.clone(),
+            global_custom_skill_paths: data.global_custom_skill_paths.clone(),
+            global_gateway: data.global_gateway.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
             app_secrets: data.app_secrets.clone(),
@@ -127,6 +190,11 @@ impl AppSettings {
         data.proxy = self.proxy.clone();
         data.global_executable_paths = self.global_executable_paths.clone();
         data.global_ai_instructions = self.global_ai_instructions.clone();
+        data.global_instruction_sources = self.global_instruction_sources.clone();
+        data.global_skill_sources = self.global_skill_sources.clone();
+        data.global_custom_instruction_paths = self.global_custom_instruction_paths.clone();
+        data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
+        data.global_gateway = self.global_gateway.clone();
         data.shared_secrets = self.shared_secrets.clone();
         data.workspace_secrets = self.workspace_secrets.clone();
         data.app_secrets = self.app_secrets.clone();

@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::agent_context::{render_skill_catalog, SkillEntry};
+
 use crate::tools::{
     call_tool, list_tools_for_profile, wrap_mcp_tool_result, SharedToolContext, ToolContext,
     Workspace,
@@ -41,14 +43,20 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
 
 fn initialize_result(state: &SharedState) -> Value {
     let base_instructions = "Use these tools only for local coding operations inside the configured workspace. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence.";
-    let instructions = if state.ai_instructions.trim().is_empty() {
-        base_instructions.to_string()
+    let configured = if state.ai_instructions.trim().is_empty() {
+        String::new()
     } else {
         format!(
-            "{base_instructions}\n\nConfigured agent instructions (global first, workspace second):\n{}",
+            "Configured agent instructions (global, workspace, repository sources):\n{}",
             state.ai_instructions.trim()
         )
     };
+    let skill_catalog = render_skill_catalog(&state.skills);
+    let instructions = [base_instructions, configured.as_str(), skill_catalog.as_str()]
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     serde_json::json!({
         "protocolVersion": "2025-06-18",
         "capabilities": {
@@ -115,6 +123,7 @@ pub fn new_state(
     permission_mode: String,
     executable_paths: Vec<std::path::PathBuf>,
     ai_instructions: String,
+    skills: Vec<SkillEntry>,
 ) -> SharedState {
     Arc::new(
         ToolContext::from_workspace(
@@ -124,7 +133,8 @@ pub fn new_state(
             tool_profile,
             permission_mode,
         )
-        .with_agent_runtime(executable_paths, ai_instructions),
+        .with_agent_runtime(executable_paths, ai_instructions)
+        .with_skills(skills),
     )
 }
 

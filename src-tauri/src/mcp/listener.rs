@@ -15,6 +15,9 @@ use crate::auth::{
     protected_resource_metadata, token_exchange, verify_bearer_header, verify_oauth_bearer_header,
     AuthorizeForm, AuthorizeParams, OAuthRuntime, TokenForm,
 };
+use crate::agent_context::{
+    discover_instructions, discover_skills, merge_source_lists, render_instruction_documents,
+};
 use crate::mcp::server::{handle_request, new_state, SharedState};
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
@@ -25,6 +28,14 @@ use crate::tools::policy::PolicySettings;
 use crate::workspace::{AuthConfig, RuntimeConfig};
 
 pub type ShutdownSender = oneshot::Sender<()>;
+
+fn merge_config_text(global: &str, workspace: &str) -> String {
+    [global.trim(), workspace.trim()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[derive(Clone)]
 struct ListenerState {
@@ -59,9 +70,35 @@ pub fn spawn_listener(
         &runtime.executable_paths,
         &global.global_executable_paths,
     );
-    let ai_instructions = merge_ai_instructions(
+    let instruction_sources = merge_source_lists(
+        &global.global_instruction_sources,
+        &runtime.instruction_sources,
+    );
+    let skill_sources = merge_source_lists(
+        &global.global_skill_sources,
+        &runtime.skill_sources,
+    );
+    let instruction_paths = merge_config_text(
+        &global.global_custom_instruction_paths,
+        &runtime.custom_instruction_paths,
+    );
+    let skill_paths = merge_config_text(
+        &global.global_custom_skill_paths,
+        &runtime.custom_skill_paths,
+    );
+    let repository_instructions = discover_instructions(
+        workspace.root(),
+        &instruction_sources,
+        &instruction_paths,
+    );
+    let skills = discover_skills(workspace.root(), &skill_sources, &skill_paths);
+    let manual_instructions = merge_ai_instructions(
         &global.global_ai_instructions,
         &runtime.ai_instructions,
+    );
+    let ai_instructions = merge_ai_instructions(
+        &manual_instructions,
+        &render_instruction_documents(&repository_instructions),
     );
     let mcp = new_state(
         workspace,
@@ -71,6 +108,7 @@ pub fn spawn_listener(
         runtime.permission_mode.clone(),
         executable_paths,
         ai_instructions,
+        skills,
     );
     let bearer_token = if auth.bearer_enabled() {
         let key = "bearer_token";

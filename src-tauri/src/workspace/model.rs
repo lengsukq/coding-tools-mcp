@@ -33,6 +33,9 @@ pub struct TunnelConfig {
     /// When true, apply global proxy from Settings → General when starting the tunnel.
     #[serde(default = "default_use_proxy")]
     pub use_proxy: bool,
+    /// Route this service through the shared global gateway instead of a dedicated tunnel.
+    #[serde(default)]
+    pub use_global_gateway: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +67,16 @@ pub struct RuntimeConfig {
     /// Workspace-level instructions injected into agent context.
     #[serde(default)]
     pub ai_instructions: String,
+    /// IDE / coding-agent instruction providers enabled for this workspace.
+    #[serde(default)]
+    pub instruction_sources: Vec<String>,
+    /// IDE / coding-agent skill providers enabled for this workspace.
+    #[serde(default)]
+    pub skill_sources: Vec<String>,
+    #[serde(default)]
+    pub custom_instruction_paths: String,
+    #[serde(default)]
+    pub custom_skill_paths: String,
     #[serde(default = "default_workspace_local_entries")]
     pub workspace_local_entries: bool,
     #[serde(default = "default_workspace_script_extensions")]
@@ -90,6 +103,9 @@ pub struct ActionsConfig {
     pub cloudflare_token: String,
     #[serde(default = "default_use_proxy")]
     pub use_proxy: bool,
+    /// Route this service through the shared global gateway instead of a dedicated tunnel.
+    #[serde(default)]
+    pub use_global_gateway: bool,
     #[serde(default = "default_actions_port")]
     pub local_port: u16,
     #[serde(default = "default_permission_mode")]
@@ -199,6 +215,7 @@ impl Default for TunnelConfig {
             frp_server_port: default_frp_server_port(),
             cloudflare_mode: default_cloudflare_mode(),
             use_proxy: default_use_proxy(),
+            use_global_gateway: false,
         }
     }
 }
@@ -223,6 +240,10 @@ impl Default for RuntimeConfig {
             allowed_commands: default_allowed_commands(),
             executable_paths: String::new(),
             ai_instructions: String::new(),
+            instruction_sources: Vec::new(),
+            skill_sources: Vec::new(),
+            custom_instruction_paths: String::new(),
+            custom_skill_paths: String::new(),
             workspace_local_entries: default_workspace_local_entries(),
             workspace_script_extensions: default_workspace_script_extensions(),
         }
@@ -241,6 +262,7 @@ impl Default for ActionsConfig {
             cloudflare_mode: default_cloudflare_mode(),
             cloudflare_token: String::new(),
             use_proxy: default_use_proxy(),
+            use_global_gateway: false,
             local_port: default_actions_port(),
             permission_mode: default_permission_mode(),
             runtime_command: String::new(),
@@ -286,6 +308,9 @@ impl WorkspaceProfile {
     }
 
     pub fn effective_public_url_with(&self, settings: &AppSettings) -> String {
+        if self.tunnel.use_global_gateway && settings.global_gateway.enabled {
+            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id, false);
+        }
         computed_public_url(
             &self.tunnel.tunnel_type,
             &self.tunnel.frp_server,
@@ -313,6 +338,9 @@ impl WorkspaceProfile {
     }
 
     pub fn actions_effective_public_url_with(&self, settings: &AppSettings) -> String {
+        if self.actions.use_global_gateway && settings.global_gateway.enabled {
+            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id, true);
+        }
         computed_public_url(
             &self.actions.tunnel_type,
             &self.actions.frp_server,
@@ -363,6 +391,18 @@ impl WorkspaceProfile {
         } else {
             public
         }
+    }
+}
+
+fn gateway_workspace_base(public_url: &str, workspace_id: &str, actions: bool) -> String {
+    let base = public_url.trim_end_matches('/');
+    if base.is_empty() {
+        return String::new();
+    }
+    if actions {
+        format!("{base}/w/{workspace_id}/actions")
+    } else {
+        format!("{base}/w/{workspace_id}")
     }
 }
 

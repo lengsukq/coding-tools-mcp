@@ -16,9 +16,17 @@
   import { getWebviewMemorySample } from "$lib/api/ui-memory";
   import { reloadUiOnly } from "$lib/ui-memory-guard";
   import { showToast } from "$lib/stores/toast";
+  import { AGENT_SOURCE_OPTIONS, toggleSource } from "$lib/agent-context";
 
   let proxy = $state<ProxyConfigDto>({ mode: "none", url: "" });
-  let runtime = $state<GlobalRuntimeSettingsDto>({ executablePaths: "", aiInstructions: "" });
+  let runtime = $state<GlobalRuntimeSettingsDto>({
+    executablePaths: "",
+    aiInstructions: "",
+    instructionSources: [],
+    skillSources: [],
+    customInstructionPaths: "",
+    customSkillPaths: "",
+  });
   let changed = $state(false);
   let runtimeChanged = $state(false);
   let saving = $state(false);
@@ -227,6 +235,67 @@
           ></textarea>
           <span class="text-xs text-[var(--color-text-muted)]">支持绝对路径和 ~；用于查找 aws、docker、kubectl 等系统程序，仍受 Workspace 的 allowed_commands 策略约束。</span>
         </label>
+        <div class="rounded-md border border-[var(--color-border)] p-3">
+          <p class="text-sm font-medium">全局 Agent Sources</p>
+          <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+            作为所有 Workspace 的默认来源；Workspace 可以继续追加 Codex、Claude Code、Cursor、Copilot、OpenCode、ZCode、Reasonix 或 Custom。
+          </p>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <div>
+              <p class="mb-2 text-xs font-medium">Instructions</p>
+              <div class="grid gap-2">
+                {#each AGENT_SOURCE_OPTIONS as option}
+                  <label class="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={runtime.instructionSources.includes(option.value)}
+                      onchange={(event) => {
+                        runtime.instructionSources = toggleSource(runtime.instructionSources, option.value, event.currentTarget.checked);
+                        handleRuntimeChange();
+                      }}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+            <div>
+              <p class="mb-2 text-xs font-medium">Skills</p>
+              <div class="grid gap-2">
+                {#each AGENT_SOURCE_OPTIONS as option}
+                  <label class="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={runtime.skillSources.includes(option.value)}
+                      onchange={(event) => {
+                        runtime.skillSources = toggleSource(runtime.skillSources, option.value, event.currentTarget.checked);
+                        handleRuntimeChange();
+                      }}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          </div>
+          {#if runtime.instructionSources.includes("custom") || runtime.skillSources.includes("custom")}
+            <div class="mt-3 grid gap-3 md:grid-cols-2">
+              {#if runtime.instructionSources.includes("custom")}
+                <label class="grid gap-1">
+                  <span class="text-xs text-[var(--color-text-muted)]">Custom Instructions 文件</span>
+                  <textarea class="min-h-20 tx-input tx-mono" bind:value={runtime.customInstructionPaths} oninput={handleRuntimeChange}></textarea>
+                </label>
+              {/if}
+              {#if runtime.skillSources.includes("custom")}
+                <label class="grid gap-1">
+                  <span class="text-xs text-[var(--color-text-muted)]">Custom Skills 目录</span>
+                  <textarea class="min-h-20 tx-input tx-mono" bind:value={runtime.customSkillPaths} oninput={handleRuntimeChange}></textarea>
+                </label>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
         <label class="grid gap-1">
           <span class="text-xs text-[var(--color-text-muted)]">全局 AI Instructions</span>
           <textarea

@@ -258,6 +258,22 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
         false,
     ),
     (
+        "list_skills",
+        "List skills",
+        "List skills discovered from the enabled IDE and coding-agent providers. Skill bodies are loaded separately on demand.",
+        true,
+        false,
+        false,
+    ),
+    (
+        "get_skill",
+        "Get skill",
+        "Load one discovered SKILL.md by id or unique name, including its full workflow body.",
+        true,
+        false,
+        false,
+    ),
+    (
         "git_status",
         "Git status",
         "Return git working tree status for the workspace.",
@@ -326,6 +342,8 @@ pub const CORE_TOOLS: &[&str] = &[
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
+    "list_skills",
+    "get_skill",
     "read_file",
     "list_dir",
     "list_files",
@@ -349,6 +367,8 @@ pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "server_info",
     "check_exec_environment",
     "get_default_cwd",
+    "list_skills",
+    "get_skill",
     "set_default_cwd",
     "read_file",
     "list_dir",
@@ -378,6 +398,8 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "exec_health_check",
     "get_default_cwd",
     "set_default_cwd",
+    "list_skills",
+    "get_skill",
     "read_file",
     "list_dir",
     "list_files",
@@ -433,6 +455,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "check_exec_environment",
     "exec_health_check",
     "get_default_cwd",
+    "list_skills",
+    "get_skill",
     "read_file",
     "list_dir",
     "list_files",
@@ -518,6 +542,20 @@ pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
 
 pub fn input_schema(name: &str) -> Value {
     match name {
+        "list_skills" => json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        "get_skill" => json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 }
+            },
+            "description": "Provide either id or name to load a skill. If both are provided, id takes priority.",
+            "additionalProperties": false
+        }),
         "history_session_bootstrap" => json!({
             "type": "object",
             "properties": {
@@ -931,7 +969,7 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 26);
+        assert_eq!(tools.len(), 28);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
