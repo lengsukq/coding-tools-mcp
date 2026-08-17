@@ -499,12 +499,22 @@ pub fn normalize_tool_profile(profile: &str) -> &'static str {
 }
 
 pub fn exposed_tool_names(tool_profile: &str) -> Vec<&'static str> {
-    match normalize_tool_profile(tool_profile) {
+    let names = match normalize_tool_profile(tool_profile) {
         "read-only" => CORE_READ_ONLY_TOOLS.to_vec(),
         "advanced" | "compat-readonly-all" => P0_TOOLS.iter().map(|(name, ..)| *name).collect(),
         _ => CORE_TOOLS.to_vec(),
-    }
+    };
+
+    names
+        .into_iter()
+        .filter(|name| !CLIENT_HIDDEN_TOOLS.contains(name))
+        .collect()
 }
+
+/// Legacy compatibility tools that remain callable by name but must not be advertised to
+/// MCP clients. `request_permissions` cannot persist a grant for ChatGPT in trusted/safe
+/// mode, so advertising it encourages retry loops after policy errors.
+const CLIENT_HIDDEN_TOOLS: &[&str] = &["request_permissions"];
 
 pub fn list_tools() -> Vec<Value> {
     list_tools_for_profile("full")
@@ -961,7 +971,7 @@ mod tests {
     use super::{input_schema, list_tools_for_profile};
 
     #[test]
-    fn core_catalog_exposes_26_chatgpt_compatible_tools() {
+    fn core_catalog_excludes_non_persistent_permission_tool() {
         let tools = list_tools_for_profile("core");
         let names: Vec<_> = tools
             .iter()
@@ -969,7 +979,7 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 28);
+        assert_eq!(tools.len(), 27);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
@@ -978,6 +988,7 @@ mod tests {
         assert!(names.contains(&"history_session_read"));
         assert!(names.contains(&"grep_text"));
         assert!(!names.contains(&"grep"));
+        assert!(!names.contains(&"request_permissions"));
 
         for name in names {
             let schema = input_schema(name);

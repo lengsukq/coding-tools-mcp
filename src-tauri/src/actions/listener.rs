@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,6 +9,8 @@ use axum::{
     routing::{get, post},
     Extension, Router,
 };
+use crate::local_network;
+use crate::settings::AppSettings;
 use serde_json::{json, Value};
 use tokio::sync::{oneshot, Mutex, RwLock};
 use tower_http::cors::CorsLayer;
@@ -84,13 +85,15 @@ pub fn spawn_listener(
     };
 
     // 在返回 Running 之前完成 bind，避免后台任务里的端口冲突被伪装成启动成功。
-    let listener = bind_listener(actions_port)?;
+    let allow_lan_access = AppSettings::load_or_default().allow_lan_access;
+    let listener = bind_listener(actions_port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let profile_id = workspace_id.to_string();
     let handle = tauri::async_runtime::spawn(async move {
         let result = serve(
             listener,
             actions_port,
+            allow_lan_access,
             &profile_id,
             workspace_path,
             configured_public_url,
@@ -124,6 +127,7 @@ pub fn spawn_listener(
 async fn serve(
     listener: tokio::net::TcpListener,
     actions_port: u16,
+    allow_lan_access: bool,
     profile_id: &str,
     workspace_path: PathBuf,
     configured_public_url: String,
@@ -204,7 +208,8 @@ async fn serve(
         profile_id,
         "actions-stdout.log",
         &format!(
-            "[actions] listening on http://127.0.0.1:{actions_port} (public: {public_base_url})"
+            "[actions] listening on http://{}:{actions_port} (public: {public_base_url})",
+            local_network::bind_host(allow_lan_access)
         ),
     );
     axum::serve(listener, app)
@@ -215,8 +220,8 @@ async fn serve(
     Ok(())
 }
 
-fn bind_listener(port: u16) -> Result<tokio::net::TcpListener, String> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+fn bind_listener(port: u16, allow_lan_access: bool) -> Result<tokio::net::TcpListener, String> {
+    let addr = local_network::bind_addr(port, allow_lan_access);
     let listener = std::net::TcpListener::bind(addr)
         .map_err(|err| format!("Actions 本地端口 {port} 绑定失败: {err}"))?;
     listener
@@ -288,12 +293,18 @@ async fn oauth_authorization_server_metadata(
 
 async fn oauth_authorize_get(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<AuthorizeParams>,
 ) -> Response {
     let Some(oauth) = state.oauth.as_ref() else {
         return oauth_not_configured();
     };
-    authorize_get(oauth, params, Some(state.workspace_path.as_str()))
+    authorize_get(
+        oauth,
+        params,
+        Some(state.workspace_path.as_str()),
+        &resolve_oauth_base(&state, &headers),
+    )
 }
 
 async fn oauth_authorize_post(
@@ -404,6 +415,6 @@ mod tests {
         let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("占用测试端口");
         let port = occupied.local_addr().expect("读取测试端口").port();
 
-        assert!(bind_listener(port).is_err());
+        assert!(bind_listener(port, false).is_err());
     }
 }

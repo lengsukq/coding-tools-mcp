@@ -58,6 +58,7 @@ export interface GlobalRuntimeSettingsDto {
   skillSources: string[];
   customInstructionPaths: string;
   customSkillPaths: string;
+  allowLanAccess: boolean;
 }
 
 export async function getGlobalRuntimeSettings(): Promise<GlobalRuntimeSettingsDto> {

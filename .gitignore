@@ -48,6 +48,7 @@ tmp-run
 .scratch/
 scratch/
 .tmp/
+/.local-build/
 
 # Local runtime configuration
 *.local.json

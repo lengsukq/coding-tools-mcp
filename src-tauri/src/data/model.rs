@@ -29,6 +29,8 @@ pub struct AppData {
     #[serde(default)]
     pub global_custom_skill_paths: String,
     #[serde(default)]
+    pub allow_lan_access: bool,
+    #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
     #[serde(default)]
     pub shared_secrets: HashMap<String, String>,

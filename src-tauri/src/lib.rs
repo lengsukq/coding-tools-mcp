@@ -10,6 +10,7 @@ mod error;
 pub mod harness;
 mod health;
 mod global_gateway;
+mod local_network;
 mod mcp;
 mod platform;
 mod runtime;

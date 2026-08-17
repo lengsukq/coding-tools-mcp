@@ -73,24 +73,22 @@ fn request_permissions_is_unsupported_not_silent_grant() {
     assert_err(&out);
     assert_eq!(out["error"]["code"], "ELICITATION_UNSUPPORTED");
     assert_eq!(out["status"], "unsupported");
+    assert_eq!(out["error"]["retryable"], false);
+    assert!(out["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Do not retry request_permissions"));
 }
 
 #[test]
-fn request_permissions_exposes_public_schema_and_grants_in_dangerous_mode() {
-    let tools = list_tools_for_profile("core");
-    let tool = tools
-        .iter()
-        .find(|tool| tool["name"] == "request_permissions")
-        .expect("request_permissions descriptor");
-    let schema = &tool["inputSchema"];
-    assert_eq!(
-        schema["required"],
-        json!(["tool_name", "permission", "reason", "arguments"])
-    );
-    assert!(schema["properties"]["permission"]["enum"]
-        .as_array()
-        .expect("permission enum")
-        .contains(&json!("network")));
+fn request_permissions_is_hidden_from_clients_but_keeps_legacy_dangerous_mode_compatibility() {
+    for profile in ["core", "read-only", "advanced", "compat-readonly-all"] {
+        let tools = list_tools_for_profile(profile);
+        assert!(
+            tools.iter().all(|tool| tool["name"] != "request_permissions"),
+            "request_permissions must not be advertised for profile {profile}"
+        );
+    }
 
     let fx = tiny_js_fixture();
     let mut ctx = ctx_for(&fx.root);
@@ -183,6 +181,7 @@ fn advanced_profile_exposes_every_declared_tool() {
     let declared = coding_tools_mcp_desktop_lib::tools::registry::P0_TOOLS
         .iter()
         .map(|(name, ..)| *name)
+        .filter(|name| *name != "request_permissions")
         .collect::<std::collections::HashSet<_>>();
     let tool_values = coding_tools_mcp_desktop_lib::tools::list_tools_for_profile("advanced");
     let exposed = tool_values
@@ -206,9 +205,11 @@ fn core_profile_keeps_the_default_capabilities_and_adds_history_tools() {
     let expected = coding_tools_mcp_desktop_lib::tools::registry::CORE_TOOLS
         .iter()
         .copied()
+        .filter(|name| *name != "request_permissions")
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 27);
+    assert!(!names.contains("request_permissions"));
     assert!(names.contains("grep_text"));
     assert!(names.contains("history_session_bootstrap"));
     assert!(names.contains("history_session_checkpoint"));

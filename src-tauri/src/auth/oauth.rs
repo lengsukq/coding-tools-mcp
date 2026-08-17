@@ -145,11 +145,27 @@ pub fn authorization_server_metadata(base_url: &str, client_secret: Option<&str>
 
 pub fn protected_resource_metadata(base_url: &str) -> Value {
     let base = base_url.trim_end_matches('/');
+    let resource = format!("{base}/mcp");
     json!({
-        "resource": base,
+        "resource": resource,
         "authorization_servers": [base],
         "bearer_methods_supported": ["header"],
     })
+}
+
+pub fn protected_resource_metadata_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let resource = format!("{base}/mcp");
+    let Some((scheme, remainder)) = resource.split_once("://") else {
+        return String::new();
+    };
+    let (authority, path) = remainder
+        .split_once('/')
+        .map(|(authority, path)| (authority, format!("/{path}")))
+        .unwrap_or((remainder, String::new()));
+    format!(
+        "{scheme}://{authority}/.well-known/oauth-protected-resource{path}"
+    )
 }
 
 #[cfg(test)]
@@ -184,6 +200,15 @@ mod tests {
     fn protected_resource_metadata_lists_authorization_servers() {
         let meta = protected_resource_metadata("https://example.com");
         assert_eq!(meta["authorization_servers"], json!(["https://example.com"]));
+        assert_eq!(meta["resource"], json!("https://example.com/mcp"));
+    }
+
+    #[test]
+    fn protected_resource_metadata_url_inserts_well_known_before_path() {
+        assert_eq!(
+            protected_resource_metadata_url("https://example.com/w/workspace"),
+            "https://example.com/.well-known/oauth-protected-resource/w/workspace/mcp"
+        );
     }
 
     #[test]

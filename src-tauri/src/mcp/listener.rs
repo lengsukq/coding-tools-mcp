@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Form, Query, State};
-use axum::http::{header::CACHE_CONTROL, HeaderMap, StatusCode};
+use axum::http::{
+    header::{CACHE_CONTROL, WWW_AUTHENTICATE},
+    HeaderMap, StatusCode,
+};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,13 +15,15 @@ use tower_http::cors::CorsLayer;
 
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, external_base_url,
-    protected_resource_metadata, token_exchange, verify_bearer_header, verify_oauth_bearer_header,
-    AuthorizeForm, AuthorizeParams, OAuthRuntime, TokenForm,
+    protected_resource_metadata, protected_resource_metadata_url, token_exchange,
+    verify_bearer_header, verify_oauth_bearer_header, AuthorizeForm, AuthorizeParams, OAuthRuntime,
+    TokenForm,
 };
 use crate::agent_context::{
     discover_instructions, discover_skills, merge_source_lists, render_instruction_documents,
 };
 use crate::mcp::server::{handle_request, new_state, SharedState};
+use crate::local_network;
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
 use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
@@ -151,11 +156,12 @@ pub fn spawn_listener(
         oauth_client_secret,
     };
     // 在返回 Running 之前完成 bind，避免后台任务里的端口冲突被伪装成启动成功。
-    let listener = bind_listener(port)?;
+    let allow_lan_access = AppSettings::load_or_default().allow_lan_access;
+    let listener = bind_listener(port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let profile_id = state.workspace_id.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        let result = serve(listener, port, state, shutdown_rx).await;
+        let result = serve(listener, port, allow_lan_access, state, shutdown_rx).await;
         if let Err(err) = &result {
             append_profile_log(
                 &profile_id,
@@ -173,6 +179,7 @@ pub fn spawn_listener(
 async fn serve(
     listener: tokio::net::TcpListener,
     port: u16,
+    allow_lan_access: bool,
     state: ListenerState,
     shutdown: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -187,6 +194,10 @@ async fn serve(
             "/.well-known/oauth-protected-resource",
             get(oauth_protected_resource_metadata),
         )
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            get(oauth_protected_resource_metadata),
+        )
         .route("/oauth/authorize", get(oauth_authorize_get).post(oauth_authorize_post))
         .route("/oauth/token", post(oauth_token_post))
         .with_state(state)
@@ -195,7 +206,10 @@ async fn serve(
     append_profile_log(
         &profile_id,
         "stdout.log",
-        &format!("[mcp] listening on http://127.0.0.1:{port}/mcp"),
+        &format!(
+            "[mcp] listening on http://{}:{port}/mcp",
+            local_network::bind_host(allow_lan_access)
+        ),
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -205,8 +219,8 @@ async fn serve(
     Ok(())
 }
 
-fn bind_listener(port: u16) -> Result<tokio::net::TcpListener, String> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+fn bind_listener(port: u16, allow_lan_access: bool) -> Result<tokio::net::TcpListener, String> {
+    let addr = local_network::bind_addr(port, allow_lan_access);
     let listener = std::net::TcpListener::bind(addr)
         .map_err(|err| format!("MCP 本地端口 {port} 绑定失败: {err}"))?;
     listener
@@ -339,7 +353,19 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
     if state.auth.oauth_enabled() {
         if let Some(oauth) = state.oauth.as_ref() {
             let server_url = resolve_oauth_base(state, headers);
-            return verify_oauth_bearer_header(headers, oauth, &server_url);
+            if let Some(mut response) = verify_oauth_bearer_header(headers, oauth, &server_url) {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    let metadata_url = protected_resource_metadata_url(&server_url);
+                    if let Ok(value) = format!(
+                        "Bearer resource_metadata=\"{metadata_url}\""
+                    )
+                    .parse()
+                    {
+                        response.headers_mut().insert(WWW_AUTHENTICATE, value);
+                    }
+                }
+                return Some(response);
+            }
         }
     }
     None
@@ -372,6 +398,7 @@ async fn oauth_protected_resource_metadata(
 
 async fn oauth_authorize_get(
     State(state): State<ListenerState>,
+    headers: HeaderMap,
     Query(params): Query<AuthorizeParams>,
 ) -> Response {
     let Some(oauth) = state.oauth.as_ref() else {
@@ -381,6 +408,7 @@ async fn oauth_authorize_get(
         oauth,
         params,
         Some(state.workspace_path.as_str()),
+        &resolve_oauth_base(&state, &headers),
     )
 }
 
@@ -435,7 +463,7 @@ mod tests {
         let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("占用测试端口");
         let port = occupied.local_addr().expect("读取测试端口").port();
 
-        assert!(bind_listener(port).is_err());
+        assert!(bind_listener(port, false).is_err());
     }
 
     #[tokio::test]

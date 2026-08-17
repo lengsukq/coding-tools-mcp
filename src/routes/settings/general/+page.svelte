@@ -26,6 +26,7 @@
     skillSources: [],
     customInstructionPaths: "",
     customSkillPaths: "",
+    allowLanAccess: false,
   });
   let changed = $state(false);
   let runtimeChanged = $state(false);
@@ -71,7 +72,7 @@
     try {
       await setGlobalRuntimeSettings(runtime);
       runtimeChanged = false;
-      await message("全局 Runtime 设置已保存。已运行的 MCP 服务需要重启后生效。", { title: "已保存", kind: "info" });
+      await message("全局 Runtime 设置已保存。已运行的 MCP、Actions 和 Global Gateway 需要重启后生效。", { title: "已保存", kind: "info" });
     } catch (e) {
       await message(String(e), { title: "保存失败", kind: "error" });
     } finally {
@@ -225,6 +226,27 @@
         class="mt-4 grid gap-3"
         onsubmit={(e) => { e.preventDefault(); void saveRuntime(); }}
       >
+        <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
+          <input
+            type="checkbox"
+            class="mt-0.5 h-4 w-4"
+            bind:checked={runtime.allowLanAccess}
+            onchange={handleRuntimeChange}
+          />
+          <span class="grid gap-1">
+            <span class="text-sm font-medium">允许局域网访问</span>
+            <span class="text-xs text-[var(--color-text-muted)]">
+              默认关闭。开启后 MCP、Actions 和 Global Gateway 会从仅监听 127.0.0.1 改为监听 0.0.0.0，
+              同一局域网内的服务器即可访问本机端口用于内网穿透。
+            </span>
+            {#if runtime.allowLanAccess}
+              <span class="text-xs text-amber-500">
+                已开启：服务会暴露到局域网。建议同时启用认证，并确认 macOS 防火墙规则符合预期。
+              </span>
+            {/if}
+          </span>
+        </label>
+
         <label class="grid gap-1">
           <span class="text-xs text-[var(--color-text-muted)]">全局可执行 PATH（每行一个目录，也可粘贴 PATH）</span>
           <textarea

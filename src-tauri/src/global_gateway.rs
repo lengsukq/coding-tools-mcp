@@ -14,6 +14,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
+use crate::local_network;
 use crate::settings::{AppSettings, GlobalGatewayConfig};
 use crate::tunnel::{cloudflare, frp, TunnelServiceKind};
 use crate::workspace::WorkspaceProfile;
@@ -27,6 +28,60 @@ pub struct GlobalGatewayStatusDto {
     pub local_url: String,
     pub public_url: String,
     pub detail: String,
+}
+
+async fn proxy_mcp_protected_resource_metadata(
+    State(state): State<ProxyState>,
+    AxumPath(workspace_id): AxumPath<String>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    proxy(
+        state,
+        workspace_id,
+        ".well-known/oauth-protected-resource".into(),
+        Method::GET,
+        uri,
+        headers,
+        Bytes::new(),
+    )
+    .await
+}
+
+async fn proxy_mcp_authorization_server_metadata(
+    State(state): State<ProxyState>,
+    AxumPath(workspace_id): AxumPath<String>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    proxy(
+        state,
+        workspace_id,
+        ".well-known/oauth-authorization-server".into(),
+        Method::GET,
+        uri,
+        headers,
+        Bytes::new(),
+    )
+    .await
+}
+
+async fn proxy_actions_authorization_server_metadata(
+    State(state): State<ProxyState>,
+    AxumPath(workspace_id): AxumPath<String>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    proxy(
+        state,
+        workspace_id,
+        "actions/.well-known/oauth-authorization-server".into(),
+        Method::GET,
+        uri,
+        headers,
+        Bytes::new(),
+    )
+    .await
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,7 +143,7 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
         stop_runtime(runtime).await;
     }
 
-    let listener = bind_listener(config.local_port)?;
+    let listener = bind_listener(config.local_port, settings.allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let port = config.local_port;
     let handle = tauri::async_runtime::spawn(async move {
@@ -268,8 +323,8 @@ async fn start_tunnel(
     }
 }
 
-fn bind_listener(port: u16) -> AppResult<tokio::net::TcpListener> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+fn bind_listener(port: u16, allow_lan_access: bool) -> AppResult<tokio::net::TcpListener> {
+    let addr = local_network::bind_addr(port, allow_lan_access);
     let listener = std::net::TcpListener::bind(addr)
         .map_err(|error| AppError::Message(format!("全局 Gateway 端口 {port} 绑定失败: {error}")))?;
     listener.set_nonblocking(true)?;
@@ -280,9 +335,32 @@ async fn serve(
     listener: tokio::net::TcpListener,
     shutdown: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
     let app = Router::new()
         .route("/health", get(|| async { Json(json!({ "ok": true, "service": "global-gateway" })) }))
+        .route(
+            "/.well-known/oauth-protected-resource/w/{workspace_id}/mcp",
+            get(proxy_mcp_protected_resource_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/w/{workspace_id}",
+            get(proxy_mcp_protected_resource_metadata),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server/w/{workspace_id}",
+            get(proxy_mcp_authorization_server_metadata),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server/w/{workspace_id}/mcp",
+            get(proxy_mcp_authorization_server_metadata),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server/w/{workspace_id}/actions",
+            get(proxy_actions_authorization_server_metadata),
+        )
         .route("/w/{workspace_id}", any(proxy_root))
         .route("/w/{workspace_id}/{*path}", any(proxy_path))
         .with_state(ProxyState { client });
@@ -331,7 +409,15 @@ async fn proxy(
         Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     };
 
-    let (port, upstream_path) = if path == "actions" || path.starts_with("actions/") {
+    let actions_request = path == "actions" || path.starts_with("actions/");
+    if actions_request && !profile.actions.use_global_gateway {
+        return (StatusCode::NOT_FOUND, "actions is not routed through global gateway").into_response();
+    }
+    if !actions_request && !profile.tunnel.use_global_gateway {
+        return (StatusCode::NOT_FOUND, "mcp is not routed through global gateway").into_response();
+    }
+
+    let (port, upstream_path) = if actions_request {
         let stripped = path.strip_prefix("actions").unwrap_or("").trim_start_matches('/');
         (profile.actions.local_port, format!("/{}", stripped))
     } else {
@@ -353,10 +439,6 @@ async fn proxy(
     };
     let status = response.status();
     let response_headers = response.headers().clone();
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(error) => return (StatusCode::BAD_GATEWAY, format!("upstream body failed: {error}")).into_response(),
-    };
     let mut builder = Response::builder().status(status);
     if let Some(target_headers) = builder.headers_mut() {
         for (name, value) in &response_headers {
@@ -365,7 +447,9 @@ async fn proxy(
             }
         }
     }
-    builder.body(Body::from(bytes)).unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+    builder
+        .body(Body::from_stream(response.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
 fn is_hop_header(name: &str) -> bool {

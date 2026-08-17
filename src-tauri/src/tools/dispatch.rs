@@ -161,10 +161,13 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
                     "status": "unsupported",
                     "grant_id": null,
                     "expires_at": null,
-                    "next_actions": [],
+                    "next_actions": [
+                        "Do not retry request_permissions.",
+                        "If the original operation returned DANGEROUS_OPERATION_REQUIRES_CONFIRMATION and the user already explicitly authorized it, retry the original tool with confirm=true."
+                    ],
                     "error": {
                         "code": "ELICITATION_UNSUPPORTED",
-                        "message": "Permission elicitation is not available for this client.",
+                        "message": "Permission elicitation is not available for this client. Do not retry request_permissions; it cannot create a persistent grant.",
                         "category": "permission",
                         "retryable": false,
                         "details": { "requested": effective_args }

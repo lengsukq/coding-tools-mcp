@@ -85,6 +85,10 @@
     goto("/settings/keys");
   }
 
+  function openGatewaySettings() {
+    goto("/settings/gateway");
+  }
+
   onMount(() => {
     const stopGuard = startUiMemoryGuard();
     const stopClose = startCloseGuard(() => {
@@ -124,6 +128,14 @@
       onclick={openKeysSettings}
     >
       共享密钥
+    </button>
+
+    <button
+      type="button"
+      class="tx-settings-link {$page.url.pathname === '/settings/gateway' ? 'active' : ''}"
+      onclick={openGatewaySettings}
+    >
+      Global Gateway
     </button>
     <button
       type="button"

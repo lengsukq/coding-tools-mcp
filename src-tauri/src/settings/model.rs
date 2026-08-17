@@ -132,6 +132,10 @@ pub struct AppSettings {
     pub global_custom_instruction_paths: String,
     #[serde(default)]
     pub global_custom_skill_paths: String,
+    /// Allow MCP, Actions and Global Gateway listeners to bind to all LAN interfaces.
+    /// Defaults to false so services remain loopback-only unless explicitly enabled.
+    #[serde(default)]
+    pub allow_lan_access: bool,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
@@ -176,6 +180,7 @@ impl AppSettings {
             global_skill_sources: data.global_skill_sources.clone(),
             global_custom_instruction_paths: data.global_custom_instruction_paths.clone(),
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
+            allow_lan_access: data.allow_lan_access,
             global_gateway: data.global_gateway.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
@@ -194,6 +199,7 @@ impl AppSettings {
         data.global_skill_sources = self.global_skill_sources.clone();
         data.global_custom_instruction_paths = self.global_custom_instruction_paths.clone();
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
+        data.allow_lan_access = self.allow_lan_access;
         data.global_gateway = self.global_gateway.clone();
         data.shared_secrets = self.shared_secrets.clone();
         data.workspace_secrets = self.workspace_secrets.clone();

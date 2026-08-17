@@ -145,6 +145,7 @@ pub fn authorize_get(
     oauth: &OAuthRuntime,
     params: AuthorizeParams,
     workspace_path: Option<&str>,
+    server_url: &str,
 ) -> Response {
     if params.response_type != "code" {
         return html_error("response_type must be 'code'", StatusCode::BAD_REQUEST);
@@ -166,6 +167,7 @@ pub fn authorize_get(
         &params.state,
         "",
         workspace_path,
+        server_url,
     ))
     .into_response()
 }
@@ -180,6 +182,7 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
             &form.state,
             "Invalid client",
             None,
+            server_url,
         ))
         .into_response();
     }
@@ -192,6 +195,7 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
             &form.state,
             "Invalid PKCE parameters",
             None,
+            server_url,
         ))
         .into_response();
     }
@@ -206,6 +210,7 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
                 &form.state,
                 "Invalid password",
                 None,
+                server_url,
             )),
         )
             .into_response();
@@ -377,6 +382,7 @@ fn login_page(
     state: &str,
     error: &str,
     workspace_path: Option<&str>,
+    server_url: &str,
 ) -> String {
     let error_block = if error.is_empty() {
         String::new()
@@ -399,7 +405,7 @@ fn login_page(
         <p>Client: <strong>{}</strong></p>\
         <p>Redirect URI: <code>{}</code></p>\
         {error_block}\
-        <form method='POST' action='/oauth/authorize'>\
+        <form method='POST' action='{}/oauth/authorize'>\
         <input type='hidden' name='client_id' value='{}'>\
         <input type='hidden' name='redirect_uri' value='{}'>\
         <input type='hidden' name='code_challenge' value='{}'>\
@@ -410,6 +416,7 @@ fn login_page(
         </form></body></html>",
         html_escape(client_id),
         html_escape(redirect_uri),
+        html_escape(server_url.trim_end_matches('/')),
         html_escape(client_id),
         html_escape(redirect_uri),
         html_escape(code_challenge),
@@ -503,5 +510,22 @@ mod tests {
         let verifier = "dBjftJeZ4CVP-mB92Kpru-AEJvkQlLgi3ThpmQ45N_Xyo";
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         assert!(verify_pkce(verifier, &challenge));
+    }
+
+    #[test]
+    fn login_page_posts_back_to_workspace_oauth_path() {
+        let html = login_page(
+            "client",
+            "https://chatgpt.com/callback",
+            "challenge",
+            "S256",
+            "state",
+            "",
+            Some("/workspace"),
+            "https://mcp.example.com/w/workspace-id",
+        );
+        assert!(html.contains(
+            "action='https://mcp.example.com/w/workspace-id/oauth/authorize'"
+        ));
     }
 }
