@@ -58,6 +58,12 @@ pub struct RuntimeConfig {
     /// Workspace execution policy shared by MCP clients.
     #[serde(default = "default_allowed_commands")]
     pub allowed_commands: String,
+    /// Additional executable search paths for workspace runtime commands.
+    #[serde(default)]
+    pub executable_paths: String,
+    /// Workspace-level instructions injected into agent context.
+    #[serde(default)]
+    pub ai_instructions: String,
     #[serde(default = "default_workspace_local_entries")]
     pub workspace_local_entries: bool,
     #[serde(default = "default_workspace_script_extensions")]
@@ -215,6 +221,8 @@ impl Default for RuntimeConfig {
             permission_mode: default_permission_mode(),
             runtime_command: String::new(),
             allowed_commands: default_allowed_commands(),
+            executable_paths: String::new(),
+            ai_instructions: String::new(),
             workspace_local_entries: default_workspace_local_entries(),
             workspace_script_extensions: default_workspace_script_extensions(),
         }

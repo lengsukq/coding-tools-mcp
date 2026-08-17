@@ -75,6 +75,12 @@ pub struct AppSettings {
     /// Global outbound proxy (Cloudflare tunnel, etc.).
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// Global executable search paths inherited by every workspace runtime.
+    #[serde(default)]
+    pub global_executable_paths: String,
+    /// Global agent instructions prepended to workspace-specific instructions.
+    #[serde(default)]
+    pub global_ai_instructions: String,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
     /// Persisted alongside other app settings in app_settings.json.
     #[serde(default)]
@@ -106,6 +112,8 @@ impl AppSettings {
             last_workspace_id: data.last_workspace_id.clone(),
             download: data.download.clone(),
             proxy: data.proxy.clone(),
+            global_executable_paths: data.global_executable_paths.clone(),
+            global_ai_instructions: data.global_ai_instructions.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
             app_secrets: data.app_secrets.clone(),
@@ -117,6 +125,8 @@ impl AppSettings {
         data.last_workspace_id = self.last_workspace_id.clone();
         data.download = self.download.clone();
         data.proxy = self.proxy.clone();
+        data.global_executable_paths = self.global_executable_paths.clone();
+        data.global_ai_instructions = self.global_ai_instructions.clone();
         data.shared_secrets = self.shared_secrets.clone();
         data.workspace_secrets = self.workspace_secrets.clone();
         data.app_secrets = self.app_secrets.clone();

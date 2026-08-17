@@ -20,7 +20,7 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     }
 
     let result = match method {
-        "initialize" => Ok(initialize_result()),
+        "initialize" => Ok(initialize_result(state)),
         "ping" => Ok(serde_json::json!({})),
         "tools/list" => {
             let tools = list_tools_for_profile(&state.tool_profile);
@@ -39,7 +39,16 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     }
 }
 
-fn initialize_result() -> Value {
+fn initialize_result(state: &SharedState) -> Value {
+    let base_instructions = "Use these tools only for local coding operations inside the configured workspace. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence.";
+    let instructions = if state.ai_instructions.trim().is_empty() {
+        base_instructions.to_string()
+    } else {
+        format!(
+            "{base_instructions}\n\nConfigured agent instructions (global first, workspace second):\n{}",
+            state.ai_instructions.trim()
+        )
+    };
     serde_json::json!({
         "protocolVersion": "2025-06-18",
         "capabilities": {
@@ -51,7 +60,7 @@ fn initialize_result() -> Value {
             "title": "Coding Tools MCP",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use these tools only for local coding operations inside the configured workspace. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
+        "instructions": instructions
     })
 }
 
@@ -104,14 +113,19 @@ pub fn new_state(
     policy: crate::tools::policy::PolicySettings,
     tool_profile: String,
     permission_mode: String,
+    executable_paths: Vec<std::path::PathBuf>,
+    ai_instructions: String,
 ) -> SharedState {
-    Arc::new(ToolContext::from_workspace(
-        workspace,
-        auth,
-        policy,
-        tool_profile,
-        permission_mode,
-    ))
+    Arc::new(
+        ToolContext::from_workspace(
+            workspace,
+            auth,
+            policy,
+            tool_profile,
+            permission_mode,
+        )
+        .with_agent_runtime(executable_paths, ai_instructions),
+    )
 }
 
 #[cfg(test)]
@@ -125,9 +139,20 @@ mod tests {
 
     use super::{handle_request, initialize_result, tool_arguments};
 
+    fn test_context() -> ToolContext {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let harness = tempfile::tempdir().expect("harness");
+        ToolContext::for_test(workspace.keep(), harness.keep()).expect("context")
+    }
+
+    fn test_state() -> Arc<ToolContext> {
+        Arc::new(test_context())
+    }
+
     #[test]
     fn initialize_instructions_define_the_history_persistence_workflow() {
-        let initialized = initialize_result();
+        let state = test_state();
+        let initialized = initialize_result(&state);
         let instructions = initialized["instructions"].as_str().expect("instructions");
         assert!(instructions.contains("history_session_bootstrap"));
         assert!(instructions.contains("At the start of every new ChatGPT conversation"));
@@ -150,9 +175,26 @@ mod tests {
 
     #[test]
     fn initialize_does_not_claim_tool_catalog_notifications_without_a_stream() {
-        let initialized = initialize_result();
+        let state = test_state();
+        let initialized = initialize_result(&state);
 
         assert_eq!(initialized["capabilities"]["tools"]["listChanged"], false);
+    }
+
+    #[test]
+    fn initialize_appends_configured_agent_instructions() {
+        let state = Arc::new(
+            test_context().with_agent_runtime(
+                Vec::new(),
+                "Global rule\n\nWorkspace rule".into(),
+            ),
+        );
+        let initialized = initialize_result(&state);
+        let instructions = initialized["instructions"].as_str().expect("instructions");
+
+        assert!(instructions.contains("Configured agent instructions"));
+        assert!(instructions.contains("Global rule"));
+        assert!(instructions.contains("Workspace rule"));
     }
 
     #[test]

@@ -408,6 +408,8 @@
         tool_profile: draft.toolProfile,
         permission_mode: draft.permissionMode,
         allowed_commands: draft.allowedCommands,
+        executable_paths: draft.executablePaths,
+        ai_instructions: draft.aiInstructions,
         workspace_local_entries: draft.workspaceLocalEntries,
         workspace_script_extensions: draft.workspaceScriptExtensions,
       },
@@ -646,6 +648,8 @@
                 toolProfile={profile.runtime.tool_profile}
                 permissionMode={profile.runtime.permission_mode}
                 allowedCommands={profile.runtime.allowed_commands ?? ""}
+                executablePaths={profile.runtime.executable_paths ?? ""}
+                aiInstructions={profile.runtime.ai_instructions ?? ""}
                 workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
                 workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
                 onSave={saveMcpPolicy}

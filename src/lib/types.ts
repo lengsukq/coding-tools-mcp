@@ -26,6 +26,8 @@ export interface RuntimeConfig {
   permission_mode: string;
   runtime_command?: string;
   allowed_commands?: string;
+  executable_paths?: string;
+  ai_instructions?: string;
   workspace_local_entries?: boolean;
   workspace_script_extensions?: string;
 }

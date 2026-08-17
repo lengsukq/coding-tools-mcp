@@ -17,6 +17,10 @@ pub struct AppData {
     #[serde(default)]
     pub proxy: ProxyConfig,
     #[serde(default)]
+    pub global_executable_paths: String,
+    #[serde(default)]
+    pub global_ai_instructions: String,
+    #[serde(default)]
     pub shared_secrets: HashMap<String, String>,
     #[serde(default)]
     pub workspace_secrets: HashMap<String, HashMap<String, String>>,

@@ -3,6 +3,8 @@
     toolProfile: string;
     permissionMode: string;
     allowedCommands: string;
+    executablePaths: string;
+    aiInstructions: string;
     workspaceLocalEntries: boolean;
     workspaceScriptExtensions: string;
   }
@@ -11,6 +13,8 @@
     toolProfile: string;
     permissionMode: string;
     allowedCommands: string;
+    executablePaths: string;
+    aiInstructions: string;
     workspaceLocalEntries: boolean;
     workspaceScriptExtensions: string;
     onSave: (draft: RuntimePolicyDraft) => void | Promise<void>;
@@ -28,23 +32,27 @@
     { value: "dangerous", label: "完全放开" },
   ] as const;
 
-  let { toolProfile, permissionMode, allowedCommands, workspaceLocalEntries, workspaceScriptExtensions, onSave }: Props = $props();
+  let { toolProfile, permissionMode, allowedCommands, executablePaths, aiInstructions, workspaceLocalEntries, workspaceScriptExtensions, onSave }: Props = $props();
 
   let draftProfile = $state("full");
   let draftMode = $state("trusted");
   let draftCommands = $state("");
+  let draftExecutablePaths = $state("");
+  let draftAiInstructions = $state("");
   let draftLocalEntries = $state(true);
   let draftExtensions = $state(".exe,.bat,.cmd,.ps1");
   let saving = $state(false);
 
   const dirty = $derived(
-    draftProfile !== toolProfile || draftMode !== permissionMode || draftCommands !== allowedCommands || draftLocalEntries !== workspaceLocalEntries || draftExtensions !== workspaceScriptExtensions,
+    draftProfile !== toolProfile || draftMode !== permissionMode || draftCommands !== allowedCommands || draftExecutablePaths !== executablePaths || draftAiInstructions !== aiInstructions || draftLocalEntries !== workspaceLocalEntries || draftExtensions !== workspaceScriptExtensions,
   );
 
   $effect(() => {
     draftProfile = toolProfile;
     draftMode = permissionMode;
     draftCommands = allowedCommands;
+    draftExecutablePaths = executablePaths;
+    draftAiInstructions = aiInstructions;
     draftLocalEntries = workspaceLocalEntries;
     draftExtensions = workspaceScriptExtensions;
   });
@@ -53,7 +61,7 @@
     if (saving || !dirty) return;
     saving = true;
     try {
-      await onSave({ toolProfile: draftProfile, permissionMode: draftMode, allowedCommands: draftCommands.trim(), workspaceLocalEntries: draftLocalEntries, workspaceScriptExtensions: draftExtensions.trim() });
+      await onSave({ toolProfile: draftProfile, permissionMode: draftMode, allowedCommands: draftCommands.trim(), executablePaths: draftExecutablePaths.trim(), aiInstructions: draftAiInstructions.trim(), workspaceLocalEntries: draftLocalEntries, workspaceScriptExtensions: draftExtensions.trim() });
     } finally {
       saving = false;
     }
@@ -81,6 +89,16 @@
   <label class="grid gap-1">
     <span class="text-xs text-[var(--color-text-muted)]">系统命令（逗号分隔）</span>
     <input type="text" class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm" placeholder="python,git,curl,powershell,..." bind:value={draftCommands} />
+  </label>
+  <label class="grid gap-1">
+    <span class="text-xs text-[var(--color-text-muted)]">额外可执行 PATH（每行一个目录，也可粘贴 PATH）</span>
+    <textarea class="min-h-20 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm" placeholder="/opt/homebrew/bin&#10;/usr/local/bin" bind:value={draftExecutablePaths}></textarea>
+    <span class="text-xs text-[var(--color-text-muted)]">支持绝对路径和 ~；工作区路径优先于全局 PATH。这里只负责查找程序，命令仍需加入系统命令白名单。</span>
+  </label>
+  <label class="grid gap-1">
+    <span class="text-xs text-[var(--color-text-muted)]">Workspace AI Instructions</span>
+    <textarea class="min-h-28 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm" placeholder="例如：修改代码必须遵循 Clean Code；运行测试后再确认完成。" bind:value={draftAiInstructions}></textarea>
+    <span class="text-xs text-[var(--color-text-muted)]">会追加到全局 AI Instructions 后，并通过 MCP initialize.instructions 注入客户端。</span>
   </label>
   <label class="flex items-center gap-2 text-sm">
     <input type="checkbox" bind:checked={draftLocalEntries} />

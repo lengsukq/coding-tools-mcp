@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -145,7 +146,8 @@ fn run_native_diagnostic(
         "pwd" if parts.len() == 1 => Some(format!("{}\n", cwd.display())),
         "ls" | "dir" => Some(list_directory(ctx, cwd, &parts[1..])?),
         "which" if parts.len() == 2 => {
-            let path = which::which(&parts[1]).map_err(|_| WorkspaceError::Tool {
+            let search_path = ctx.executable_path_env();
+            let path = which_on_path(&parts[1], cwd, search_path.as_deref()).ok_or_else(|| WorkspaceError::Tool {
                 code: "COMMAND_NOT_FOUND",
                 message: format!("Program not found on PATH: {}", parts[1]),
                 category: "runtime",
@@ -233,10 +235,20 @@ async fn run_command(
     tty: bool,
     stdin_text: &str,
 ) -> Result<Value, WorkspaceError> {
-    let (program, args) = parse_and_resolve(cmd, cwd, ctx.workspace.root(), &ctx.policy)?;
+    let search_path = ctx.executable_path_env();
+    let (program, args) = parse_and_resolve(
+        cmd,
+        cwd,
+        ctx.workspace.root(),
+        &ctx.policy,
+        search_path.as_deref(),
+    )?;
     let start = Instant::now();
 
     let mut command = command_for_program(&program, &args);
+    if let Some(path) = search_path.as_ref() {
+        command.env("PATH", path);
+    }
     command
         .current_dir(platform_command_path(cwd))
         .stdin(std::process::Stdio::piped())
@@ -526,6 +538,7 @@ fn parse_and_resolve(
     cwd: &Path,
     workspace_root: &Path,
     policy: &crate::tools::policy::PolicySettings,
+    search_path: Option<&OsStr>,
 ) -> Result<(String, Vec<String>), WorkspaceError> {
     let parts = shell_words::split(cmd)
         .map_err(|_| WorkspaceError::invalid_argument("Invalid command syntax"))?;
@@ -533,7 +546,7 @@ fn parse_and_resolve(
         return Err(WorkspaceError::invalid_argument("Empty command"));
     }
 
-    let program = resolve_program(&parts[0], cwd, workspace_root, policy)?;
+    let program = resolve_program(&parts[0], cwd, workspace_root, policy, search_path)?;
     Ok((program, parts[1..].to_vec()))
 }
 
@@ -542,6 +555,7 @@ fn resolve_program(
     cwd: &Path,
     workspace_root: &Path,
     policy: &crate::tools::policy::PolicySettings,
+    search_path: Option<&OsStr>,
 ) -> Result<String, WorkspaceError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -605,14 +619,78 @@ fn resolve_program(
         });
     }
 
-    which::which(trimmed)
+    which_on_path(trimmed, cwd, search_path)
         .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|_| WorkspaceError::Tool {
+        .ok_or_else(|| WorkspaceError::Tool {
             code: "COMMAND_REJECTED",
             message: format!("Program not found on PATH: {trimmed}"),
             category: "runtime",
             retryable: false,
         })
+}
+
+fn which_on_path(program: &str, cwd: &Path, search_path: Option<&OsStr>) -> Option<std::path::PathBuf> {
+    let Some(paths) = search_path else {
+        return which::which(program).ok();
+    };
+
+    for directory in std::env::split_paths(paths) {
+        let directory = if directory.is_absolute() {
+            directory
+        } else {
+            cwd.join(directory)
+        };
+        for candidate in executable_candidates(directory.join(program)) {
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn executable_candidates(candidate: PathBuf) -> Vec<PathBuf> {
+    vec![candidate]
+}
+
+#[cfg(windows)]
+fn executable_candidates(candidate: PathBuf) -> Vec<PathBuf> {
+    if candidate.extension().is_some() {
+        return vec![candidate];
+    }
+    let extensions = std::env::var_os("PATHEXT")
+        .map(|value| {
+            value
+                .to_string_lossy()
+                .split(';')
+                .filter_map(|item| {
+                    let extension = item.trim().trim_start_matches('.');
+                    (!extension.is_empty()).then(|| extension.to_ascii_lowercase())
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec!["com".into(), "exe".into(), "bat".into(), "cmd".into()]);
+
+    extensions
+        .into_iter()
+        .map(|extension| candidate.with_extension(extension))
+        .collect()
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 #[cfg(test)]
@@ -631,6 +709,31 @@ mod tests {
         assert_eq!(result["command_ok"], false);
         assert_eq!(result["status"], "spawn_failed");
         assert_eq!(result["error"]["code"], expected_code);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_path_resolution_uses_declared_order() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().expect("root");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        std::fs::create_dir_all(&first).expect("first dir");
+        std::fs::create_dir_all(&second).expect("second dir");
+        for directory in [&first, &second] {
+            let executable = directory.join("path-probe");
+            std::fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("probe");
+            let mut permissions = std::fs::metadata(&executable).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable, permissions).expect("permissions");
+        }
+        let search_path = std::env::join_paths([&first, &second]).expect("join path");
+
+        let resolved = which_on_path("path-probe", root.path(), Some(search_path.as_os_str()))
+            .expect("resolved executable");
+
+        assert_eq!(resolved, first.join("path-probe"));
     }
 
     #[test]

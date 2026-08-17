@@ -17,6 +17,8 @@ use crate::auth::{
 };
 use crate::mcp::server::{handle_request, new_state, SharedState};
 use crate::secret::SecretStore;
+use crate::settings::AppSettings;
+use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
 use crate::tools::Workspace;
 use crate::tunnel::append_profile_log;
 use crate::tools::policy::PolicySettings;
@@ -52,12 +54,23 @@ pub fn spawn_listener(
     let workspace_display = workspace_path.display().to_string();
     let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
     let policy = PolicySettings::from_runtime(&runtime);
+    let global = AppSettings::load_or_default();
+    let executable_paths = merge_executable_paths(
+        &runtime.executable_paths,
+        &global.global_executable_paths,
+    );
+    let ai_instructions = merge_ai_instructions(
+        &global.global_ai_instructions,
+        &runtime.ai_instructions,
+    );
     let mcp = new_state(
         workspace,
         auth.clone(),
         policy,
         runtime.tool_profile.clone(),
         runtime.permission_mode.clone(),
+        executable_paths,
+        ai_instructions,
     );
     let bearer_token = if auth.bearer_enabled() {
         let key = "bearer_token";

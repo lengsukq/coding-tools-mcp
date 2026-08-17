@@ -3,6 +3,7 @@ mod frp_profiles;
 mod health;
 mod logs;
 pub(crate) mod runtime;
+mod runtime_settings;
 mod secrets;
 mod software;
 mod tunnel;
@@ -23,6 +24,7 @@ pub use runtime::{
     get_actions_runtime_status, get_runtime_status, restart_actions_runtime, restart_runtime,
     start_actions_runtime, start_runtime, stop_actions_runtime, stop_runtime,
 };
+pub use runtime_settings::{get_global_runtime_settings, set_global_runtime_settings};
 pub use secrets::{
     get_shared_secret, get_workspace_secret, regenerate_shared_secret,
     regenerate_workspace_secret, set_shared_secret, set_workspace_secret,

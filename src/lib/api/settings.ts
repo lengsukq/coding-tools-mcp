@@ -50,3 +50,16 @@ export async function getProxy(): Promise<ProxyConfigDto> {
 export async function setProxy(proxy: ProxyConfigDto): Promise<void> {
   return invoke("set_proxy", { proxy });
 }
+
+export interface GlobalRuntimeSettingsDto {
+  executablePaths: string;
+  aiInstructions: string;
+}
+
+export async function getGlobalRuntimeSettings(): Promise<GlobalRuntimeSettingsDto> {
+  return invoke<GlobalRuntimeSettingsDto>("get_global_runtime_settings");
+}
+
+export async function setGlobalRuntimeSettings(runtime: GlobalRuntimeSettingsDto): Promise<void> {
+  return invoke("set_global_runtime_settings", { runtime });
+}

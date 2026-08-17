@@ -420,6 +420,7 @@ pub fn check_exec_environment(ctx: &ToolContext) -> Result<Value, WorkspaceError
         "workspace_exec_sandbox_enforced": false,
         "workspace_exec_boundary": "policy_only",
         "system_command_allowlist": ctx.policy.allowed_commands.iter().cloned().collect::<Vec<_>>(),
+        "configured_executable_paths": ctx.executable_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
         "workspace_local_entries": {
             "enabled": ctx.policy.workspace_local_entries,
             "script_extensions": ctx.policy.workspace_script_extensions.iter().cloned().collect::<Vec<_>>(),

@@ -2,7 +2,14 @@
   import { onMount } from "svelte";
   import { ask, message } from "@tauri-apps/plugin-dialog";
   import { ExternalLink, RefreshCw } from "@lucide/svelte";
-  import { getProxy, setProxy, type ProxyConfigDto } from "$lib/api/settings";
+  import {
+    getGlobalRuntimeSettings,
+    getProxy,
+    setGlobalRuntimeSettings,
+    setProxy,
+    type GlobalRuntimeSettingsDto,
+    type ProxyConfigDto,
+  } from "$lib/api/settings";
   import { checkAppUpdate, openUrl } from "$lib/api/app-info";
   import { APP_VERSION } from "$lib/app-version";
   import { RELEASES_LATEST_URL, REPO_URL } from "$lib/app-links";
@@ -11,16 +18,20 @@
   import { showToast } from "$lib/stores/toast";
 
   let proxy = $state<ProxyConfigDto>({ mode: "none", url: "" });
+  let runtime = $state<GlobalRuntimeSettingsDto>({ executablePaths: "", aiInstructions: "" });
   let changed = $state(false);
+  let runtimeChanged = $state(false);
   let saving = $state(false);
+  let runtimeSaving = $state(false);
   let checkingUpdate = $state(false);
   let releasingUi = $state(false);
   let memoryHint = $state<string | null>(null);
 
   async function refresh() {
     try {
-      proxy = await getProxy();
+      [proxy, runtime] = await Promise.all([getProxy(), getGlobalRuntimeSettings()]);
       changed = false;
+      runtimeChanged = false;
     } catch (e) {
       await message(String(e), { title: "加载失败", kind: "error" });
     }
@@ -41,6 +52,23 @@
 
   function handleChange() {
     changed = true;
+  }
+
+  function handleRuntimeChange() {
+    runtimeChanged = true;
+  }
+
+  async function saveRuntime() {
+    runtimeSaving = true;
+    try {
+      await setGlobalRuntimeSettings(runtime);
+      runtimeChanged = false;
+      await message("全局 Runtime 设置已保存。已运行的 MCP 服务需要重启后生效。", { title: "已保存", kind: "info" });
+    } catch (e) {
+      await message(String(e), { title: "保存失败", kind: "error" });
+    } finally {
+      runtimeSaving = false;
+    }
   }
 
   async function openLink(url: string, title: string) {
@@ -113,7 +141,7 @@
     <p class="page-kicker">全局设置</p>
     <h2 class="page-title">通用</h2>
     <p class="mt-2 max-w-2xl text-sm text-[var(--color-text-muted)]">
-      配置全局网络代理，并查看应用版本与官方仓库入口。
+      配置全局 Agent Runtime、网络代理，并查看应用版本与官方仓库入口。
     </p>
   </header>
 
@@ -178,6 +206,47 @@
           {releasingUi ? "刷新中…" : "释放界面内存"}
         </button>
       </div>
+    </div>
+
+    <div class="tx-card p-4">
+      <h3 class="text-sm font-semibold">Agent Runtime</h3>
+      <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+        为所有 Workspace 提供默认可执行 PATH 和 AI Instructions；Workspace 配置会在此基础上覆盖或追加。
+      </p>
+      <form
+        class="mt-4 grid gap-3"
+        onsubmit={(e) => { e.preventDefault(); void saveRuntime(); }}
+      >
+        <label class="grid gap-1">
+          <span class="text-xs text-[var(--color-text-muted)]">全局可执行 PATH（每行一个目录，也可粘贴 PATH）</span>
+          <textarea
+            class="min-h-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm"
+            placeholder="/opt/homebrew/bin&#10;/usr/local/bin&#10;~/.local/bin"
+            bind:value={runtime.executablePaths}
+            oninput={handleRuntimeChange}
+          ></textarea>
+          <span class="text-xs text-[var(--color-text-muted)]">支持绝对路径和 ~；用于查找 aws、docker、kubectl 等系统程序，仍受 Workspace 的 allowed_commands 策略约束。</span>
+        </label>
+        <label class="grid gap-1">
+          <span class="text-xs text-[var(--color-text-muted)]">全局 AI Instructions</span>
+          <textarea
+            class="min-h-32 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm"
+            placeholder="例如：优先遵循 Clean Code；修改完成后运行相关测试。"
+            bind:value={runtime.aiInstructions}
+            oninput={handleRuntimeChange}
+          ></textarea>
+          <span class="text-xs text-[var(--color-text-muted)]">通过 MCP initialize.instructions 注入；Workspace Instructions 会追加在全局规则之后。</span>
+        </label>
+        <div class="flex justify-end pt-1">
+          <button
+            type="submit"
+            class="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            disabled={!runtimeChanged || runtimeSaving}
+          >
+            {runtimeSaving ? "保存中…" : "保存 Runtime 设置"}
+          </button>
+        </div>
+      </form>
     </div>
 
     <div class="tx-card p-4">
