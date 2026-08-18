@@ -3,11 +3,10 @@
   import { onDestroy } from "svelte";
   import { showToast } from "$lib/stores/toast";
 
-  const sessionPrompt = `请初始化或恢复当前项目会话，先调用 history_session_bootstrap，并把我的首次请求逐字传入 initial_user_input。
-如果没有历史记录，则创建首个 history-session；如果已有历史记录，先阅读返回的有界 state。
-需要早期精确细节时，先调用 history_session_search，再用 history_session_read 分页读取相关原始 Markdown，并根据 next_cursor 继续直到完成；不要要求 bootstrap 返回全部历史。
-本会话每轮任务完成后调用 history_session_checkpoint，并原样传入 bootstrap 返回的 session_key 和 current_path，以及我本轮请求的逐字 raw_user_input。
-只有 checkpoint 返回 ok=true 且会话目标一致后才能确认进度已保存；服务端不能自动读取未通过工具参数传入的对话内容。`;
+  const sessionPrompt = `不需要强制调用 history_session_bootstrap，直接处理当前任务即可。
+如果需要以前的工作记录，先调用 history_session_search，再用 history_session_read 分页读取相关原始 Markdown；不要把全部历史记录加载到上下文。
+如果当前工作区启用了会话记录，在每轮任务完成后调用 history_session_checkpoint，并传入本轮请求的 raw_user_input；session_key 和 expected_path 可以省略，服务端会懒初始化当前会话。
+只有 checkpoint 返回 recorded=true 或 ok=true 后，才能确认进度已保存；服务端不能自动读取未通过工具参数传入的对话内容。历史上下文也可以在 Coding Tools MCP 面板中多选后注入。`;
 
   let copying = $state(false);
   let copied = $state(false);
@@ -66,7 +65,7 @@
           ChatGPT 新会话启动提示词
         </h3>
         <p class="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">
-          首次使用会初始化历史；后续新会话会自动恢复已有进度。
+          当前会话默认记录；旧会话由面板选择后按需注入。
         </p>
       </div>
     </div>

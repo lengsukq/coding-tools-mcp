@@ -60,7 +60,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "history_session_read",
         "Read session archive",
-        "Read one lossless numeric Markdown archive by number or a path returned from history_session_search. Responses are UTF-8-safe pages: max_bytes defaults to 32 KiB and is capped at 64 KiB; follow next_cursor to recover the complete source.",
+        "Read one lossless numeric Markdown archive by number or a path returned from history_session_search. Responses are UTF-8-safe pages: max_bytes defaults to 16 KiB and is capped at 64 KiB; follow next_cursor to recover the complete source.",
         true,
         false,
         false,
@@ -410,6 +410,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "update_plan",
     "request_goal_review",
     "request_plan_review",
+    "capability_health_check",
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
@@ -431,6 +432,38 @@ pub const CORE_TOOLS: &[&str] = &[
     "git_show",
     "git_blame",
     "request_permissions",
+    "view_image",
+];
+
+/// Compact default surface: keep the tools needed for ordinary development and
+/// history lookup, while moving planning, skills, harness, and permission helpers
+/// to the explicit legacy/advanced profiles.
+pub const COMPACT_TOOLS: &[&str] = &[
+    "server_info",
+    "history_session_bootstrap",
+    "history_session_checkpoint",
+    "history_session_validate",
+    "history_session_search",
+    "history_session_read",
+    "check_exec_environment",
+    "get_default_cwd",
+    "set_default_cwd",
+    "read_file",
+    "list_dir",
+    "list_files",
+    "search_text",
+    "grep_text",
+    "apply_patch",
+    "patch_check",
+    "exec_command",
+    "write_stdin",
+    "kill_session",
+    "read_output",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_show",
+    "git_blame",
     "view_image",
 ];
 
@@ -473,6 +506,7 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "update_plan",
     "request_goal_review",
     "request_plan_review",
+    "capability_health_check",
     "check_exec_environment",
     "exec_health_check",
     "get_default_cwd",
@@ -577,6 +611,7 @@ pub fn canonical_tool_name(name: &str) -> &str {
 
 pub fn normalize_tool_profile(profile: &str) -> &'static str {
     match profile {
+        "compact" => "compact",
         "advanced" => "advanced",
         "read-only" => "read-only",
         "compat-readonly-all" => "compat-readonly-all",
@@ -586,6 +621,7 @@ pub fn normalize_tool_profile(profile: &str) -> &'static str {
 
 pub fn exposed_tool_names(tool_profile: &str) -> Vec<&'static str> {
     let names = match normalize_tool_profile(tool_profile) {
+        "compact" => COMPACT_TOOLS.to_vec(),
         "read-only" => CORE_READ_ONLY_TOOLS.to_vec(),
         "advanced" | "compat-readonly-all" => P0_TOOLS.iter().map(|(name, ..)| *name).collect(),
         _ => CORE_TOOLS.to_vec(),
@@ -606,6 +642,25 @@ pub fn list_tools() -> Vec<Value> {
     list_tools_for_profile("full")
 }
 
+fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
+    match name {
+        "server_info" => "Return compact server and workspace metadata.",
+        "history_session_bootstrap" => "Create or resume a history archive when explicitly requested; returns bounded metadata only.",
+        "history_session_checkpoint" => "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization.",
+        "history_session_validate" => "Validate or rebuild history indexes without deleting archives.",
+        "history_session_search" => "Search indexed session archives and return bounded matches.",
+        "history_session_read" => "Read a bounded UTF-8 page from one selected session archive.",
+        "read_file" => "Read a bounded UTF-8 text range from a workspace file.",
+        "search_text" | "grep_text" => "Search workspace text with bounded previews.",
+        "apply_patch" => "Apply a workspace patch and return a change summary.",
+        "exec_command" => "Run an allowed workspace command with bounded output.",
+        "write_stdin" => "Write to a running command session with bounded output.",
+        "read_output" => "Read a bounded page from a command output session.",
+        "git_diff" => "Return bounded Git diff output.",
+        _ => fallback,
+    }
+}
+
 pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
     let compat = tool_profile == "compat-readonly-all";
     exposed_tool_names(tool_profile)
@@ -621,7 +676,11 @@ pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
                 json!({
                     "name": name,
                     "title": title,
-                    "description": description,
+                    "description": if tool_profile == "compact" {
+                        compact_description(name, description)
+                    } else {
+                        description
+                    },
                     "inputSchema": input_schema(name),
                     "annotations": {
                         "title": title,
@@ -666,7 +725,6 @@ pub fn input_schema(name: &str) -> Value {
         }),
         "history_session_checkpoint" => json!({
             "type": "object",
-            "required": ["session_key", "expected_path"],
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
                 "session_key": { "type": "string", "minLength": 1 },
@@ -703,7 +761,7 @@ pub fn input_schema(name: &str) -> Value {
                 "history_dir": { "type": "string", "default": "docs/history-session" },
                 "query": { "type": "string", "default": "" },
                 "cursor": { "type": "integer", "minimum": 0, "default": 0 },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+                "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 5 }
             },
             "additionalProperties": false
         }),
@@ -715,7 +773,7 @@ pub fn input_schema(name: &str) -> Value {
                 "number": { "type": "integer", "minimum": 1 },
                 "path": { "type": "string", "minLength": 1 },
                 "cursor": { "type": "integer", "minimum": 0, "default": 0 },
-                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 65536, "default": 32768 },
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 65536, "default": 16384 },
                 "expected_hash": { "type": "string", "minLength": 64, "maxLength": 64 }
             },
             "additionalProperties": false
@@ -890,7 +948,7 @@ pub fn input_schema(name: &str) -> Value {
                 "path": { "type": "string", "minLength": 1 },
                 "start_line": { "type": "integer", "minimum": 1, "default": 1 },
                 "end_line": { "type": "integer", "minimum": 1 },
-                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 131072 }
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
             "required": ["path"],
             "additionalProperties": false
@@ -931,8 +989,8 @@ pub fn input_schema(name: &str) -> Value {
                 "regex": { "type": "boolean", "default": false },
                 "case_sensitive": { "type": "boolean", "default": false },
                 "context_lines": { "type": "integer", "minimum": 0, "maximum": 20, "default": 0 },
-                "max_preview_bytes": { "type": "integer", "minimum": 64, "maximum": 4096, "default": 512 },
-                "max_results": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1000 },
+                "max_preview_bytes": { "type": "integer", "minimum": 64, "maximum": 4096, "default": 256 },
+                "max_results": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 100 },
                 "max_file_bytes": {
                     "type": "integer",
                     "minimum": 1,
@@ -969,7 +1027,7 @@ pub fn input_schema(name: &str) -> Value {
                 "cmd": { "type": "string", "minLength": 1 },
                 "workdir": { "type": "string", "default": "." },
                 "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000, "default": 30000 },
-                "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 },
+                "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 32768 },
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
                 "tty": { "type": "boolean", "default": false },
                 "stdin": { "type": "string", "default": "" },
@@ -986,7 +1044,7 @@ pub fn input_schema(name: &str) -> Value {
                 "session_id": { "type": "string", "minLength": 1 },
                 "chars": { "type": "string", "default": "" },
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
-                "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 65536 }
+                "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
             "required": ["session_id"],
             "additionalProperties": false
@@ -997,7 +1055,7 @@ pub fn input_schema(name: &str) -> Value {
                 "session_id": { "type": "string", "minLength": 1 },
                 "signal": { "type": "string", "enum": ["TERM", "KILL", "INT"], "default": "TERM" },
                 "wait_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 5000 },
-                "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 65536 }
+                "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
             "required": ["session_id"],
             "additionalProperties": false
@@ -1018,7 +1076,7 @@ pub fn input_schema(name: &str) -> Value {
             "properties": {
                 "path": { "type": "string", "default": "." },
                 "include_untracked": { "type": "boolean", "default": true },
-                "max_entries": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1000 }
+                "max_entries": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 500 }
             },
             "additionalProperties": false
         }),
@@ -1029,7 +1087,7 @@ pub fn input_schema(name: &str) -> Value {
                 "staged": { "type": "boolean", "default": false },
                 "unstaged": { "type": "boolean", "default": true },
                 "context_lines": { "type": "integer", "minimum": 0, "maximum": 20, "default": 3 },
-                "max_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 262144 }
+                "max_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 }
             },
             "additionalProperties": false
         }),
@@ -1051,7 +1109,7 @@ pub fn input_schema(name: &str) -> Value {
                 "paths": { "type": "array", "items": { "type": "string" } },
                 "include_diff": { "type": "boolean", "default": true },
                 "context_lines": { "type": "integer", "minimum": 0, "maximum": 20, "default": 3 },
-                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 262144 }
+                "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 65536 }
             },
             "additionalProperties": false
         }),
@@ -1147,7 +1205,7 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 34);
+        assert_eq!(tools.len(), 35);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
@@ -1174,5 +1232,24 @@ mod tests {
             assert!(schema.get("anyOf").is_none(), "{name} anyOf");
             assert!(schema.get("$ref").is_none(), "{name} ref");
         }
+    }
+
+    #[test]
+    fn compact_catalog_keeps_development_and_history_tools_only() {
+        let tools = list_tools_for_profile("compact");
+        let names: Vec<_> = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect();
+
+        assert!(names.len() < 30);
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"apply_patch"));
+        assert!(names.contains(&"exec_command"));
+        assert!(names.contains(&"history_session_search"));
+        assert!(names.contains(&"history_session_read"));
+        assert!(!names.contains(&"planning_state"));
+        assert!(!names.contains(&"list_skills"));
+        assert!(!names.contains(&"request_permissions"));
     }
 }

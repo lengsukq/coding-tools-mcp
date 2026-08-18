@@ -32,7 +32,7 @@ fn profile_by_id(state: &AppState, id: &str) -> AppResult<WorkspaceProfile> {
 fn log_file_names(profile: &WorkspaceProfile, service: &str) -> AppResult<Vec<&'static str>> {
     match service {
         "mcp" => {
-            let mut names = vec!["stderr.log", "stdout.log"];
+            let mut names = vec!["mcp-requests.log", "stderr.log", "stdout.log"];
             if profile.tunnel.tunnel_type == "cloudflare" {
                 names.insert(0, "cloudflared.log");
             }

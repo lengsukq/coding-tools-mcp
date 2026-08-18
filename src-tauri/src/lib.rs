@@ -19,6 +19,7 @@ mod secret;
 mod settings;
 pub mod tools;
 mod tunnel;
+pub(crate) mod usage;
 mod update;
 mod workspace;
 
@@ -26,7 +27,8 @@ use app_state::AppState;
 use commands::{
     accept_goal_review, accept_plan_review, check_app_update, create_goal, create_plan, create_workspace, delete_frp_profile, delete_workspace, scan_agent_context, scan_global_agent_context,
     get_actions_runtime_status, get_app_settings, get_download_config, get_frp_snippet,
-    get_global_gateway_config, get_global_gateway_status,
+    get_global_gateway_config, get_global_gateway_status, list_history_sessions,
+    get_service_usage_stats,
     get_global_runtime_settings, get_last_workspace_id, get_proxy, get_runtime_status,
     get_planning_state, get_shared_secret, get_webview_memory_sample,
     get_workspace_secret, hide_to_tray, install_software, list_frp_profiles, list_software,
@@ -191,6 +193,8 @@ pub fn run() {
             reject_plan_review,
             scan_agent_context,
             scan_global_agent_context,
+            list_history_sessions,
+            get_service_usage_stats,
             create_workspace,
             update_workspace,
             open_workspace_directory,

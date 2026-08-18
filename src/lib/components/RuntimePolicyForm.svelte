@@ -33,7 +33,9 @@
   }
 
   const TOOL_PROFILE_OPTIONS = [
-    { value: "full", label: "完整工具" },
+    { value: "compact", label: "精简开发（推荐）" },
+    { value: "core", label: "兼容核心" },
+    { value: "advanced", label: "完整工具" },
     { value: "read-only", label: "只读工具" },
     { value: "compat-readonly-all", label: "兼容只读" },
   ] as const;
@@ -180,7 +182,7 @@
     <div class="mb-3">
       <p class="text-sm font-medium">Agent Context Sources</p>
       <p class="mt-1 text-xs text-[var(--color-text-muted)]">
-        Workspace 未选择来源时继承全局设置；如果全局也未选择，则自动识别常见 Agent 配置。Instructions 会在 MCP 初始化时重扫，Skills 会在 list/get 时实时重扫。
+        Workspace 未选择来源时继承全局设置；compact 工具档只常驻根目录核心规则，其余规则按需读取。Skills 会在 list/get 时实时重扫。
       </p>
     </div>
 
@@ -282,7 +284,7 @@
   <label class="grid gap-1">
     <span class="text-xs text-[var(--color-text-muted)]">Workspace AI Instructions</span>
     <textarea class="min-h-28 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm" placeholder="例如：修改代码必须遵循 Clean Code；运行测试后再确认完成。" bind:value={draftAiInstructions}></textarea>
-    <span class="text-xs text-[var(--color-text-muted)]">手动规则会与 Global Instructions、自动发现的 Repository Instructions 一起注入。</span>
+    <span class="text-xs text-[var(--color-text-muted)]">手动规则会与 Global Instructions、compact 模式选中的核心 Repository Instructions 一起注入。</span>
   </label>
 
   <label class="flex items-center gap-2 text-sm">

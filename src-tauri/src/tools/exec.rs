@@ -61,7 +61,7 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
     let max_output = args
         .get("max_output_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(65_536) as usize;
+        .unwrap_or(32_768) as usize;
     let yield_ms = args
         .get("yield_time_ms")
         .and_then(Value::as_u64)

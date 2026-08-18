@@ -31,7 +31,7 @@ pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
     let max_bytes = args
         .get("max_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(131_072) as usize;
+        .unwrap_or(32_768) as usize;
     let start_line = args
         .get("start_line")
         .and_then(Value::as_u64)
@@ -78,6 +78,7 @@ pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
         "encoding": "utf-8",
         "start_line": start_line,
         "end_line": actual_end,
+        "next_start_line": truncated.then_some(actual_end.saturating_add(1)),
         "total_lines": total_lines,
         "total_bytes": text.len(),
         "bytes_read": content.len(),
@@ -102,7 +103,7 @@ pub fn list_dir(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     let max_entries = args
         .get("max_entries")
         .and_then(Value::as_u64)
-        .unwrap_or(1000) as usize;
+        .unwrap_or(100) as usize;
     let include_hidden = args
         .get("include_hidden")
         .and_then(Value::as_bool)
@@ -227,7 +228,7 @@ pub fn search_text(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError
     let max_preview = args
         .get("max_preview_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(512) as usize;
+        .unwrap_or(256) as usize;
     let max_file_bytes = args
         .get("max_file_bytes")
         .and_then(Value::as_u64)

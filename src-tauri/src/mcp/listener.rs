@@ -28,6 +28,7 @@ use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
 use crate::tools::Workspace;
 use crate::tunnel::append_profile_log;
 use crate::tools::policy::PolicySettings;
+use crate::usage::ServiceUsage;
 use crate::workspace::{AuthConfig, RuntimeConfig};
 
 pub type ShutdownSender = oneshot::Sender<()>;
@@ -64,6 +65,7 @@ pub fn spawn_listener(
     oauth_password: Option<String>,
     oauth_token_secret: Option<String>,
     runtime: RuntimeConfig,
+    usage: Arc<ServiceUsage>,
 ) -> Result<(ShutdownSender, tauri::async_runtime::JoinHandle<()>), String> {
     let workspace_display = workspace_path.display().to_string();
     let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
@@ -108,6 +110,9 @@ pub fn spawn_listener(
         executable_paths,
         manual_instructions,
         agent_context,
+        runtime.history_recording,
+        runtime.history_context_sessions,
+        usage,
     );
     let bearer_token = if auth.bearer_enabled() {
         let key = "bearer_token";
@@ -254,6 +259,9 @@ async fn mcp_post(
         .unwrap_or("")
         .to_string();
     let request_id = body.get("id").cloned().unwrap_or(Value::Null);
+    let request_bytes = serde_json::to_vec(&body)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default();
     let tool_name = body
         .get("params")
         .and_then(|params| params.get("name"))
@@ -270,15 +278,58 @@ async fn mcp_post(
     );
 
     let mcp = state.mcp.clone();
+    let audit_state = state.mcp.clone();
     let profile_id = state.workspace_id.clone();
     let result = tokio::task::spawn_blocking(move || handle_request(&mcp, &body)).await;
     match result {
         Ok(response) => {
+            let response_bytes = serde_json::to_vec(&response)
+                .map(|bytes| bytes.len())
+                .unwrap_or_default();
+            let is_error = response.get("error").is_some()
+                || response
+                    .get("result")
+                    .and_then(|result| result.get("isError"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            state.mcp.usage().record(
+                request_bytes,
+                response_bytes,
+                method == "tools/call",
+                is_error,
+            );
+            let audit = audit_state.context_audit_snapshot();
+            let repeated_bytes = audit
+                .get("repeated_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let latest_block = audit
+                .get("blocks")
+                .and_then(Value::as_array)
+                .and_then(|blocks| blocks.last());
             append_profile_log(
                 &profile_id,
                 "mcp-requests.log",
-                &format!("[rpc] completed id={} method={} tool={}", request_id, method, tool_name),
+                &format!(
+                    "[rpc] completed id={} method={} tool={} response_bytes={} repeated_bytes={}",
+                    request_id, method, tool_name, response_bytes, repeated_bytes
+                ),
             );
+            if let Some(block) = latest_block {
+                append_profile_log(
+                    &profile_id,
+                    "mcp-requests.log",
+                    &format!(
+                        "[context-audit] kind={} bytes={} hash={} repeated={} total_bytes={} repeated_bytes={}",
+                        block.get("kind").and_then(Value::as_str).unwrap_or("unknown"),
+                        block.get("bytes").and_then(Value::as_u64).unwrap_or_default(),
+                        block.get("hash").and_then(Value::as_str).unwrap_or("unknown"),
+                        block.get("repeated").and_then(Value::as_bool).unwrap_or(false),
+                        audit.get("total_bytes").and_then(Value::as_u64).unwrap_or_default(),
+                        repeated_bytes
+                    ),
+                );
+            }
             if tool_name == "exec_command" || tool_name == "exec_health_check" {
                 let structured = response
                     .get("result")
@@ -312,17 +363,9 @@ async fn mcp_post(
             Json(response).into_response()
         }
         Err(error) => {
-            append_profile_log(
-                &profile_id,
-                "mcp-requests.log",
-                &format!(
-                    "[rpc] worker_failed id={} method={} tool={} error={error}",
-                    request_id, method, tool_name
-                ),
-            );
-            Json(json!({
+            let error_response = json!({
                 "jsonrpc": "2.0",
-                "id": request_id,
+                "id": request_id.clone(),
                 "error": {
                     "code": -32603,
                     "message": "Exec RPC worker failed",
@@ -333,7 +376,25 @@ async fn mcp_post(
                         "suggestion": "重试请求或重启 MCP 运行时"
                     }
                 }
-            }))
+            });
+            let response_bytes = serde_json::to_vec(&error_response)
+                .map(|bytes| bytes.len())
+                .unwrap_or_default();
+            state.mcp.usage().record(
+                request_bytes,
+                response_bytes,
+                method == "tools/call",
+                true,
+            );
+            append_profile_log(
+                &profile_id,
+                "mcp-requests.log",
+                &format!(
+                    "[rpc] worker_failed id={} method={} tool={} error={error}",
+                    request_id, method, tool_name
+                ),
+            );
+            Json(error_response)
             .into_response()
         }
     }

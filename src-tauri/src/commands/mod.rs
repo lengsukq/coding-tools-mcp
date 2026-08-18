@@ -2,6 +2,7 @@ mod agent_context;
 mod app_info;
 mod frp_profiles;
 mod health;
+mod history;
 mod global_gateway;
 mod logs;
 mod planning;
@@ -10,6 +11,7 @@ mod runtime_settings;
 mod secrets;
 mod software;
 mod tunnel;
+mod usage;
 pub(crate) mod ui_memory;
 pub(crate) mod window_chrome;
 mod workspace;
@@ -24,6 +26,7 @@ pub use frp_profiles::{
 };
 pub use global_gateway::{check_global_gateway_health, get_global_gateway_config, get_global_gateway_status, set_global_gateway_config, start_global_gateway, stop_global_gateway};
 pub use health::run_health_checks;
+pub use history::list_history_sessions;
 pub use logs::read_workspace_logs;
 pub use planning::{
     accept_goal_review, accept_plan_review, create_goal, create_plan, get_planning_state,
@@ -43,6 +46,7 @@ pub use software::{
     uninstall_software,
 };
 pub use tunnel::{get_frp_snippet, restart_tunnel, start_tunnel, stop_tunnel, test_tunnel};
+pub use usage::get_service_usage_stats;
 pub use workspace::{
     create_workspace, delete_workspace, list_workspaces, open_workspace_directory, update_workspace,
 };

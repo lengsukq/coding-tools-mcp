@@ -8,18 +8,197 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
-use crate::tools::workspace::{tool_ok, WorkspaceError, WorkspaceResult};
+use crate::tools::workspace::{relative_display, tool_ok, Workspace, WorkspaceError, WorkspaceResult};
 
 use self::model::{InitialInputRecord, SearchHit};
 
 const BOOTSTRAP_RESPONSE_BUDGET: usize = 64 * 1024;
-const DEFAULT_SEARCH_LIMIT: usize = 10;
+const DEFAULT_SEARCH_LIMIT: usize = 5;
 const MAX_SEARCH_LIMIT: usize = 50;
-const DEFAULT_READ_MAX_BYTES: usize = 32 * 1024;
+const DEFAULT_READ_MAX_BYTES: usize = 16 * 1024;
 const MAX_READ_MAX_BYTES: usize = 64 * 1024;
+const CONTEXT_SESSION_SNIPPET_LIMIT: usize = 3;
+const CONTEXT_SNIPPET_MAX_CHARS: usize = 512;
+
+/// Return the small, UI-safe session catalog used by the desktop history picker.
+/// The catalog contains metadata and bounded focus text, never the archive body.
+pub fn list_sessions_for_workspace(workspace: &Workspace) -> WorkspaceResult<Value> {
+    let history_dir = storage::resolve_history_dir(workspace, None, None)?;
+    let report = storage::scan(workspace, &history_dir)?;
+    let manifest = storage::build_manifest(&report);
+    let sessions = report
+        .documents
+        .iter()
+        .map(|document| session_summary(document, true))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "context_revision": manifest.archive_revision,
+        "history_count": sessions.len(),
+        "sessions": sessions
+    }))
+}
+
+/// Build the selected-history block for MCP initialization. This is deliberately
+/// separate from tool results so it is emitted only when the workspace selection
+/// changes, not after every file or command operation.
+pub fn context_snapshot(ctx: &ToolContext) -> WorkspaceResult<Option<Value>> {
+    if ctx.history_context_sessions.is_empty() {
+        return Ok(None);
+    }
+    let history_dir = resolve_dir(ctx, &json!({}))?;
+    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let selected = ctx
+        .history_context_sessions
+        .iter()
+        .filter_map(|number| {
+            report
+                .documents
+                .iter()
+                .find(|document| document.number == *number)
+        })
+        .map(|document| session_summary(document, false))
+        .collect::<Vec<_>>();
+    let selected_snippets = ctx
+        .history_context_sessions
+        .iter()
+        .filter_map(|number| {
+            report
+                .documents
+                .iter()
+                .find(|document| document.number == *number)
+        })
+        .flat_map(|document| {
+            session_summary(document, true)
+                .get("snippets")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let latest_checkpoints = selected
+        .iter()
+        .map(|session| {
+            json!({
+                "number": session["number"],
+                "updated_at": session["updated_at"],
+                "focus": session["latest_focus"]
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut key_files = Vec::new();
+    for session in &selected {
+        if let Some(files) = session.get("key_files").and_then(Value::as_array) {
+            for file in files.iter().filter_map(Value::as_str) {
+                if !key_files.iter().any(|item: &String| item == file) {
+                    key_files.push(file.to_string());
+                }
+                if key_files.len() >= 24 {
+                    break;
+                }
+            }
+        }
+        if key_files.len() >= 24 {
+            break;
+        }
+    }
+    let revision = storage::sha256(
+        &serde_json::to_vec(&selected).map_err(|error| {
+            WorkspaceError::invalid_argument(format!("history context is not serializable: {error}"))
+        })?,
+    );
+    Ok(Some(json!({
+        "context_revision": format!("sha256:{revision}"),
+        "selected_sessions": ctx.history_context_sessions,
+        "session_metadata": selected,
+        "latest_checkpoints": latest_checkpoints,
+        "key_files": key_files,
+        "selected_snippets": selected_snippets,
+        "injection_mode": "index_and_bounded_snippets",
+        "full_history": "available_on_demand_via_history_session_search_and_read"
+    })))
+}
+
+fn session_summary(document: &self::model::HistoryDocument, include_snippets: bool) -> Value {
+    let checkpoints = markdown::parse_checkpoint_records(&document.content);
+    let latest = checkpoints.iter().max_by_key(|record| record.revision);
+    let focus = latest
+        .and_then(|record| {
+            let value = if record.raw_user_input.trim().is_empty() {
+                &record.user_intent
+            } else {
+                &record.raw_user_input
+            };
+            (!value.trim().is_empty()).then_some(value.clone())
+        })
+        .or_else(|| {
+            markdown::parse_initial_input_records(&document.content)
+                .into_iter()
+                .max_by_key(|record| record.revision)
+                .map(|record| record.raw_user_input)
+        })
+        .unwrap_or_else(|| "尚未记录任务焦点".to_string());
+    let mut key_files = Vec::new();
+    for record in checkpoints.iter().rev() {
+        for file in &record.files_changed {
+            if !file.trim().is_empty() && !key_files.contains(file) {
+                key_files.push(file.clone());
+            }
+            if key_files.len() >= 12 {
+                break;
+            }
+        }
+        if key_files.len() >= 12 {
+            break;
+        }
+    }
+    let snippets = if include_snippets {
+        checkpoints
+            .iter()
+            .rev()
+            .take(CONTEXT_SESSION_SNIPPET_LIMIT)
+            .map(|record| {
+                let mut parts = Vec::new();
+                let text = if record.raw_user_input.trim().is_empty() {
+                    record.user_intent.trim()
+                } else {
+                    record.raw_user_input.trim()
+                };
+                if !text.is_empty() {
+                    parts.push(text.to_string());
+                }
+                if !record.decisions.is_empty() {
+                    parts.push(format!("决策：{}", record.decisions.join("；")));
+                }
+                if !record.files_changed.is_empty() {
+                    parts.push(format!("文件：{}", record.files_changed.join("、")));
+                }
+                json!({
+                    "turn_id": record.turn_id,
+                    "timestamp": record.timestamp,
+                    "text": storage::truncate_text(&parts.join(" "), CONTEXT_SNIPPET_MAX_CHARS)
+                })
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    json!({
+        "number": document.number,
+        "path": document.path,
+        "title": markdown::document_title(&document.content, document.number),
+        "session_key": document.session_key,
+        "created_at": document.created_at,
+        "updated_at": document.updated_at,
+        "bytes": document.content.len(),
+        "entry_count": checkpoints.len(),
+        "latest_focus": storage::truncate_text(&focus, CONTEXT_SNIPPET_MAX_CHARS),
+        "key_files": key_files,
+        "snippets": snippets
+    })
+}
 
 pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
-    let (session_key, source) = resolve_session_key(args)?;
+    let (session_key, source) = resolve_session_key(ctx, args)?;
     let history_dir = resolve_dir(ctx, args)?;
     storage::ensure_directory(&history_dir)?;
     let _lock = storage::lock_directory(&history_dir)?;
@@ -159,6 +338,27 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     storage::write_manifest(&history_dir, &manifest)?;
     storage::write_state(&history_dir, &state)?;
 
+    if ctx.tool_profile == "compact" {
+        return Ok(tool_ok(json!({
+            "context_mode": "compact",
+            "index_only": true,
+            "is_new_session": created,
+            "session_key": session_key,
+            "session_key_source": source,
+            "current_number": current_number,
+            "current_path": current_path,
+            "created": created,
+            "resumed": resumed,
+            "initial_input_captured": initial_input_captured,
+            "sequence_valid": refreshed.sequence_valid(),
+            "history_count": refreshed.documents.len(),
+            "total_history_bytes": refreshed.total_bytes(),
+            "state_revision": state.state_revision,
+            "archive_revision": manifest.archive_revision,
+            "warnings": warnings
+        })));
+    }
+
     let mut result = json!({
         "is_new_session": created,
         "session_key": session_key,
@@ -205,15 +405,59 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 }
 
 pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
-    let session_key = required_checkpoint_argument(args, "session_key")?;
-    let expected_path = required_checkpoint_argument(args, "expected_path")?;
+    if !ctx.history_recording {
+        return Ok(tool_ok(json!({
+            "recorded": false,
+            "reason": "session_recording_disabled"
+        })));
+    }
+    let session_key = resolve_session_key(ctx, args)?.0;
+    let history_dir = resolve_dir(ctx, args)?;
+    storage::ensure_directory(&history_dir)?;
+    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    reject_ambiguous_history(&report)?;
+    let document = report
+        .documents
+        .iter()
+        .find(|document| document.session_key.as_deref() == Some(session_key.as_str()));
+    if document.is_none() {
+        let bootstrap_result = bootstrap(
+            ctx,
+            &json!({
+                "session_key": session_key,
+                "history_dir": args.get("history_dir"),
+                "workspace_root": args.get("workspace_root"),
+                "title": "开发会话",
+                "create_if_missing": true
+            }),
+        )?;
+        let expected_path = bootstrap_result
+            .get("current_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| history_error(
+                "SESSION_TARGET_UNAVAILABLE",
+                "Unable to create a lazy history target.",
+                "internal",
+                true,
+                json!({}),
+            ))?;
+        let mut retry_args = args.clone();
+        if let Some(object) = retry_args.as_object_mut() {
+            object.insert("session_key".into(), Value::String(session_key.clone()));
+            object.insert("expected_path".into(), Value::String(expected_path.to_string()));
+        }
+        return checkpoint(ctx, &retry_args);
+    }
+    let expected_path = args
+        .get("expected_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| document.expect("checked above").path.as_str())
+        .to_string();
     let host_session_key_mismatch = host_session_key(args)
         .map(|host| host != session_key.as_str())
         .unwrap_or(false);
-    let history_dir = resolve_dir(ctx, args)?;
-    if !history_dir.exists() {
-        return Err(session_not_bootstrapped());
-    }
     let _lock = storage::lock_directory(&history_dir)?;
     let report = storage::scan(&ctx.workspace, &history_dir)?;
     reject_ambiguous_history(&report)?;
@@ -300,8 +544,23 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     }
     if host_session_key_mismatch {
         warnings.push(
-            "宿主会话标识已变化；本次仍使用 bootstrap 返回的稳定目标，未切换历史文件。".into(),
+            "宿主会话标识已变化；本次仍使用解析出的稳定目标，未切换历史文件。".into(),
         );
+    }
+    if ctx.tool_profile == "compact" {
+        return Ok(tool_ok(json!({
+            "recorded": true,
+            "session_number": document.number,
+            "path": document.path,
+            "session_key": session_key,
+            "turn_id": record.turn_id,
+            "updated": updated,
+            "duplicate_ignored": duplicate_ignored,
+            "user_input_captured": user_input_captured,
+            "archive_revision": manifest.archive_revision,
+            "state_revision": state.state_revision,
+            "warnings": warnings
+        })));
     }
     Ok(tool_ok(json!({
         "session_number": document.number,
@@ -391,30 +650,47 @@ pub fn search(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 
 pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let history_dir = resolve_dir(ctx, args)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
-    let document = if let Some(number) = args.get("number").and_then(Value::as_u64) {
-        report
-            .documents
-            .iter()
-            .find(|document| document.number == number)
+    let path = if let Some(number) = args.get("number").and_then(Value::as_u64) {
+        history_dir.join(format!("{number}.md"))
     } else if let Some(path) = args.get("path").and_then(Value::as_str) {
-        report
-            .documents
-            .iter()
-            .find(|document| document.path == path)
+        ctx.workspace.resolve_read_path(path)?.path
     } else {
-        None
-    }
-    .ok_or_else(|| {
-        history_error(
+        return Err(history_error(
             "HISTORY_READ_NOT_FOUND",
             "Pass an existing archive number or a manifest-returned relative path.",
             "not_found",
             false,
             json!({}),
+        ));
+    };
+    if path.parent() != Some(history_dir.as_path())
+        || path.extension().and_then(|value| value.to_str()) != Some("md")
+        || path.file_stem().and_then(|value| value.to_str()).and_then(|value| value.parse::<u64>().ok()).is_none()
+    {
+        return Err(history_error(
+            "HISTORY_READ_NOT_FOUND",
+            "Pass an existing archive number or a manifest-returned relative path.",
+            "not_found",
+            false,
+            json!({}),
+        ));
+    }
+    let content = fs::read_to_string(&path).map_err(|_| {
+        history_error(
+            "HISTORY_READ_NOT_FOUND",
+            "The selected history archive does not exist.",
+            "not_found",
+            false,
+            json!({}),
         )
     })?;
-    let bytes = document.content.as_bytes();
+    let number = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("validated numeric history path");
+    let display_path = relative_display(ctx.workspace.root(), &path);
+    let bytes = content.as_bytes();
     let content_hash = storage::sha256(bytes);
     if let Some(expected_hash) = args.get("expected_hash").and_then(Value::as_str) {
         if expected_hash != content_hash {
@@ -428,7 +704,7 @@ pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         }
     }
     let cursor = bounded_usize(args, "cursor", 0, bytes.len())?;
-    if cursor > bytes.len() || !document.content.is_char_boundary(cursor) {
+    if cursor > bytes.len() || !content.is_char_boundary(cursor) {
         return Err(history_error(
             "HISTORY_CURSOR_INVALID",
             "cursor must be a UTF-8 character boundary inside the archive.",
@@ -444,11 +720,11 @@ pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         MAX_READ_MAX_BYTES,
     )?;
     let mut end = cursor.saturating_add(requested).min(bytes.len());
-    while end > cursor && !document.content.is_char_boundary(end) {
+    while end > cursor && !content.is_char_boundary(end) {
         end -= 1;
     }
     if end == cursor && end < bytes.len() {
-        let next = document.content[cursor..]
+        let next = content[cursor..]
             .chars()
             .next()
             .map(char::len_utf8)
@@ -456,9 +732,9 @@ pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         end = cursor + next;
     }
     Ok(tool_ok(json!({
-        "number": document.number,
-        "path": document.path,
-        "content": &document.content[cursor..end],
+        "number": number,
+        "path": display_path,
+        "content": &content[cursor..end],
         "cursor": cursor,
         "next_cursor": (end < bytes.len()).then_some(end),
         "total_bytes": bytes.len(),
@@ -698,23 +974,6 @@ fn host_session_key(args: &Value) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn required_checkpoint_argument(args: &Value, name: &str) -> WorkspaceResult<String> {
-    args.get(name)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            history_error(
-                "CHECKPOINT_TARGET_REQUIRED",
-                "Pass session_key and expected_path exactly as returned by history_session_bootstrap.",
-                "validation",
-                false,
-                json!({"missing_argument": name}),
-            )
-        })
-}
-
 fn resolve_dir(ctx: &ToolContext, args: &Value) -> WorkspaceResult<std::path::PathBuf> {
     storage::resolve_history_dir(
         &ctx.workspace,
@@ -723,7 +982,7 @@ fn resolve_dir(ctx: &ToolContext, args: &Value) -> WorkspaceResult<std::path::Pa
     )
 }
 
-fn resolve_session_key(args: &Value) -> WorkspaceResult<(String, &'static str)> {
+fn resolve_session_key(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(String, &'static str)> {
     if let Some(value) = host_session_key(args) {
         return Ok((value.to_string(), "platform_conversation_id"));
     }
@@ -735,12 +994,10 @@ fn resolve_session_key(args: &Value) -> WorkspaceResult<(String, &'static str)> 
     {
         return Ok((value.to_string(), "explicit_session_key"));
     }
-    Err(history_error(
-        "SESSION_ID_UNAVAILABLE",
-        "A stable ChatGPT session identifier is required.",
-        "validation",
-        false,
-        json!({}),
+    let fingerprint = storage::sha256(ctx.workspace.root_display().as_bytes());
+    Ok((
+        format!("workspace-session-{}", &fingerprint[..16]),
+        "workspace_fallback",
     ))
 }
 

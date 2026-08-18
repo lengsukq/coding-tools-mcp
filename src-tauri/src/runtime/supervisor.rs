@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
@@ -15,6 +16,7 @@ use crate::runtime::port::{
 use crate::secret::SecretStore;
 use crate::tools::policy::PolicySettings;
 use crate::tunnel::{append_profile_log, cleanup_orphan_for_runtime, TunnelServiceKind};
+use crate::usage::{ServiceUsage, ServiceUsageStats};
 use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +46,7 @@ struct RuntimeEntry {
 #[derive(Default)]
 pub struct RuntimeSupervisor {
     entries: HashMap<(String, ServiceKind), RuntimeEntry>,
+    usage: HashMap<(String, ServiceKind), Arc<ServiceUsage>>,
 }
 
 impl RuntimeSupervisor {
@@ -67,6 +70,17 @@ impl RuntimeSupervisor {
 
     pub fn actions_status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
         self.status(profile, ServiceKind::Actions)
+    }
+
+    pub fn usage_stats(&self, workspace_id: &str, kind: ServiceKind) -> ServiceUsageStats {
+        let service = match kind {
+            ServiceKind::Mcp => "mcp",
+            ServiceKind::Actions => "actions",
+        };
+        self.usage
+            .get(&(workspace_id.to_string(), kind))
+            .map(|usage| usage.snapshot(workspace_id, service))
+            .unwrap_or_else(|| ServiceUsage::empty(workspace_id, service))
     }
 
     pub fn start_mcp(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
@@ -228,6 +242,12 @@ impl RuntimeSupervisor {
             )));
         }
 
+        let usage = self
+            .usage
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(ServiceUsage::default()))
+            .clone();
+
         self.entries.insert(
             key.clone(),
             RuntimeEntry {
@@ -293,6 +313,7 @@ impl RuntimeSupervisor {
                     oauth_password,
                     oauth_token_secret,
                     profile.runtime.clone(),
+                    usage.clone(),
                 )
             }
             ServiceKind::Actions => {
@@ -350,6 +371,7 @@ impl RuntimeSupervisor {
                     oauth_password,
                     oauth_token_secret,
                     policy,
+                    usage.clone(),
                 )
             }
         };

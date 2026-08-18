@@ -18,12 +18,29 @@
   import EmptyState from "$lib/components/EmptyState.svelte";
   import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
   import { getLastWorkspaceId } from "$lib/api/settings";
+  import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
   import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import { actionsConfig, type RuntimeState, type WorkspaceProfile } from "$lib/types";
 
+  interface UsagePoint {
+    timestamp: number;
+    estimatedTokens: number;
+    requestCount: number;
+    averageTokens: number;
+  }
+
+  interface ChartPoint {
+    x: number;
+    y: number;
+  }
+
   let lastWorkspaceId = $state("");
   let planningByWorkspace = $state<Record<string, PlanningStateDto | null>>({});
+  let usageByWorkspace = $state<Record<string, ServiceUsageStats[]>>({});
+  let usageHistory = $state<UsagePoint[]>([]);
+  let usageWorkspaceKey = $state("");
   let planningGeneration = 0;
+  let usageGeneration = 0;
 
   const workspaceCount = $derived($workspaces.length);
   const mcpRunning = $derived(
@@ -90,6 +107,34 @@
     return stats;
   });
 
+  const usageTotals = $derived.by(() => {
+    const totals = {
+      estimatedTokens: 0,
+      estimatedInputTokens: 0,
+      estimatedOutputTokens: 0,
+      requestCount: 0,
+      toolCallCount: 0,
+      errorCount: 0,
+    };
+    for (const stats of Object.values(usageByWorkspace)) {
+      for (const item of stats) {
+        totals.estimatedTokens += item.estimatedTokens;
+        totals.estimatedInputTokens += item.estimatedInputTokens;
+        totals.estimatedOutputTokens += item.estimatedOutputTokens;
+        totals.requestCount += item.requestCount;
+        totals.toolCallCount += item.toolCallCount;
+        totals.errorCount += item.errorCount;
+      }
+    }
+    return totals;
+  });
+  const averageTokens = $derived(
+    usageTotals.requestCount === 0
+      ? 0
+      : usageTotals.estimatedTokens / usageTotals.requestCount,
+  );
+  const usageChart = $derived.by(() => buildUsageChart(usageHistory));
+
   function stateLabel(state: RuntimeState | undefined): string {
     switch (state) {
       case "running":
@@ -155,11 +200,108 @@
     planningByWorkspace = Object.fromEntries(entries);
   }
 
+  async function loadUsage(items: WorkspaceProfile[]) {
+    const generation = ++usageGeneration;
+    if (items.length === 0) {
+      usageByWorkspace = {};
+      usageHistory = [];
+      usageWorkspaceKey = "";
+      return;
+    }
+
+    const workspaceKey = items.map((item) => item.id).sort().join("|");
+    if (workspaceKey !== usageWorkspaceKey) {
+      usageWorkspaceKey = workspaceKey;
+      usageHistory = [];
+    }
+
+    const entries = await Promise.all(
+      items.map(async (workspace) => {
+        try {
+          return [workspace.id, await getServiceUsageStats(workspace.id)] as const;
+        } catch {
+          return [workspace.id, []] as const;
+        }
+      }),
+    );
+    if (generation !== usageGeneration) return;
+    const nextUsage = Object.fromEntries(entries);
+    usageByWorkspace = nextUsage;
+    usageHistory = [...usageHistory, buildUsagePoint(nextUsage)].slice(-24);
+  }
+
+  function formatCount(value: number): string {
+    return new Intl.NumberFormat("zh-CN", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  }
+
+  function formatMillions(value: number): string {
+    return `${(value / 1_000_000).toFixed(2)}M`;
+  }
+
+  function formatMetric(value: number): string {
+    if (value >= 1_000_000) return formatMillions(value);
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return Math.round(value).toLocaleString("zh-CN");
+  }
+
+  function buildUsagePoint(statsByWorkspace: Record<string, ServiceUsageStats[]>): UsagePoint {
+    const stats = Object.values(statsByWorkspace).flat();
+    const estimatedTokens = stats.reduce((sum, item) => sum + item.estimatedTokens, 0);
+    const requestCount = stats.reduce((sum, item) => sum + item.requestCount, 0);
+    return {
+      timestamp: Date.now(),
+      estimatedTokens,
+      requestCount,
+      averageTokens: requestCount === 0 ? 0 : estimatedTokens / requestCount,
+    };
+  }
+
+  function buildUsageChart(history: UsagePoint[]): {
+    path: string;
+    areaPath: string;
+    points: ChartPoint[];
+    max: number;
+  } {
+    if (history.length === 0) {
+      return {
+        path: "M 0 32 L 100 32",
+        areaPath: "M 0 32 L 100 32 L 100 36 L 0 36 Z",
+        points: [],
+        max: 0,
+      };
+    }
+
+    const values = history.map((point) => point.estimatedTokens);
+    const max = Math.max(...values, 1);
+    const samples = values.length === 1 ? [values[0], values[0]] : values;
+    const points = samples.map((value, index) => ({
+      x: samples.length === 1 ? 50 : (index / (samples.length - 1)) * 100,
+      y: 32 - (value / max) * 25,
+    }));
+    const path = points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+      .join(" ");
+    const last = points[points.length - 1];
+    const first = points[0];
+    return {
+      path,
+      areaPath: `${path} L ${last.x.toFixed(2)} 36 L ${first.x.toFixed(2)} 36 Z`,
+      points,
+      max,
+    };
+  }
+
   function openWorkspace(id: string) {
     goto(`/workspace/${id}`);
   }
 
   onMount(() => {
+    const usageTimer = window.setInterval(() => {
+      void loadUsage($workspaces);
+    }, 5000);
     void getLastWorkspaceId()
       .then((id) => {
         lastWorkspaceId = id ?? "";
@@ -167,11 +309,14 @@
       .catch(() => {
         lastWorkspaceId = "";
       });
+
+    return () => window.clearInterval(usageTimer);
   });
 
   $effect(() => {
     const items = $workspaces;
     void loadPlanning(items);
+    void loadUsage(items);
   });
 </script>
 
@@ -184,7 +329,7 @@
       </div>
       <h2 class="page-title">Dashboard</h2>
       <p class="mt-2 max-w-2xl text-sm text-[var(--color-text-muted)]">
-        不进入具体工作区，也可以查看全部服务运行状态、连接方式和 AI Planning 进度。
+        不进入具体工作区，也可以查看服务状态、Token 趋势、连接方式和 AI Planning 进度。
       </p>
     </div>
   </header>
@@ -195,7 +340,28 @@
         <EmptyState />
       </div>
     {:else}
-      <div class="tx-dashboard-hero-grid">
+      <div class="tx-dashboard-canvas">
+        <nav class="tx-dashboard-quick-nav" aria-label="Dashboard 快速导航">
+          <span class="tx-dashboard-quick-nav-label">快速跳转</span>
+          <a href="#dashboard-overview" aria-label="跳转到运行总览" title="运行总览">
+            <Gauge size={15} />
+          </a>
+          <a href="#dashboard-metrics" aria-label="跳转到关键指标" title="关键指标">
+            <Activity size={15} />
+          </a>
+          <a href="#dashboard-workspaces" aria-label="跳转到工作区运行矩阵" title="运行矩阵">
+            <Boxes size={15} />
+          </a>
+          <a href="#dashboard-usage" aria-label="跳转到 Token 趋势" title="Token 趋势">
+            <Network size={15} />
+          </a>
+          <a href="#dashboard-details" aria-label="跳转到连接与 Planning" title="连接与 Planning">
+            <ListChecks size={15} />
+          </a>
+        </nav>
+
+        <div class="tx-dashboard-content">
+      <div id="dashboard-overview" class="tx-dashboard-hero-grid tx-dashboard-anchor">
         <section class="tx-card tx-dashboard-health-card">
           <div class="tx-dashboard-health-copy">
             <div class="flex items-center gap-2">
@@ -265,7 +431,7 @@
         </section>
       </div>
 
-      <div class="tx-dashboard-metrics">
+      <div id="dashboard-metrics" class="tx-dashboard-metrics tx-dashboard-anchor">
         <div class="tx-dashboard-metric-card">
           <span>工作区</span>
           <strong>{workspaceCount}</strong>
@@ -286,9 +452,14 @@
           <strong>{planningStats.pendingReview}</strong>
           <small>{planningStats.activeGoals} Goal · {planningStats.activePlans} Plan 活跃</small>
         </div>
+        <div class="tx-dashboard-metric-card">
+          <span>Token 估算</span>
+          <strong>{formatCount(usageTotals.estimatedTokens)}</strong>
+          <small>{formatCount(usageTotals.requestCount)} 次服务请求 · 当前会话</small>
+        </div>
       </div>
 
-      <section class="tx-dashboard-section">
+      <section id="dashboard-workspaces" class="tx-dashboard-section tx-dashboard-anchor">
         <div class="tx-dashboard-section-heading">
           <div>
             <div class="flex items-center gap-2">
@@ -350,7 +521,68 @@
         </div>
       </section>
 
-      <div class="tx-dashboard-detail-grid">
+      <div id="dashboard-details" class="tx-dashboard-detail-grid tx-dashboard-anchor">
+        <section id="dashboard-usage" class="tx-card tx-dashboard-detail-card tx-dashboard-usage-card">
+          <div class="tx-dashboard-usage-heading">
+            <div>
+              <div class="flex items-center gap-2">
+                <Activity size={16} class="text-[var(--primary)]" />
+                <h3>Token 使用趋势</h3>
+              </div>
+              <p>基于服务内置统计的累计估算，最近 24 个采样点。</p>
+            </div>
+            <span class="tx-dashboard-usage-badge">Token / M</span>
+          </div>
+
+          <div class="tx-dashboard-usage-layout">
+            <div class="tx-dashboard-usage-chart">
+              <div class="tx-dashboard-usage-chart-meta">
+                <span>累计 Token</span>
+                <strong>{formatMillions(usageTotals.estimatedTokens)}</strong>
+              </div>
+              <svg
+                class="tx-dashboard-line-chart"
+                viewBox="0 0 100 40"
+                role="img"
+                aria-label={`Token 使用趋势，当前 ${formatMillions(usageTotals.estimatedTokens)}`}
+                preserveAspectRatio="none"
+              >
+                <line class="tx-dashboard-chart-gridline" x1="0" y1="7" x2="100" y2="7" />
+                <line class="tx-dashboard-chart-gridline" x1="0" y1="19.5" x2="100" y2="19.5" />
+                <line class="tx-dashboard-chart-gridline" x1="0" y1="32" x2="100" y2="32" />
+                <path class="tx-dashboard-chart-area" d={usageChart.areaPath} />
+                <path class="tx-dashboard-chart-line" d={usageChart.path} />
+                {#if usageChart.points.length > 0}
+                  {@const lastPoint = usageChart.points[usageChart.points.length - 1]}
+                  <circle class="tx-dashboard-chart-point" cx={lastPoint.x} cy={lastPoint.y} r="1.25" />
+                {/if}
+              </svg>
+              <div class="tx-dashboard-chart-scale">
+                <span>0M</span>
+                <span>{formatMillions(usageChart.max)}</span>
+              </div>
+            </div>
+
+            <div class="tx-dashboard-usage-stats">
+              <div class="tx-dashboard-usage-stat">
+                <span>请求次数</span>
+                <strong>{formatMetric(usageTotals.requestCount)}</strong>
+                <small>全部服务</small>
+              </div>
+              <div class="tx-dashboard-usage-stat">
+                <span>平均 Token / 请求</span>
+                <strong>{formatMetric(averageTokens)}</strong>
+                <small>输入 + 输出</small>
+              </div>
+              <div class="tx-dashboard-usage-stat">
+                <span>输入 / 输出</span>
+                <strong>{formatMillions(usageTotals.estimatedInputTokens)} / {formatMillions(usageTotals.estimatedOutputTokens)}</strong>
+                <small>估算 Token</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="tx-card tx-dashboard-detail-card">
           <div class="tx-dashboard-section-heading compact">
             <div>
@@ -411,6 +643,39 @@
             <span><strong>{planningStats.modes.goal}</strong> Goal</span>
           </div>
         </section>
+
+        <section class="tx-card tx-dashboard-detail-card">
+          <div class="tx-dashboard-section-heading compact">
+            <div>
+              <div class="flex items-center gap-2">
+                <Activity size={16} class="text-[var(--primary)]" />
+                <h3>服务 Token 用量</h3>
+              </div>
+              <p>由本地 MCP / Actions 服务统计 JSON 请求大小后估算，不保存请求正文。</p>
+            </div>
+          </div>
+          <div class="tx-dashboard-planning-stats">
+            <div>
+              <span>输入 Token</span>
+              <strong>{formatCount(usageTotals.estimatedInputTokens)}</strong>
+            </div>
+            <div>
+              <span>输出 Token</span>
+              <strong>{formatCount(usageTotals.estimatedOutputTokens)}</strong>
+            </div>
+            <div class:attention={usageTotals.errorCount > 0}>
+              <span>错误请求</span>
+              <strong>{formatCount(usageTotals.errorCount)}</strong>
+            </div>
+          </div>
+          <div class="tx-dashboard-mode-strip">
+            <span><strong>{formatCount(usageTotals.toolCallCount)}</strong> 工具调用</span>
+            <span><strong>{formatCount(usageTotals.requestCount)}</strong> 请求</span>
+            <span>重启后仍保留本次应用会话累计</span>
+          </div>
+        </section>
+      </div>
+        </div>
       </div>
     {/if}
   </div>

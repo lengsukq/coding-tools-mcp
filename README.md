@@ -103,17 +103,16 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 支持 MCP 的客户端使用界面中的公网 MCP URL。使用 OAuth 时，客户端会通过服务端元数据进入授权流程；授权口令、Client ID 和 Secret 均可在桌面端集中生成和管理。当前版本使用预配置 OAuth 客户端，创建 ChatGPT 插件时应选择静态/手动 OAuth 凭据，不需要选择 CIMD。
 
-首次连接建议先调用历史初始化，再检查工作区：
+首次连接可直接检查工作区；历史初始化不再是必需步骤：
 
 ```text
-history_session_bootstrap
 server_info
 get_default_cwd
 git_status
 check_exec_environment
 ```
 
-这样 Agent 不需要依赖聊天上下文猜测当前项目、工作目录和执行能力。
+这样 Agent 不需要依赖聊天上下文猜测当前项目、工作目录和执行能力。需要显式创建或恢复历史目标时，再手动调用 `history_session_bootstrap`。
 
 ## ChatGPT 的两种接入方式
 
@@ -166,7 +165,7 @@ check_exec_environment
 告诉我当前连接的工作区、默认目录和 Git 状态。
 ```
 
-如果能够返回当前项目的信息，说明“桌面端 → 公网隧道 → OAuth → ChatGPT → MCP 工具”链路已经打通。首次正式开发时，再调用 `history_session_bootstrap` 初始化或恢复项目历史。
+如果能够返回当前项目的信息，说明“桌面端 → 公网隧道 → OAuth → ChatGPT → MCP 工具”链路已经打通。当前会话默认允许记录检查点；旧会话是否注入由工作区的“历史上下文”面板多选控制。
 
 如果 ChatGPT 仍显示旧的工具列表，请断开并重新连接插件，或创建一个新对话后再次验证。
 
@@ -203,17 +202,19 @@ MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用�
 
 ![ChatGPT 新会话启动提示词](docs/images/history-session-prompt.png)
 
-*复制完整提示词到新会话，即可初始化或恢复历史；每轮任务完成后再保存检查点。*
+*当前会话默认记录；旧会话通过工作区的“历史上下文”面板选择后，才会以有界快照注入。*
+
+历史上下文面板提供当前会话记录开关、历史会话多选、预览和清除选择。应用选择后会刷新 MCP 上下文，只注入会话索引、最近检查点、关键文件和精选片段；每个会话最多 3 条片段、每条最多 512 字节。完整 Markdown 历史仍保存在 `docs/history-session/`，需要时再用搜索和分页读取工具恢复。
 
 它提供五个互相配合的历史工具：
 
 | 工具 | 作用 |
 | --- | --- |
-| `history_session_bootstrap` | 新对话开始时初始化或恢复项目会话；保存逐字的 `initial_user_input`，返回稳定的 `session_key`、`current_path` 和有界当前状态，不返回全量历史 |
-| `history_session_checkpoint` | 每轮任务完成后按 bootstrap 返回的稳定目标追加结构化进度，并保存逐字的 `raw_user_input`；目标不一致时拒绝写入，避免串到其他历史文件 |
+| `history_session_bootstrap` | 兼容或手动初始化/恢复项目会话；compact 模式只返回有界索引，不返回全量历史 |
+| `history_session_checkpoint` | 当前会话默认按需追加结构化进度；可省略 `session_key` 和 `expected_path`，服务端会懒初始化目标 |
 | `history_session_validate` | 检查历史编号、文件和会话映射；必要时重建派生索引，不删除已有历史 |
 | `history_session_search` | 按确定性关键词搜索长期 Markdown 档案，返回有界的命中位置和短片段 |
-| `history_session_read` | 按编号或搜索结果位置，无损、UTF-8 安全地分页读取一份原始 Markdown 档案；默认每页 `32 KiB`，最多 `64 KiB`，根据 `next_cursor` 继续读取 |
+| `history_session_read` | 按编号或搜索结果位置，无损、UTF-8 安全地分页读取一份原始 Markdown 档案；默认每页 `16 KiB`，最多 `64 KiB`，根据 `next_cursor` 继续读取 |
 
 典型效果：
 
@@ -223,13 +224,13 @@ MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用�
 对话 2：读取有界当前状态 → 搜索并精读需要的旧档案 → 从上次进度继续 → 保存新检查点
 ```
 
-历史档案使用可读的 Markdown 格式，可以随项目备份或纳入 Git，也方便开发者直接审阅和修订。`memory/state.json` 是有界当前状态投影，`memory/manifest.json` 只保存位置、哈希与关键词，不复制正文；Markdown 才是长期、无损的事实来源。首次输入和每轮输入必须由 ChatGPT 作为 `initial_user_input`、`raw_user_input` 工具参数传入，服务端无法读取未传入的远程聊天文本。检查点采用幂等追加，同一 `turn_id` 内容变化时保留 revision 与 supersedes 证据，并要求返回 `ok=true` 且会话目标一致后才确认保存成功。
+历史档案使用可读的 Markdown 格式，可以随项目备份或纳入 Git，也方便开发者直接审阅和修订。`memory/state.json` 是有界当前状态投影，`memory/manifest.json` 只保存位置、哈希与关键词，不复制正文；Markdown 才是长期、无损的事实来源。若手动调用 bootstrap，首次输入可作为 `initial_user_input` 传入；每轮检查点使用 `raw_user_input`，服务端无法读取未传入的远程聊天文本。检查点采用幂等追加，同一 `turn_id` 内容变化时保留 revision 与 supersedes 证据，并要求返回成功且会话目标一致后才确认保存成功。
 
 > 历史持久化由 AI 调用 MCP 工具完成，并非桌面端在后台录制聊天内容。若客户端未触发工具调用，服务端无法凭空感知新的对话或任务进度。
 
 ## Agent 可以做什么
 
-默认 `core` profile 提供一组稳定、可组合的开发工具：
+默认 `compact` profile 提供一组稳定、可组合的开发工具；`core` 和 `advanced` 作为 legacy 兼容 profile 保留：
 
 | 类别 | 主要工具 |
 | --- | --- |

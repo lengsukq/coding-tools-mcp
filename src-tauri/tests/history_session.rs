@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 
 use coding_tools_mcp_desktop_lib::tools::{list_tools_for_profile, ToolContext};
+use coding_tools_mcp_desktop_lib::tools::history;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -24,6 +25,92 @@ fn test_context() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
     let ctx = ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
         .expect("tool context");
     (workspace, harness, ctx)
+}
+
+#[test]
+fn compact_bootstrap_returns_index_metadata_without_workflow_prompt() {
+    let (_workspace, _harness, ctx) = test_context();
+    let ctx = ctx.with_tool_profile("compact");
+    let boot = invoke_ok(
+        &ctx,
+        "history_session_bootstrap",
+        json!({"session_key": "compact-session", "initial_user_input": "建立精简历史"}),
+    );
+
+    assert_eq!(boot["context_mode"], "compact");
+    assert_eq!(boot["index_only"], true);
+    assert!(boot.get("state").is_none());
+    assert!(boot.get("assistant_instructions").is_none());
+    assert!(boot.get("required_next_actions").is_none());
+}
+
+#[test]
+fn compact_checkpoint_lazily_creates_session_without_bootstrap() {
+    let (workspace, _harness, ctx) = test_context();
+    let ctx = ctx.with_tool_profile("compact");
+    let checkpoint = invoke_ok(
+        &ctx,
+        "history_session_checkpoint",
+        json!({
+            "turn_id": "lazy-1",
+            "raw_user_input": "直接保存当前任务，不先 bootstrap",
+            "files_changed": ["src/history.rs"]
+        }),
+    );
+
+    assert_eq!(checkpoint["recorded"], true);
+    assert_eq!(checkpoint["turn_id"], "lazy-1");
+    assert!(checkpoint.get("content_hash").is_none());
+    assert!(workspace.path().join("docs/history-session/1.md").is_file());
+}
+
+#[test]
+fn disabled_recording_does_not_write_a_checkpoint() {
+    let (workspace, _harness, ctx) = test_context();
+    let ctx = ctx.with_history_config(false, Vec::new());
+    let checkpoint = invoke_ok(
+        &ctx,
+        "history_session_checkpoint",
+        json!({"raw_user_input": "不要记录这次会话"}),
+    );
+
+    assert_eq!(checkpoint["recorded"], false);
+    assert!(!workspace.path().join("docs/history-session").exists());
+}
+
+#[test]
+fn selected_history_context_is_bounded_and_does_not_include_archive_body() {
+    let (workspace, _harness, ctx) = test_context();
+    let ctx = ctx.with_tool_profile("compact");
+    invoke_ok(
+        &ctx,
+        "history_session_bootstrap",
+        json!({"session_key": "selected-session", "initial_user_input": "历史选择项"}),
+    );
+    invoke_ok(
+        &ctx,
+        "history_session_checkpoint",
+        json!({
+            "session_key": "selected-session",
+            "turn_id": "selected-1",
+            "raw_user_input": "这里是精选片段",
+            "files_changed": ["src/important.rs"]
+        }),
+    );
+    let ctx = ctx.with_history_config(true, vec![1]);
+    let snapshot = history::context_snapshot(&ctx)
+        .expect("snapshot")
+        .expect("selected snapshot");
+
+    assert_eq!(snapshot["selected_sessions"][0], 1);
+    assert_eq!(snapshot["injection_mode"], "index_and_bounded_snippets");
+    assert!(snapshot["context_revision"].as_str().unwrap().starts_with("sha256:"));
+    assert!(snapshot["latest_checkpoints"].is_array());
+    assert!(snapshot["key_files"].to_string().contains("src/important.rs"));
+    assert!(snapshot["selected_snippets"].is_array());
+    assert!(snapshot.to_string().contains("这里是精选片段"));
+    assert!(!snapshot.to_string().contains(&"历史选择项".repeat(20)));
+    assert!(workspace.path().join("docs/history-session/1.md").is_file());
 }
 
 #[test]
@@ -461,10 +548,7 @@ fn history_tools_are_exposed_with_public_schemas() {
         .iter()
         .find(|tool| tool["name"] == "history_session_checkpoint")
         .expect("checkpoint schema");
-    assert_eq!(
-        checkpoint["inputSchema"]["required"],
-        json!(["session_key", "expected_path"])
-    );
+    assert!(checkpoint["inputSchema"].get("required").is_none());
     assert!(checkpoint["inputSchema"]["properties"]
         .get("raw_user_input")
         .is_some());
@@ -474,7 +558,7 @@ fn history_tools_are_exposed_with_public_schemas() {
         .expect("read schema");
     assert_eq!(
         read["inputSchema"]["properties"]["max_bytes"]["default"],
-        32768
+        16384
     );
     assert_eq!(
         read["inputSchema"]["properties"]["max_bytes"]["maximum"],
@@ -483,13 +567,14 @@ fn history_tools_are_exposed_with_public_schemas() {
 }
 
 #[test]
-fn bootstrap_requires_a_stable_session_id() {
+fn bootstrap_uses_a_workspace_fallback_without_a_host_session_id() {
     let (_workspace, _harness, ctx) = test_context();
-    let result = invoke(&ctx, "history_session_bootstrap", json!({}));
-    assert_eq!(
-        assert_err(&result)["error"]["code"],
-        "SESSION_ID_UNAVAILABLE"
-    );
+    let result = invoke_ok(&ctx, "history_session_bootstrap", json!({}));
+    assert_eq!(result["session_key_source"], "workspace_fallback");
+    assert!(result["session_key"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("workspace-session-"));
 }
 
 #[test]

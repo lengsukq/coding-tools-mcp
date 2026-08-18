@@ -21,6 +21,7 @@ use crate::auth::{
 };
 use crate::tools::{self, is_allowed_tool, policy::PolicySettings, wrap_tool_result, ToolContext};
 use crate::tunnel::append_profile_log;
+use crate::usage::ServiceUsage;
 
 use super::auth::{require_actions_auth, AuthConfig};
 use super::openapi;
@@ -38,6 +39,7 @@ struct AppState {
     oauth: Option<Arc<OAuthRuntime>>,
     oauth_client_secret: Option<String>,
     write_lock: Arc<Mutex<()>>,
+    usage: Arc<ServiceUsage>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,6 +55,7 @@ pub fn spawn_listener(
     oauth_password: Option<String>,
     oauth_token_secret: Option<String>,
     policy: PolicySettings,
+    usage: Arc<ServiceUsage>,
 ) -> Result<(ShutdownSender, tauri::async_runtime::JoinHandle<()>), String> {
     if auth_type == "api_key" && api_key.as_ref().is_none_or(String::is_empty) {
         return Err("Actions API key is not configured".into());
@@ -102,6 +105,7 @@ pub fn spawn_listener(
             oauth,
             oauth_client_secret,
             policy,
+            usage,
             shutdown_rx,
         )
         .await;
@@ -136,6 +140,7 @@ async fn serve(
     oauth: Option<Arc<OAuthRuntime>>,
     oauth_client_secret: Option<String>,
     policy: PolicySettings,
+    usage: Arc<ServiceUsage>,
     shutdown: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let workspace = tools::Workspace::new(workspace_path.clone()).map_err(|e| e.message())?;
@@ -148,7 +153,8 @@ async fn serve(
         policy.clone(),
         "full".into(),
         policy.permission_mode.clone(),
-    ));
+    )
+    .with_usage(usage.clone()));
     let tools: Vec<Value> = tools::list_tools()
         .into_iter()
         .filter(|tool| {
@@ -183,6 +189,7 @@ async fn serve(
         oauth,
         oauth_client_secret,
         write_lock: Arc::new(Mutex::new(())),
+        usage,
     };
 
     let protected = Router::new()
@@ -368,13 +375,21 @@ async fn execute_action(
         }
         None => json!({}),
     };
+    let input_bytes = serde_json::to_vec(&arguments)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default();
 
     if let Err(err) = tools::policy::validate_actions_exposure(&tool_name) {
+        let response = json!({ "detail": err.to_string() });
+        let output_bytes = serde_json::to_vec(&response)
+            .map(|bytes| bytes.len())
+            .unwrap_or_default();
+        state.usage.record(input_bytes, output_bytes, true, true);
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "detail": err.to_string() })),
+            Json(response),
         )
-            .into_response();
+        .into_response();
     }
 
     let structured = if tools::registry::MUTATING_TOOLS.contains(&tool_name.as_str()) {
@@ -393,15 +408,22 @@ async fn execute_action(
     } else {
         StatusCode::OK
     };
+    let response = json!({
+        "ok": !is_error,
+        "tool": tool_name,
+        "structured_content": result.get("structuredContent").cloned().unwrap_or(Value::Null),
+        "content": result.get("content").cloned().unwrap_or_else(|| json!([])),
+        "is_error": is_error
+    });
+    let output_bytes = serde_json::to_vec(&response)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default();
+    state
+        .usage
+        .record(input_bytes, output_bytes, true, is_error);
     (
         status,
-        Json(json!({
-            "ok": !is_error,
-            "tool": tool_name,
-            "structured_content": result.get("structuredContent").cloned().unwrap_or(Value::Null),
-            "content": result.get("content").cloned().unwrap_or_else(|| json!([])),
-            "is_error": is_error
-        })),
+        Json(response),
     )
         .into_response()
 }

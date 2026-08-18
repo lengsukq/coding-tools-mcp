@@ -54,6 +54,12 @@ pub struct RuntimeConfig {
     pub local_port: u16,
     #[serde(default = "default_tool_profile")]
     pub tool_profile: String,
+    /// Persist the current MCP conversation through explicit checkpoint calls.
+    #[serde(default = "default_history_recording")]
+    pub history_recording: bool,
+    /// Numeric history archives selected by the desktop UI for context injection.
+    #[serde(default)]
+    pub history_context_sessions: Vec<u64>,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
     #[serde(default)]
@@ -181,7 +187,11 @@ fn default_actions_port() -> u16 {
 }
 
 fn default_tool_profile() -> String {
-    "core".to_string()
+    "compact".to_string()
+}
+
+fn default_history_recording() -> bool {
+    true
 }
 
 fn default_permission_mode() -> String {
@@ -235,6 +245,8 @@ impl Default for RuntimeConfig {
         Self {
             local_port: default_mcp_port(),
             tool_profile: default_tool_profile(),
+            history_recording: default_history_recording(),
+            history_context_sessions: Vec::new(),
             permission_mode: default_permission_mode(),
             runtime_command: String::new(),
             allowed_commands: default_allowed_commands(),

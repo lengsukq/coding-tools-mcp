@@ -24,6 +24,8 @@ export interface AuthConfig {
 export interface RuntimeConfig {
   local_port: number;
   tool_profile: string;
+  history_recording?: boolean;
+  history_context_sessions?: number[];
   permission_mode: string;
   runtime_command?: string;
   allowed_commands?: string;

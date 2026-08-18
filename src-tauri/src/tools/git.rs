@@ -12,7 +12,7 @@ pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
     let max_entries = args
         .get("max_entries")
         .and_then(Value::as_u64)
-        .unwrap_or(1000) as usize;
+        .unwrap_or(500) as usize;
     let include_untracked = args
         .get("include_untracked")
         .and_then(Value::as_bool)
@@ -106,7 +106,7 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     let max_bytes = args
         .get("max_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(262_144) as usize;
+        .unwrap_or(65_536) as usize;
 
     let mut path_filters: Vec<String> = Vec::new();
     if let Some(p) = args.get("path").and_then(Value::as_str) {
@@ -258,7 +258,7 @@ pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     let max_bytes = args
         .get("max_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(262_144) as usize;
+        .unwrap_or(65_536) as usize;
     let include_diff = args
         .get("include_diff")
         .and_then(Value::as_bool)

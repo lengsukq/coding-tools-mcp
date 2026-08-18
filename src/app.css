@@ -2339,6 +2339,75 @@ button:disabled {
   padding-bottom: 48px;
 }
 
+.tx-dashboard-canvas {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.tx-dashboard-content {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+}
+
+.tx-dashboard-anchor {
+  scroll-margin-top: 24px;
+}
+
+.tx-dashboard-quick-nav {
+  position: sticky;
+  top: 18px;
+  z-index: 200;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 9px 4px;
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+}
+
+.tx-dashboard-quick-nav-label {
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  writing-mode: vertical-rl;
+}
+
+.tx-dashboard-quick-nav a {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.tx-dashboard-quick-nav a:hover {
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.tx-dashboard-quick-nav a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .tx-dashboard-empty {
   display: flex;
   min-height: 58vh;
@@ -2521,7 +2590,7 @@ button:disabled {
 
 .tx-dashboard-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -2764,6 +2833,162 @@ button:disabled {
   padding: 20px;
 }
 
+.tx-dashboard-usage-card {
+  grid-column: 1 / -1;
+}
+
+.tx-dashboard-usage-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.tx-dashboard-usage-heading h3 {
+  color: var(--text-main);
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.tx-dashboard-usage-heading p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.tx-dashboard-usage-badge {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.tx-dashboard-usage-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.8fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.tx-dashboard-usage-chart {
+  min-width: 0;
+  padding: 15px 16px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(118, 118, 128, 0.035);
+}
+
+.tx-dashboard-usage-chart-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.tx-dashboard-usage-chart-meta strong {
+  color: var(--text-main);
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.03em;
+}
+
+.tx-dashboard-line-chart {
+  display: block;
+  width: 100%;
+  height: 154px;
+  margin-top: 13px;
+  overflow: visible;
+}
+
+.tx-dashboard-chart-gridline {
+  stroke: var(--border);
+  stroke-dasharray: 1 2;
+  stroke-width: 0.35;
+}
+
+.tx-dashboard-chart-area {
+  fill: var(--primary);
+  opacity: 0.1;
+}
+
+.tx-dashboard-chart-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.tx-dashboard-chart-point {
+  fill: var(--primary);
+  stroke: var(--card-bg);
+  stroke-width: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+
+.tx-dashboard-chart-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+}
+
+.tx-dashboard-usage-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  align-content: start;
+}
+
+.tx-dashboard-usage-stat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(118, 118, 128, 0.035);
+}
+
+.tx-dashboard-usage-stat span {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.tx-dashboard-usage-stat strong {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tx-dashboard-usage-stat small {
+  grid-column: 1;
+  color: var(--text-secondary);
+  font-size: 9px;
+}
+
 .tx-dashboard-bars {
   display: grid;
   gap: 12px;
@@ -2870,11 +3095,34 @@ button:disabled {
   .tx-dashboard-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .tx-dashboard-usage-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
   .tx-dashboard-body {
     gap: 16px;
+  }
+
+  .tx-dashboard-canvas {
+    grid-template-columns: 1fr;
+  }
+
+  .tx-dashboard-quick-nav {
+    position: sticky;
+    top: 8px;
+    grid-template-columns: auto repeat(5, 34px);
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+  }
+
+  .tx-dashboard-quick-nav-label {
+    margin: 0 5px 0 0;
+    letter-spacing: 0;
+    writing-mode: horizontal-tb;
   }
 
   .tx-dashboard-health-card {
@@ -2901,6 +3149,11 @@ button:disabled {
 
   .tx-dashboard-planning-stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tx-dashboard-usage-heading {
+    flex-direction: column;
+    gap: 10px;
   }
 }
 

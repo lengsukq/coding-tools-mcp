@@ -432,10 +432,32 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
             }),
         );
     }
-    if let Ok(latest) = PlanningService::new(ctx.workspace.root()).state() {
-        output = attach_planning_context(output, &latest);
+    if should_attach_planning_context(ctx, name, &output) {
+        if let Ok(latest) = PlanningService::new(ctx.workspace.root()).state() {
+            output = attach_planning_context(output, &latest);
+            if let Some(planning) = output.get("planning_context") {
+                ctx.record_context_block("planning_status", planning);
+            }
+        }
     }
     output
+}
+
+fn should_attach_planning_context(ctx: &ToolContext, name: &str, output: &Value) -> bool {
+    if ctx.tool_profile != "compact" {
+        return true;
+    }
+    let planning_tool = matches!(
+        name,
+        "planning_state"
+            | "create_goal"
+            | "update_goal"
+            | "create_plan"
+            | "update_plan"
+            | "request_goal_review"
+            | "request_plan_review"
+    );
+    planning_tool || output.get("ok").and_then(Value::as_bool) == Some(false)
 }
 
 fn attach_recovery_guidance(mut output: Value) -> Value {
@@ -675,6 +697,9 @@ fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String
 
 pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
     let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
+    let history_context = crate::tools::history::context_snapshot(ctx)
+        .ok()
+        .flatten();
     Ok(tool_ok(json!({
         "server": "coding-tools-mcp",
         "title": "Coding Tools MCP",
@@ -685,6 +710,12 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         "default_cwd": ctx.default_cwd_display(),
         "network_allowed": ctx.policy.network_allowed(),
         "tool_profile": ctx.tool_profile,
+        "history_recording": ctx.history_recording,
+        "history_context_sessions": ctx.history_context_sessions,
+        "history_context_revision": history_context
+            .as_ref()
+            .and_then(|value| value.get("context_revision")),
+        "context_audit": ctx.context_audit_snapshot(),
         "auth_enabled": ctx.auth.auth_enabled(),
         "auth_type": ctx.auth.auth_type,
         "endpoint_path": "/mcp",
@@ -766,6 +797,15 @@ mod planning_tests {
         let output = call_tool(&ctx, "server_info", &json!({}));
         assert_eq!(output["planning_context"]["mode"], "plan");
         assert!(output["planning_context"]["revision"].as_u64().is_some());
+    }
+
+    #[test]
+    fn compact_normal_tool_response_omits_repeated_planning_context() {
+        let (_workspace, _harness, ctx) = context();
+        let ctx = ctx.with_tool_profile("compact");
+        let output = call_tool(&ctx, "server_info", &json!({}));
+        assert!(output.get("planning_context").is_none());
+        assert!(output["context_audit"]["blocks"].is_array());
     }
 }
 

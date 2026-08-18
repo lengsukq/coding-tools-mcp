@@ -1,6 +1,9 @@
+use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use sha2::Digest;
 
 use crate::agent_context::{
     discover_instructions, discover_skills, render_instruction_documents, AgentContextRuntimeConfig,
@@ -10,7 +13,21 @@ use crate::harness::Harness;
 use crate::tools::policy::PolicySettings;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
+use crate::usage::ServiceUsage;
 use crate::workspace::AuthConfig;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContextAuditBlock {
+    pub kind: String,
+    pub bytes: usize,
+    pub hash: String,
+    pub repeated: bool,
+}
+
+#[derive(Debug, Default)]
+struct ContextAuditState {
+    blocks: VecDeque<ContextAuditBlock>,
+}
 
 pub struct ToolContext {
     pub workspace: Workspace,
@@ -18,6 +35,8 @@ pub struct ToolContext {
     pub policy: PolicySettings,
     pub tool_profile: String,
     pub permission_mode: String,
+    pub history_recording: bool,
+    pub history_context_sessions: Vec<u64>,
     pub executable_paths: Vec<PathBuf>,
     pub ai_instructions: String,
     pub skills: Vec<SkillEntry>,
@@ -25,6 +44,8 @@ pub struct ToolContext {
     pub harness: Harness,
     default_cwd: Mutex<PathBuf>,
     pub sessions: Arc<SessionStore>,
+    usage: Arc<ServiceUsage>,
+    context_audit: Mutex<ContextAuditState>,
 }
 
 pub type SharedToolContext = Arc<ToolContext>;
@@ -80,6 +101,8 @@ impl ToolContext {
             policy,
             tool_profile: crate::tools::registry::normalize_tool_profile(&tool_profile).into(),
             permission_mode,
+            history_recording: true,
+            history_context_sessions: Vec::new(),
             executable_paths: Vec::new(),
             ai_instructions: String::new(),
             skills: Vec::new(),
@@ -87,6 +110,8 @@ impl ToolContext {
             harness: Harness::new(root.clone(), harness_root).expect("无法初始化 Harness"),
             default_cwd: Mutex::new(root),
             sessions,
+            usage: Arc::new(ServiceUsage::default()),
+            context_audit: Mutex::new(ContextAuditState::default()),
         }
     }
 
@@ -125,15 +150,43 @@ impl ToolContext {
         self
     }
 
+    pub fn with_history_config(mut self, recording: bool, sessions: Vec<u64>) -> Self {
+        self.history_recording = recording;
+        self.history_context_sessions = sessions;
+        self
+    }
+
+    pub(crate) fn with_usage(mut self, usage: Arc<ServiceUsage>) -> Self {
+        self.usage = usage;
+        self
+    }
+
+    pub(crate) fn usage(&self) -> Arc<ServiceUsage> {
+        self.usage.clone()
+    }
+
+    pub fn with_tool_profile(mut self, profile: &str) -> Self {
+        self.tool_profile = crate::tools::registry::normalize_tool_profile(profile).into();
+        self
+    }
+
     pub fn current_ai_instructions(&self) -> String {
         let Some(config) = &self.agent_context else {
             return self.ai_instructions.clone();
         };
-        let repository_instructions = discover_instructions(
+        let mut repository_instructions = discover_instructions(
             self.workspace.root(),
             &config.instruction_sources,
             &config.custom_instruction_paths,
         );
+        if self.tool_profile == "compact" {
+            repository_instructions.retain(|document| {
+                document.scope == "workspace"
+                    && (document.path.ends_with("AGENTS.md")
+                        || document.path.ends_with("AGENTS.override.md"))
+            });
+            repository_instructions.truncate(1);
+        }
         merge_ai_instructions(
             &self.ai_instructions,
             &render_instruction_documents(&repository_instructions),
@@ -176,6 +229,45 @@ impl ToolContext {
 
     pub fn default_cwd_path(&self) -> PathBuf {
         self.default_cwd.lock().expect("cwd lock").clone()
+    }
+
+    pub fn record_context_block(&self, kind: &str, value: &serde_json::Value) {
+        let Ok(bytes) = serde_json::to_vec(value) else {
+            return;
+        };
+        let hash = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
+        let Ok(mut audit) = self.context_audit.lock() else {
+            return;
+        };
+        let repeated = audit.blocks.iter().any(|block| block.hash == hash);
+        audit.blocks.push_back(ContextAuditBlock {
+            kind: kind.to_string(),
+            bytes: bytes.len(),
+            hash,
+            repeated,
+        });
+        while audit.blocks.len() > 32 {
+            audit.blocks.pop_front();
+        }
+    }
+
+    pub fn context_audit_snapshot(&self) -> serde_json::Value {
+        let blocks = self
+            .context_audit
+            .lock()
+            .map(|audit| audit.blocks.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let total_bytes = blocks.iter().map(|block| block.bytes).sum::<usize>();
+        let repeated_bytes = blocks
+            .iter()
+            .filter(|block| block.repeated)
+            .map(|block| block.bytes)
+            .sum::<usize>();
+        serde_json::json!({
+            "total_bytes": total_bytes,
+            "repeated_bytes": repeated_bytes,
+            "blocks": blocks
+        })
     }
 }
 
@@ -263,5 +355,21 @@ mod tests {
             merge_ai_instructions("global rule", "workspace rule"),
             "global rule\n\nworkspace rule"
         );
+    }
+
+    #[test]
+    fn context_audit_records_only_sizes_hashes_and_repetition() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let harness = tempfile::tempdir().expect("harness");
+        let context = ToolContext::for_test(workspace.keep(), harness.keep()).expect("context");
+        context.record_context_block("test", &serde_json::json!({"value": "bounded"}));
+        context.record_context_block("test", &serde_json::json!({"value": "bounded"}));
+
+        let audit = context.context_audit_snapshot();
+        let blocks = audit["blocks"].as_array().expect("audit blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1]["repeated"], true);
+        assert!(blocks[0]["hash"].as_str().unwrap().starts_with("sha256:"));
+        assert!(blocks[0].get("content").is_none());
     }
 }

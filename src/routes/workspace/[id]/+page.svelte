@@ -7,6 +7,7 @@
   } from "$lib/components/ActionsPolicyForm.svelte";
   import AuthConfigForm from "$lib/components/AuthConfigForm.svelte";
   import HealthPanel from "$lib/components/HealthPanel.svelte";
+  import HistoryContextPanel from "$lib/components/HistoryContextPanel.svelte";
   import LogViewer from "$lib/components/LogViewer.svelte";
   import RuntimePolicyForm, {
     type RuntimePolicyDraft,
@@ -59,7 +60,7 @@
 
   type WorkspaceTab = "overview" | "mcp" | "actions" | "planning";
   type SubTab = "config" | "logs" | "health";
-  type ConfigSection = "connection" | "auth" | "policy";
+  type ConfigSection = "connection" | "auth" | "policy" | "history";
 
   let profile = $state<WorkspaceProfile | null>(null);
   let mcpStatus = $state<RuntimeState>("stopped");
@@ -98,6 +99,7 @@
     { value: "connection", label: "连接", description: "端口、隧道与公网访问" },
     { value: "auth", label: "认证", description: "访问身份与授权方式" },
     { value: "policy", label: "权限", description: "工具、命令与执行边界" },
+    { value: "history", label: "历史上下文", description: "记录与选择注入的旧会话" },
   ];
 
   const workspaceId = $derived($page.params.id);
@@ -445,6 +447,22 @@
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
+  async function saveHistoryContext(recording: boolean, selectedSessions: number[]) {
+    if (!profile) return;
+    const next: WorkspaceProfile = {
+      ...profile,
+      runtime: {
+        ...profile.runtime,
+        history_recording: recording,
+        history_context_sessions: selectedSessions,
+      },
+    };
+    await updateWorkspace(next);
+    profile = next;
+    await load();
+    await promptServiceRestart(mcpStatus === "running", "MCP 服务");
+  }
+
   async function saveActionsPolicy(draft: ActionsPolicyDraft) {
     if (!profile) return;
     const current = actionsConfig(profile);
@@ -772,7 +790,7 @@
                   auth={profile.auth}
                   onSaveProfile={saveMcpAuth}
                 />
-              {:else}
+              {:else if mcpConfigSection === "policy"}
                 <div class="tx-config-stage-heading">
                   <div>
                     <p class="tx-section-label">执行权限</p>
@@ -793,6 +811,13 @@
                   workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
                   workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
                   onSave={saveMcpPolicy}
+                />
+              {:else}
+                <HistoryContextPanel
+                  workspaceId={workspaceId!}
+                  recording={profile.runtime.history_recording ?? true}
+                  selectedSessions={profile.runtime.history_context_sessions ?? []}
+                  onSave={saveHistoryContext}
                 />
               {/if}
             </div>

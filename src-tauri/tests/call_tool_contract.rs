@@ -208,7 +208,7 @@ fn core_profile_keeps_the_default_capabilities_and_adds_history_tools() {
         .filter(|name| *name != "request_permissions")
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 32);
+    assert_eq!(names.len(), expected.len());
     assert!(!names.contains("request_permissions"));
     assert!(names.contains("grep_text"));
     assert!(names.contains("history_session_bootstrap"));
