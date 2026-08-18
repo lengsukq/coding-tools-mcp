@@ -55,3 +55,7 @@ export async function restartRuntime(id: string): Promise<RuntimeStatus> {
 export async function restartActionsRuntime(id: string): Promise<RuntimeStatus> {
   return invoke<RuntimeStatus>("restart_actions_runtime", { id });
 }
+
+export async function restoreRuntimeState(): Promise<void> {
+  return invoke("restore_runtime_state");
+}

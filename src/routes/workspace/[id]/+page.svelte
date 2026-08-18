@@ -12,6 +12,7 @@
     type RuntimePolicyDraft,
   } from "$lib/components/RuntimePolicyForm.svelte";
   import ChatGptSessionPrompt from "$lib/components/ChatGptSessionPrompt.svelte";
+  import PlanningControlPanel from "$lib/components/PlanningControlPanel.svelte";
   import ServicePanel from "$lib/components/ServicePanel.svelte";
   import GptQuickCopy from "$lib/components/GptQuickCopy.svelte";
   import StatusOrb from "$lib/components/StatusOrb.svelte";
@@ -56,8 +57,9 @@
     type WorkspaceProfile,
   } from "$lib/types";
 
-  type ServiceTab = "mcp" | "actions";
+  type WorkspaceTab = "overview" | "mcp" | "actions" | "planning";
   type SubTab = "config" | "logs" | "health";
+  type ConfigSection = "connection" | "auth" | "policy";
 
   let profile = $state<WorkspaceProfile | null>(null);
   let mcpStatus = $state<RuntimeState>("stopped");
@@ -72,15 +74,30 @@
   let actionsPublic = $state("");
   let frpProfiles = $state<FrpProfileDto[]>([]);
 
-  let activeService = $state<ServiceTab>("mcp");
+  let activeWorkspaceTab = $state<WorkspaceTab>("overview");
   let mcpSubTab = $state<SubTab>("config");
   let actionsSubTab = $state<SubTab>("config");
+  let mcpConfigSection = $state<ConfigSection>("connection");
+  let actionsConfigSection = $state<ConfigSection>("connection");
   let loadGeneration = 0;
 
+  const workspaceTabs = [
+    { value: "overview", label: "概览" },
+    { value: "mcp", label: "MCP" },
+    { value: "actions", label: "Actions" },
+    { value: "planning", label: "规划" },
+  ];
+
   const subTabs = [
-    { value: "config", label: "配置" },
+    { value: "config", label: "设置" },
     { value: "logs", label: "日志" },
     { value: "health", label: "健康" },
+  ];
+
+  const configSections = [
+    { value: "connection", label: "连接", description: "端口、隧道与公网访问" },
+    { value: "auth", label: "认证", description: "访问身份与授权方式" },
+    { value: "policy", label: "权限", description: "工具、命令与执行边界" },
   ];
 
   const workspaceId = $derived($page.params.id);
@@ -541,62 +558,142 @@
 </script>
 
 {#if profile && actions}
-  <section class="page-scroll">
-    <header class="page-header">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <p class="page-kicker">工作区</p>
-          <h2 class="page-title">{profile.name}</h2>
+  <section class="tx-workspace-page">
+    <div class="tx-workspace-scroll">
+      <header class="tx-workspace-header">
+        <div class="tx-workspace-header-inner">
+          <div class="min-w-0">
+            <p class="page-kicker">工作区</p>
+            <div class="mt-1 flex min-w-0 items-center gap-3">
+              <h2 class="page-title !mt-0 truncate">{profile.name}</h2>
+              <span class="tx-workspace-path truncate">{profile.path}</span>
+            </div>
+          </div>
+          <div class="tx-workspace-statuses" aria-label="服务运行状态">
+            <button
+              type="button"
+              class="tx-service-status-chip"
+              class:active={mcpStatus === "running"}
+              onclick={() => (activeWorkspaceTab = "mcp")}
+            >
+              <StatusOrb state={mcpStatus} />
+              <span>MCP</span>
+              <small>{stateLabel(mcpStatus)}</small>
+            </button>
+            <button
+              type="button"
+              class="tx-service-status-chip"
+              class:active={actionsStatus === "running"}
+              onclick={() => (activeWorkspaceTab = "actions")}
+            >
+              <StatusOrb state={actionsStatus} />
+              <span>Actions</span>
+              <small>{stateLabel(actionsStatus)}</small>
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          class="tx-btn-ghost text-[var(--danger)]"
-          onclick={() => void removeWorkspace()}
-        >
-          删除工作区
-        </button>
-      </div>
+      </header>
 
-      <div class="mt-4">
-        <WorkspaceMetaForm
-          name={profile.name}
-          path={profile.path}
-          onSave={saveWorkspaceName}
-          onUpdatePath={saveWorkspacePath}
+      <div class="tx-workspace-tabs">
+        <Tabs
+          items={workspaceTabs}
+          value={activeWorkspaceTab}
+          onchange={(value) => {
+            activeWorkspaceTab = value as WorkspaceTab;
+          }}
         />
       </div>
 
-      <div class="mt-4">
-        <ChatGptSessionPrompt />
-      </div>
+      <div class="page-body tx-workspace-body">
+      {#if activeWorkspaceTab === "overview"}
+        <div class="tx-workspace-section-stack">
+          <div class="tx-summary-grid">
+            <button
+              type="button"
+              class="tx-summary-card tx-summary-card-button"
+              onclick={() => (activeWorkspaceTab = "mcp")}
+            >
+              <span class="tx-summary-label">MCP</span>
+              <strong class="flex items-center gap-2">
+                <StatusOrb state={mcpStatus} />
+                {stateLabel(mcpStatus)}
+              </strong>
+              <small>{mcpLocal || "尚未启动"}</small>
+            </button>
+            <button
+              type="button"
+              class="tx-summary-card tx-summary-card-button"
+              onclick={() => (activeWorkspaceTab = "actions")}
+            >
+              <span class="tx-summary-label">Actions</span>
+              <strong class="flex items-center gap-2">
+                <StatusOrb state={actionsStatus} />
+                {stateLabel(actionsStatus)}
+              </strong>
+              <small>{actionsLocal || "尚未启动"}</small>
+            </button>
+            <div class="tx-summary-card">
+              <span class="tx-summary-label">工作区目录</span>
+              <strong>{profile.name}</strong>
+              <small>{profile.path}</small>
+            </div>
+          </div>
 
-      <div class="mt-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          class="tx-status-pill"
-          class:active={activeService === "mcp"}
-          onclick={() => (activeService = "mcp")}
-        >
-          <StatusOrb state={mcpStatus} />
-          <span class="font-medium">MCP</span>
-          <span class="text-[var(--color-text-muted)]">{stateLabel(mcpStatus)}</span>
-        </button>
-        <button
-          type="button"
-          class="tx-status-pill"
-          class:active={activeService === "actions"}
-          onclick={() => (activeService = "actions")}
-        >
-          <StatusOrb state={actionsStatus} />
-          <span class="font-medium">Actions</span>
-          <span class="text-[var(--color-text-muted)]">{stateLabel(actionsStatus)}</span>
-        </button>
-      </div>
-    </header>
+          <div class="tx-card p-5">
+            <div class="tx-workspace-section-heading">
+              <div>
+                <p class="tx-section-label">工作区信息</p>
+                <p class="tx-workspace-section-description">名称和本地目录只在这里维护，不再混入服务配置。</p>
+              </div>
+            </div>
+            <div class="mt-4">
+              <WorkspaceMetaForm
+                name={profile.name}
+                path={profile.path}
+                onSave={saveWorkspaceName}
+                onUpdatePath={saveWorkspacePath}
+              />
+            </div>
+          </div>
 
-    <div class="page-body">
-      {#if activeService === "mcp"}
-        <div class="mt-4 flex flex-col gap-3">
+          <div class="tx-card p-5">
+            <div class="tx-workspace-section-heading">
+              <div>
+                <p class="tx-section-label">ChatGPT 会话</p>
+                <p class="tx-workspace-section-description">复制当前工作区对应的会话初始化提示。</p>
+              </div>
+            </div>
+            <div class="mt-4">
+              <ChatGptSessionPrompt />
+            </div>
+          </div>
+
+          <div class="tx-danger-zone">
+            <div>
+              <strong>删除工作区</strong>
+              <p>仅删除 Coding Tools 中的工作区配置，不会删除本地项目文件。</p>
+            </div>
+            <button
+              type="button"
+              class="tx-btn-ghost text-[var(--danger)]"
+              onclick={() => void removeWorkspace()}
+            >
+              删除工作区
+            </button>
+          </div>
+        </div>
+      {:else if activeWorkspaceTab === "planning"}
+        <div class="tx-workspace-section-stack">
+          <div class="tx-workspace-section-heading">
+            <div>
+              <p class="tx-section-label">规划</p>
+              <p class="tx-workspace-section-description">规划状态和执行控制独立放置，避免与运行时配置互相干扰。</p>
+            </div>
+          </div>
+          <PlanningControlPanel workspaceId={workspaceId!} />
+        </div>
+      {:else if activeWorkspaceTab === "mcp"}
+        <div class="tx-workspace-section-stack">
           <ServicePanel
             title="MCP"
             subtitle="Streamable HTTP · 工具运行时"
@@ -609,6 +706,7 @@
             localEndpoint={mcpLocal || mcpLocalEndpoint(profile.runtime.local_port)}
             publicEndpoint={mcpPublic}
             publicLabel="公网 MCP"
+            showToggle={false}
             onToggle={toggleMcp}
             onPortChange={saveMcpPort}
           />
@@ -621,7 +719,7 @@
           />
         </div>
 
-        <div class="mt-5">
+        <div class="mt-5 tx-service-subtabs">
           <Tabs
             items={subTabs}
             value={mcpSubTab}
@@ -632,54 +730,84 @@
         </div>
 
         {#if mcpSubTab === "config"}
-          <div class="tx-card mt-4 grid gap-6 p-5">
-            <div>
-              <p class="tx-section-label">隧道</p>
-              <TunnelConfigForm
-                workspaceId={workspaceId!}
-                service="mcp"
-                config={mcpTunnelForm}
-                onSave={saveMcpTunnel}
-              />
-            </div>
-            <div>
-              <p class="tx-section-label">认证</p>
-              <AuthConfigForm
-                workspaceId={workspaceId!}
-                auth={profile.auth}
-                onSaveProfile={saveMcpAuth}
-              />
-            </div>
-            <div>
-              <p class="tx-section-label">策略</p>
-              <RuntimePolicyForm
-                workspaceId={workspaceId!}
-                toolProfile={profile.runtime.tool_profile}
-                permissionMode={profile.runtime.permission_mode}
-                allowedCommands={profile.runtime.allowed_commands ?? ""}
-                executablePaths={profile.runtime.executable_paths ?? ""}
-                aiInstructions={profile.runtime.ai_instructions ?? ""}
-                instructionSources={profile.runtime.instruction_sources ?? []}
-                skillSources={profile.runtime.skill_sources ?? []}
-                customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
-                customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
-                workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
-                workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
-                onSave={saveMcpPolicy}
-              />
+          <div class="tx-config-workbench mt-4">
+            <nav class="tx-config-nav" aria-label="MCP 设置分类">
+              <p class="tx-config-nav-title">MCP 设置</p>
+              {#each configSections as section}
+                <button
+                  type="button"
+                  class="tx-config-nav-item"
+                  class:active={mcpConfigSection === section.value}
+                  onclick={() => (mcpConfigSection = section.value as ConfigSection)}
+                >
+                  <strong>{section.label}</strong>
+                  <small>{section.description}</small>
+                </button>
+              {/each}
+            </nav>
+
+            <div class="tx-card tx-config-stage p-5">
+              {#if mcpConfigSection === "connection"}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">连接与隧道</p>
+                    <p>管理 MCP 的公网访问方式。本地端口可直接在上方服务卡修改。</p>
+                  </div>
+                </div>
+                <TunnelConfigForm
+                  workspaceId={workspaceId!}
+                  service="mcp"
+                  config={mcpTunnelForm}
+                  onSave={saveMcpTunnel}
+                />
+              {:else if mcpConfigSection === "auth"}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">访问认证</p>
+                    <p>只处理谁可以访问 MCP，不与执行权限混在一起。</p>
+                  </div>
+                </div>
+                <AuthConfigForm
+                  workspaceId={workspaceId!}
+                  auth={profile.auth}
+                  onSaveProfile={saveMcpAuth}
+                />
+              {:else}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">执行权限</p>
+                    <p>控制 AI 可以使用哪些工具、命令和本地执行能力。</p>
+                  </div>
+                </div>
+                <RuntimePolicyForm
+                  workspaceId={workspaceId!}
+                  toolProfile={profile.runtime.tool_profile}
+                  permissionMode={profile.runtime.permission_mode}
+                  allowedCommands={profile.runtime.allowed_commands ?? ""}
+                  executablePaths={profile.runtime.executable_paths ?? ""}
+                  aiInstructions={profile.runtime.ai_instructions ?? ""}
+                  instructionSources={profile.runtime.instruction_sources ?? []}
+                  skillSources={profile.runtime.skill_sources ?? []}
+                  customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
+                  customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
+                  workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
+                  workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
+                  onSave={saveMcpPolicy}
+                />
+              {/if}
             </div>
           </div>
         {:else if mcpSubTab === "logs"}
-          <div class="mt-4">
+          <div class="mt-4 tx-card p-4">
             <LogViewer workspaceId={workspaceId!} service="mcp" />
           </div>
         {:else}
-          <div class="mt-4">
+          <div class="mt-4 tx-card p-4">
             <HealthPanel workspaceId={workspaceId!} />
           </div>
         {/if}
-      {:else}
-        <div class="mt-4 flex flex-col gap-3">
+      {:else if activeWorkspaceTab === "actions"}
+        <div class="tx-workspace-section-stack">
           <ServicePanel
             title="Actions"
             subtitle="OpenAPI 网关 · ChatGPT Actions"
@@ -692,6 +820,7 @@
             localEndpoint={actionsLocal || actionsLocalEndpoint(actions.local_port)}
             publicEndpoint={actionsPublic || actionsOpenApiUrl(profile, frpProfiles)}
             publicLabel="OpenAPI"
+            showToggle={false}
             onToggle={toggleActions}
             onPortChange={saveActionsPort}
           />
@@ -703,7 +832,7 @@
           />
         </div>
 
-        <div class="mt-5">
+        <div class="mt-5 tx-service-subtabs">
           <Tabs
             items={subTabs}
             value={actionsSubTab}
@@ -714,55 +843,142 @@
         </div>
 
         {#if actionsSubTab === "config"}
-          <div class="tx-card mt-4 grid gap-6 p-5">
-            <div>
-              <p class="tx-section-label">隧道</p>
-              <TunnelConfigForm
-                workspaceId={workspaceId!}
-                service="actions"
-                config={actionsTunnelForm}
-                onSave={saveActionsTunnel}
-              />
-            </div>
-            <div>
-              <p class="tx-section-label">认证</p>
-              <ActionsAuthForm
-                workspaceId={workspaceId!}
-                authType={actions.auth_type}
-                oauthClientId={actions.oauth_client_id ?? ""}
-                oauthScopes={actions.oauth_scopes ?? ""}
-                openapiUrl={actionsOpenApiUrl(profile, frpProfiles)}
-                privacyUrl={actionsPrivacyUrl(profile, frpProfiles)}
-                oauthAuthorizeUrl={actionsOAuthAuthorizeUrl(profile, frpProfiles)}
-                oauthTokenUrl={actionsOAuthTokenUrl(profile, frpProfiles)}
-                useSharedSecrets={actions.use_shared_secrets ?? false}
-                onSave={saveActionsAuth}
-              />
-            </div>
-            <div>
-              <p class="tx-section-label">策略</p>
-              <ActionsPolicyForm
-                allowedCommands={actions.allowed_commands ?? ""}
-                maxPatchBytes={actions.max_patch_bytes ?? 200_000}
-                permissionMode={actions.permission_mode}
-                onSave={saveActionsPolicy}
-              />
+          <div class="tx-config-workbench mt-4">
+            <nav class="tx-config-nav" aria-label="Actions 设置分类">
+              <p class="tx-config-nav-title">Actions 设置</p>
+              {#each configSections as section}
+                <button
+                  type="button"
+                  class="tx-config-nav-item"
+                  class:active={actionsConfigSection === section.value}
+                  onclick={() => (actionsConfigSection = section.value as ConfigSection)}
+                >
+                  <strong>{section.label}</strong>
+                  <small>{section.description}</small>
+                </button>
+              {/each}
+            </nav>
+
+            <div class="tx-card tx-config-stage p-5">
+              {#if actionsConfigSection === "connection"}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">连接与隧道</p>
+                    <p>管理 Actions 的公网访问方式。本地端口可直接在上方服务卡修改。</p>
+                  </div>
+                </div>
+                <TunnelConfigForm
+                  workspaceId={workspaceId!}
+                  service="actions"
+                  config={actionsTunnelForm}
+                  onSave={saveActionsTunnel}
+                />
+              {:else if actionsConfigSection === "auth"}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">访问认证</p>
+                    <p>集中管理 ChatGPT Actions 的认证方式和 OAuth 配置。</p>
+                  </div>
+                </div>
+                <ActionsAuthForm
+                  workspaceId={workspaceId!}
+                  authType={actions.auth_type}
+                  oauthClientId={actions.oauth_client_id ?? ""}
+                  oauthScopes={actions.oauth_scopes ?? ""}
+                  openapiUrl={actionsOpenApiUrl(profile, frpProfiles)}
+                  privacyUrl={actionsPrivacyUrl(profile, frpProfiles)}
+                  oauthAuthorizeUrl={actionsOAuthAuthorizeUrl(profile, frpProfiles)}
+                  oauthTokenUrl={actionsOAuthTokenUrl(profile, frpProfiles)}
+                  useSharedSecrets={actions.use_shared_secrets ?? false}
+                  onSave={saveActionsAuth}
+                />
+              {:else}
+                <div class="tx-config-stage-heading">
+                  <div>
+                    <p class="tx-section-label">执行权限</p>
+                    <p>控制 Actions 可以执行的命令范围和补丁写入边界。</p>
+                  </div>
+                </div>
+                <ActionsPolicyForm
+                  allowedCommands={actions.allowed_commands ?? ""}
+                  maxPatchBytes={actions.max_patch_bytes ?? 200_000}
+                  permissionMode={actions.permission_mode}
+                  onSave={saveActionsPolicy}
+                />
+              {/if}
             </div>
           </div>
         {:else if actionsSubTab === "logs"}
-          <div class="mt-4">
+          <div class="mt-4 tx-card p-4">
             <LogViewer workspaceId={workspaceId!} service="actions" />
           </div>
         {:else}
-          <div class="mt-4">
+          <div class="mt-4 tx-card p-4">
             <HealthPanel workspaceId={workspaceId!} />
           </div>
         {/if}
-      {/if}
+        {/if}
+      </div>
     </div>
 
-    <footer class="border-t border-[var(--color-border)] px-8 py-4 text-xs text-[var(--color-text-muted)]">
-      MCP 默认端口 28766，Actions 默认 8787，可同时运行。
-    </footer>
+    <div class="tx-workspace-action-bar">
+      <div class="tx-workspace-action-bar-inner">
+        <button
+          type="button"
+          class="tx-runtime-jump"
+          onclick={() => (activeWorkspaceTab = "mcp")}
+        >
+          <StatusOrb state={mcpStatus} />
+          <span>
+            <strong>MCP</strong>
+            <small>{stateLabel(mcpStatus)}</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="tx-btn-primary tx-runtime-action"
+          class:tx-btn-danger={mcpStatus === "running"}
+          disabled={mcpBusy || mcpStatus === "starting" || mcpStatus === "stopping"}
+          onclick={toggleMcp}
+        >
+          {#if mcpBusy}
+            处理中…
+          {:else if mcpStatus === "running"}
+            停止 MCP
+          {:else}
+            启动 MCP
+          {/if}
+        </button>
+
+        <div class="tx-runtime-divider"></div>
+
+        <button
+          type="button"
+          class="tx-runtime-jump"
+          onclick={() => (activeWorkspaceTab = "actions")}
+        >
+          <StatusOrb state={actionsStatus} />
+          <span>
+            <strong>Actions</strong>
+            <small>{stateLabel(actionsStatus)}</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="tx-btn-primary tx-runtime-action"
+          class:tx-btn-danger={actionsStatus === "running"}
+          disabled={actionsBusy || actionsStatus === "starting" || actionsStatus === "stopping"}
+          onclick={toggleActions}
+        >
+          {#if actionsBusy}
+            处理中…
+          {:else if actionsStatus === "running"}
+            停止 Actions
+          {:else}
+            启动 Actions
+          {/if}
+        </button>
+      </div>
+    </div>
   </section>
 {/if}

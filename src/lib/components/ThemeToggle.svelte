@@ -29,7 +29,7 @@
 
 <button
   type="button"
-  class="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/10 bg-white/5 text-[#c5d0ea] transition-colors hover:bg-white/10"
+  class="tx-icon-button"
   onclick={toggle}
   aria-label="切换主题"
 >

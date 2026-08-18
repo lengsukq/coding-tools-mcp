@@ -1,4 +1,5 @@
 export const AGENT_SOURCE_OPTIONS = [
+  { value: "auto", label: "自动扫描（推荐）", detail: "自动识别 Workspace 和常见全局 Instructions / Skills" },
   { value: "codex", label: "OpenAI Codex", detail: "AGENTS.md / .codex / .agents" },
   { value: "claude", label: "Claude Code", detail: "CLAUDE.md / .claude" },
   { value: "cursor", label: "Cursor", detail: ".cursor/rules / .cursor/skills" },
@@ -12,6 +13,10 @@ export const AGENT_SOURCE_OPTIONS = [
 export type AgentSourceId = (typeof AGENT_SOURCE_OPTIONS)[number]["value"];
 
 export function toggleSource(values: string[], value: string, enabled: boolean): string[] {
-  if (enabled) return values.includes(value) ? values : [...values, value];
+  if (value === "auto") {
+    return enabled ? ["auto"] : ["disabled"];
+  }
+  const withoutAuto = values.filter((item) => item !== "auto" && item !== "disabled");
+  if (enabled) return withoutAuto.includes(value) ? withoutAuto : [...withoutAuto, value];
   return values.filter((item) => item !== value);
 }

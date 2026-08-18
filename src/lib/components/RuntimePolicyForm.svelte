@@ -180,7 +180,7 @@
     <div class="mb-3">
       <p class="text-sm font-medium">Agent Context Sources</p>
       <p class="mt-1 text-xs text-[var(--color-text-muted)]">
-        可多选不同 IDE / Coding Agent。静态 Instructions 会注入 MCP；Skills 只暴露目录信息，使用时才加载完整 SKILL.md。
+        Workspace 未选择来源时继承全局设置；如果全局也未选择，则自动识别常见 Agent 配置。Instructions 会在 MCP 初始化时重扫，Skills 会在 list/get 时实时重扫。
       </p>
     </div>
 
@@ -255,7 +255,7 @@
 
     <div class="mt-4 flex flex-wrap items-center gap-2">
       <button type="button" class="tx-btn-ghost" disabled={scanning} onclick={() => void scan()}>
-        {scanning ? "扫描中…" : "保存并扫描"}
+        {scanning ? "扫描中…" : "立即重新扫描"}
       </button>
       {#if scanResult}
         <span class="text-xs text-[var(--color-text-muted)]">

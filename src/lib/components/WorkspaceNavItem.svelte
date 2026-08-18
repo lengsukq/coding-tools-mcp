@@ -15,7 +15,16 @@
 
 <div class="tx-nav-item" class:active>
   <button type="button" class="tx-nav-button" onclick={onClick}>
-    <ServiceStatusPair mcp={mcpState} actions={actionsState} />
-    <span class="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name}</span>
+    <div class="flex min-w-0 flex-1 items-center gap-2">
+      <ServiceStatusPair mcp={mcpState} actions={actionsState} />
+      <div class="min-w-0 flex-1 text-left">
+        <div class="truncate text-sm font-medium">{workspace.name}</div>
+        <div class="tx-nav-meta truncate">
+          {mcpState === "running" ? "MCP运行" : "MCP停止"}
+          ·
+          {actionsState === "running" ? "Actions运行" : "Actions停止"}
+        </div>
+      </div>
+    </div>
   </button>
 </div>

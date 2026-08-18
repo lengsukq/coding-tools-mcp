@@ -12,8 +12,8 @@
     getActionsRuntimeStatus,
     getRuntimeStatus,
     listWorkspaces,
+    restoreRuntimeState,
   } from "$lib/api/workspaces";
-  import { getLastWorkspaceId } from "$lib/api/settings";
   import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import { showToast } from "$lib/stores/toast";
   import { startUiMemoryGuard } from "$lib/ui-memory-guard";
@@ -66,6 +66,10 @@
   }
 
   function openWorkspace(id: string) {
+    if ($page.url.pathname === `/workspace/${id}`) {
+      goto("/");
+      return;
+    }
     goto(`/workspace/${id}`);
   }
 
@@ -95,16 +99,16 @@
       closeConfirmOpen = true;
     });
     void (async () => {
-      await refreshWorkspaces();
-      const path = $page.url.pathname;
-      if (path === "/") {
-        const lastId = await getLastWorkspaceId();
-        if (lastId && $workspaces.some((item) => item.id === lastId)) {
-          goto(`/workspace/${lastId}`);
-        } else if ($workspaces.length > 0) {
-          goto(`/workspace/${$workspaces[0].id}`);
-        }
+      try {
+        await restoreRuntimeState();
+      } catch (error) {
+        showToast(String(error), {
+          title: "恢复上次运行状态失败",
+          kind: "warning",
+          duration: 8000,
+        });
       }
+      await refreshWorkspaces();
     })();
     return () => {
       stopGuard();
@@ -113,7 +117,11 @@
   });
 </script>
 
-<AppShell onAddWorkspace={addWorkspace}>
+<AppShell
+  onAddWorkspace={addWorkspace}
+  onOpenSettings={openGeneralSettings}
+  settingsActive={$page.url.pathname.startsWith("/settings")}
+>
   {#snippet settingsNav()}
     <button
       type="button"
@@ -127,7 +135,7 @@
       class="tx-settings-link {$page.url.pathname === '/settings/keys' ? 'active' : ''}"
       onclick={openKeysSettings}
     >
-      共享密钥
+      密钥与认证
     </button>
 
     <button
@@ -135,21 +143,21 @@
       class="tx-settings-link {$page.url.pathname === '/settings/gateway' ? 'active' : ''}"
       onclick={openGatewaySettings}
     >
-      Global Gateway
+      全局网关
     </button>
     <button
       type="button"
       class="tx-settings-link {$page.url.pathname === '/settings/frp' ? 'active' : ''}"
       onclick={openFrpSettings}
     >
-      FRP 配置
+      FRP
     </button>
     <button
       type="button"
       class="tx-settings-link {$page.url.pathname === '/settings/software' ? 'active' : ''}"
       onclick={openSoftwareSettings}
     >
-      软件管理
+      隧道工具
     </button>
   {/snippet}
   {#snippet sidebar()}

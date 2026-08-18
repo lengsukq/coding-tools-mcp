@@ -59,6 +59,7 @@ export interface GlobalRuntimeSettingsDto {
   customInstructionPaths: string;
   customSkillPaths: string;
   allowLanAccess: boolean;
+  restoreRuntimeStateOnLaunch: boolean;
 }
 
 export async function getGlobalRuntimeSettings(): Promise<GlobalRuntimeSettingsDto> {

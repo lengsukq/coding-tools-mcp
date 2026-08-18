@@ -15,6 +15,7 @@
     localEndpoint: string;
     publicEndpoint?: string;
     publicLabel?: string;
+    showToggle?: boolean;
     onToggle: () => void | Promise<void>;
     onPortChange?: (port: number) => void | Promise<void>;
   }
@@ -31,6 +32,7 @@
     localEndpoint,
     publicEndpoint = "",
     publicLabel = "公网",
+    showToggle = true,
     onToggle,
     onPortChange,
   }: Props = $props();
@@ -60,7 +62,7 @@
 </script>
 
 <article class="tx-card p-5">
-  <div class="flex items-start justify-between gap-3">
+  <div class="tx-service-panel-header">
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <StatusOrb state={status} />
@@ -73,21 +75,23 @@
         </p>
       {/if}
     </div>
-    <button
-      type="button"
-      class="tx-btn-primary shrink-0"
-      class:tx-btn-danger={running}
-      disabled={busy || status === "starting" || status === "stopping"}
-      onclick={onToggle}
-    >
-      {#if busy}
-        处理中…
-      {:else if running}
-        停止
-      {:else}
-        启动
-      {/if}
-    </button>
+    {#if showToggle}
+      <button
+        type="button"
+        class="tx-btn-primary shrink-0"
+        class:tx-btn-danger={running}
+        disabled={busy || status === "starting" || status === "stopping"}
+        onclick={onToggle}
+      >
+        {#if busy}
+          处理中…
+        {:else if running}
+          停止
+        {:else}
+          启动
+        {/if}
+      </button>
+    {/if}
   </div>
 
   {#if showError}
@@ -96,7 +100,7 @@
     </div>
   {/if}
 
-  <div class="mt-5 grid gap-3">
+  <div class="tx-service-info-grid mt-5">
     <div class="tx-info-block">
       <div class="tx-info-row">
         <span class="tx-info-label">端口</span>

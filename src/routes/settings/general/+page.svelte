@@ -17,6 +17,11 @@
   import { reloadUiOnly } from "$lib/ui-memory-guard";
   import { showToast } from "$lib/stores/toast";
   import { AGENT_SOURCE_OPTIONS, toggleSource } from "$lib/agent-context";
+  import {
+    scanGlobalAgentContext,
+    type AgentSourceDetectionDto,
+    type GlobalAgentContextScanDto,
+  } from "$lib/api/agent-context";
 
   let proxy = $state<ProxyConfigDto>({ mode: "none", url: "" });
   let runtime = $state<GlobalRuntimeSettingsDto>({
@@ -27,6 +32,7 @@
     customInstructionPaths: "",
     customSkillPaths: "",
     allowLanAccess: false,
+    restoreRuntimeStateOnLaunch: false,
   });
   let changed = $state(false);
   let runtimeChanged = $state(false);
@@ -35,12 +41,63 @@
   let checkingUpdate = $state(false);
   let releasingUi = $state(false);
   let memoryHint = $state<string | null>(null);
+  let globalAgentScan = $state<GlobalAgentContextScanDto | null>(null);
+  let scanningGlobalAgents = $state(false);
+  let globalAgentScanError = $state("");
+
+  function sourceDetection(provider: string): AgentSourceDetectionDto | undefined {
+    return globalAgentScan?.sources.find((source) => source.provider === provider);
+  }
+
+  function arraysEqual(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+
+  function applyDetectedGlobalSources() {
+    if (!globalAgentScan) return;
+    const nextInstructions = [...globalAgentScan.detectedInstructionSources];
+    const nextSkills = [...globalAgentScan.detectedSkillSources];
+    if (
+      !arraysEqual(runtime.instructionSources, nextInstructions)
+      || !arraysEqual(runtime.skillSources, nextSkills)
+    ) {
+      runtime.instructionSources = nextInstructions;
+      runtime.skillSources = nextSkills;
+      runtimeChanged = true;
+    }
+  }
+
+  async function scanGlobalSources(autoSelectEmpty: boolean) {
+    if (scanningGlobalAgents) return;
+    scanningGlobalAgents = true;
+    globalAgentScanError = "";
+    try {
+      globalAgentScan = await scanGlobalAgentContext();
+      if (autoSelectEmpty && globalAgentScan) {
+        let changedByScan = false;
+        if (runtime.instructionSources.length === 0 && globalAgentScan.detectedInstructionSources.length > 0) {
+          runtime.instructionSources = [...globalAgentScan.detectedInstructionSources];
+          changedByScan = true;
+        }
+        if (runtime.skillSources.length === 0 && globalAgentScan.detectedSkillSources.length > 0) {
+          runtime.skillSources = [...globalAgentScan.detectedSkillSources];
+          changedByScan = true;
+        }
+        if (changedByScan) runtimeChanged = true;
+      }
+    } catch (e) {
+      globalAgentScanError = String(e);
+    } finally {
+      scanningGlobalAgents = false;
+    }
+  }
 
   async function refresh() {
     try {
       [proxy, runtime] = await Promise.all([getProxy(), getGlobalRuntimeSettings()]);
       changed = false;
       runtimeChanged = false;
+      await scanGlobalSources(true);
     } catch (e) {
       await message(String(e), { title: "加载失败", kind: "error" });
     }
@@ -72,7 +129,7 @@
     try {
       await setGlobalRuntimeSettings(runtime);
       runtimeChanged = false;
-      await message("全局 Runtime 设置已保存。已运行的 MCP、Actions 和 Global Gateway 需要重启后生效。", { title: "已保存", kind: "info" });
+      await message("全局 Runtime 设置已保存。运行状态恢复开关会在下次启动应用时生效；其他 Runtime 配置需要重启对应服务后生效。", { title: "已保存", kind: "info" });
     } catch (e) {
       await message(String(e), { title: "保存失败", kind: "error" });
     } finally {
@@ -230,6 +287,26 @@
           <input
             type="checkbox"
             class="mt-0.5 h-4 w-4"
+            bind:checked={runtime.restoreRuntimeStateOnLaunch}
+            onchange={handleRuntimeChange}
+          />
+          <span class="grid gap-1">
+            <span class="text-sm font-medium">启动时恢复上次运行状态</span>
+            <span class="text-xs text-[var(--color-text-muted)]">
+              默认关闭。开启后会记住哪些 Workspace 的 MCP / Actions 正在运行，并在下次启动 Coding Tools 时自动恢复。
+            </span>
+            {#if runtime.restoreRuntimeStateOnLaunch}
+              <span class="text-xs text-[var(--color-accent)]">
+                首次开启并保存时，会立即记录当前已经运行的服务；之后手动启动或停止都会同步更新恢复状态。
+              </span>
+            {/if}
+          </span>
+        </label>
+
+        <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
+          <input
+            type="checkbox"
+            class="mt-0.5 h-4 w-4"
             bind:checked={runtime.allowLanAccess}
             onchange={handleRuntimeChange}
           />
@@ -258,15 +335,40 @@
           <span class="text-xs text-[var(--color-text-muted)]">支持绝对路径和 ~；用于查找 aws、docker、kubectl 等系统程序，仍受 Workspace 的 allowed_commands 策略约束。</span>
         </label>
         <div class="rounded-md border border-[var(--color-border)] p-3">
-          <p class="text-sm font-medium">全局 Agent Sources</p>
-          <p class="mt-1 text-xs text-[var(--color-text-muted)]">
-            作为所有 Workspace 的默认来源；Workspace 可以继续追加 Codex、Claude Code、Cursor、Copilot、OpenCode、ZCode、Reasonix 或 Custom。
-          </p>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-sm font-medium">全局 Agent Sources</p>
+              <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+                自动扫描本机 IDE 的全局 Instructions / Skills；首次没有配置时会自动勾选检测到的来源，之后仍由用户决定是否保存或调整。
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="tx-btn-ghost" disabled={scanningGlobalAgents} onclick={() => void scanGlobalSources(false)}>
+                {scanningGlobalAgents ? "扫描中…" : "重新扫描"}
+              </button>
+              <button
+                type="button"
+                class="tx-btn-ghost"
+                disabled={!globalAgentScan || globalAgentScan.sources.length === 0}
+                onclick={applyDetectedGlobalSources}
+              >
+                应用检测结果
+              </button>
+            </div>
+          </div>
+          {#if globalAgentScanError}
+            <p class="mt-2 text-xs text-[var(--danger)]">{globalAgentScanError}</p>
+          {:else if globalAgentScan}
+            <p class="mt-2 text-xs text-[var(--color-text-muted)]">
+              已检测到 {globalAgentScan.sources.length} 个 IDE / Agent 来源 · Instructions {globalAgentScan.detectedInstructionSources.length} 类 · Skills {globalAgentScan.detectedSkillSources.length} 类
+            </p>
+          {/if}
           <div class="mt-3 grid gap-3 md:grid-cols-2">
             <div>
               <p class="mb-2 text-xs font-medium">Instructions</p>
               <div class="grid gap-2">
                 {#each AGENT_SOURCE_OPTIONS as option}
+                  {@const detected = sourceDetection(option.value)}
                   <label class="flex items-start gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -276,7 +378,12 @@
                         handleRuntimeChange();
                       }}
                     />
-                    <span>{option.label}</span>
+                    <span>
+                      <span class="block">{option.label}</span>
+                      {#if detected?.instructionPaths.length}
+                        <span class="block text-[11px] text-[var(--color-text-muted)]">已检测 {detected.instructionPaths.length} 个全局提示词文件</span>
+                      {/if}
+                    </span>
                   </label>
                 {/each}
               </div>
@@ -285,6 +392,7 @@
               <p class="mb-2 text-xs font-medium">Skills</p>
               <div class="grid gap-2">
                 {#each AGENT_SOURCE_OPTIONS as option}
+                  {@const detected = sourceDetection(option.value)}
                   <label class="flex items-start gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -294,12 +402,35 @@
                         handleRuntimeChange();
                       }}
                     />
-                    <span>{option.label}</span>
+                    <span>
+                      <span class="block">{option.label}</span>
+                      {#if detected?.skillPaths.length}
+                        <span class="block text-[11px] text-[var(--color-text-muted)]">已检测 {detected.skillPaths.length} 个全局 Skill</span>
+                      {/if}
+                    </span>
                   </label>
                 {/each}
               </div>
             </div>
           </div>
+          {#if globalAgentScan && globalAgentScan.sources.length > 0}
+            <details class="mt-3 text-xs">
+              <summary class="cursor-pointer text-[var(--color-text-muted)]">查看全局扫描结果</summary>
+              <div class="mt-2 grid gap-3">
+                {#each globalAgentScan.sources as source}
+                  <div class="rounded-md border border-[var(--color-border)] p-2.5">
+                    <p class="font-medium">{AGENT_SOURCE_OPTIONS.find((option) => option.value === source.provider)?.label ?? source.provider}</p>
+                    {#each source.instructionPaths as path}
+                      <p class="mt-1 font-mono text-[11px] text-[var(--color-text-muted)]">Instruction · {path}</p>
+                    {/each}
+                    {#each source.skillPaths as path}
+                      <p class="mt-1 font-mono text-[11px] text-[var(--color-text-muted)]">Skill · {path}</p>
+                    {/each}
+                  </div>
+                {/each}
+              </div>
+            </details>
+          {/if}
           {#if runtime.instructionSources.includes("custom") || runtime.skillSources.includes("custom")}
             <div class="mt-3 grid gap-3 md:grid-cols-2">
               {#if runtime.instructionSources.includes("custom")}
