@@ -1,67 +1,75 @@
 # 技术栈
 
-> 本文档描述 Coding Tools MCP Rust 的技术栈信息。
+> 本文档只描述当前仓库实际依赖，不列“计划使用”的未落地技术。
 
 ## 基本信息
 
-| 属性 | 值 |
-|------|-----|
-| 项目名称 | Coding Tools MCP Rust |
-| 版本 | 0.0.0 |
-| 语言 | Rust 1.77+ / TypeScript |
-| 框架 | Tauri 2 |
+| 属性 | 当前值 |
+| --- | --- |
+| 应用版本 | `0.2.0` |
+| Rust Edition | 2021 |
+| 前端语言 | TypeScript |
+| 桌面框架 | Tauri 2 |
+| 前端框架 | SvelteKit 2 / Svelte 5 |
+| 构建工具 | Vite 6 |
 
-## 核心技术
+## Rust Core
 
-| 类别 | 技术 | 用途 |
-|------|------|------|
-| 桌面壳 | Tauri 2 | 跨平台桌面应用框架 |
-| 后端语言 | Rust | MCP 核心、进程管理、状态机 |
-| 前端 | Svelte + TypeScript | UI 界面 |
-| 异步运行时 | tokio | 异步 I/O、进程监督 |
-| HTTP 服务 | axum | 内嵌 MCP Streamable HTTP |
-| MCP SDK | rmcp | MCP 协议实现 |
-| Git 操作 | git2 | git_status / git_diff 等工具 |
-| 密钥存储 | keyring | 系统钥匙串（Windows Credential Manager 等） |
-| 序列化 | serde + serde_json | 配置持久化 |
+| 技术 | 用途 |
+| --- | --- |
+| `tauri` / `tauri-plugin-dialog` | 桌面外壳、Tray、IPC、文件选择 |
+| `tokio` | 异步 Runtime、网络、进程、文件与 Session |
+| `axum` | MCP / Actions / OAuth HTTP 服务 |
+| `tower-http` | CORS |
+| `reqwest` + rustls | 更新、健康检查、网络请求 |
+| `serde` / `serde_json` | 配置、Tool Schema、状态持久化 |
+| `jsonwebtoken` / `sha2` / `base64` | OAuth Token 与 PKCE |
+| `uuid` | Goal / Plan / Task / OAuth Client 等 ID |
+| `walkdir` / `glob` / `regex` | Workspace 文件发现与搜索 |
+| `image` | Workspace 图片 Tool |
+| `zip` / `flate2` / `tar` | 下载与归档处理 |
+| `fs2` | 文件锁与运行时协调 |
+| `windows` / `libc` | 平台特定能力 |
 
-## 开发工具
+当前 MCP 协议和 Tool Schema 由项目自己的 Rust 实现维护，仓库没有使用 `rmcp` 或 `git2` 作为当前核心依赖；Git 工具通过受控 Git 命令实现。
 
-| 类别 | 工具 | 用途 |
-|------|------|------|
-| 包管理 | cargo / pnpm | Rust / 前端依赖 |
-| 构建 | tauri-cli | 桌面应用构建 |
-| 测试 | cargo test | Rust 单元/集成测试 |
-| 代码检查 | clippy / rustfmt | Rust lint 与格式化 |
-| 前端检查 | eslint / prettier | TypeScript 检查 |
+## Frontend
 
-## 参考实现技术栈（old/）
+| 技术 | 用途 |
+| --- | --- |
+| `@sveltejs/kit` | 路由与应用结构 |
+| `svelte` 5 | UI |
+| `@tauri-apps/api` | 前端到 Tauri IPC |
+| `@tauri-apps/plugin-dialog` | 原生 Dialog |
+| `@lucide/svelte` | 图标 |
+| Tailwind CSS 4 | 样式能力，与项目自定义 CSS/设计系统共存 |
+| TypeScript 5.6 | 类型检查 |
 
-| 类别 | 技术 | 说明 |
-|------|------|------|
-| MCP 核心 | Python 3.11+ | `coding_tools_mcp/server.py` |
-| 桌面客户端 | PySide6 | `apps/desktop-client/` |
-| Actions 网关 | FastAPI + uvicorn | `coding_tools_actions/` |
-| 测试 | pytest + unittest | `tests/compliance/` |
+## 包管理与命令
 
-## 主要依赖（计划）
+仓库使用 `npm` / `package-lock.json`，不是 pnpm。
 
-### Rust (src-tauri/Cargo.toml)
+```bash
+npm ci
+npm run check
+npm run build
+npm run desktop
 
-- `tauri` — 桌面壳
-- `tokio` — 异步运行时
-- `axum` — HTTP server
-- `rmcp` — MCP 协议
-- `git2` — Git 操作
-- `keyring` — 系统密钥存储
-- `serde` / `serde_json` — 序列化
-- `tracing` — 结构化日志
+cd src-tauri
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
 
-### 前端 (package.json)
+## CI
 
-- `svelte` — UI 框架
-- `@tauri-apps/api` — Tauri 前端 API
-- `tailwindcss` — 样式
+GitHub Actions 在 `push(main)`、`pull_request` 和手动触发时运行：
+
+- Frontend check + production build；
+- Rust fmt；
+- Clippy `-D warnings`；
+- Locked build；
+- 全 target Rust tests。
 
 ---
 *返回索引: [../project-context.md](../project-context.md)*

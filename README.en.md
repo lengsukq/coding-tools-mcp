@@ -101,12 +101,11 @@ When a connection fails, inspect recent MCP requests without leaving the desktop
 
 ### 5. Connect an AI client
 
-Use the public MCP URL shown by the app. With OAuth enabled, the client follows the server metadata into the authorization flow; authorization codes, Client IDs, and secrets can be generated and managed from the desktop client. This release uses preconfigured OAuth clients, so select static/manual OAuth credentials when creating a ChatGPT plugin; CIMD is not required.
+Use the public MCP URL shown by the app. OAuth now supports Authorization Code + PKCE S256, Dynamic Client Registration (`/register`), and Refresh Tokens. Clients with DCR support can register themselves from the server metadata; older clients can continue to use the static Client ID / Secret configured in the desktop app.
 
-For a first connection, ask the agent to initialize history before inspecting the workspace:
+For a first connection, inspect the workspace directly; history bootstrap is optional:
 
 ```text
-history_session_bootstrap
 server_info
 get_default_cwd
 git_status
@@ -128,7 +127,7 @@ Before configuring ChatGPT, make sure that:
 
 1. The workspace MCP service and public tunnel are both running.
 2. The public MCP endpoint passes the desktop health check. If OAuth is enabled, also verify the protected-resource document and authorization metadata.
-3. You have copied the **Public MCP URL** from the desktop **GPT configuration** card. For OAuth, also have the OAuth Client ID, OAuth Client Secret, and authorization password ready.
+3. You have copied the **Public MCP URL** from the desktop **GPT configuration** card. OAuth needs the authorization password; static Client ID / Secret values are only needed when the client does not support dynamic registration.
 
 > ChatGPT must use the public HTTPS `/mcp` URL. A local address such as `http://127.0.0.1:28766/mcp` is not reachable from ChatGPT. Menu names may vary slightly by ChatGPT version and language.
 
@@ -153,7 +152,7 @@ Open **Plugins** from the ChatGPT sidebar, click the `+` button, select the MCP 
 
 ![Create an MCP plugin and enter its connection details](docs/images/gpt-config-2-detail.png)
 
-For OAuth, open the advanced OAuth settings, select static/manual OAuth credentials, and enter the Client ID and Client Secret shown by the desktop app. CIMD is not required. When ChatGPT opens the authorization page, enter the authorization password from the desktop **GPT configuration** card.
+For OAuth, prefer Dynamic Client Registration when the client supports it and let the client register from the server metadata. If the client only supports static OAuth credentials, use the Client ID and Client Secret shown by the desktop app. When the authorization page opens, enter the authorization password from the desktop **GPT configuration** card.
 
 > Client Secrets, authorization passwords, and Bearer tokens are sensitive. Never paste them into chats, issues, or public screenshots. If the desktop app uses Bearer or no authentication, select the matching option currently offered by ChatGPT.
 
@@ -166,7 +165,7 @@ Use Coding Tools MCP to call server_info, get_default_cwd, and git_status.
 Tell me which workspace is connected, its default directory, and its Git status.
 ```
 
-If ChatGPT returns information from the current project, the desktop app, public tunnel, authentication, ChatGPT, and MCP tool chain are connected end to end. Before real development, call `history_session_bootstrap` to initialize or restore project history.
+If ChatGPT returns information from the current project, the desktop app, public tunnel, authentication, ChatGPT, and MCP tool chain are connected end to end. History can be initialized explicitly when a client or workflow needs a dedicated archived session, but it is not a prerequisite for normal development.
 
 If ChatGPT still shows an old tool list, disconnect and reconnect the plugin or verify again in a new conversation.
 
@@ -205,7 +204,7 @@ Chat transcripts are useful for rereading a discussion, but they are a poor long
 
 *Paste the full prompt into a new conversation to initialize or restore history, then save a checkpoint after each completed task.*
 
-Five tools work together:
+The default `compact` profile exposes history through the Stable Tool API v2 `history_manage` aggregate entry point. The five lifecycle-specific names below remain available in compatibility profiles:
 
 | Tool | Purpose |
 | --- | --- |
@@ -230,7 +229,9 @@ The default `core` profile provides a stable, composable development tool set:
 | Command execution | `exec_command`, `write_stdin`, `read_output`, `kill_session` |
 | Git | `git_status`, `git_diff`, `git_log`, `git_show`, `git_blame` |
 | Environment | `server_info`, `check_exec_environment`, `get_default_cwd`, `set_default_cwd` |
-| History sessions | `history_session_bootstrap`, `history_session_checkpoint`, `history_session_validate`, `history_session_search`, `history_session_read` |
+| State management | `history_manage`, `planning_manage`, `task_manage` (Stable Tool API v2) |
+
+Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while legacy profiles retain the old tool names.
 
 A typical development loop is:
 

@@ -1,7 +1,18 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rust:
@@ -21,15 +32,23 @@ jobs:
             librsvg2-dev \
             libxdo-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: cargo build
         working-directory: src-tauri
-        run: cargo build
+        run: cargo build --locked
       - name: cargo test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --all-targets --locked
 
   frontend:
     runs-on: ubuntu-latest
@@ -41,3 +60,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run build

@@ -101,7 +101,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 ### 5. 连接 AI 客户端
 
-支持 MCP 的客户端使用界面中的公网 MCP URL。使用 OAuth 时，客户端会通过服务端元数据进入授权流程；授权口令、Client ID 和 Secret 均可在桌面端集中生成和管理。当前版本使用预配置 OAuth 客户端，创建 ChatGPT 插件时应选择静态/手动 OAuth 凭据，不需要选择 CIMD。
+支持 MCP 的客户端使用界面中的公网 MCP URL。OAuth 当前支持 Authorization Code + PKCE S256、Dynamic Client Registration（`/register`）和 Refresh Token。支持动态注册的客户端可以直接读取服务端 metadata 并注册自己的 Client；不支持 DCR 的旧客户端仍可继续使用桌面端配置的静态 Client ID / Secret。
 
 首次连接可直接检查工作区；历史初始化不再是必需步骤：
 
@@ -127,7 +127,7 @@ check_exec_environment
 
 1. 工作区的 MCP 服务和公网隧道均处于运行状态。
 2. “健康检查”中的公网 MCP 检查通过；如果使用 OAuth，再确认 OAuth 受保护资源和授权元数据检查通过。
-3. 从桌面端“GPT 配置”卡片复制“公网 MCP 地址”；如果使用 OAuth，同时准备 OAuth Client ID、OAuth Client Secret 和授权口令。
+3. 从桌面端“GPT 配置”卡片复制“公网 MCP 地址”。使用 OAuth 时需要授权口令；只有客户端不支持动态注册时才需要额外填写静态 Client ID / Secret。
 
 > ChatGPT 必须使用公网 HTTPS `/mcp` 地址，不能使用 `http://127.0.0.1:28766/mcp` 之类的本地地址。ChatGPT 的菜单名称可能随版本和语言设置略有变化。
 
@@ -152,7 +152,7 @@ check_exec_environment
 
 ![在 ChatGPT 中新建 MCP 插件并填写连接信息](docs/images/gpt-config-2-detail.png)
 
-使用 OAuth 时，展开“高级 OAuth 设置”，选择静态/手动 OAuth 凭据并填写桌面端提供的 Client ID 和 Client Secret，不需要选择 CIMD。保存或连接后，ChatGPT 会打开授权页面；输入桌面端“GPT 配置”卡片中的授权口令完成首次授权。
+使用 OAuth 时，优先让支持 Dynamic Client Registration 的客户端根据 metadata 自动注册；若当前客户端只支持静态 OAuth，则继续填写桌面端提供的 Client ID 和 Client Secret。保存或连接后会进入授权页面，输入桌面端“GPT 配置”卡片中的授权口令完成授权。
 
 > Client Secret、授权口令和 Bearer Token 都属于敏感信息，不要粘贴到对话、Issue 或公开截图中。若桌面端使用 Bearer 或不启用认证，请在 ChatGPT 中选择当前界面提供的对应认证方式。
 
@@ -206,7 +206,7 @@ MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用�
 
 历史上下文面板提供当前会话记录开关、历史会话多选、预览和清除选择。应用选择后会刷新 MCP 上下文，只注入会话索引、最近检查点、关键文件和精选片段；每个会话最多 3 条片段、每条最多 512 字节。完整 Markdown 历史仍保存在 `docs/history-session/`，需要时再用搜索和分页读取工具恢复。
 
-它提供五个互相配合的历史工具：
+默认 `compact` profile 通过 Stable Tool API v2 的 `history_manage` 聚合入口访问历史能力；`core` / `advanced` 兼容 profile 仍保留以下五个旧工具名：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -239,7 +239,9 @@ MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用�
 | 命令执行 | `exec_command`、`write_stdin`、`read_output`、`kill_session` |
 | Git | `git_status`、`git_diff`、`git_log`、`git_show`、`git_blame` |
 | 环境 | `server_info`、`check_exec_environment`、`get_default_cwd`、`set_default_cwd` |
-| 历史会话 | `history_session_bootstrap`、`history_session_checkpoint`、`history_session_validate`、`history_session_search`、`history_session_read` |
+| 状态管理 | `history_manage`、`planning_manage`、`task_manage`（Stable Tool API v2） |
+
+聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；旧工具继续保留给兼容 profile。
 
 典型开发过程：
 

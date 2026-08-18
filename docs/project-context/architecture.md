@@ -1,97 +1,126 @@
 # 架构设计
 
-> 本文档描述 Coding Tools MCP Rust 的架构和项目结构。
+> 本文档描述 Coding Tools MCP 当前实际架构。`docs/specs/` 可以保留历史设计过程，本目录只记录当前代码事实。
 
-## 项目结构（目标）
+## 总体定位
 
-```
-coding-tools-mcp-rust/
-├── src-tauri/              # Tauri Rust 后端
-│   ├── src/
-│   │   ├── main.rs         # 入口
-│   │   ├── lib.rs          # 库入口
-│   │   ├── commands/       # Tauri IPC 命令
-│   │   ├── workspace/      # Workspace 配置存储
-│   │   ├── runtime/        # Runtime 状态机
-│   │   ├── mcp/            # 内嵌 MCP 协议 + 工具
-│   │   ├── tunnel/         # FRP / Cloudflare 隧道管理
-│   │   ├── auth/           # OAuth / Bearer 认证
-│   │   └── health/         # 健康检查
-│   └── Cargo.toml
-├── src/                    # Svelte 前端
-│   ├── lib/
-│   │   ├── components/     # UI 组件
-│   │   └── stores/         # 状态管理
-│   └── routes/             # 页面路由
-├── docs/                   # 项目文档
-│   ├── specs/              # 功能规格
-│   ├── project-context/    # 项目上下文
-│   └── graph-insights/     # 代码图谱
-├── tests/                  # 合规测试（从 old/ 移植）
-├── old/                    # 旧版 Python 参考实现
-└── AGENTS.md               # Agent 入口
+Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌面控制面**。桌面端负责工作区、认证、公网入口、运行时和可视化配置；Rust Core 在本机直接提供 MCP / GPT Actions，并通过统一工具内核访问代码、Git、命令、Planning、History 与 Harness。
+
+```text
+┌──────────────────────────────────────────────┐
+│ SvelteKit Desktop UI                        │
+│ Workspace / Dashboard / Planning / Settings │
+└──────────────────────┬───────────────────────┘
+                       │ Tauri IPC
+┌──────────────────────▼───────────────────────┐
+│ Rust Application Core                       │
+│ Workspace / Runtime / Auth / Planning       │
+│ History / Harness / Usage / Update          │
+├──────────────────────────────────────────────┤
+│ Unified Tool Runtime                        │
+│ file / patch / exec / git / skill / manage │
+├─────────────────────┬────────────────────────┤
+│ MCP Streamable HTTP │ GPT Actions OpenAPI   │
+└──────────┬──────────┴──────────┬─────────────┘
+           │                     │
+      Local / Global Gateway / FRP / Cloudflare
 ```
 
-## 当前状态
+## 当前目录边界
 
-仓库处于重构初期，根目录仅有 `old/` 参考实现和 `docs/` 文档。Tauri 工程骨架待创建。
+| 路径 | 当前职责 |
+| --- | --- |
+| `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、Dispatch、文件/Git/Exec/History/Planning/Skill |
+| `src-tauri/src/mcp/` | MCP Streamable HTTP transport 与客户端初始化 |
+| `src-tauri/src/actions/` | GPT Actions HTTP/OpenAPI transport |
+| `src-tauri/src/auth/` | Bearer、OAuth Authorization Code、PKCE S256、DCR、Refresh Token |
+| `src-tauri/src/planning/` | Direct / Plan / Goal、Goal/Plan 生命周期、Execution Ledger |
+| `src-tauri/src/harness/` | Durable Task、operation/event log、基线与恢复信息 |
+| `src-tauri/src/runtime/` | MCP / Actions 生命周期与进程监督 |
+| `src-tauri/src/tunnel/` | FRP / Cloudflare 下载、配置与进程监督 |
+| `src-tauri/src/global_gateway.rs` | 多 Workspace 共享公网入口 `/w/<workspace-id>` |
+| `src-tauri/src/workspace/` | Workspace 配置、持久化与兼容迁移 |
+| `src/` | SvelteKit 5 桌面 UI、Tauri API 封装与状态展示 |
+| `docs/history-session/` | 项目内、可审计、无损 Markdown 会话档案 |
+| `.coding-tools/planning/state.json` | 项目本地 Goal / Plan / Execution Ledger 状态 |
 
-## 架构模式
+## Tool Runtime
 
-### 分层设计
+MCP 和 Actions 不各自实现工具逻辑。两条 transport 最终必须进入：
 
+```text
+tools::dispatch::call_tool
 ```
-┌─────────────────────────────────────────┐
-│  UI Layer (Svelte)                      │
-│  Workspace 卡片 / 配置 / 日志 / 健康检查  │
-├─────────────────────────────────────────┤
-│  Tauri Commands (IPC)                   │
-│  前端 ↔ Rust 后端通信                    │
-├─────────────────────────────────────────┤
-│  App Orchestrator (Rust)                │
-│  Workspace Store / Runtime State Machine│
-├─────────────────────────────────────────┤
-│  MCP Core (内嵌, Rust)                  │
-│  axum HTTP /mcp + 工具实现               │
-├─────────────────────────────────────────┤
-│  Tunnel Supervisor (Rust)               │
-│  管理 cloudflared / frp 外部进程         │
-└─────────────────────────────────────────┘
+
+这里统一处理：
+
+- Workspace 路径边界与命令策略；
+- Goal / Plan 模式写入门禁；
+- Harness operation / task 记录；
+- Tool 分发与统一错误结构；
+- Execution Ledger 更新；
+- Planning context 与恢复提示。
+
+### Stable Tool API v2
+
+默认 `compact` profile 使用稳定聚合入口：
+
+```text
+history_manage
+planning_manage
+task_manage
 ```
 
-### 与旧版 Python 客户端的关键差异
+生命周期动作通过 `action` 参数路由，避免每新增一个状态操作就改变顶层 MCP Tool Schema。旧的 `history_session_*`、`create_goal`、`update_plan`、`start_task` 等工具继续保留在兼容 profile，不直接删除。
 
-| 维度 | 旧版 (PySide6) | 新版 (Tauri) |
-|------|---------------|-------------|
-| MCP 运行时 | 外部 Python 子进程 | **内嵌 Rust** |
-| 进程管理 | psutil 启发式猜 PID | 状态机 + 自有子进程 |
-| UI | Qt 样式表 | Web 设计系统 |
-| 密钥 | 明文 secrets.json | 系统钥匙串 |
-| 分发 | 需要 Python 环境 | 单二进制 |
+`server_info.tool_api` 与 `capability_health_check.capability.tool_api` 会返回当前 Tool API 版本信息。
 
-## 核心模块
+## Planning、Task 与 History
 
-### workspace/
-- **职责**: Workspace 配置的 CRUD、持久化、密钥分离存储
-- **参考**: `old/apps/desktop-client/mcp_desktop_client/models.py`, `storage.py`
+三者职责明确分离：
 
-### runtime/
-- **职责**: MCP 运行时生命周期状态机（Stopped → Starting → Running → Stopping → Error）
-- **参考**: `old/apps/desktop-client/mcp_desktop_client/runtime.py`
+- **Planning**：用户目标、约束、计划与人工验收；
+- **Harness Task**：可恢复执行任务、操作事件和工作区基线；
+- **History**：对话与开发事实的长期无损归档。
 
-### mcp/
-- **职责**: MCP 协议实现、17 个工具、HTTP transport
-- **参考**: `old/coding_tools_mcp/server.py`, `old/docs/profile-v0.1.md`
+统一的 **Execution Ledger** 位于 Planning State 顶层，投影当前：
 
-### tunnel/
-- **职责**: FRP 配置生成、Cloudflare 隧道进程监督
-- **参考**: `old/apps/desktop-client/mcp_desktop_client/runtime.py` 中的隧道逻辑
+```text
+Goal / Plan / Step
+Task
+last tool / last error
+changed files
+history checkpoint ref
+verification
+```
 
-## 入口文件
+旧 `Goal.execution_checkpoint` 继续同步，作为兼容字段存在。
 
-- **Tauri 入口**: `src-tauri/src/main.rs`（待创建）
-- **前端入口**: `src/routes/+page.svelte`（待创建）
-- **Agent 入口**: `AGENTS.md`
+## OAuth
+
+MCP 与 Actions 共用同一 OAuth runtime：
+
+- Authorization Code；
+- PKCE `S256`；
+- Dynamic Client Registration `/register`；
+- `authorization_code` 与 `refresh_token` grant；
+- Access / Refresh JWT 类型区分；
+- 动态 Client 绑定已注册 redirect URI。
+
+静态 Client ID / Secret 仍保留，用于旧客户端兼容。
+
+## Runtime 与网络
+
+每个 Workspace 可以独立运行 MCP / Actions。Global Gateway 提供统一公网入口并按 `/w/<workspace-id>` 路由到对应工作区。FRP 与 Cloudflare Tunnel 由 Rust supervisor 管理，不要求外部 Python Runtime。
+
+## 安全边界
+
+- Workspace 内按 Policy 允许读写和执行；
+- Workspace 外默认只读；
+- `.git` / `.github` 等仓库资产受额外保护；
+- Patch 预检后事务化应用；
+- Dangerous operation 需要显式 `confirm=true`；
+- Windows 当前仍是 `policy_only` 边界，不宣称拥有完整 OS Sandbox。
 
 ---
 *返回索引: [../project-context.md](../project-context.md)*

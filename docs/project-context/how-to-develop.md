@@ -1,127 +1,114 @@
 # 如何开发
 
-> 本文档描述 Coding Tools MCP Rust 的开发流程。
+> 本文档描述当前 Coding Tools MCP 的开发流程。开发前置条件来自实际 Planning Mode 与仓库 Policy，不再依赖旧 MCP Probe Kit 工具。
 
-## 概述
+## 开发入口
 
-本项目使用 MCP Probe Kit 工作流驱动开发。新功能必须先走规格流程，通过闸门后再写实现代码。
-
-## 新功能开发流程
-
-### 第一步：启动功能编排
-
-调用 `start_feature` MCP 工具：
-
-```json
-{
-  "feature_name": "my-feature",
-  "description": "功能描述",
-  "project_root": "e:/workspace/github/coding-tools-mcp-rust"
-}
-```
-
-### 第二步：生成并校验规格
-
-1. 调用 `add_feature` 生成规格模板
-2. Agent 按模板填写 `docs/specs/<feature>/requirements.md`、`design.md`、`tasks.md`
-3. 调用 `check_spec` 校验规格完整性
-4. **未通过前不要写实现代码**
-
-### 第三步：工作量估算
-
-调用 `estimate` 获取故事点和时间区间。
-
-### 第四步：按 tasks.md 实现
-
-1. 每条任务先写证据块（读相关代码）
-2. 实现后对照验收标准核验
-3. 单文件不超过 500 行，超出需拆分
-
-## Tauri 开发命令（工程创建后）
+桌面端运行：
 
 ```bash
-# 开发模式（热重载）
-cargo tauri dev
-
-# 构建发布版
-cargo tauri build
-
-# 仅构建 Rust 后端
-cd src-tauri && cargo build
-
-# 仅构建前端
-pnpm dev
+npm ci
+npm run desktop
 ```
 
-## 安装包版本与发布规则（硬性）
+只开发前端时可以使用 `npm run dev`，但它不能验证 Tauri IPC、系统托盘、Runtime、Keyring 等桌面能力，因此功能验收仍应回到 `npm run desktop`。
 
-凡是包含功能或缺陷修复、且需要构建、安装、交付或发布桌面安装包的变更，**必须先递增应用版本，再构建**。不得用旧版本号覆盖安装包，也不得只改 DMG、NSIS 等产物文件名。
+## Planning Mode
 
-### 版本递增
+Planning Mode 由桌面端控制：
 
-- 默认递增 patch 版本，例如 `0.1.7` → `0.1.8`。
-- 新功能或不兼容变更按语义化版本递增 minor 或 major。
-- 仅文档、索引或不产生安装包的维护变更可不递增版本。
+- **Direct**：普通开发工具可以直接执行；
+- **Plan**：项目写入与命令执行被服务端阻止，只允许分析和规划；
+- **Goal**：写操作必须存在 Active focused Goal；若同时 focused Plan，则 Plan 必须属于该 Goal 且可执行。
 
-### 必须同步的版本源
+Agent 不应通过聊天绕过模式。适合长期跟踪的工作可以创建 Goal / Plan，并在完成后请求人工验收。
 
-每次递增时，以下位置必须保持为同一版本：
+## 推荐开发流程
 
-1. `package.json`
-2. `package-lock.json` 的根 `version` 和根包 `version`
-3. `src-tauri/Cargo.toml`
-4. `src-tauri/Cargo.lock` 中 `coding-tools-mcp-desktop` 包的 `version`
-5. `src-tauri/tauri.conf.json`
+```text
+理解 Workspace / git status
+→ 阅读相关代码和当前 project-context
+→ 明确 Goal / Plan（需要时）
+→ 小批次修改
+→ 运行定向测试
+→ 检查 diff
+→ 运行质量门
+→ 分批 commit
+→ 请求 Goal / Plan review
+```
 
-不要修改依赖自身恰好相同的版本号；只更新本项目包的版本字段。
+不要求为了修改普通代码先创建 Harness Task。Harness Task 适合需要额外基线、事件流或恢复能力的长任务。
 
-### 构建门禁
+## Tool API 开发规则
 
-构建前必须：
+默认 `compact` profile 使用 Stable Tool API v2。新增 Goal、Plan、Task、History 生命周期行为时，优先在以下聚合入口增加 `action`：
 
-1. 搜索上述版本源，确认没有旧的项目版本残留。
-2. 运行 `npm run check`、`cargo check`；修复类变更还需运行相关 Rust 测试。
-3. 提交版本升级与功能/修复代码，再从该提交构建。
+```text
+history_manage
+planning_manage
+task_manage
+```
 
-构建后必须：
+不要无必要增加新的顶层 Tool。旧生命周期 Tool 只作为兼容层继续维护。
 
-1. 校验 App 内部版本（macOS 为 `CFBundleShortVersionString`）。
-2. 校验安装包文件名包含当前版本，例如 `Coding Tools MCP_<version>_aarch64.dmg`。
-3. 校验已安装应用显示的版本与安装包一致；不得把旧包误报为新包。
-4. 清理同一构建目录中旧版本的安装包和临时构建日志，但保留当前版本产物。
-
-若移动了 macOS 源码目录，Rust/Tauri 的 `target` 缓存会保留旧绝对路径；首次在新目录构建前必须执行 `cd src-tauri && cargo clean`，再重新构建。
-
-macOS GitHub Actions 仍仅允许在用户明确要求后通过 `workflow_dispatch` 手动触发，不因版本提交自动触发。
-
-## Rust 后端开发约定
-
-### Tauri Command 模式
+所有 MCP 与 Actions 工具执行必须收口到：
 
 ```rust
-#[tauri::command]
-async fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceProfile>, String> {
-    state.workspace_store.list().map_err(|e| e.to_string())
-}
+tools::dispatch::call_tool
 ```
 
-### 状态机模式
+Transport 层不得复制 Policy、Planning Gate 或工具业务逻辑。
 
-Runtime 生命周期使用显式 enum，不用字符串状态：
+## OAuth 开发规则
 
-```rust
-enum RuntimeState {
-    Stopped,
-    Starting { since: Instant },
-    Running { pid: u32, port: u16 },
-    Stopping,
-    Error { message: String },
-}
+MCP 与 Actions 共用 `auth/oauth_flow.rs`。修改 OAuth 时至少保持：
+
+- PKCE 仅接受 `S256`；
+- 动态 Client 只能使用已注册 redirect URI；
+- Access Token 与 Refresh Token 类型不可混用；
+- 静态 Client 兼容流程不得被破坏；
+- metadata 与真实 endpoint/grant 保持一致。
+
+## Planning / Execution 状态规则
+
+职责边界：
+
+- Planning 保存 Goal / Plan 与人工验收；
+- Harness 保存 Task / operation / event；
+- History 保存长期对话事实；
+- Execution Ledger 只保存当前执行投影并关联三者。
+
+不要再创建第四套重复的“当前任务状态”。
+
+## 版本与发布
+
+产生安装包的功能/修复发布必须先同步升级：
+
+1. `package.json`；
+2. `package-lock.json` 根版本；
+3. `src-tauri/Cargo.toml`；
+4. `src-tauri/Cargo.lock` 中本项目版本；
+5. `src-tauri/tauri.conf.json`。
+
+只做代码开发、测试或文档修改且本轮不构建交付安装包时，不强制提前升版本。
+
+## 提交前质量门
+
+```bash
+npm run check
+npm run build
+
+cd src-tauri
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --locked
 ```
 
-## 参考旧版实现
+本机缺少 rustfmt/clippy component 时不要静默跳过；记录环境限制，并保证 CI 的 stable toolchain 安装对应 component。
 
-开发 MCP 工具时，以 `old/docs/profile-v0.1.md` 为行为契约，以 `old/tests/compliance/` 为验收标准。不要猜测工具行为，对照规范和测试。
+## 参考旧版
+
+`old/` 只用于兼容行为对照。当前代码、当前测试和 `docs/project-context/` 的优先级高于旧 Python 实现。
 
 ---
 *返回索引: [../project-context.md](../project-context.md)*
