@@ -11,8 +11,8 @@
 
 ## 术语定义
 
-- **仓库主页**: 固定为 `https://github.com/mybolide/coding-tools-mcp`。
-- **Releases 最新页**: `https://github.com/mybolide/coding-tools-mcp/releases/latest`。
+- **仓库主页**: 固定为 `https://github.com/lengsukq/coding-tools-mcp`。
+- **Releases 最新页**: `https://github.com/lengsukq/coding-tools-mcp/releases/latest`。
 - **当前版本**: 与 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 同步的应用版本字符串（前端由 `src/lib/app-version.ts` 读取）。
 - **最新发布版本**: GitHub Releases API `releases/latest` 返回的 `tag_name`（可带或不带 `v` 前缀）。
 
@@ -66,7 +66,7 @@
 
 #### 验收标准（EARS）
 
-1. WHEN 用户点击「检查更新」THEN 系统 SHALL 请求 GitHub `repos/mybolide/coding-tools-mcp/releases/latest`，读取 `tag_name` 与 `html_url`。
+1. WHEN 用户点击「检查更新」THEN 系统 SHALL 请求 GitHub `repos/lengsukq/coding-tools-mcp/releases/latest`，读取 `tag_name` 与 `html_url`。
 2. WHEN 最新 `tag_name` 语义化版本高于当前版本 THEN 系统 SHALL 提示有新版本并允许打开该 Release 页面。
 3. WHEN 最新版本等于或低于当前版本 THEN 系统 SHALL 提示已是最新或无需更新。
 4. IF 网络失败、非 2xx、JSON 无效或 `tag_name` 不可解析 THEN 系统 SHALL 返回可读错误，不得谎称已是最新。

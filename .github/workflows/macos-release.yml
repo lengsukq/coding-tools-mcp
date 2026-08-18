@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "可选：上传 DMG 到已存在的 Release，例如 v0.1.8"
+        description: "可选：上传 DMG 到已存在的 Release，例如 v0.2.1"
         required: false
         type: string
 
@@ -12,7 +12,36 @@ permissions:
   contents: read
 
 jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: 校验版本源与 Release 标签
+        id: version
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          npm run version:check
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_TAG="$RELEASE_TAG_INPUT"
+          if [[ -n "$RELEASE_TAG" && "$RELEASE_TAG" != "v${VERSION}" ]]; then
+            echo "Release 标签 ${RELEASE_TAG} 必须与项目版本 v${VERSION} 一致。"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
   build-universal-macos:
+    needs: verify-version
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +75,7 @@ jobs:
       - name: 上传 Actions 构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: coding-tools-mcp-${{ github.ref_name }}-macos-universal
+          name: coding-tools-mcp-${{ needs.verify-version.outputs.version }}-macos-universal
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
@@ -54,7 +83,9 @@ jobs:
 
   upload-release:
     if: ${{ inputs.release_tag != '' }}
-    needs: build-universal-macos
+    needs:
+      - verify-version
+      - build-universal-macos
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -62,14 +93,15 @@ jobs:
       - name: 下载 macOS 构建产物
         uses: actions/download-artifact@v4
         with:
-          name: coding-tools-mcp-${{ github.ref_name }}-macos-universal
+          name: coding-tools-mcp-${{ needs.verify-version.outputs.version }}-macos-universal
           path: dist/macos
 
       - name: 上传 DMG 到指定 Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ needs.verify-version.outputs.release_tag }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: >-
           gh release upload "$RELEASE_TAG" dist/macos/dmg/*.dmg
-          --repo "$GITHUB_REPOSITORY"
+          --repo "$RELEASE_REPOSITORY"
           --clobber

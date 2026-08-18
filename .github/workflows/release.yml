@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "要创建或更新的 Release 标签，例如 v0.1.22"
+        description: "要创建或更新的 Release 标签，例如 v0.2.1"
         required: true
         type: string
 
@@ -15,7 +15,36 @@ permissions:
   contents: write
 
 jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: 校验版本源与 Release 标签
+        id: version
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          npm run version:check
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_TAG="${RELEASE_TAG_INPUT:-$GITHUB_REF_NAME}"
+          if [[ "$RELEASE_TAG" != "v${VERSION}" ]]; then
+            echo "Release 标签 ${RELEASE_TAG} 必须与项目版本 v${VERSION} 一致。"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
   build-windows:
+    needs: verify-version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +81,7 @@ jobs:
           if-no-files-found: error
 
   build-universal-macos:
+    needs: verify-version
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +121,7 @@ jobs:
 
   publish-release:
     needs:
+      - verify-version
       - build-windows
       - build-universal-macos
     runs-on: ubuntu-latest
@@ -110,8 +141,10 @@ jobs:
       - name: 创建 Release 并上传安装包
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
-          name: Coding Tools MCP ${{ inputs.release_tag || github.ref_name }}
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ needs.verify-version.outputs.release_tag }}
+          name: Coding Tools MCP ${{ needs.verify-version.outputs.release_tag }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

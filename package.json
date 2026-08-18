@@ -1,8 +1,16 @@
 {
   "name": "coding-tools-mcp-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Coding Tools MCP desktop client",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lengsukq/coding-tools-mcp.git"
+  },
+  "homepage": "https://github.com/lengsukq/coding-tools-mcp",
+  "bugs": {
+    "url": "https://github.com/lengsukq/coding-tools-mcp/issues"
+  },
   "scripts": {
     "dev": "vite dev",
     "desktop": "tauri dev",
@@ -11,6 +19,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "version:set": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/check-version.mjs",
     "tauri": "tauri"
   },
   "license": "Apache-2.0",

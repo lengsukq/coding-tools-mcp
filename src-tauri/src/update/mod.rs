@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::settings::AppSettings;
 
-pub const REPO_URL: &str = "https://github.com/mybolide/coding-tools-mcp";
-pub const RELEASES_LATEST_URL: &str = "https://github.com/mybolide/coding-tools-mcp/releases/latest";
+pub const REPO_URL: &str = "https://github.com/lengsukq/coding-tools-mcp";
+pub const RELEASES_LATEST_URL: &str = "https://github.com/lengsukq/coding-tools-mcp/releases/latest";
 pub const RELEASES_API_URL: &str =
-    "https://api.github.com/repos/mybolide/coding-tools-mcp/releases/latest";
+    "https://api.github.com/repos/lengsukq/coding-tools-mcp/releases/latest";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,7 +189,7 @@ mod tests {
     fn parse_latest_detects_newer_release() {
         let body = r#"{
             "tag_name": "v0.1.99",
-            "html_url": "https://github.com/mybolide/coding-tools-mcp/releases/tag/v0.1.99"
+            "html_url": "https://github.com/lengsukq/coding-tools-mcp/releases/tag/v0.1.99"
         }"#;
         let result = parse_latest_release(body, "0.1.23").expect("parse");
         assert!(result.update_available);
@@ -202,7 +202,7 @@ mod tests {
     fn parse_latest_reports_up_to_date() {
         let body = r#"{
             "tag_name": "v0.1.23",
-            "html_url": "https://github.com/mybolide/coding-tools-mcp/releases/tag/v0.1.23"
+            "html_url": "https://github.com/lengsukq/coding-tools-mcp/releases/tag/v0.1.23"
         }"#;
         let result = parse_latest_release(body, "0.1.23").expect("parse");
         assert!(!result.update_available);
