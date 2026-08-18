@@ -23,7 +23,180 @@ Coding Tools MCP is a Rust + Tauri 2 desktop application. Select a project direc
 
 ![Coding Tools MCP workspace overview](docs/images/workspace-overview.png)
 
-*One desktop app manages workspaces, MCP services, connection details, and the session-recovery prompt.*
+*Current workspace overview: `coding-tools-mcp` is the active workspace, with MCP / Actions status, the project directory, and the session-recovery entry point visible.*
+
+## Feature overview: characteristics and advantages
+
+Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** AI development runtime: the desktop app manages projects and services, one tool runtime performs controlled operations, and MCP or GPT Actions provides the client-facing entry point.
+
+| Feature | Main characteristics | Practical advantages |
+| --- | --- | --- |
+| Workspace management | Each project has its own directory, name, ports, auth, and tunnel configuration | Clearer multi-project switching and less risk of sending a command or credential to the wrong project |
+| MCP tool runtime | Files, patches, commands, Git, images, Skills, and state management share one core | MCP and Actions behave consistently; policy, errors, and permissions do not drift by entry point |
+| GPT Actions | Exposes an OpenAPI Schema, privacy-policy URL, and authentication settings | Custom GPTs can use the same development capabilities when MCP Connector is unavailable |
+| Connectivity and public entry points | Local endpoints, Global Gateway, FRP, and Cloudflare Tunnel | The same workspace can serve local development and remote ChatGPT access |
+| Authentication | OAuth Authorization Code, PKCE S256, DCR, and Refresh Tokens, with Bearer and static-client compatibility | Modern OAuth flows are available without abandoning older clients or simple deployments |
+| Planning / Goal / Task | Direct, Plan, and Goal modes with one Execution Ledger | Complex work can be decomposed, resumed, verified, and handed off with less drift |
+| Conversation history | Lossless Markdown archives plus bounded state, search, pagination, and startup prompts | Context follows the repository instead of one chat window, without injecting every old message |
+| Logs and health checks | Inspect requests, endpoints, OAuth metadata, and connectivity results in the desktop app | Faster diagnosis of whether a problem is local service, tunnel, authentication, or client-side |
+| Workspace-first security | Read-only by default outside the workspace, protected Git assets, patch preflight, explicit dangerous-operation confirmation | Clear and controllable permissions make it suitable for real projects, not just demos |
+
+### Global Dashboard: see the whole system without opening a workspace
+
+The global Dashboard summarizes multiple workspaces in one control surface. It does not require opening a project first; it shows service availability, the recent workspace, MCP / Actions status, the workspace runtime matrix, and the current Planning focus.
+
+![Global Dashboard runtime overview](docs/images/dashboard-overview.png)
+
+*Health, the recent workspace, and each service's connection mode are visible together, making it easy to judge the overall runtime state.*
+
+The Dashboard also refreshes estimated token usage for the current application session and breaks it down by connection mode, AI Planning queue, and service token details. Token usage is estimated from local request sizes; request bodies are not stored.
+
+![Dashboard metrics, connection modes, AI Planning, and token usage](docs/images/dashboard-insights.png)
+
+*Workspace count, online services, pending acceptance, and token trends help developers understand system state and likely runtime cost before starting work.*
+
+### 1. Workspace management: turn a project into durable, identifiable context
+
+A workspace is the basic unit of Coding Tools MCP. It binds a local project directory and owns its service state, ports, authentication, public entry point, and conversation history. The desktop app can store multiple projects while always showing the active workspace name and path.
+
+**Characteristics**
+
+- The project directory is the source of truth; the workspace name is maintained separately from service configuration.
+- MCP, Actions, planning state, and conversation history are organized around the active workspace.
+- The sidebar switches projects quickly, while the overview page exposes service status at a glance.
+
+**Advantages**
+
+- Fewer mix-ups between directories, ports, and public URLs when working on multiple projects.
+- Every connection gives the AI an explicit project boundary, reducing the risk of running commands in the wrong repository.
+- Configuration remains available after restarting the desktop app.
+
+### 2. MCP tool runtime: one core for real development actions
+
+The Rust tool runtime provides file reading, search, patches, command execution, Git, images, Skills, and state management. MCP Streamable HTTP and GPT Actions do not maintain separate tool implementations; both enter the same dispatch path.
+
+**Characteristics**
+
+- Stable Tool API v2 uses aggregate entry points such as `history_manage`, `planning_manage`, and `task_manage`, while compatibility profiles remain available.
+- Files, commands, and patches pass through one set of path boundaries, command policies, confirmations, and error structures.
+- Patch operations support preflight checks and failure recovery to reduce partial writes.
+
+**Advantages**
+
+- Different clients receive the same tool behavior, lowering maintenance and compatibility risk.
+- The AI can complete the full loop from understanding code to editing files, running tests, and checking Git.
+- Permission decisions and failures are easier to explain, audit, and recover from.
+
+### 3. GPT Actions: keep a second path for custom GPTs
+
+In addition to MCP Connector, the desktop app can run a GPT Actions OpenAPI gateway. The Actions page exposes the OpenAPI Schema, privacy-policy URL, and authentication details for configuration through “Import from URL” in the GPT editor.
+
+**Characteristics**
+
+- MCP and Actions can run together for one workspace, with separate ports and public domains when needed.
+- Both entry points share the same tool runtime, workspace policy, and planning/history state.
+- None, API Key (Bearer), and OAuth can be selected to match the client’s capabilities.
+
+**Advantages**
+
+- Custom GPTs remain viable when a client does not support MCP Connector.
+- Switching entry points does not change the project permissions or execution boundaries.
+- OpenAPI, auth fields, and privacy-policy details are presented in one place and are easier to reproduce.
+
+### 4. Connectivity and public entry points: move from local debugging to remote development
+
+Every service keeps a local endpoint for development and health checks. When a remote AI client needs access, use a dedicated tunnel or route multiple workspaces through Global Gateway under `/w/<workspace-id>`.
+
+**Characteristics**
+
+- FRP and Cloudflare Tunnel are supported, with tunnel processes supervised by the desktop app.
+- Global Gateway can reuse one public entry point and route to different projects by workspace ID.
+- Stopping a service also disconnects its associated tunnel, reducing orphaned public processes.
+
+**Advantages**
+
+- Local development, LAN debugging, and remote ChatGPT access share the same workspace model.
+- Multiple projects do not each need a separately maintained public-infrastructure stack.
+- Endpoints, tunnels, and service states are visible together, making network debugging more direct.
+
+![Global Gateway shared public entry point](docs/images/global-gateway.png)
+
+*Global Gateway provides a shared entry point for multiple workspaces through `/w/<workspace-id>`, while FRP and Cloudflare remain available for independent tunnels.*
+
+### 5. OAuth and authentication: modern security with client compatibility
+
+MCP and Actions share one OAuth runtime with Authorization Code, PKCE S256, Dynamic Client Registration, and Refresh Tokens. Bearer auth and static Client ID / Secret remain available for older clients and simpler environments.
+
+**Characteristics**
+
+- Dynamic-registration clients can register themselves from the server metadata.
+- PKCE S256 reduces the value of an intercepted authorization code.
+- Access and Refresh Tokens are distinguished and bound to registered redirect URIs.
+
+**Advantages**
+
+- Modern clients can use a fuller OAuth flow with less manual credential copying.
+- Older clients have a clear compatibility path instead of requiring a one-time migration.
+- Auth settings and health checks live in the desktop app, making authorization failures easier to locate.
+
+### 6. Planning, Goals, and Tasks: keep complex work controlled and resumable
+
+The planning page separates goals, plans, and execution tasks. Direct suits small changes, Plan suits work that needs steps, and Goal suits long-running work with explicit acceptance criteria. The AI can create and maintain plans in conversation while the desktop app displays constraints, progress, and final acceptance records.
+
+![AI Planning and acceptance](docs/images/planning-overview.png)
+
+*The planning page shows the active execution mode, Goal / Plan state, pending acceptance count, and the Goal acceptance checklist together.*
+
+**Characteristics**
+
+- A Goal expresses the result and constraints, a Plan expresses the steps, and a Harness Task expresses a recoverable execution process.
+- Write operations can be required to bind to the active Goal and follow the active Plan.
+- The Execution Ledger projects the current step, last tool, errors, changed files, history checkpoint, and verification result in one place.
+
+**Advantages**
+
+- Large tasks do not depend only on chat context; work can resume from explicit state after a pause.
+- Planning, execution, and acceptance stay separate, adding control to high-risk changes without removing flexibility.
+- Developers can quickly see what is done, what remains, and whether the result has been verified.
+
+### 7. Conversation history: let context follow the repository
+
+Long-term project records live in `docs/history-session/`. Markdown archives preserve the full record, while `memory/state.json` and `memory/manifest.json` provide bounded current state and indexes. A new conversation can recover the needed context through startup prompts, search, and paginated reads.
+
+**Characteristics**
+
+- Supports initialization, checkpoints, validation, search, and lossless paginated reads.
+- The current conversation can be recorded by default; older conversations are selected explicitly in the workspace panel.
+- Only bounded snapshots and selected excerpts are injected instead of the entire history.
+
+**Advantages**
+
+- Project history can be backed up, reviewed, and committed without being locked to one chat platform.
+- A new agent gets the current state quickly and reads older decisions only when needed, saving context and time.
+- Important changes, tests, risks, and next steps become a traceable handoff record.
+
+### 8. Logs, health checks, and security boundaries: make failures visible and permissions explicit
+
+The desktop app exposes service logs, endpoint checks, OAuth metadata checks, and runtime status. The unified tool runtime applies workspace paths, command policies, repository protection, and dangerous-operation confirmations through one Policy layer.
+
+Global settings also bring together the application version and Releases links, UI-memory release, the global Agent Runtime, startup restoration of running services, and LAN-access controls. Network-exposure options are off by default and explain their impact when enabled.
+
+![General settings and Agent Runtime](docs/images/settings-general.png)
+
+*General settings combine update links, WebView memory management, runtime-state restoration, LAN access, and the global executable PATH.*
+
+**Characteristics**
+
+- Reads, writes, and execution are allowed inside the workspace according to policy; outside the workspace is read-only by default.
+- `.git`, `.github`, and other repository assets receive extra protection; dangerous operations require explicit confirmation.
+- Health checks report local service, public entry point, and authentication metadata separately.
+- Windows currently uses a `policy_only` execution boundary; the project does not present static policy as a full OS sandbox.
+
+**Advantages**
+
+- AI capabilities can approach a real development workflow while keeping the least-privilege scope explicit.
+- Connection, authorization, and tool-call failures have clear diagnostic entry points.
+- Security boundaries are stated honestly, making it easier to add system-level isolation where deployment requires it.
 
 ## Understand the workflow in 30 seconds
 
