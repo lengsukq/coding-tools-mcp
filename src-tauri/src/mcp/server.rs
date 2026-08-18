@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::agent_context::{render_skill_catalog, SkillEntry};
+use crate::agent_context::{render_skill_catalog, AgentContextRuntimeConfig};
 
 use crate::tools::{
     call_tool, list_tools_for_profile, wrap_mcp_tool_result, SharedToolContext, ToolContext,
@@ -42,16 +42,18 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
 }
 
 fn initialize_result(state: &SharedState) -> Value {
-    let base_instructions = "Use these tools only for local coding operations inside the configured workspace. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
-    let configured = if state.ai_instructions.trim().is_empty() {
+    let base_instructions = "Use these tools only for local coding operations inside the configured workspace. Planning mode is controlled exclusively by the desktop app: every tool response may contain planning_context with the authoritative current mode, revision, focused Goal, and focused Plan. Never assume or attempt to change the mode from chat. Goal and Plan records are AI-driven conversation artifacts: when a user request benefits from durable tracking, create_goal and create_plan may be called directly from the conversation without asking the user to fill desktop forms or approve a proposal first. Keep their criteria and steps updated as work progresses. When the work is ready for acceptance, call request_goal_review and/or request_plan_review with a concise verification summary. Never archive or claim final acceptance yourself; only the human desktop review action can accept and archive. If a review is rejected, continue from the reactivated Goal/Plan and incorporate the human feedback. In Plan mode, project writes and command execution are intentionally blocked by the server. In Goal mode, project mutations require an active focused Goal and must respect any focused Plan relationship/status. If the client reports missing tools while server authorization is still valid, treat it as a capability discovery mismatch rather than a permission loss: refresh the MCP session/tool list before requesting permissions. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
+    let current_ai_instructions = state.current_ai_instructions();
+    let configured = if current_ai_instructions.trim().is_empty() {
         String::new()
     } else {
         format!(
             "Configured agent instructions (global, workspace, repository sources):\n{}",
-            state.ai_instructions.trim()
+            current_ai_instructions.trim()
         )
     };
-    let skill_catalog = render_skill_catalog(&state.skills);
+    let current_skills = state.current_skills();
+    let skill_catalog = render_skill_catalog(&current_skills);
     let instructions = [base_instructions, configured.as_str(), skill_catalog.as_str()]
         .into_iter()
         .filter(|value| !value.trim().is_empty())
@@ -123,7 +125,7 @@ pub fn new_state(
     permission_mode: String,
     executable_paths: Vec<std::path::PathBuf>,
     ai_instructions: String,
-    skills: Vec<SkillEntry>,
+    agent_context: AgentContextRuntimeConfig,
 ) -> SharedState {
     Arc::new(
         ToolContext::from_workspace(
@@ -134,7 +136,7 @@ pub fn new_state(
             permission_mode,
         )
         .with_agent_runtime(executable_paths, ai_instructions)
-        .with_skills(skills),
+        .with_agent_context(agent_context),
     )
 }
 
@@ -183,6 +185,8 @@ mod tests {
         assert!(instructions.contains("not automatic background persistence"));
         assert!(instructions.contains("do not request a separate permission grant"));
         assert!(instructions.contains("confirm=true"));
+        assert!(instructions.contains("planning_context"));
+        assert!(instructions.contains("controlled exclusively by the desktop app"));
     }
 
     #[test]

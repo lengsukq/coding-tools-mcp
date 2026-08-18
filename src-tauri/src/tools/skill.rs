@@ -4,9 +4,10 @@ use crate::tools::context::ToolContext;
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 
 pub fn list_skills(ctx: &ToolContext, _args: &Value) -> Result<Value, WorkspaceError> {
+    let skills = ctx.current_skills();
     Ok(tool_ok(json!({
-        "skills": ctx.skills.iter().map(|skill| &skill.descriptor).collect::<Vec<_>>(),
-        "count": ctx.skills.len()
+        "skills": skills.iter().map(|skill| &skill.descriptor).collect::<Vec<_>>(),
+        "count": skills.len()
     })))
 }
 
@@ -16,14 +17,15 @@ pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceErro
     if id.is_none() && name.is_none() {
         return Err(WorkspaceError::invalid_argument("id or name is required"));
     }
-    let matches = ctx.skills.iter().filter(|skill| {
+    let skills = ctx.current_skills();
+    let matches = skills.iter().filter(|skill| {
         id.is_some_and(|value| skill.descriptor.id == value)
             || name.is_some_and(|value| skill.descriptor.name.eq_ignore_ascii_case(value))
     }).collect::<Vec<_>>();
     match matches.as_slice() {
         [] => Err(WorkspaceError::Tool {
             code: "SKILL_NOT_FOUND",
-            message: "Skill not found in enabled providers".into(),
+            message: "Skill not found in discovered agent sources".into(),
             category: "runtime",
             retryable: false,
         }),
@@ -46,7 +48,7 @@ pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_context::{SkillDescriptor, SkillEntry};
+    use crate::agent_context::{AgentContextRuntimeConfig, SkillDescriptor, SkillEntry};
     use crate::tools::ToolContext;
 
     #[test]
@@ -68,5 +70,34 @@ mod tests {
             }]);
         let result = get_skill(&ctx, &json!({"name":"release"})).expect("skill");
         assert_eq!(result["content"], "Run tests first.");
+    }
+
+    #[test]
+    fn list_skills_refreshes_files_created_after_context_initialization() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let harness = tempfile::tempdir().expect("harness");
+        let ctx = ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+            .expect("context")
+            .with_agent_context(AgentContextRuntimeConfig {
+                instruction_sources: vec!["codex".into()],
+                skill_sources: vec!["custom".into()],
+                custom_instruction_paths: String::new(),
+                custom_skill_paths: ".agents/skills".into(),
+            });
+
+        let empty = list_skills(&ctx, &json!({})).expect("empty skills");
+        assert_eq!(empty["count"], 0);
+
+        let skill_dir = workspace.path().join(".agents/skills/live-refresh");
+        std::fs::create_dir_all(&skill_dir).expect("skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: live-refresh\ndescription: Refresh after startup\n---\nFresh body.",
+        )
+        .expect("skill");
+
+        let refreshed = list_skills(&ctx, &json!({})).expect("refreshed skills");
+        assert_eq!(refreshed["count"], 1);
+        assert_eq!(refreshed["skills"][0]["name"], "live-refresh");
     }
 }

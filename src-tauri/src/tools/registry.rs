@@ -66,6 +66,70 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
         false,
     ),
     (
+        "planning_state",
+        "Planning state",
+        "Return project-local Goal and Plan state stored inside the configured workspace.",
+        true,
+        false,
+        false,
+    ),
+    (
+        "capability_health_check",
+        "Capability health check",
+        "Check MCP authentication, workspace access, and exposed tool capability state to distinguish capability mismatch from permission problems.",
+        true,
+        false,
+        false,
+    ),
+    (
+        "create_goal",
+        "Create goal",
+        "AI conversation workflow: create and focus a durable project Goal when the user's request benefits from an explicit objective, success criteria, and constraints. No pre-approval is required.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "update_goal",
+        "Update goal",
+        "Update Goal status, focus, constraints, or completed success criteria.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "create_plan",
+        "Create plan",
+        "AI conversation workflow: create, activate, and focus a durable project Plan, optionally linked to a Goal. No pre-approval is required.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "update_plan",
+        "Update plan",
+        "Update Plan status, focus, and individual step progress.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "request_goal_review",
+        "Request goal review",
+        "Submit a completed Goal to the desktop app for human acceptance. This does not archive the Goal; only the human UI can accept and archive it.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "request_plan_review",
+        "Request plan review",
+        "Submit a completed Plan to the desktop app for human acceptance. This does not archive the Plan; only the human UI can accept and archive it.",
+        false,
+        false,
+        false,
+    ),
+    (
         "project_state",
         "Project state",
         "Return the current project, task, change, and verification state.",
@@ -339,6 +403,13 @@ pub const CORE_TOOLS: &[&str] = &[
     "history_session_validate",
     "history_session_search",
     "history_session_read",
+    "planning_state",
+    "create_goal",
+    "update_goal",
+    "create_plan",
+    "update_plan",
+    "request_goal_review",
+    "request_plan_review",
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
@@ -365,6 +436,7 @@ pub const CORE_TOOLS: &[&str] = &[
 
 pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "server_info",
+    "planning_state",
     "check_exec_environment",
     "get_default_cwd",
     "list_skills",
@@ -394,6 +466,13 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "history_session_validate",
     "history_session_search",
     "history_session_read",
+    "planning_state",
+    "create_goal",
+    "update_goal",
+    "create_plan",
+    "update_plan",
+    "request_goal_review",
+    "request_plan_review",
     "check_exec_environment",
     "exec_health_check",
     "get_default_cwd",
@@ -434,6 +513,12 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "history_session_bootstrap",
     "history_session_checkpoint",
     "history_session_validate",
+    "create_goal",
+    "update_goal",
+    "create_plan",
+    "update_plan",
+    "request_goal_review",
+    "request_plan_review",
     "apply_patch",
     "exec_command",
     "write_stdin",
@@ -452,6 +537,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "server_info",
     "history_session_search",
     "history_session_read",
+    "planning_state",
     "check_exec_environment",
     "exec_health_check",
     "get_default_cwd",
@@ -632,6 +718,88 @@ pub fn input_schema(name: &str) -> Value {
                 "max_bytes": { "type": "integer", "minimum": 1, "maximum": 65536, "default": 32768 },
                 "expected_hash": { "type": "string", "minLength": 64, "maxLength": 64 }
             },
+            "additionalProperties": false
+        }),
+        "planning_state" => json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        "create_goal" => json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "objective": { "type": "string", "minLength": 1 },
+                "success_criteria": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            },
+            "required": ["title", "objective"],
+            "additionalProperties": false
+        }),
+        "update_goal" => json!({
+            "type": "object",
+            "properties": {
+                "goal_id": { "type": "string", "minLength": 1 },
+                "title": { "type": "string", "minLength": 1 },
+                "objective": { "type": "string", "minLength": 1 },
+                "status": { "type": "string", "enum": ["active", "paused", "cancelled"] },
+                "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                "completed_criteria_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                "focus": { "type": "boolean" }
+            },
+            "required": ["goal_id"],
+            "additionalProperties": false
+        }),
+        "create_plan" => json!({
+            "type": "object",
+            "properties": {
+                "goal_id": { "type": "string", "minLength": 1 },
+                "title": { "type": "string", "minLength": 1 },
+                "objective": { "type": "string", "minLength": 1 },
+                "steps": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            },
+            "required": ["title", "objective"],
+            "additionalProperties": false
+        }),
+        "update_plan" => json!({
+            "type": "object",
+            "properties": {
+                "plan_id": { "type": "string", "minLength": 1 },
+                "status": { "type": "string", "enum": ["draft", "active", "paused", "cancelled"] },
+                "focus": { "type": "boolean" },
+                "step_updates": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step_id": { "type": "string", "minLength": 1 },
+                            "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "blocked", "skipped"] },
+                            "notes": { "type": "string" }
+                        },
+                        "required": ["step_id", "status"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["plan_id"],
+            "additionalProperties": false
+        }),
+        "request_goal_review" => json!({
+            "type": "object",
+            "properties": {
+                "goal_id": { "type": "string", "minLength": 1 },
+                "summary": { "type": "string", "minLength": 1 }
+            },
+            "required": ["goal_id", "summary"],
+            "additionalProperties": false
+        }),
+        "request_plan_review" => json!({
+            "type": "object",
+            "properties": {
+                "plan_id": { "type": "string", "minLength": 1 },
+                "summary": { "type": "string", "minLength": 1 }
+            },
+            "required": ["plan_id", "summary"],
             "additionalProperties": false
         }),
         "harness_status" => json!({
@@ -979,13 +1147,21 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 27);
+        assert_eq!(tools.len(), 34);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
         assert!(names.contains(&"history_session_validate"));
         assert!(names.contains(&"history_session_search"));
         assert!(names.contains(&"history_session_read"));
+        assert!(names.contains(&"planning_state"));
+        assert!(names.contains(&"create_goal"));
+        assert!(names.contains(&"update_goal"));
+        assert!(names.contains(&"create_plan"));
+        assert!(names.contains(&"update_plan"));
+        assert!(names.contains(&"request_goal_review"));
+        assert!(names.contains(&"request_plan_review"));
+        assert!(!names.contains(&"set_planning_mode"));
         assert!(names.contains(&"grep_text"));
         assert!(!names.contains(&"grep"));
         assert!(!names.contains(&"request_permissions"));

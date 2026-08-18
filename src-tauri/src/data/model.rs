@@ -31,6 +31,12 @@ pub struct AppData {
     #[serde(default)]
     pub allow_lan_access: bool,
     #[serde(default)]
+    pub restore_runtime_state_on_launch: bool,
+    #[serde(default)]
+    pub restore_mcp_workspace_ids: Vec<String>,
+    #[serde(default)]
+    pub restore_actions_workspace_ids: Vec<String>,
+    #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
     #[serde(default)]
     pub shared_secrets: HashMap<String, String>,

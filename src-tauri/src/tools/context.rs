@@ -2,7 +2,10 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::agent_context::SkillEntry;
+use crate::agent_context::{
+    discover_instructions, discover_skills, render_instruction_documents, AgentContextRuntimeConfig,
+    SkillEntry,
+};
 use crate::harness::Harness;
 use crate::tools::policy::PolicySettings;
 use crate::tools::session::SessionStore;
@@ -18,6 +21,7 @@ pub struct ToolContext {
     pub executable_paths: Vec<PathBuf>,
     pub ai_instructions: String,
     pub skills: Vec<SkillEntry>,
+    pub agent_context: Option<AgentContextRuntimeConfig>,
     pub harness: Harness,
     default_cwd: Mutex<PathBuf>,
     pub sessions: Arc<SessionStore>,
@@ -68,6 +72,8 @@ impl ToolContext {
         harness_root: PathBuf,
     ) -> Self {
         let root = workspace.root().to_path_buf();
+        let sessions = Arc::new(SessionStore::new());
+        crate::tools::session::register_workspace_session_store(&root, &sessions);
         Self {
             workspace,
             auth,
@@ -77,9 +83,10 @@ impl ToolContext {
             executable_paths: Vec::new(),
             ai_instructions: String::new(),
             skills: Vec::new(),
+            agent_context: None,
             harness: Harness::new(root.clone(), harness_root).expect("无法初始化 Harness"),
             default_cwd: Mutex::new(root),
-            sessions: Arc::new(SessionStore::new()),
+            sessions,
         }
     }
 
@@ -111,6 +118,37 @@ impl ToolContext {
     pub fn with_skills(mut self, skills: Vec<SkillEntry>) -> Self {
         self.skills = skills;
         self
+    }
+
+    pub fn with_agent_context(mut self, config: AgentContextRuntimeConfig) -> Self {
+        self.agent_context = Some(config);
+        self
+    }
+
+    pub fn current_ai_instructions(&self) -> String {
+        let Some(config) = &self.agent_context else {
+            return self.ai_instructions.clone();
+        };
+        let repository_instructions = discover_instructions(
+            self.workspace.root(),
+            &config.instruction_sources,
+            &config.custom_instruction_paths,
+        );
+        merge_ai_instructions(
+            &self.ai_instructions,
+            &render_instruction_documents(&repository_instructions),
+        )
+    }
+
+    pub fn current_skills(&self) -> Vec<SkillEntry> {
+        let Some(config) = &self.agent_context else {
+            return self.skills.clone();
+        };
+        discover_skills(
+            self.workspace.root(),
+            &config.skill_sources,
+            &config.custom_skill_paths,
+        )
     }
 
     pub fn executable_path_env(&self) -> Option<OsString> {

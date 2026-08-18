@@ -136,6 +136,13 @@ pub struct AppSettings {
     /// Defaults to false so services remain loopback-only unless explicitly enabled.
     #[serde(default)]
     pub allow_lan_access: bool,
+    /// Restore the MCP / Actions services that were running in the previous app session.
+    #[serde(default)]
+    pub restore_runtime_state_on_launch: bool,
+    #[serde(default)]
+    pub restore_mcp_workspace_ids: Vec<String>,
+    #[serde(default)]
+    pub restore_actions_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
@@ -181,6 +188,9 @@ impl AppSettings {
             global_custom_instruction_paths: data.global_custom_instruction_paths.clone(),
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
             allow_lan_access: data.allow_lan_access,
+            restore_runtime_state_on_launch: data.restore_runtime_state_on_launch,
+            restore_mcp_workspace_ids: data.restore_mcp_workspace_ids.clone(),
+            restore_actions_workspace_ids: data.restore_actions_workspace_ids.clone(),
             global_gateway: data.global_gateway.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
@@ -200,6 +210,9 @@ impl AppSettings {
         data.global_custom_instruction_paths = self.global_custom_instruction_paths.clone();
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
         data.allow_lan_access = self.allow_lan_access;
+        data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;
+        data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();
+        data.restore_actions_workspace_ids = self.restore_actions_workspace_ids.clone();
         data.global_gateway = self.global_gateway.clone();
         data.shared_secrets = self.shared_secrets.clone();
         data.workspace_secrets = self.workspace_secrets.clone();

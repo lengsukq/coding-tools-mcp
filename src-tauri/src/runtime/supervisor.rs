@@ -51,6 +51,20 @@ impl RuntimeSupervisor {
         self.status(profile, ServiceKind::Mcp)
     }
 
+    pub fn running_workspace_ids(&self, kind: ServiceKind) -> Vec<String> {
+        let mut ids = self
+            .entries
+            .iter()
+            .filter_map(|((workspace_id, entry_kind), entry)| {
+                (*entry_kind == kind && matches!(entry.phase, RuntimePhase::Running | RuntimePhase::Starting))
+                    .then(|| workspace_id.clone())
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     pub fn actions_status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
         self.status(profile, ServiceKind::Actions)
     }

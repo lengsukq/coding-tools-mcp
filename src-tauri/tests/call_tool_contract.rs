@@ -208,7 +208,7 @@ fn core_profile_keeps_the_default_capabilities_and_adds_history_tools() {
         .filter(|name| *name != "request_permissions")
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 27);
+    assert_eq!(names.len(), 32);
     assert!(!names.contains("request_permissions"));
     assert!(names.contains("grep_text"));
     assert!(names.contains("history_session_bootstrap"));
@@ -216,6 +216,12 @@ fn core_profile_keeps_the_default_capabilities_and_adds_history_tools() {
     assert!(names.contains("history_session_validate"));
     assert!(names.contains("history_session_search"));
     assert!(names.contains("history_session_read"));
+    assert!(names.contains("planning_state"));
+    assert!(names.contains("create_goal"));
+    assert!(names.contains("update_goal"));
+    assert!(names.contains("create_plan"));
+    assert!(names.contains("update_plan"));
+    assert!(!names.contains("set_planning_mode"));
     assert!(!names.contains("harness_status"));
     assert!(!names.contains("start_task"));
 }

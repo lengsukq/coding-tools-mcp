@@ -19,9 +19,7 @@ use crate::auth::{
     verify_bearer_header, verify_oauth_bearer_header, AuthorizeForm, AuthorizeParams, OAuthRuntime,
     TokenForm,
 };
-use crate::agent_context::{
-    discover_instructions, discover_skills, merge_source_lists, render_instruction_documents,
-};
+use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::mcp::server::{handle_request, new_state, SharedState};
 use crate::local_network;
 use crate::secret::SecretStore;
@@ -91,20 +89,16 @@ pub fn spawn_listener(
         &global.global_custom_skill_paths,
         &runtime.custom_skill_paths,
     );
-    let repository_instructions = discover_instructions(
-        workspace.root(),
-        &instruction_sources,
-        &instruction_paths,
-    );
-    let skills = discover_skills(workspace.root(), &skill_sources, &skill_paths);
     let manual_instructions = merge_ai_instructions(
         &global.global_ai_instructions,
         &runtime.ai_instructions,
     );
-    let ai_instructions = merge_ai_instructions(
-        &manual_instructions,
-        &render_instruction_documents(&repository_instructions),
-    );
+    let agent_context = AgentContextRuntimeConfig {
+        instruction_sources,
+        skill_sources,
+        custom_instruction_paths: instruction_paths,
+        custom_skill_paths: skill_paths,
+    };
     let mcp = new_state(
         workspace,
         auth.clone(),
@@ -112,8 +106,8 @@ pub fn spawn_listener(
         runtime.tool_profile.clone(),
         runtime.permission_mode.clone(),
         executable_paths,
-        ai_instructions,
-        skills,
+        manual_instructions,
+        agent_context,
     );
     let bearer_token = if auth.bearer_enabled() {
         let key = "bearer_token";

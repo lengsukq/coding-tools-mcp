@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 use crate::data::DataStore;
@@ -7,6 +8,7 @@ use crate::runtime::RuntimeSupervisor;
 pub struct AppState {
     pub data: Mutex<DataStore>,
     pub runtime: Mutex<RuntimeSupervisor>,
+    pub startup_restore_attempted: AtomicBool,
 }
 
 impl AppState {
@@ -16,6 +18,7 @@ impl AppState {
         Ok(Self {
             data: Mutex::new(store),
             runtime: Mutex::new(RuntimeSupervisor::default()),
+            startup_restore_attempted: AtomicBool::new(false),
         })
     }
 

@@ -1,6 +1,9 @@
 use tauri::State;
 
-use crate::agent_context::{discover, merge_source_lists, AgentContextSnapshot};
+use crate::agent_context::{
+    discover, merge_source_lists, scan_global_agent_context as discover_global_agent_context,
+    AgentContextSnapshot, GlobalAgentContextScan,
+};
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
 
@@ -39,6 +42,11 @@ pub fn scan_agent_context(
         &instruction_paths,
         &skill_paths,
     ))
+}
+
+#[tauri::command]
+pub fn scan_global_agent_context() -> GlobalAgentContextScan {
+    discover_global_agent_context()
 }
 
 fn merge_text(global: &str, workspace: &str) -> String {

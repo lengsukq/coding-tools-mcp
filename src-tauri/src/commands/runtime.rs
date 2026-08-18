@@ -1,6 +1,7 @@
 use tauri::State;
 
 use std::sync::LazyLock;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::Mutex as AsyncMutex;
@@ -22,6 +23,31 @@ use crate::workspace::RuntimeStatusDto;
 /// Serialize MCP/Actions restarts so secret-save and form-save cannot tear down
 /// the same listener concurrently (that race could abort the process on Windows).
 static RESTART_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
+
+fn remember_runtime_state(
+    state: &AppState,
+    id: &str,
+    kind: ServiceKind,
+    running: bool,
+) -> AppResult<()> {
+    state.with_settings(|store| {
+        let mut settings = store.settings();
+        let ids = match kind {
+            ServiceKind::Mcp => &mut settings.restore_mcp_workspace_ids,
+            ServiceKind::Actions => &mut settings.restore_actions_workspace_ids,
+        };
+
+        if running {
+            if !ids.iter().any(|workspace_id| workspace_id == id) {
+                ids.push(id.to_string());
+                ids.sort();
+            }
+        } else {
+            ids.retain(|workspace_id| workspace_id != id);
+        }
+        store.update_settings(settings)
+    })
+}
 
 fn profile_by_id(state: &AppState, id: &str) -> AppResult<crate::workspace::WorkspaceProfile> {
     state.with_workspaces(|store| {
@@ -215,12 +241,18 @@ pub(crate) async fn restart_actions_by_id(
 
 #[tauri::command]
 pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    start_mcp_service(&state, &id).await
+    let status = start_mcp_service(&state, &id).await?;
+    if status.state == "running" || status.state == "starting" {
+        remember_runtime_state(&state, &id, ServiceKind::Mcp, true)?;
+    }
+    Ok(status)
 }
 
 #[tauri::command]
 pub async fn stop_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    stop_mcp_service(&state, &id).await
+    let status = stop_mcp_service(&state, &id).await?;
+    remember_runtime_state(&state, &id, ServiceKind::Mcp, false)?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -237,7 +269,11 @@ pub async fn start_actions_runtime(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<RuntimeStatusDto> {
-    start_actions_service(&state, &id).await
+    let status = start_actions_service(&state, &id).await?;
+    if status.state == "running" || status.state == "starting" {
+        remember_runtime_state(&state, &id, ServiceKind::Actions, true)?;
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -245,7 +281,9 @@ pub async fn stop_actions_runtime(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<RuntimeStatusDto> {
-    stop_actions_service(&state, &id).await
+    let status = stop_actions_service(&state, &id).await?;
+    remember_runtime_state(&state, &id, ServiceKind::Actions, false)?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -274,4 +312,39 @@ pub async fn restart_actions_runtime(
     id: String,
 ) -> AppResult<RuntimeStatusDto> {
     restart_actions_by_id(&state, &id).await
+}
+
+#[tauri::command]
+pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> {
+    if state
+        .startup_restore_attempted
+        .swap(true, Ordering::SeqCst)
+    {
+        return Ok(());
+    }
+
+    let settings = state.with_settings(|store| Ok(store.settings()))?;
+    if !settings.restore_runtime_state_on_launch {
+        return Ok(());
+    }
+
+    for id in settings.restore_mcp_workspace_ids {
+        if profile_by_id(&state, &id).is_err() {
+            continue;
+        }
+        if let Err(error) = start_mcp_service(&state, &id).await {
+            eprintln!("failed to restore MCP runtime for {id}: {error}");
+        }
+    }
+
+    for id in settings.restore_actions_workspace_ids {
+        if profile_by_id(&state, &id).is_err() {
+            continue;
+        }
+        if let Err(error) = start_actions_service(&state, &id).await {
+            eprintln!("failed to restore Actions runtime for {id}: {error}");
+        }
+    }
+
+    Ok(())
 }
