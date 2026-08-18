@@ -116,6 +116,25 @@ pub struct ExecutionCheckpoint {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExecutionLedger {
+    pub goal_id: Option<String>,
+    pub plan_id: Option<String>,
+    pub step_id: Option<String>,
+    pub task_id: Option<String>,
+    pub last_tool: Option<String>,
+    #[serde(default)]
+    pub state: String,
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    pub history_checkpoint_ref: Option<String>,
+    #[serde(default)]
+    pub verification: Vec<String>,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanStep {
     pub id: String,
@@ -163,6 +182,8 @@ pub struct PlanningState {
     pub goals: Vec<Goal>,
     #[serde(default)]
     pub plans: Vec<Plan>,
+    #[serde(default)]
+    pub execution: ExecutionLedger,
 }
 
 impl Default for PlanningState {
@@ -176,6 +197,7 @@ impl Default for PlanningState {
             proposals: Vec::new(),
             goals: Vec::new(),
             plans: Vec::new(),
+            execution: ExecutionLedger::default(),
         }
     }
 }

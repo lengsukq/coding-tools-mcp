@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+pub const TOOL_API_VERSION: &str = "2";
+
 pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "harness_status",
@@ -22,6 +24,30 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
         "Server info",
         "Return server, workspace, auth, profile, and exposed-tool metadata.",
         true,
+        false,
+        false,
+    ),
+    (
+        "history_manage",
+        "History manager",
+        "Stable Tool API v2 entry point for history bootstrap, checkpoint, validation, search, and bounded reads.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "planning_manage",
+        "Planning manager",
+        "Stable Tool API v2 entry point for Goal and Plan state, lifecycle updates, and review requests.",
+        false,
+        false,
+        false,
+    ),
+    (
+        "task_manage",
+        "Task manager",
+        "Stable Tool API v2 entry point for durable task state, lifecycle, events, and change summaries.",
+        false,
         false,
         false,
     ),
@@ -395,9 +421,118 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     ),
 ];
 
-/// old Python 版本默认提供的核心工具集。默认 MCP 只暴露这一组，保持 Agent 的工具面稳定。
+pub fn tool_api_descriptor() -> Value {
+    json!({
+        "version": TOOL_API_VERSION,
+        "profile": "stable-aggregate",
+        "aggregate_tools": ["history_manage", "planning_manage", "task_manage"],
+        "legacy_compatibility": true
+    })
+}
+
+fn history_manage_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "type": "string", "enum": ["bootstrap", "checkpoint", "validate", "search", "read"] },
+            "workspace_root": { "type": "string", "minLength": 1 },
+            "session_key": { "type": "string", "minLength": 1 },
+            "expected_path": { "type": "string", "minLength": 1 },
+            "history_dir": { "type": "string", "default": "docs/history-session" },
+            "title": { "type": "string" },
+            "initial_user_input": { "type": "string" },
+            "create_if_missing": { "type": "boolean", "default": true },
+            "turn_id": { "type": "string", "minLength": 1 },
+            "timestamp": { "type": "string" },
+            "user_intent": { "type": "string" },
+            "raw_user_input": { "type": "string" },
+            "findings": { "type": "array", "items": { "type": "string" } },
+            "decisions": { "type": "array", "items": { "type": "string" } },
+            "files_changed": { "type": "array", "items": { "type": "string" } },
+            "tests": { "type": "array", "items": { "type": "string" } },
+            "runtime_state": { "type": "array", "items": { "type": "string" } },
+            "remaining_issues": { "type": "array", "items": { "type": "string" } },
+            "next_actions": { "type": "array", "items": { "type": "string" } },
+            "notes": { "type": "string" },
+            "repair": { "type": "boolean", "default": false },
+            "query": { "type": "string", "default": "" },
+            "cursor": { "type": "integer", "minimum": 0, "default": 0 },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "number": { "type": "integer", "minimum": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "max_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+            "expected_hash": { "type": "string", "minLength": 64, "maxLength": 64 }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+
+fn planning_manage_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "type": "string", "enum": ["state", "create_goal", "update_goal", "create_plan", "update_plan", "request_goal_review", "request_plan_review"] },
+            "goal_id": { "type": "string", "minLength": 1 },
+            "plan_id": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1 },
+            "objective": { "type": "string", "minLength": 1 },
+            "success_criteria": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "completed_criteria_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "status": { "type": "string", "enum": ["draft", "active", "paused", "cancelled"] },
+            "focus": { "type": "boolean" },
+            "steps": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "step_updates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step_id": { "type": "string", "minLength": 1 },
+                        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "blocked", "skipped"] },
+                        "notes": { "type": "string" }
+                    },
+                    "required": ["step_id", "status"],
+                    "additionalProperties": false
+                }
+            },
+            "summary": { "type": "string", "minLength": 1 }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+
+fn task_manage_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "type": "string", "enum": ["status", "operation_log", "project_state", "start", "update", "pause", "resume", "finish", "context", "events", "change_summary"] },
+            "task_id": { "type": "string", "minLength": 1 },
+            "objective": { "type": "string", "minLength": 1 },
+            "completed_steps": { "type": "array", "items": { "type": "string" } },
+            "pending_steps": { "type": "array", "items": { "type": "string" } },
+            "summary": { "type": "string" },
+            "allow_unverified": { "type": "boolean", "default": false },
+            "cursor": { "type": "integer", "minimum": 0, "default": 0 },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+            "max_files": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 200 },
+            "max_bytes": { "type": "integer", "minimum": 8192, "maximum": 131072, "default": 32768 },
+            "change_id": { "type": "string" }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+
+/// Legacy-compatible core surface. It keeps lifecycle-specific tool names while
+/// also exposing the Stable Tool API v2 managers so MCP and Actions can migrate
+/// without a flag day.
 pub const CORE_TOOLS: &[&str] = &[
     "server_info",
+    "history_manage",
+    "planning_manage",
+    "task_manage",
     "history_session_bootstrap",
     "history_session_checkpoint",
     "history_session_validate",
@@ -435,16 +570,14 @@ pub const CORE_TOOLS: &[&str] = &[
     "view_image",
 ];
 
-/// Compact default surface: keep the tools needed for ordinary development and
-/// history lookup, while moving planning, skills, harness, and permission helpers
-/// to the explicit legacy/advanced profiles.
+/// Compact default surface: keep ordinary development tools plus the Stable Tool
+/// API v2 managers while moving lifecycle-specific compatibility tools, skills,
+/// harness internals, and permission helpers to legacy/advanced profiles.
 pub const COMPACT_TOOLS: &[&str] = &[
     "server_info",
-    "history_session_bootstrap",
-    "history_session_checkpoint",
-    "history_session_validate",
-    "history_session_search",
-    "history_session_read",
+    "history_manage",
+    "planning_manage",
+    "task_manage",
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
@@ -494,6 +627,9 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "harness_status",
     "operation_log",
     "server_info",
+    "history_manage",
+    "planning_manage",
+    "task_manage",
     "history_session_bootstrap",
     "history_session_checkpoint",
     "history_session_validate",
@@ -544,6 +680,9 @@ pub const ALLOWED_TOOLS: &[&str] = &[
 ];
 
 pub const MUTATING_TOOLS: &[&str] = &[
+    "history_manage",
+    "planning_manage",
+    "task_manage",
     "history_session_bootstrap",
     "history_session_checkpoint",
     "history_session_validate",
@@ -645,6 +784,9 @@ pub fn list_tools() -> Vec<Value> {
 fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
     match name {
         "server_info" => "Return compact server and workspace metadata.",
+        "history_manage" => "Manage project history through one stable action-based API.",
+        "planning_manage" => "Manage Goal and Plan state through one stable action-based API.",
+        "task_manage" => "Manage durable task state through one stable action-based API.",
         "history_session_bootstrap" => "Create or resume a history archive when explicitly requested; returns bounded metadata only.",
         "history_session_checkpoint" => "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization.",
         "history_session_validate" => "Validate or rebuild history indexes without deleting archives.",
@@ -697,6 +839,9 @@ pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
 
 pub fn input_schema(name: &str) -> Value {
     match name {
+        "history_manage" => history_manage_schema(),
+        "planning_manage" => planning_manage_schema(),
+        "task_manage" => task_manage_schema(),
         "list_skills" => json!({
             "type": "object",
             "properties": {},
@@ -1194,7 +1339,7 @@ pub fn input_schema(name: &str) -> Value {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{input_schema, list_tools_for_profile};
+    use super::{input_schema, list_tools_for_profile, tool_api_descriptor};
 
     #[test]
     fn core_catalog_excludes_non_persistent_permission_tool() {
@@ -1205,8 +1350,11 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 35);
+        assert_eq!(tools.len(), 38);
         assert_eq!(unique.len(), tools.len());
+        assert!(names.contains(&"history_manage"));
+        assert!(names.contains(&"planning_manage"));
+        assert!(names.contains(&"task_manage"));
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
         assert!(names.contains(&"history_session_validate"));
@@ -1235,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_catalog_keeps_development_and_history_tools_only() {
+    fn compact_catalog_uses_stable_v2_aggregate_managers() {
         let tools = list_tools_for_profile("compact");
         let names: Vec<_> = tools
             .iter()
@@ -1246,10 +1394,14 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"apply_patch"));
         assert!(names.contains(&"exec_command"));
-        assert!(names.contains(&"history_session_search"));
-        assert!(names.contains(&"history_session_read"));
+        assert!(names.contains(&"history_manage"));
+        assert!(names.contains(&"planning_manage"));
+        assert!(names.contains(&"task_manage"));
+        assert!(!names.contains(&"history_session_search"));
+        assert!(!names.contains(&"history_session_read"));
         assert!(!names.contains(&"planning_state"));
         assert!(!names.contains(&"list_skills"));
         assert!(!names.contains(&"request_permissions"));
+        assert_eq!(tool_api_descriptor()["version"], "2");
     }
 }

@@ -5,6 +5,7 @@ pub mod file;
 pub mod git;
 pub mod history;
 mod image_tool;
+pub mod manage;
 pub mod patch;
 pub mod planning;
 pub mod policy;

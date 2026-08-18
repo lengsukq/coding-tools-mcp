@@ -25,6 +25,27 @@ export interface SuccessCriterionDto {
   completed: boolean;
 }
 
+export interface ExecutionCheckpointDto {
+  current_step_id: string | null;
+  completed_step_ids: string[];
+  last_error: string | null;
+  updated_at: string;
+}
+
+export interface ExecutionLedgerDto {
+  goal_id: string | null;
+  plan_id: string | null;
+  step_id: string | null;
+  task_id: string | null;
+  last_tool: string | null;
+  state: string;
+  last_error: string | null;
+  changed_files: string[];
+  history_checkpoint_ref: string | null;
+  verification: string[];
+  updated_at: string;
+}
+
 export async function acceptGoalReview(
   workspaceId: string,
   goalId: string,
@@ -89,6 +110,7 @@ export interface GoalDto {
   review_requested_at: string | null;
   review_summary: string | null;
   review_feedback: string | null;
+  execution_checkpoint: ExecutionCheckpointDto | null;
 }
 
 export interface PlanStepDto {
@@ -124,6 +146,7 @@ export interface PlanningStateDto {
   proposals: PlanningProposalDto[];
   goals: GoalDto[];
   plans: PlanDto[];
+  execution: ExecutionLedgerDto;
 }
 
 export interface GoalUpdate {

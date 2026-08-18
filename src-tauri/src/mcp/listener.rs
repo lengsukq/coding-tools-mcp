@@ -15,9 +15,9 @@ use tower_http::cors::CorsLayer;
 
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, external_base_url,
-    protected_resource_metadata, protected_resource_metadata_url, token_exchange,
-    verify_bearer_header, verify_oauth_bearer_header, AuthorizeForm, AuthorizeParams, OAuthRuntime,
-    TokenForm,
+    protected_resource_metadata, protected_resource_metadata_url, register_client, token_exchange,
+    verify_bearer_header, verify_oauth_bearer_header, AuthorizeForm, AuthorizeParams,
+    ClientRegistrationRequest, OAuthRuntime, TokenForm,
 };
 use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::mcp::server::{handle_request, new_state, SharedState};
@@ -39,6 +39,16 @@ fn merge_config_text(global: &str, workspace: &str) -> String {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+async fn oauth_register_post(
+    State(state): State<ListenerState>,
+    Json(request): Json<ClientRegistrationRequest>,
+) -> Response {
+    let Some(oauth) = state.oauth.as_ref() else {
+        return oauth_not_configured();
+    };
+    register_client(oauth, request)
 }
 
 #[derive(Clone)]
@@ -197,6 +207,7 @@ async fn serve(
             "/.well-known/oauth-protected-resource/mcp",
             get(oauth_protected_resource_metadata),
         )
+        .route("/register", post(oauth_register_post))
         .route("/oauth/authorize", get(oauth_authorize_get).post(oauth_authorize_post))
         .route("/oauth/token", post(oauth_token_post))
         .with_state(state)

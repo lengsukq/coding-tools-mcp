@@ -4,11 +4,14 @@ use std::hash::{Hash, Hasher};
 
 use serde_json::{json, Value};
 
-use crate::planning::{GoalStatus, PlanStatus, PlanningMode, PlanningService, PlanningState, PLANNING_RELATIVE_PATH};
+use crate::planning::{
+    ExecutionLedgerUpdate, GoalStatus, PlanStatus, PlanningMode, PlanningService, PlanningState,
+    PLANNING_RELATIVE_PATH,
+};
 use crate::tools::context::ToolContext;
 use crate::tools::policy::{validate_tool_arguments_for_workspace, PolicyError};
 use crate::tools::workspace::{tool_err, tool_err_code, tool_ok, WorkspaceError};
-use crate::tools::{exec, file, git, history, image_tool, patch, planning, session, skill};
+use crate::tools::{exec, file, git, history, image_tool, manage, patch, planning, session, skill};
 
 fn policy_tool_err(err: PolicyError) -> Value {
     let dangerous = err
@@ -52,6 +55,82 @@ fn policy_tool_err(err: PolicyError) -> Value {
     })
 }
 
+fn record_execution_ledger(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    output: &Value,
+    tracked_task_id: Option<&str>,
+) {
+    if !mutating_tool_call(name, args)
+        && !matches!(name, "start_task" | "update_task" | "pause_task" | "resume_task" | "finish_task")
+    {
+        return;
+    }
+    let succeeded = output.get("ok").and_then(Value::as_bool) != Some(false);
+    let task_id = tracked_task_id
+        .map(str::to_string)
+        .or_else(|| args.get("task_id").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            output
+                .get("task")
+                .and_then(|task| task.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    let last_error = output
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let changed_files = output
+        .get("affected_files")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .map(str::to_string)
+                        .or_else(|| item.get("path").and_then(Value::as_str).map(str::to_string))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let is_checkpoint = name == "history_session_checkpoint"
+        || (name == "history_manage"
+            && args.get("action").and_then(Value::as_str) == Some("checkpoint"));
+    let history_checkpoint_ref = is_checkpoint
+        .then(|| output.get("path").and_then(Value::as_str).map(str::to_string))
+        .flatten();
+    let verification = args
+        .get("tests")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let last_tool = args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(|action| format!("{name}:{action}"))
+        .unwrap_or_else(|| name.to_string());
+
+    let _ = PlanningService::new(ctx.workspace.root()).record_execution(ExecutionLedgerUpdate {
+        task_id,
+        last_tool: Some(last_tool),
+        state: Some(if succeeded { "completed" } else { "failed" }.into()),
+        last_error,
+        changed_files,
+        history_checkpoint_ref,
+        verification,
+    });
+}
+
 fn capability_health_check(ctx: &ToolContext) -> Value {
     let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
     let mut hasher = DefaultHasher::new();
@@ -71,13 +150,19 @@ fn capability_health_check(ctx: &ToolContext) -> Value {
             "server_tool_count": tools.len(),
             "tool_profile": ctx.tool_profile,
             "tool_fingerprint": format!("{:x}", hasher.finish()),
-            "server_version": env!("CARGO_PKG_VERSION")
+            "server_version": env!("CARGO_PKG_VERSION"),
+            "tool_api": crate::tools::registry::tool_api_descriptor()
         },
         "recommendation": "If client tools are missing while server capability is healthy, refresh MCP tool discovery instead of requesting permissions."
     })
 }
 
-fn planning_protected_tool(name: &str) -> bool {
+fn mutating_tool_call(name: &str, args: &Value) -> bool {
+    manage::action_is_mutating(name, args)
+        .unwrap_or_else(|| crate::tools::registry::MUTATING_TOOLS.contains(&name))
+}
+
+fn planning_protected_tool(name: &str, args: &Value) -> bool {
     const EXEMPT: &[&str] = &[
         "history_session_bootstrap",
         "history_session_checkpoint",
@@ -89,11 +174,14 @@ fn planning_protected_tool(name: &str) -> bool {
         "kill_session",
         "set_default_cwd",
     ];
-    crate::tools::registry::MUTATING_TOOLS.contains(&name) && !EXEMPT.contains(&name)
+    if name == "history_manage" || name == "planning_manage" {
+        return false;
+    }
+    mutating_tool_call(name, args) && !EXEMPT.contains(&name)
 }
 
-fn plan_mode_blocks_tool(name: &str) -> bool {
-    planning_protected_tool(name) || name == "exec_health_check"
+fn plan_mode_blocks_tool(name: &str, args: &Value) -> bool {
+    planning_protected_tool(name, args) || name == "exec_health_check"
 }
 
 fn load_planning_state(ctx: &ToolContext) -> Result<PlanningState, Value> {
@@ -111,13 +199,13 @@ fn load_planning_state(ctx: &ToolContext) -> Result<PlanningState, Value> {
     })
 }
 
-fn planning_gate(state: &PlanningState, name: &str) -> Option<Value> {
-    if !planning_protected_tool(name) && state.mode != PlanningMode::Plan {
+fn planning_gate(state: &PlanningState, name: &str, args: &Value) -> Option<Value> {
+    if !planning_protected_tool(name, args) && state.mode != PlanningMode::Plan {
         return None;
     }
     match state.mode {
         PlanningMode::Direct => None,
-        PlanningMode::Plan if plan_mode_blocks_tool(name) => Some(tool_err(WorkspaceError::ToolDetails {
+        PlanningMode::Plan if plan_mode_blocks_tool(name, args) => Some(tool_err(WorkspaceError::ToolDetails {
             code: "PLAN_MODE_READ_ONLY",
             message: format!("{name} is disabled while this workspace is in Plan mode"),
             category: "permission",
@@ -214,11 +302,11 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     let effective_args = apply_default_cwd(ctx, name, args);
     let planning_state = match load_planning_state(ctx) {
         Ok(state) => Some(state),
-        Err(error) if planning_protected_tool(name) || name == "exec_health_check" => return error,
+        Err(error) if planning_protected_tool(name, &effective_args) || name == "exec_health_check" => return error,
         Err(_) => None,
     };
     if let Some(state) = planning_state.as_ref() {
-        if let Some(error) = planning_gate(state, name) {
+        if let Some(error) = planning_gate(state, name, &effective_args) {
             return attach_planning_context(error, state);
         }
     }
@@ -240,6 +328,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
             Ok(value) => value,
             Err(error) => attach_harness_status(ctx, tool_err(error), false),
         };
+        record_execution_ledger(ctx, name, args, &output, None);
         return planning_state
             .as_ref()
             .map(|state| attach_planning_context(output.clone(), state))
@@ -288,6 +377,9 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
 
     let ws = &ctx.workspace;
     let result = match name {
+        "history_manage" => manage::history_manage(ctx, &effective_args),
+        "planning_manage" => manage::planning_manage(ctx, &effective_args),
+        "task_manage" => manage::task_manage(ctx, &effective_args),
         "history_session_bootstrap" => history::bootstrap(ctx, &effective_args),
         "history_session_checkpoint" => history::checkpoint(ctx, &effective_args),
         "history_session_validate" => history::validate(ctx, &effective_args),
@@ -432,6 +524,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
             }),
         );
     }
+    record_execution_ledger(ctx, name, &effective_args, &output, task_id.as_deref());
     if should_attach_planning_context(ctx, name, &output) {
         if let Ok(latest) = PlanningService::new(ctx.workspace.root()).state() {
             output = attach_planning_context(output, &latest);
@@ -449,7 +542,8 @@ fn should_attach_planning_context(ctx: &ToolContext, name: &str, output: &Value)
     }
     let planning_tool = matches!(
         name,
-        "planning_state"
+        "planning_manage"
+            | "planning_state"
             | "create_goal"
             | "update_goal"
             | "create_plan"
@@ -719,6 +813,7 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         "auth_enabled": ctx.auth.auth_enabled(),
         "auth_type": ctx.auth.auth_type,
         "endpoint_path": "/mcp",
+        "tool_api": crate::tools::registry::tool_api_descriptor(),
         "tools": tools,
         "tool_count": tools.len()
     })))
@@ -749,10 +844,10 @@ mod planning_tests {
             .expect("plan mode");
         let state = PlanningService::new(ctx.workspace.root()).state().expect("state");
 
-        let blocked = planning_gate(&state, "apply_patch").expect("blocked");
+        let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
-        assert!(planning_gate(&state, "exec_command").is_some());
-        assert!(planning_gate(&state, "kill_session").is_none());
+        assert!(planning_gate(&state, "exec_command", &json!({})).is_some());
+        assert!(planning_gate(&state, "kill_session", &json!({})).is_none());
     }
 
     #[test]
@@ -761,14 +856,14 @@ mod planning_tests {
         let service = PlanningService::new(ctx.workspace.root());
         service.set_mode(PlanningMode::Goal).expect("goal mode");
         let state = service.state().expect("state");
-        let blocked = planning_gate(&state, "apply_patch").expect("blocked");
+        let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "GOAL_CONTEXT_REQUIRED");
 
         service
             .create_goal("Goal", "Objective", Vec::new(), Vec::new())
             .expect("goal");
         let state = service.state().expect("state");
-        assert!(planning_gate(&state, "apply_patch").is_none());
+        assert!(planning_gate(&state, "apply_patch", &json!({})).is_none());
     }
 
     #[test]
@@ -784,8 +879,20 @@ mod planning_tests {
             .expect("request review");
 
         let state = service.state().expect("state");
-        let blocked = planning_gate(&state, "apply_patch").expect("blocked");
+        let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "GOAL_NOT_ACTIVE");
+    }
+
+    #[test]
+    fn plan_mode_allows_read_only_v2_actions_and_blocks_task_mutation() {
+        let (_workspace, _harness, ctx) = context();
+        let service = PlanningService::new(ctx.workspace.root());
+        service.set_mode(PlanningMode::Plan).expect("plan mode");
+        let state = service.state().expect("state");
+
+        assert!(planning_gate(&state, "planning_manage", &json!({"action":"state"})).is_none());
+        assert!(planning_gate(&state, "task_manage", &json!({"action":"context"})).is_none());
+        assert!(planning_gate(&state, "task_manage", &json!({"action":"start"})).is_some());
     }
 
     #[test]

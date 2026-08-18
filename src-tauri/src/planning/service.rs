@@ -4,14 +4,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::{AppError, AppResult};
 
 use super::model::{
-    ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus,
-    PlanningMode, PlanningProposal, PlanningState, ProposalStatus, SuccessCriterion,
+    ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningMode,
+    PlanningProposal, PlanningState, ProposalStatus, SuccessCriterion,
 };
 use super::store::PlanningStore;
 
 #[derive(Debug, Clone)]
 pub struct PlanningService {
     store: PlanningStore,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionLedgerUpdate {
+    pub task_id: Option<String>,
+    pub last_tool: Option<String>,
+    pub state: Option<String>,
+    pub last_error: Option<String>,
+    pub changed_files: Vec<String>,
+    pub history_checkpoint_ref: Option<String>,
+    pub verification: Vec<String>,
 }
 
 impl PlanningService {
@@ -217,6 +228,68 @@ impl PlanningService {
 
     pub fn state(&self) -> AppResult<PlanningState> {
         self.store.load()
+    }
+
+    pub fn record_execution(&self, update: ExecutionLedgerUpdate) -> AppResult<PlanningState> {
+        self.store.update(|state| {
+            let focused_plan = state
+                .focus_plan_id
+                .as_deref()
+                .and_then(|id| state.plans.iter().find(|plan| plan.id == id));
+            let current_step_id = focused_plan.and_then(|plan| {
+                plan.steps
+                    .iter()
+                    .find(|step| step.status == PlanStepStatus::InProgress)
+                    .or_else(|| plan.steps.iter().find(|step| step.status == PlanStepStatus::Pending))
+                    .map(|step| step.id.clone())
+            });
+            let completed_step_ids = focused_plan
+                .map(|plan| {
+                    plan.steps
+                        .iter()
+                        .filter(|step| step.status == PlanStepStatus::Completed)
+                        .map(|step| step.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            state.execution.goal_id = state.focus_goal_id.clone();
+            state.execution.plan_id = state.focus_plan_id.clone();
+            state.execution.step_id = current_step_id.clone();
+            if update.task_id.is_some() {
+                state.execution.task_id = update.task_id;
+            }
+            if update.last_tool.is_some() {
+                state.execution.last_tool = update.last_tool;
+            }
+            if let Some(value) = update.state {
+                state.execution.state = value;
+            }
+            state.execution.last_error = update.last_error.clone();
+            if !update.changed_files.is_empty() {
+                state.execution.changed_files = update.changed_files;
+            }
+            if update.history_checkpoint_ref.is_some() {
+                state.execution.history_checkpoint_ref = update.history_checkpoint_ref;
+            }
+            if !update.verification.is_empty() {
+                state.execution.verification = update.verification;
+            }
+            state.execution.updated_at = timestamp();
+
+            if let Some(goal_id) = state.focus_goal_id.as_deref() {
+                if let Some(goal) = state.goals.iter_mut().find(|goal| goal.id == goal_id) {
+                    goal.execution_checkpoint = Some(ExecutionCheckpoint {
+                        current_step_id,
+                        completed_step_ids,
+                        last_error: update.last_error,
+                        updated_at: state.execution.updated_at.clone(),
+                    });
+                    goal.updated_at = state.execution.updated_at.clone();
+                }
+            }
+            Ok(state.clone())
+        })
     }
 
     pub fn create_proposal(
@@ -617,6 +690,51 @@ mod tests {
         assert_eq!(updated.status, PlanStatus::Active);
         assert_eq!(updated.steps[0].status, PlanStepStatus::Completed);
         assert_eq!(service.state().expect("state").focus_plan_id, Some(plan.id));
+    }
+
+    #[test]
+    fn execution_ledger_converges_goal_plan_task_and_history_state() {
+        let workspace = tempdir().expect("workspace");
+        let service = PlanningService::new(workspace.path());
+        let goal = service
+            .create_goal("Goal", "Objective", Vec::new(), Vec::new())
+            .expect("goal");
+        service
+            .update_goal(&goal.id, None, None, None, None, None, Some(true))
+            .expect("focus goal");
+        let plan = service
+            .create_plan(Some(goal.id.clone()), "Plan", "Objective", vec!["Step".into()])
+            .expect("plan");
+        let step_id = plan.steps[0].id.clone();
+        service
+            .update_plan(
+                &plan.id,
+                Some(PlanStatus::Active),
+                vec![(step_id.clone(), PlanStepStatus::InProgress, None)],
+                Some(true),
+            )
+            .expect("focus plan");
+
+        let state = service
+            .record_execution(ExecutionLedgerUpdate {
+                task_id: Some("task-1".into()),
+                last_tool: Some("history_manage:checkpoint".into()),
+                state: Some("completed".into()),
+                history_checkpoint_ref: Some("docs/history-session/6.md".into()),
+                verification: vec!["cargo test".into()],
+                ..ExecutionLedgerUpdate::default()
+            })
+            .expect("record execution");
+
+        assert_eq!(state.execution.goal_id.as_deref(), Some(goal.id.as_str()));
+        assert_eq!(state.execution.plan_id.as_deref(), Some(plan.id.as_str()));
+        assert_eq!(state.execution.step_id.as_deref(), Some(step_id.as_str()));
+        assert_eq!(state.execution.task_id.as_deref(), Some("task-1"));
+        assert_eq!(
+            state.execution.history_checkpoint_ref.as_deref(),
+            Some("docs/history-session/6.md")
+        );
+        assert_eq!(state.goals[0].execution_checkpoint.as_ref().unwrap().current_step_id.as_deref(), Some(step_id.as_str()));
     }
 
     #[test]

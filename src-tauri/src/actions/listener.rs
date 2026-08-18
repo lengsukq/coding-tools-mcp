@@ -17,7 +17,8 @@ use tower_http::cors::CorsLayer;
 
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, external_base_url,
-    token_exchange, AuthorizeForm, AuthorizeParams, OAuthRuntime, TokenForm,
+    register_client, token_exchange, AuthorizeForm, AuthorizeParams, ClientRegistrationRequest,
+    OAuthRuntime, TokenForm,
 };
 use crate::tools::{self, is_allowed_tool, policy::PolicySettings, wrap_tool_result, ToolContext};
 use crate::tunnel::append_profile_log;
@@ -40,6 +41,16 @@ struct AppState {
     oauth_client_secret: Option<String>,
     write_lock: Arc<Mutex<()>>,
     usage: Arc<ServiceUsage>,
+}
+
+async fn oauth_register_post(
+    State(state): State<AppState>,
+    Json(request): Json<ClientRegistrationRequest>,
+) -> Response {
+    let Some(oauth) = state.oauth.as_ref() else {
+        return oauth_not_configured();
+    };
+    register_client(oauth, request)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -205,6 +216,7 @@ async fn serve(
             "/.well-known/oauth-authorization-server",
             get(oauth_authorization_server_metadata),
         )
+        .route("/register", post(oauth_register_post))
         .route("/oauth/authorize", get(oauth_authorize_get).post(oauth_authorize_post))
         .route("/oauth/token", post(oauth_token_post))
         .merge(protected)
