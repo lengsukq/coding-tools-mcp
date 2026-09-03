@@ -110,3 +110,25 @@ fn project_state包含分支任务和脏状态摘要() {
     assert!(!state.files.is_empty());
     assert!(state.task.is_some());
 }
+
+#[test]
+fn planning_state_write_is_not_external_change() {
+    let (_temp, workspace, harness_root) = fixture();
+    let harness = Harness::new(workspace.clone(), harness_root).expect("创建 Harness");
+    let task = harness.start_task("验证规划写入忽略").expect("启动任务");
+
+    let planning_dir = workspace.join(".coding-tools").join("planning");
+    fs::create_dir_all(&planning_dir).expect("创建规划目录");
+    fs::write(
+        planning_dir.join("state.json"),
+        r#"{"schema_version":1,"revision":1}"#,
+    )
+    .expect("写入规划状态");
+
+    harness
+        .check_baseline(&task.id)
+        .expect("自写 planning state 不应触发 FILE_CHANGED_EXTERNALLY");
+    let status = harness.status().expect("读取状态");
+    assert!(status.writable, "执行权限不应因 planning state 被锁");
+    assert_eq!(status.baseline_matches, Some(true));
+}

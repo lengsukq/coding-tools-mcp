@@ -533,6 +533,7 @@ fn should_skip(path: &Path, root: &Path) -> bool {
             matches!(
                 name,
                 ".git"
+                    | ".coding-tools"
                     | ".mcp-probe-kit"
                     | "node_modules"
                     | "target"
@@ -615,5 +616,33 @@ mod tests {
             .join(harness.workspace_id())
             .join("snapshots")
             .exists());
+    }
+
+    #[test]
+    fn coding_tools_planning_state_is_not_external_change() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+
+        let task = harness.start_task("验证规划状态忽略").expect("start task");
+        let planning_dir = workspace.path().join(".coding-tools").join("planning");
+        fs::create_dir_all(&planning_dir).expect("planning dir");
+        fs::write(
+            planning_dir.join("state.json"),
+            r#"{"schema_version":1,"goals":[]}"#,
+        )
+        .expect("write planning state");
+
+        harness
+            .check_baseline(&task.id)
+            .expect("planning state must not count as external change");
+        let status = harness.status().expect("status");
+        assert!(status.writable);
+        assert_eq!(status.baseline_matches, Some(true));
     }
 }
