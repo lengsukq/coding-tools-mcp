@@ -66,8 +66,7 @@ async fn check_mcp_public_url(client: &reqwest::Client, url: &str) -> (bool, Str
             let body = response.text().await.unwrap_or_default();
             let lower = body.to_ascii_lowercase();
             if (lower.contains("powered by") && lower.contains("frp"))
-                || (lower.contains("the page you requested was not found")
-                    && lower.contains("frp"))
+                || (lower.contains("the page you requested was not found") && lower.contains("frp"))
             {
                 return (
                     false,
@@ -97,10 +96,7 @@ async fn check_json_field(client: &reqwest::Client, url: &str, field: &str) -> (
                         .get(field)
                         .map(format_field_value)
                         .unwrap_or_default();
-                    (
-                        true,
-                        format!("HTTP {}; {field}={value}", status.as_u16()),
-                    )
+                    (true, format!("HTTP {}; {field}={value}", status.as_u16()))
                 }
                 Err(err) => (false, err.to_string()),
             }
@@ -137,10 +133,30 @@ pub async fn run_health_checks(profile: &WorkspaceProfile) -> Vec<HealthItem> {
     .await;
 
     vec![
-        health_item("本地 /mcp", mcp_local_ok, mcp_local_detail, "确认 MCP 服务已启动，端口与工作区配置一致。"),
-        health_item("公网 /mcp", mcp_public_ok, mcp_public_detail, "检查隧道是否已连接，或公网 URL 是否填写正确。"),
-        health_item("MCP OAuth 授权元数据", mcp_oauth_ok, mcp_oauth_detail, "MCP 认证需设为 OAuth，且公网地址可访问。"),
-        health_item("MCP OAuth 受保护资源", mcp_protected_ok, mcp_protected_detail, "确认公网 MCP 根地址与 OAuth 配置一致。"),
+        health_item(
+            "本地 /mcp",
+            mcp_local_ok,
+            mcp_local_detail,
+            "确认 MCP 服务已启动，端口与工作区配置一致。",
+        ),
+        health_item(
+            "公网 /mcp",
+            mcp_public_ok,
+            mcp_public_detail,
+            "检查隧道是否已连接，或公网 URL 是否填写正确。",
+        ),
+        health_item(
+            "MCP OAuth 授权元数据",
+            mcp_oauth_ok,
+            mcp_oauth_detail,
+            "MCP 认证需设为 OAuth，且公网地址可访问。",
+        ),
+        health_item(
+            "MCP OAuth 受保护资源",
+            mcp_protected_ok,
+            mcp_protected_detail,
+            "确认公网 MCP 根地址与 OAuth 配置一致。",
+        ),
     ]
 }
 

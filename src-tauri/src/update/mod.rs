@@ -7,7 +7,8 @@ use crate::error::{AppError, AppResult};
 use crate::settings::AppSettings;
 
 pub const REPO_URL: &str = "https://github.com/lengsukq/coding-tools-mcp";
-pub const RELEASES_LATEST_URL: &str = "https://github.com/lengsukq/coding-tools-mcp/releases/latest";
+pub const RELEASES_LATEST_URL: &str =
+    "https://github.com/lengsukq/coding-tools-mcp/releases/latest";
 pub const RELEASES_API_URL: &str =
     "https://api.github.com/repos/lengsukq/coding-tools-mcp/releases/latest";
 
@@ -80,7 +81,9 @@ pub fn parse_latest_release(body: &str, current_version: &str) -> AppResult<Upda
     }
     let current = normalize_tag(current_version);
     let ordering = compare_versions(&latest_version, &current).ok_or_else(|| {
-        AppError::Message(format!("无法比较版本: 当前={current} 最新={latest_version}"))
+        AppError::Message(format!(
+            "无法比较版本: 当前={current} 最新={latest_version}"
+        ))
     })?;
     let release_url = release
         .html_url
@@ -177,10 +180,7 @@ mod tests {
             Some(Ordering::Greater)
         );
         assert_eq!(compare_versions("v0.1.23", "0.1.23"), Some(Ordering::Equal));
-        assert_eq!(
-            compare_versions("0.1.20", "v0.1.23"),
-            Some(Ordering::Less)
-        );
+        assert_eq!(compare_versions("0.1.20", "v0.1.23"), Some(Ordering::Less));
         assert_eq!(compare_versions("1.0.0", "0.9.9"), Some(Ordering::Greater));
         assert!(compare_versions("latest", "0.1.0").is_none());
     }

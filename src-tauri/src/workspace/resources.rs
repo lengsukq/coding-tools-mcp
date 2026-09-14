@@ -122,7 +122,8 @@ fn port_conflict_error(target: ResourceClaim<'_>, owner: ResourceClaim<'_>) -> A
 fn subdomain_conflict_error(target: ResourceClaim<'_>, owner: ResourceClaim<'_>) -> AppError {
     AppError::Message(format!(
         "FRP 子域名“{}”已被工作区“{}”的 MCP 服务使用，当前工作区 MCP 不能启动。",
-        target.subdomain.trim(), owner.profile.name,
+        target.subdomain.trim(),
+        owner.profile.name,
     ))
 }
 
@@ -147,7 +148,8 @@ mod tests {
         let owner = profile("owner", 28_766);
         let target = profile("target", 28_766);
 
-        let error = validate_service_start(&[owner.clone(), target.clone()], &target.id).unwrap_err();
+        let error =
+            validate_service_start(&[owner.clone(), target.clone()], &target.id).unwrap_err();
 
         let message = error.to_string();
         assert!(message.contains("28766"));

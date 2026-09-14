@@ -147,11 +147,13 @@ fn run_native_diagnostic(
         "ls" | "dir" => Some(list_directory(ctx, cwd, &parts[1..])?),
         "which" if parts.len() == 2 => {
             let search_path = ctx.executable_path_env();
-            let path = which_on_path(&parts[1], cwd, search_path.as_deref()).ok_or_else(|| WorkspaceError::Tool {
-                code: "COMMAND_NOT_FOUND",
-                message: format!("Program not found on PATH: {}", parts[1]),
-                category: "runtime",
-                retryable: false,
+            let path = which_on_path(&parts[1], cwd, search_path.as_deref()).ok_or_else(|| {
+                WorkspaceError::Tool {
+                    code: "COMMAND_NOT_FOUND",
+                    message: format!("Program not found on PATH: {}", parts[1]),
+                    category: "runtime",
+                    retryable: false,
+                }
             })?;
             Some(format!("{}\n", path.display()))
         }
@@ -629,7 +631,11 @@ fn resolve_program(
         })
 }
 
-fn which_on_path(program: &str, cwd: &Path, search_path: Option<&OsStr>) -> Option<std::path::PathBuf> {
+fn which_on_path(
+    program: &str,
+    cwd: &Path,
+    search_path: Option<&OsStr>,
+) -> Option<std::path::PathBuf> {
     let Some(paths) = search_path else {
         return which::which(program).ok();
     };
@@ -724,7 +730,9 @@ mod tests {
         for directory in [&first, &second] {
             let executable = directory.join("path-probe");
             std::fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("probe");
-            let mut permissions = std::fs::metadata(&executable).expect("metadata").permissions();
+            let mut permissions = std::fs::metadata(&executable)
+                .expect("metadata")
+                .permissions();
             permissions.set_mode(0o755);
             std::fs::set_permissions(&executable, permissions).expect("permissions");
         }
@@ -819,7 +827,8 @@ mod tests {
         // Ensure console-subsystem programs (python.exe) also go through the
         // hidden-window flag path; Command does not expose creation_flags for
         // direct assertion, so this only verifies construction still succeeds.
-        let python = command_for_program("C:/Python312/python.exe", &["-c".into(), "print(1)".into()]);
+        let python =
+            command_for_program("C:/Python312/python.exe", &["-c".into(), "print(1)".into()]);
         assert_eq!(
             python.as_std().get_program().to_string_lossy(),
             "C:/Python312/python.exe"

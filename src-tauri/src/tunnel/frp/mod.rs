@@ -5,9 +5,9 @@ use crate::workspace::WorkspaceProfile;
 use std::collections::HashSet;
 
 pub(crate) use client::{
-    acquire_frpc_operation_lock, clear_managed_frpc_pid, frpc_log_name, frpc_reconnect_loop_detected,
-    managed_frpc_config_matches, probe_local_mcp_ok, probe_public_mcp_endpoint,
-    read_frpc_log_tail, stop_recorded_frpc_instance, PublicMcpProbe,
+    acquire_frpc_operation_lock, clear_managed_frpc_pid, frpc_log_name,
+    frpc_reconnect_loop_detected, managed_frpc_config_matches, probe_local_mcp_ok,
+    probe_public_mcp_endpoint, read_frpc_log_tail, stop_recorded_frpc_instance, PublicMcpProbe,
 };
 pub(crate) use client::{cached_frpc_path, download_frpc_to_cache};
 pub use client::{resolve_frpc, spawn_frpc};
@@ -42,10 +42,7 @@ pub(crate) struct FrpServerConfig {
     pub proxy: FrpProxyConfig,
 }
 
-pub fn frp_public_url(
-    profile: &WorkspaceProfile,
-    settings: &AppSettings,
-) -> String {
+pub fn frp_public_url(profile: &WorkspaceProfile, settings: &AppSettings) -> String {
     let config = frp_server_config(profile, settings, None);
     if config.server_addr.is_empty() || config.proxy.subdomain.trim().is_empty() {
         return String::new();
@@ -273,11 +270,7 @@ mod tests {
             }],
             ..AppSettings::default()
         };
-        let config = frp_server_config(
-            &profile,
-            &settings,
-            Some("secret".into()),
-        );
+        let config = frp_server_config(&profile, &settings, Some("secret".into()));
         let toml = build_frpc_toml(&config);
         assert!(toml.contains("serverAddr = \"frp.example.com\""));
         assert!(toml.contains("loginFailExit = false"));

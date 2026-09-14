@@ -19,11 +19,7 @@ fn validate_tunnel_start_resources(state: &AppState, id: &str) -> AppResult<()> 
     state.with_workspaces(|store| validate_service_start(store.list(), id))
 }
 
-fn persist_public_url(
-    state: &AppState,
-    id: &str,
-    public_url: &str,
-) -> AppResult<()> {
+fn persist_public_url(state: &AppState, id: &str, public_url: &str) -> AppResult<()> {
     if public_url.is_empty() {
         return Ok(());
     }
@@ -82,10 +78,7 @@ fn tunnel_type_for(profile: &crate::workspace::WorkspaceProfile) -> &str {
 }
 
 #[tauri::command]
-pub async fn restart_tunnel(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<TunnelStatus> {
+pub async fn restart_tunnel(state: State<'_, AppState>, id: String) -> AppResult<TunnelStatus> {
     let profile = profile_by_id(&state, &id)?;
     validate_tunnel_start_resources(&state, &id)?;
     sync_tunnel_routes_from_runtime(&state).await?;
@@ -129,8 +122,7 @@ pub async fn restart_tunnel(
         Ok(status) => status,
         Err((error, restored)) => {
             if let Some(restored) = restored {
-                if let Err(rollback_error) =
-                    restore_tunnel_config(&state, &id, &profile, &restored)
+                if let Err(rollback_error) = restore_tunnel_config(&state, &id, &profile, &restored)
                 {
                     return Err(AppError::Message(format!(
                         "FRP 线路已恢复，但配置回滚失败：{error}; rollback: {rollback_error}"
@@ -146,10 +138,7 @@ pub async fn restart_tunnel(
 }
 
 #[tauri::command]
-pub async fn stop_tunnel(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<TunnelStatus> {
+pub async fn stop_tunnel(state: State<'_, AppState>, id: String) -> AppResult<TunnelStatus> {
     let profile = profile_by_id(&state, &id)?;
     let settings = state.with_settings(|store| Ok(store.settings()))?;
     let mut guard = supervisor().lock().await;
@@ -174,10 +163,7 @@ fn local_service_listening(profile: &crate::workspace::WorkspaceProfile) -> AppR
 
 /// Probe tunnel connectivity without leaving it running unless the local service is already up.
 #[tauri::command]
-pub async fn test_tunnel(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<TunnelTestResult> {
+pub async fn test_tunnel(state: State<'_, AppState>, id: String) -> AppResult<TunnelTestResult> {
     let profile = profile_by_id(&state, &id)?;
     validate_tunnel_start_resources(&state, &id)?;
     sync_tunnel_routes_from_runtime(&state).await?;
@@ -216,8 +202,7 @@ pub async fn test_tunnel(
         Ok(status) => status,
         Err((error, restored)) => {
             if let Some(restored) = restored {
-                if let Err(rollback_error) =
-                    restore_tunnel_config(&state, &id, &profile, &restored)
+                if let Err(rollback_error) = restore_tunnel_config(&state, &id, &profile, &restored)
                 {
                     return Err(AppError::Message(format!(
                         "FRP 测试失败且配置回滚失败：{error}; rollback: {rollback_error}"

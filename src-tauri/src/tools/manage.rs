@@ -88,8 +88,9 @@ mod tests {
     fn context() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
         let workspace = tempfile::tempdir().expect("workspace");
         let harness = tempfile::tempdir().expect("harness");
-        let ctx = ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
-            .expect("context");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
         (workspace, harness, ctx)
     }
 

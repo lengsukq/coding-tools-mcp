@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
-use crate::tools::workspace::{relative_display, tool_ok, Workspace, WorkspaceError, WorkspaceResult};
+use crate::tools::workspace::{
+    relative_display, tool_ok, Workspace, WorkspaceError, WorkspaceResult,
+};
 
 use self::model::{InitialInputRecord, SearchHit};
 
@@ -101,11 +103,9 @@ pub fn context_snapshot(ctx: &ToolContext) -> WorkspaceResult<Option<Value>> {
             break;
         }
     }
-    let revision = storage::sha256(
-        &serde_json::to_vec(&selected).map_err(|error| {
-            WorkspaceError::invalid_argument(format!("history context is not serializable: {error}"))
-        })?,
-    );
+    let revision = storage::sha256(&serde_json::to_vec(&selected).map_err(|error| {
+        WorkspaceError::invalid_argument(format!("history context is not serializable: {error}"))
+    })?);
     Ok(Some(json!({
         "context_revision": format!("sha256:{revision}"),
         "selected_sessions": ctx.history_context_sessions,
@@ -434,17 +434,22 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         let expected_path = bootstrap_result
             .get("current_path")
             .and_then(Value::as_str)
-            .ok_or_else(|| history_error(
-                "SESSION_TARGET_UNAVAILABLE",
-                "Unable to create a lazy history target.",
-                "internal",
-                true,
-                json!({}),
-            ))?;
+            .ok_or_else(|| {
+                history_error(
+                    "SESSION_TARGET_UNAVAILABLE",
+                    "Unable to create a lazy history target.",
+                    "internal",
+                    true,
+                    json!({}),
+                )
+            })?;
         let mut retry_args = args.clone();
         if let Some(object) = retry_args.as_object_mut() {
             object.insert("session_key".into(), Value::String(session_key.clone()));
-            object.insert("expected_path".into(), Value::String(expected_path.to_string()));
+            object.insert(
+                "expected_path".into(),
+                Value::String(expected_path.to_string()),
+            );
         }
         return checkpoint(ctx, &retry_args);
     }
@@ -543,9 +548,7 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         warnings.push("检测到疑似敏感信息，归档内容已脱敏。".into());
     }
     if host_session_key_mismatch {
-        warnings.push(
-            "宿主会话标识已变化；本次仍使用解析出的稳定目标，未切换历史文件。".into(),
-        );
+        warnings.push("宿主会话标识已变化；本次仍使用解析出的稳定目标，未切换历史文件。".into());
     }
     if ctx.tool_profile == "compact" {
         return Ok(tool_ok(json!({
@@ -665,7 +668,11 @@ pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     };
     if path.parent() != Some(history_dir.as_path())
         || path.extension().and_then(|value| value.to_str()) != Some("md")
-        || path.file_stem().and_then(|value| value.to_str()).and_then(|value| value.parse::<u64>().ok()).is_none()
+        || path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_none()
     {
         return Err(history_error(
             "HISTORY_READ_NOT_FOUND",

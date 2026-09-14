@@ -60,7 +60,9 @@ pub fn update_goal(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             args.get("focus").and_then(Value::as_bool),
         )
         .map_err(storage_error)?;
-    Ok(tool_ok(json!({"goal": goal, "storage_path": PLANNING_RELATIVE_PATH})))
+    Ok(tool_ok(
+        json!({"goal": goal, "storage_path": PLANNING_RELATIVE_PATH}),
+    ))
 }
 
 pub fn create_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
@@ -100,7 +102,9 @@ pub fn update_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         .get("step_updates")
         .map(|value| serde_json::from_value::<Vec<StepUpdate>>(value.clone()))
         .transpose()
-        .map_err(|error| WorkspaceError::invalid_argument(format!("invalid step_updates: {error}")))?
+        .map_err(|error| {
+            WorkspaceError::invalid_argument(format!("invalid step_updates: {error}"))
+        })?
         .unwrap_or_default()
         .into_iter()
         .map(|update| (update.step_id, update.status, update.notes))
@@ -113,7 +117,9 @@ pub fn update_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             args.get("focus").and_then(Value::as_bool),
         )
         .map_err(storage_error)?;
-    Ok(tool_ok(json!({"plan": plan, "storage_path": PLANNING_RELATIVE_PATH})))
+    Ok(tool_ok(
+        json!({"plan": plan, "storage_path": PLANNING_RELATIVE_PATH}),
+    ))
 }
 
 pub fn request_goal_review(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
@@ -216,11 +222,9 @@ mod tests {
     fn mcp_goal_and_plan_tools_share_project_local_state() {
         let workspace = tempdir().expect("workspace");
         let harness = tempdir().expect("harness");
-        let ctx = ToolContext::for_test(
-            workspace.path().to_path_buf(),
-            harness.path().to_path_buf(),
-        )
-        .expect("context");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
 
         let goal = create_goal(
             &ctx,

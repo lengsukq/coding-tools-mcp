@@ -30,7 +30,10 @@ impl AppState {
         f(&mut guard)
     }
 
-    pub fn with_workspaces<R>(&self, f: impl FnOnce(&mut DataStore) -> AppResult<R>) -> AppResult<R> {
+    pub fn with_workspaces<R>(
+        &self,
+        f: impl FnOnce(&mut DataStore) -> AppResult<R>,
+    ) -> AppResult<R> {
         self.with_data(f)
     }
 
@@ -38,7 +41,10 @@ impl AppState {
         self.with_data(f)
     }
 
-    pub fn with_runtime<R>(&self, f: impl FnOnce(&mut RuntimeSupervisor) -> AppResult<R>) -> AppResult<R> {
+    pub fn with_runtime<R>(
+        &self,
+        f: impl FnOnce(&mut RuntimeSupervisor) -> AppResult<R>,
+    ) -> AppResult<R> {
         let mut guard = self
             .runtime
             .lock()

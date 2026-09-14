@@ -171,18 +171,14 @@ async fn restart_running_services_async(
     let should_restart_mcp = MCP_SHARED_KEYS.contains(&key)
         && profile.auth.use_shared_secrets == shared
         && state
-            .with_runtime(|runtime| {
-                Ok(runtime.is_running(&profile.id))
-            })
+            .with_runtime(|runtime| Ok(runtime.is_running(&profile.id)))
             .unwrap_or(false);
     if should_restart_mcp {
-        if let Err(error) = crate::commands::runtime::restart_mcp_by_id(state, &profile.id).await
-        {
+        if let Err(error) = crate::commands::runtime::restart_mcp_by_id(state, &profile.id).await {
             eprintln!(
                 "MCP restart after secret change failed for {}: {error}",
                 profile.id
             );
         }
     }
-
 }

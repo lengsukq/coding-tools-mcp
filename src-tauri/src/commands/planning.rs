@@ -4,9 +4,7 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
-use crate::planning::{
-    Goal, Plan, PlanningMode, PlanningService, PlanningState,
-};
+use crate::planning::{Goal, Plan, PlanningMode, PlanningService, PlanningState};
 
 #[tauri::command]
 pub fn get_planning_state(

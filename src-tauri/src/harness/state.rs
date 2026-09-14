@@ -10,9 +10,9 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use super::model::{
-    BaselineEntry, CapabilityStatus, FileChangeRecord, HarnessEvent, HarnessStatus, OperationRecord,
-    ProjectBaseline, ProjectFileState, ProjectState, TaskSession,
-    TaskStatus, WorkspaceHarnessState, SCHEMA_VERSION,
+    BaselineEntry, CapabilityStatus, FileChangeRecord, HarnessEvent, HarnessStatus,
+    OperationRecord, ProjectBaseline, ProjectFileState, ProjectState, TaskSession, TaskStatus,
+    WorkspaceHarnessState, SCHEMA_VERSION,
 };
 use super::store::{HarnessError, HarnessResult, HarnessStore};
 
@@ -242,7 +242,8 @@ impl Harness {
             affected_files: Vec::new(),
             created_at: timestamp(),
         };
-        self.store.append_operation(&self.workspace_id, &operation)?;
+        self.store
+            .append_operation(&self.workspace_id, &operation)?;
         Ok(operation)
     }
 
@@ -531,7 +532,6 @@ fn should_skip(path: &Path, root: &Path) -> bool {
         return true;
     }
     std::iter::once(relative)
-        .into_iter()
         .flat_map(|p| p.components())
         .filter_map(|component| component.as_os_str().to_str())
         .any(|name| {
@@ -633,7 +633,9 @@ mod tests {
             harness_root.path().to_path_buf(),
         )
         .expect("harness");
-        let task = harness.start_task("测试 Planning 运行时状态").expect("start task");
+        let task = harness
+            .start_task("测试 Planning 运行时状态")
+            .expect("start task");
 
         let planning_dir = workspace.path().join(".coding-tools/planning");
         fs::create_dir_all(&planning_dir).expect("planning dir");
@@ -654,7 +656,9 @@ mod tests {
             harness_root.path().to_path_buf(),
         )
         .expect("harness");
-        let task = harness.start_task("测试 History 运行时状态").expect("start task");
+        let task = harness
+            .start_task("测试 History 运行时状态")
+            .expect("start task");
 
         let history_dir = workspace.path().join("docs/history-session");
         fs::create_dir_all(&history_dir).expect("history dir");
@@ -677,8 +681,11 @@ mod tests {
         .expect("harness");
         let task = harness.start_task("测试真实外部变化").expect("start task");
 
-        fs::write(workspace.path().join("main.rs"), "fn main() { println!(\"changed\"); }\n")
-            .expect("external change");
+        fs::write(
+            workspace.path().join("main.rs"),
+            "fn main() { println!(\"changed\"); }\n",
+        )
+        .expect("external change");
 
         let error = harness
             .check_baseline(&task.id)

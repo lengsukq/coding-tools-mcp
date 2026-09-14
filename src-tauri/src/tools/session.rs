@@ -72,7 +72,9 @@ mod tests {
 
         let head_page = buffer.read_page(0, SESSION_HEAD_BYTES);
         assert!(String::from_utf8_lossy(&head_page.content).contains("UNIQUE_HEAD_ERROR"));
-        let tail_offset = head_page.next_offset.expect("tail offset after evicted gap");
+        let tail_offset = head_page
+            .next_offset
+            .expect("tail offset after evicted gap");
         assert_eq!(tail_offset, buffer.tail_start());
         let tail_page = buffer.read_page(tail_offset, SESSION_TAIL_BYTES);
         assert!(String::from_utf8_lossy(&tail_page.content).contains("UNIQUE_TAIL_ERROR"));
@@ -321,14 +323,20 @@ impl RetainedBuffer {
             } else {
                 None
             };
-            (requested_offset, self.head[requested_offset..end].to_vec(), next)
+            (
+                requested_offset,
+                self.head[requested_offset..end].to_vec(),
+                next,
+            )
         } else if requested_offset < tail_start {
             let end = self.total_bytes.min(tail_start.saturating_add(limit));
             let take = end.saturating_sub(tail_start);
             let next = (end < self.total_bytes).then_some(end);
             (tail_start, self.tail[..take].to_vec(), next)
         } else {
-            let start = requested_offset.saturating_sub(tail_start).min(self.tail.len());
+            let start = requested_offset
+                .saturating_sub(tail_start)
+                .min(self.tail.len());
             let end = self.tail.len().min(start.saturating_add(limit));
             let logical_end = tail_start + end;
             let next = (logical_end < self.total_bytes).then_some(logical_end);
@@ -364,25 +372,25 @@ impl RetainedBuffer {
 }
 
 fn preview_head_tail(head: &[u8], tail: &[u8], total_bytes: usize, max_bytes: usize) -> Truncated {
-        let max_bytes = max_bytes.max(1);
-        let head_budget = (max_bytes / 8).max(1).min(head.len());
-        let tail_budget = max_bytes.saturating_sub(head_budget).min(tail.len());
-        let mut content = String::new();
-        if head_budget > 0 {
-            content.push_str(&String::from_utf8_lossy(&head[..head_budget]));
-        }
-        let omitted = total_bytes.saturating_sub(head_budget + tail_budget);
-        if omitted > 0 {
-            content.push_str(&format!("\n...[{omitted} bytes omitted]...\n"));
-        }
-        if tail_budget > 0 {
-            let start = tail.len() - tail_budget;
-            content.push_str(&String::from_utf8_lossy(&tail[start..]));
-        }
-        Truncated {
-            content,
-            truncated: omitted > 0,
-        }
+    let max_bytes = max_bytes.max(1);
+    let head_budget = (max_bytes / 8).max(1).min(head.len());
+    let tail_budget = max_bytes.saturating_sub(head_budget).min(tail.len());
+    let mut content = String::new();
+    if head_budget > 0 {
+        content.push_str(&String::from_utf8_lossy(&head[..head_budget]));
+    }
+    let omitted = total_bytes.saturating_sub(head_budget + tail_budget);
+    if omitted > 0 {
+        content.push_str(&format!("\n...[{omitted} bytes omitted]...\n"));
+    }
+    if tail_budget > 0 {
+        let start = tail.len() - tail_budget;
+        content.push_str(&String::from_utf8_lossy(&tail[start..]));
+    }
+    Truncated {
+        content,
+        truncated: omitted > 0,
+    }
 }
 
 pub struct ExecSession {
@@ -629,7 +637,6 @@ struct Truncated {
     truncated: bool,
 }
 
-
 pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, WorkspaceError> {
     let output_ref = args
         .get("output_ref")
@@ -797,11 +804,12 @@ pub fn kill_session(store: &SessionStore, args: &Value) -> Result<Value, Workspa
                 let mut child = session.child.lock().await;
                 let _ = child.start_kill();
             }
-            if let Ok(Ok(exit_status)) = tokio::time::timeout(std::time::Duration::from_millis(wait_ms), async {
-                let mut child = session.child.lock().await;
-                child.wait().await
-            })
-            .await
+            if let Ok(Ok(exit_status)) =
+                tokio::time::timeout(std::time::Duration::from_millis(wait_ms), async {
+                    let mut child = session.child.lock().await;
+                    child.wait().await
+                })
+                .await
             {
                 session.record_exit_status(exit_status);
             }

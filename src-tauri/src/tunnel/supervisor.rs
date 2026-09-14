@@ -130,9 +130,7 @@ impl TunnelSupervisor {
             return Some("frpc process exited".into());
         }
 
-        let Some(route) = self.frp_routes.get(workspace_id) else {
-            return None;
-        };
+        let route = self.frp_routes.get(workspace_id)?;
 
         let log_path = log_dir_for_profile(workspace_id).join(frp::frpc_log_name());
         let log_tail = frp::read_frpc_log_tail(&log_path);
@@ -410,9 +408,7 @@ impl TunnelSupervisor {
         }
         let settings = AppSettings::load_or_default();
         let key = profile.id.clone();
-        if self.frp_routes.contains_key(&key)
-            && !self.frp_route_matches(&key, profile, &settings)
-        {
+        if self.frp_routes.contains_key(&key) && !self.frp_route_matches(&key, profile, &settings) {
             // 清理任务携带的是旧 runtime/profile；当前 route 已被新的端口、
             // subdomain 或配置替换，不能按相同 workspace key 删除新线路。
             return Ok(());
@@ -513,7 +509,7 @@ impl TunnelSupervisor {
             return Ok(());
         }
 
-        let route_specs = vec![self.frp_routes[workspace_id].profile.clone()];
+        let route_specs = [self.frp_routes[workspace_id].profile.clone()];
         let route_refs: Vec<&WorkspaceProfile> = route_specs.iter().collect();
         let deadline = Instant::now() + Duration::from_secs(35);
         let handle = loop {
@@ -548,7 +544,7 @@ impl TunnelSupervisor {
             return Ok(());
         }
 
-        let route_specs = vec![self.frp_routes[workspace_id].profile.clone()];
+        let route_specs = [self.frp_routes[workspace_id].profile.clone()];
         let route_refs: Vec<&WorkspaceProfile> = route_specs.iter().collect();
         let expected = frp::build_frpc_toml_for_route_refs(&route_refs, settings);
 
@@ -575,9 +571,8 @@ impl TunnelSupervisor {
         pid: Option<u32>,
     ) {
         let has_route = self.frp_routes.contains_key(workspace_id);
-        self.sessions.retain(|key, session| {
-            key != workspace_id || session.child.is_some() || has_route
-        });
+        self.sessions
+            .retain(|key, session| key != workspace_id || session.child.is_some() || has_route);
 
         if let Some(route) = self.frp_routes.get(workspace_id) {
             let public_url = public_url_for_profile(&route.profile, settings);
@@ -721,7 +716,9 @@ fn resolve_frp_server(profile_id: &str, inline_server: &str, settings: &AppSetti
     inline_server.to_string()
 }
 
-fn cloudflare_config(profile: &WorkspaceProfile) -> AppResult<(u16, &str, String, String, &'static str)> {
+fn cloudflare_config(
+    profile: &WorkspaceProfile,
+) -> AppResult<(u16, &str, String, String, &'static str)> {
     let token = SecretStore::get(&profile.id, "cloudflare_token")?.unwrap_or_default();
     Ok((
         profile.runtime.local_port,
@@ -775,10 +772,9 @@ mod tests {
         let first = frp_profile("first", "shared");
         let second = frp_profile("second", "SHARED");
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            first.id.clone(),
-            FrpRoute { profile: first },
-        );
+        supervisor
+            .frp_routes
+            .insert(first.id.clone(), FrpRoute { profile: first });
 
         let config = frp::frp_server_config(&second, &settings, None);
         let error = supervisor
@@ -793,10 +789,9 @@ mod tests {
         let first = frp_profile("first", "first");
         let second = frp_profile("second", "second");
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            first.id.clone(),
-            FrpRoute { profile: first },
-        );
+        supervisor
+            .frp_routes
+            .insert(first.id.clone(), FrpRoute { profile: first });
 
         let config = frp::frp_server_config(&second, &settings, None);
         assert!(supervisor
@@ -812,10 +807,9 @@ mod tests {
         let mut proxied = frp_profile("proxied", "proxied");
         proxied.tunnel.use_proxy = true;
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            direct.id.clone(),
-            FrpRoute { profile: direct },
-        );
+        supervisor
+            .frp_routes
+            .insert(direct.id.clone(), FrpRoute { profile: direct });
 
         let config = frp::frp_server_config(&proxied, &settings, None);
         assert!(supervisor
@@ -830,10 +824,9 @@ mod tests {
         let mut second = frp_profile("second", "second");
         second.tunnel.frp_server = "another-frp.example.com".into();
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            first.id.clone(),
-            FrpRoute { profile: first },
-        );
+        supervisor
+            .frp_routes
+            .insert(first.id.clone(), FrpRoute { profile: first });
 
         let config = frp::frp_server_config(&second, &settings, None);
         assert!(supervisor
@@ -849,10 +842,9 @@ mod tests {
         stale.tunnel.frp_subdomain = "a".into();
         let key = current.id.clone();
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            key.clone(),
-            FrpRoute { profile: current },
-        );
+        supervisor
+            .frp_routes
+            .insert(key.clone(), FrpRoute { profile: current });
 
         assert!(!supervisor.frp_route_matches(&key, &stale, &settings));
     }
@@ -892,14 +884,12 @@ mod tests {
         let first_key = first.id.clone();
         let second_key = second.id.clone();
         let mut supervisor = TunnelSupervisor::new();
-        supervisor.frp_routes.insert(
-            first_key.clone(),
-            FrpRoute { profile: first },
-        );
-        supervisor.frp_routes.insert(
-            second_key.clone(),
-            FrpRoute { profile: second },
-        );
+        supervisor
+            .frp_routes
+            .insert(first_key.clone(), FrpRoute { profile: first });
+        supervisor
+            .frp_routes
+            .insert(second_key.clone(), FrpRoute { profile: second });
         supervisor.sync_frp_sessions_for_workspace(&settings, &second_key, Some(99));
 
         supervisor.sync_frp_sessions_for_workspace(&settings, &first_key, Some(42));

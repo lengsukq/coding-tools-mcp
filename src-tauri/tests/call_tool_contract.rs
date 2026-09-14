@@ -94,7 +94,9 @@ fn request_permissions_is_hidden_from_clients_but_keeps_legacy_dangerous_mode_co
     for profile in ["core", "read-only", "advanced", "compat-readonly-all"] {
         let tools = list_tools_for_profile(profile);
         assert!(
-            tools.iter().all(|tool| tool["name"] != "request_permissions"),
+            tools
+                .iter()
+                .all(|tool| tool["name"] != "request_permissions"),
             "request_permissions must not be advertised for profile {profile}"
         );
     }

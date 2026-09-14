@@ -118,11 +118,16 @@ fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     if !history_context.is_empty() {
         state.record_context_block("history_snapshot", &Value::String(history_context.clone()));
     }
-    let instructions = [base_instructions, configured.as_str(), skill_catalog.as_str(), history_context.as_str()]
-        .into_iter()
-        .filter(|value| !value.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let instructions = [
+        base_instructions,
+        configured.as_str(),
+        skill_catalog.as_str(),
+        history_context.as_str(),
+    ]
+    .into_iter()
+    .filter(|value| !value.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
     serde_json::json!({
         "protocolVersion": protocol_version,
         "capabilities": {
@@ -183,6 +188,7 @@ fn tool_arguments(name: &str, params: &Value) -> Value {
     args
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn new_state(
     workspace: Workspace,
     auth: AuthConfig,
@@ -197,17 +203,11 @@ pub fn new_state(
     usage: Arc<ServiceUsage>,
 ) -> SharedState {
     Arc::new(
-        ToolContext::from_workspace(
-            workspace,
-            auth,
-            policy,
-            tool_profile,
-            permission_mode,
-        )
-        .with_agent_runtime(executable_paths, ai_instructions)
-        .with_agent_context(agent_context)
-        .with_history_config(history_recording, history_context_sessions)
-        .with_usage(usage),
+        ToolContext::from_workspace(workspace, auth, policy, tool_profile, permission_mode)
+            .with_agent_runtime(executable_paths, ai_instructions)
+            .with_agent_context(agent_context)
+            .with_history_config(history_recording, history_context_sessions)
+            .with_usage(usage),
     )
 }
 
@@ -292,10 +292,7 @@ mod tests {
     #[test]
     fn initialize_appends_configured_agent_instructions() {
         let state = Arc::new(
-            test_context().with_agent_runtime(
-                Vec::new(),
-                "Global rule\n\nWorkspace rule".into(),
-            ),
+            test_context().with_agent_runtime(Vec::new(), "Global rule\n\nWorkspace rule".into()),
         );
         let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
         let instructions = initialized["instructions"].as_str().expect("instructions");
@@ -309,18 +306,9 @@ mod tests {
     fn protocol_version_negotiation_matrix() {
         assert!(!SUPPORTED_PROTOCOL_VERSIONS.contains(&"2026-07-28"));
         assert_eq!(LATEST_PROTOCOL_VERSION, "2025-11-25");
-        assert_eq!(
-            negotiate_protocol_version(Some("2024-11-05")),
-            "2024-11-05"
-        );
-        assert_eq!(
-            negotiate_protocol_version(Some("2025-06-18")),
-            "2025-06-18"
-        );
-        assert_eq!(
-            negotiate_protocol_version(Some("2025-11-25")),
-            "2025-11-25"
-        );
+        assert_eq!(negotiate_protocol_version(Some("2024-11-05")), "2024-11-05");
+        assert_eq!(negotiate_protocol_version(Some("2025-06-18")), "2025-06-18");
+        assert_eq!(negotiate_protocol_version(Some("2025-11-25")), "2025-11-25");
         // 未知新版本：回退到服务端最新版本，由客户端决定是否继续。
         assert_eq!(
             negotiate_protocol_version(Some("2099-01-01")),

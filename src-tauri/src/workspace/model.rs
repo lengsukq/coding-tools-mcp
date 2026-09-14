@@ -246,7 +246,6 @@ impl WorkspaceProfile {
         }
         format!("{}/mcp", base.trim_end_matches('/'))
     }
-
 }
 
 fn gateway_workspace_base(public_url: &str, workspace_id: &str) -> String {

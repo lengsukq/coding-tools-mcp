@@ -142,12 +142,7 @@ impl WorkspaceError {
     }
 }
 
-fn recovery_contract_value(
-    code: &str,
-    category: &str,
-    retryable: bool,
-    details: &Value,
-) -> Value {
+fn recovery_contract_value(code: &str, category: &str, retryable: bool, details: &Value) -> Value {
     let suggestion = details
         .get("suggestion")
         .and_then(Value::as_str)
@@ -649,9 +644,7 @@ fn concise_content(tool_name: &str, structured: &Value) -> String {
         "read_file" => read_file_content(structured),
         "search_text" | "grep_text" => search_text_content(structured),
         "list_dir" | "list_files" => listing_content(structured),
-        "exec_command" | "write_stdin" | "read_output" | "kill_session" => {
-            exec_content(structured)
-        }
+        "exec_command" | "write_stdin" | "read_output" | "kill_session" => exec_content(structured),
         "git_status" => git_status_content(structured),
         "git_diff" => git_diff_content(structured),
         "git_log" => git_log_content(structured),
@@ -684,7 +677,10 @@ fn u64_field(structured: &Value, key: &str) -> u64 {
 }
 
 fn bool_field(structured: &Value, key: &str) -> bool {
-    structured.get(key).and_then(Value::as_bool).unwrap_or(false)
+    structured
+        .get(key)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn error_content(tool_name: &str, structured: &Value) -> String {
@@ -747,7 +743,9 @@ fn read_file_content(structured: &Value) -> String {
         } else {
             String::new()
         };
-        out.push_str(&format!("\n[content truncated;{hint} full metadata in structuredContent]"));
+        out.push_str(&format!(
+            "\n[content truncated;{hint} full metadata in structuredContent]"
+        ));
     }
     out
 }
@@ -958,7 +956,10 @@ mod content_budget_tests {
     };
 
     fn content_text(result: &serde_json::Value) -> String {
-        result["content"][0]["text"].as_str().expect("text").to_string()
+        result["content"][0]["text"]
+            .as_str()
+            .expect("text")
+            .to_string()
     }
 
     #[test]
@@ -1023,7 +1024,10 @@ mod content_budget_tests {
             "max_file_bytes": 123456
         });
         let text = concise_content("search_text", &structured);
-        assert_eq!(text, "search \"needle\": 1 match(es)\nsrc/lib.rs:42: let needle = 1;");
+        assert_eq!(
+            text,
+            "search \"needle\": 1 match(es)\nsrc/lib.rs:42: let needle = 1;"
+        );
     }
 
     #[test]
@@ -1041,8 +1045,11 @@ mod content_budget_tests {
         assert!(text.contains("read_file failed [PLAN_MODE_READ_ONLY]"));
         assert!(text.contains("Category: permission"));
         assert!(text.contains("Retryable: false"));
-        assert!(text.contains("Recovery: Switch the workspace to Goal/Direct mode before retrying."));
-        assert!(text.contains("Retry when: after the workspace planning mode changes to Goal or Direct"));
+        assert!(
+            text.contains("Recovery: Switch the workspace to Goal/Direct mode before retrying.")
+        );
+        assert!(text
+            .contains("Retry when: after the workspace planning mode changes to Goal or Direct"));
     }
 
     #[test]

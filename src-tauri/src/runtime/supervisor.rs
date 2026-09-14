@@ -50,10 +50,10 @@ impl RuntimeSupervisor {
         let mut ids = self
             .entries
             .iter()
-            .filter_map(|(workspace_id, entry)| {
+            .filter(|&(_workspace_id, entry)| {
                 matches!(entry.phase, RuntimePhase::Running | RuntimePhase::Starting)
-                    .then(|| workspace_id.clone())
             })
+            .map(|(workspace_id, _entry)| workspace_id.clone())
             .collect::<Vec<_>>();
         ids.sort();
         ids.dedup();
@@ -74,9 +74,7 @@ impl RuntimeSupervisor {
     /// True when the service for this workspace is currently running.
     pub fn is_running(&self, workspace_id: &str) -> bool {
         matches!(
-            self.entries
-                .get(workspace_id)
-                .map(|entry| &entry.phase),
+            self.entries.get(workspace_id).map(|entry| &entry.phase),
             Some(RuntimePhase::Running)
         )
     }
@@ -227,11 +225,7 @@ impl RuntimeSupervisor {
             if let Some(pid) = platform().find_pid_listening_on_port(port)? {
                 self.entries.remove(&key);
                 let message = port_busy_message(port, "本地 MCP", pid);
-                append_profile_log(
-                    &profile.id,
-                    "stderr.log",
-                    &format!("[start] {message}"),
-                );
+                append_profile_log(&profile.id, "stderr.log", &format!("[start] {message}"));
                 return Err(crate::error::AppError::Message(message));
             }
         }
@@ -365,14 +359,12 @@ impl RuntimeSupervisor {
                     let message = if occupied_by_self {
                         format!(
                             "{}端口 {} 未能成功启动，可能仍被本应用上一次服务占用，请先停止后再试",
-                            "本地 MCP",
-                            port
+                            "本地 MCP", port
                         )
                     } else {
                         format!(
                             "{}端口 {} 未能成功启动，可能已被其他程序占用",
-                            "本地 MCP",
-                            port
+                            "本地 MCP", port
                         )
                     };
                     entry.phase = RuntimePhase::Error;

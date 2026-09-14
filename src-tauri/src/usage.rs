@@ -87,9 +87,7 @@ pub(crate) struct ServiceUsageStats {
 }
 
 fn estimate_tokens(bytes: u64) -> u64 {
-    bytes
-        .saturating_add(BYTES_PER_ESTIMATED_TOKEN - 1)
-        / BYTES_PER_ESTIMATED_TOKEN
+    bytes.saturating_add(BYTES_PER_ESTIMATED_TOKEN - 1) / BYTES_PER_ESTIMATED_TOKEN
 }
 
 #[cfg(test)]

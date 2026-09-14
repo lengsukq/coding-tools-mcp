@@ -87,7 +87,11 @@ fn forwarded_header_param(headers: &HeaderMap, name: &str) -> String {
 
 fn safe_external_host(host: &str) -> String {
     let host = host.trim();
-    if host.is_empty() || host.chars().any(|ch| matches!(ch, '\r' | '\n' | '/' | '\\')) {
+    if host.is_empty()
+        || host
+            .chars()
+            .any(|ch| matches!(ch, '\r' | '\n' | '/' | '\\'))
+    {
         String::new()
     } else {
         host.to_string()
@@ -159,9 +163,7 @@ pub fn protected_resource_metadata_url(base_url: &str) -> String {
         .split_once('/')
         .map(|(authority, path)| (authority, format!("/{path}")))
         .unwrap_or((remainder, String::new()));
-    format!(
-        "{scheme}://{authority}/.well-known/oauth-protected-resource{path}"
-    )
+    format!("{scheme}://{authority}/.well-known/oauth-protected-resource{path}")
 }
 
 #[cfg(test)]
@@ -185,7 +187,10 @@ mod tests {
             meta["token_endpoint_auth_methods_supported"],
             json!(["none", "client_secret_post", "client_secret_basic"])
         );
-        assert_eq!(meta["registration_endpoint"], json!("https://example.com/register"));
+        assert_eq!(
+            meta["registration_endpoint"],
+            json!("https://example.com/register")
+        );
         assert_eq!(
             meta["grant_types_supported"],
             json!(["authorization_code", "refresh_token"])
@@ -200,7 +205,10 @@ mod tests {
     #[test]
     fn protected_resource_metadata_lists_authorization_servers() {
         let meta = protected_resource_metadata("https://example.com");
-        assert_eq!(meta["authorization_servers"], json!(["https://example.com"]));
+        assert_eq!(
+            meta["authorization_servers"],
+            json!(["https://example.com"])
+        );
         assert_eq!(meta["resource"], json!("https://example.com/mcp"));
     }
 

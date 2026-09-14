@@ -13,21 +13,21 @@ use serde_json::{json, Value};
 use tokio::sync::oneshot;
 use tower_http::cors::CorsLayer;
 
+use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, external_base_url,
     protected_resource_metadata, protected_resource_metadata_url, register_client, token_exchange,
     verify_bearer_header, verify_oauth_bearer_header, AuthorizeForm, AuthorizeParams,
     ClientRegistrationRequest, OAuthRuntime, TokenForm,
 };
-use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
-use crate::mcp::server::{handle_request, new_state, SharedState};
 use crate::local_network;
+use crate::mcp::server::{handle_request, new_state, SharedState};
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
 use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
+use crate::tools::policy::PolicySettings;
 use crate::tools::Workspace;
 use crate::tunnel::append_profile_log;
-use crate::tools::policy::PolicySettings;
 use crate::usage::ServiceUsage;
 use crate::workspace::{AuthConfig, RuntimeConfig};
 
@@ -81,18 +81,13 @@ pub fn spawn_listener(
     let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
     let policy = PolicySettings::from_runtime(&runtime);
     let global = AppSettings::load_or_default();
-    let executable_paths = merge_executable_paths(
-        &runtime.executable_paths,
-        &global.global_executable_paths,
-    );
+    let executable_paths =
+        merge_executable_paths(&runtime.executable_paths, &global.global_executable_paths);
     let instruction_sources = merge_source_lists(
         &global.global_instruction_sources,
         &runtime.instruction_sources,
     );
-    let skill_sources = merge_source_lists(
-        &global.global_skill_sources,
-        &runtime.skill_sources,
-    );
+    let skill_sources = merge_source_lists(&global.global_skill_sources, &runtime.skill_sources);
     let instruction_paths = merge_config_text(
         &global.global_custom_instruction_paths,
         &runtime.custom_instruction_paths,
@@ -101,10 +96,8 @@ pub fn spawn_listener(
         &global.global_custom_skill_paths,
         &runtime.custom_skill_paths,
     );
-    let manual_instructions = merge_ai_instructions(
-        &global.global_ai_instructions,
-        &runtime.ai_instructions,
-    );
+    let manual_instructions =
+        merge_ai_instructions(&global.global_ai_instructions, &runtime.ai_instructions);
     let agent_context = AgentContextRuntimeConfig {
         instruction_sources,
         skill_sources,
@@ -138,11 +131,7 @@ pub fn spawn_listener(
     let oauth = if auth.oauth_enabled() {
         let password = oauth_password.unwrap_or_default();
         let token_secret = oauth_token_secret.unwrap_or_default();
-        let oauth_base = external_base_url(
-            &HeaderMap::new(),
-            port,
-            &configured_public_url,
-        );
+        let oauth_base = external_base_url(&HeaderMap::new(), port, &configured_public_url);
         Some(Arc::new(OAuthRuntime::new_persistent(
             oauth_base,
             auth.oauth_client_id.clone(),
@@ -210,7 +199,10 @@ async fn serve(
             get(oauth_protected_resource_metadata),
         )
         .route("/register", post(oauth_register_post))
-        .route("/oauth/authorize", get(oauth_authorize_get).post(oauth_authorize_post))
+        .route(
+            "/oauth/authorize",
+            get(oauth_authorize_get).post(oauth_authorize_post),
+        )
         .route("/oauth/token", post(oauth_token_post))
         .with_state(state)
         .layer(CorsLayer::permissive());
@@ -394,12 +386,10 @@ async fn mcp_post(
             let response_bytes = serde_json::to_vec(&error_response)
                 .map(|bytes| bytes.len())
                 .unwrap_or_default();
-            state.mcp.usage().record(
-                request_bytes,
-                response_bytes,
-                method == "tools/call",
-                true,
-            );
+            state
+                .mcp
+                .usage()
+                .record(request_bytes, response_bytes, method == "tools/call", true);
             append_profile_log(
                 &profile_id,
                 "mcp-requests.log",
@@ -408,8 +398,7 @@ async fn mcp_post(
                     request_id, method, tool_name
                 ),
             );
-            Json(error_response)
-            .into_response()
+            Json(error_response).into_response()
         }
     }
 }
@@ -425,10 +414,8 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
             if let Some(mut response) = verify_oauth_bearer_header(headers, oauth, &server_url) {
                 if response.status() == StatusCode::UNAUTHORIZED {
                     let metadata_url = protected_resource_metadata_url(&server_url);
-                    if let Ok(value) = format!(
-                        "Bearer resource_metadata=\"{metadata_url}\""
-                    )
-                    .parse()
+                    if let Ok(value) =
+                        format!("Bearer resource_metadata=\"{metadata_url}\"").parse()
                     {
                         response.headers_mut().insert(WWW_AUTHENTICATE, value);
                     }
@@ -462,7 +449,10 @@ async fn oauth_protected_resource_metadata(
     if !state.auth.oauth_enabled() {
         return oauth_not_configured();
     }
-    Json(protected_resource_metadata(&resolve_oauth_base(&state, &headers))).into_response()
+    Json(protected_resource_metadata(&resolve_oauth_base(
+        &state, &headers,
+    )))
+    .into_response()
 }
 
 async fn oauth_authorize_get(
@@ -504,12 +494,7 @@ async fn oauth_token_post(
         )
             .into_response();
     };
-    token_exchange(
-        oauth,
-        &headers,
-        form,
-        &resolve_oauth_base(&state, &headers),
-    )
+    token_exchange(oauth, &headers, form, &resolve_oauth_base(&state, &headers))
 }
 
 fn oauth_not_configured() -> Response {

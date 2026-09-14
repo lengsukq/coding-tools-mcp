@@ -167,10 +167,18 @@ fn default_proxy_mode() -> String {
     "system".to_string()
 }
 
-fn default_global_gateway_port() -> u16 { 28765 }
-fn default_global_gateway_tunnel_type() -> String { "none".to_string() }
-fn default_global_gateway_cloudflare_mode() -> String { "quick".to_string() }
-fn default_global_gateway_use_proxy() -> bool { true }
+fn default_global_gateway_port() -> u16 {
+    28765
+}
+fn default_global_gateway_tunnel_type() -> String {
+    "none".to_string()
+}
+fn default_global_gateway_cloudflare_mode() -> String {
+    "quick".to_string()
+}
+fn default_global_gateway_use_proxy() -> bool {
+    true
+}
 
 impl AppSettings {
     pub fn from_data(data: &AppData) -> Self {
@@ -213,8 +221,7 @@ impl AppSettings {
     }
 
     pub fn load_or_default() -> Self {
-        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data)))
-            .unwrap_or_default()
+        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data))).unwrap_or_default()
     }
 
     pub fn find_frp_profile(&self, id: &str) -> Option<&FrpProfile> {

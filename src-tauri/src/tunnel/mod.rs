@@ -11,6 +11,4 @@ pub use access::{
 };
 
 pub use software::{install_software, list_software, uninstall_software, SoftwareStatus};
-pub use supervisor::{
-    append_profile_log, log_dir_for_profile, TunnelStatus, TunnelSupervisor,
-};
+pub use supervisor::{append_profile_log, log_dir_for_profile, TunnelStatus, TunnelSupervisor};

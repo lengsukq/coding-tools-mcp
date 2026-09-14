@@ -72,9 +72,7 @@ pub async fn drop_workspace(workspace_id: &str) -> AppResult<()> {
     guard.drop_workspace(workspace_id).await
 }
 
-pub async fn sync_managed_runtime_routes(
-    active_runtime_keys: HashSet<String>,
-) -> AppResult<()> {
+pub async fn sync_managed_runtime_routes(active_runtime_keys: HashSet<String>) -> AppResult<()> {
     let settings = AppSettings::load_or_default();
     let profiles = DataStore::read_file(|data| Ok(data.profiles.clone()))?;
     let mut guard = supervisor().lock().await;

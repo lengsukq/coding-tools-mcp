@@ -47,8 +47,7 @@ fn registration_error(error: &str, description: &str) -> Response {
 
 fn valid_redirect_uri(uri: &str) -> bool {
     let uri = uri.trim();
-    (uri.starts_with("https://") || uri.starts_with("http://"))
-        && !uri.contains(['\r', '\n', '#'])
+    (uri.starts_with("https://") || uri.starts_with("http://")) && !uri.contains(['\r', '\n', '#'])
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -216,9 +215,15 @@ pub struct ClientRegistrationRequest {
 
 pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest) -> Response {
     if request.redirect_uris.is_empty()
-        || request.redirect_uris.iter().any(|uri| !valid_redirect_uri(uri))
+        || request
+            .redirect_uris
+            .iter()
+            .any(|uri| !valid_redirect_uri(uri))
     {
-        return registration_error("invalid_redirect_uri", "redirect_uris must contain valid http(s) URLs");
+        return registration_error(
+            "invalid_redirect_uri",
+            "redirect_uris must contain valid http(s) URLs",
+        );
     }
     if !request.grant_types.is_empty()
         && request
@@ -229,9 +234,15 @@ pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest)
         return registration_error("invalid_client_metadata", "Unsupported grant_types");
     }
     if !request.response_types.is_empty()
-        && request.response_types.iter().any(|response| response != "code")
+        && request
+            .response_types
+            .iter()
+            .any(|response| response != "code")
     {
-        return registration_error("invalid_client_metadata", "Only response_type code is supported");
+        return registration_error(
+            "invalid_client_metadata",
+            "Only response_type code is supported",
+        );
     }
     let auth_method = match request.token_endpoint_auth_method.trim() {
         "" | "none" => "none",
@@ -245,8 +256,7 @@ pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest)
         }
     };
     let client_id = format!("dcr-{}", uuid::Uuid::new_v4().simple());
-    let client_secret = (auth_method != "none")
-        .then(|| uuid::Uuid::new_v4().simple().to_string());
+    let client_secret = (auth_method != "none").then(|| uuid::Uuid::new_v4().simple().to_string());
     if let Err(error) = oauth.insert_registered_client(
         client_id.clone(),
         RegisteredClient {
@@ -355,7 +365,10 @@ pub fn authorize_get(
         return html_error("Unknown client_id", StatusCode::BAD_REQUEST);
     }
     if !oauth.redirect_uri_allowed(&params.client_id, &params.redirect_uri) {
-        return html_error("redirect_uri is not registered for this client", StatusCode::BAD_REQUEST);
+        return html_error(
+            "redirect_uri is not registered for this client",
+            StatusCode::BAD_REQUEST,
+        );
     }
     if params.code_challenge_method != "S256" || params.code_challenge.is_empty() {
         return html_error(
@@ -391,7 +404,10 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
         .into_response();
     }
     if !oauth.redirect_uri_allowed(&form.client_id, &form.redirect_uri) {
-        return html_error("redirect_uri is not registered for this client", StatusCode::BAD_REQUEST);
+        return html_error(
+            "redirect_uri is not registered for this client",
+            StatusCode::BAD_REQUEST,
+        );
     }
     if form.code_challenge_method != "S256" || form.code_challenge.is_empty() {
         return Html(login_page(
@@ -445,7 +461,11 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
     if !form.state.is_empty() {
         qs.push_str(&format!("&state={}", urlencoding_encode(&form.state)));
     }
-    let sep = if form.redirect_uri.contains('?') { '&' } else { '?' };
+    let sep = if form.redirect_uri.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
     // 授权页面通过 POST 表单提交，但客户端回调必须使用 GET。
     // 307 会保留 POST 并把表单体转发到 ChatGPT connector，导致 Bad Request。
     Redirect::to(&format!("{}{}{}", form.redirect_uri, sep, qs)).into_response()
@@ -498,7 +518,10 @@ fn authorization_code_exchange(
         pending.remove(&form.code)
     };
     let Some(code_data) = code_data else {
-        return token_error("invalid_grant", "Unknown or already-used authorization code");
+        return token_error(
+            "invalid_grant",
+            "Unknown or already-used authorization code",
+        );
     };
     if unix_now() > code_data.expires_at {
         return token_error("invalid_grant", "Authorization code expired");
@@ -597,7 +620,11 @@ fn create_token(
     .map_err(|_| ())
 }
 
-fn decode_token_claims(token: &str, token_secret: &str, server_url: &str) -> Result<TokenClaims, ()> {
+fn decode_token_claims(
+    token: &str,
+    token_secret: &str,
+    server_url: &str,
+) -> Result<TokenClaims, ()> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_audience(&[server_url]);
     validation.set_issuer(&[server_url]);
@@ -649,6 +676,7 @@ fn html_error(message: &str, status: StatusCode) -> Response {
     (status, Html(format!("<h2>Error</h2><p>{message}</p>"))).into_response()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn login_page(
     client_id: &str,
     redirect_uri: &str,
@@ -832,10 +860,7 @@ mod tests {
         let clients = oauth.clients.lock().expect("clients");
         let client_id = clients.keys().next().expect("client id").clone();
         drop(clients);
-        assert!(oauth.redirect_uri_allowed(
-            &client_id,
-            "https://chatgpt.com/connector/oauth/test"
-        ));
+        assert!(oauth.redirect_uri_allowed(&client_id, "https://chatgpt.com/connector/oauth/test"));
         assert!(!oauth.redirect_uri_allowed(&client_id, "https://attacker.example/callback"));
     }
 
@@ -885,10 +910,8 @@ mod tests {
         )
         .expect("restarted oauth runtime");
         assert!(restarted.client_id_allowed(&client_id));
-        assert!(restarted.redirect_uri_allowed(
-            &client_id,
-            "https://chatgpt.com/connector/oauth/restart"
-        ));
+        assert!(restarted
+            .redirect_uri_allowed(&client_id, "https://chatgpt.com/connector/oauth/restart"));
         let _ = SecretStore::remove_workspace_secrets(&workspace_id);
     }
 
@@ -935,8 +958,6 @@ mod tests {
             Some("/workspace"),
             "https://mcp.example.com/w/workspace-id",
         );
-        assert!(html.contains(
-            "action='https://mcp.example.com/w/workspace-id/oauth/authorize'"
-        ));
+        assert!(html.contains("action='https://mcp.example.com/w/workspace-id/oauth/authorize'"));
     }
 }

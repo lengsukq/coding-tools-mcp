@@ -69,7 +69,9 @@ pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()>
             teardown_workspace(store, &id)?;
         }
         let mut settings = store.settings();
-        settings.restore_mcp_workspace_ids.retain(|workspace_id| workspace_id != &id);
+        settings
+            .restore_mcp_workspace_ids
+            .retain(|workspace_id| workspace_id != &id);
         store.update_settings(settings)?;
         Ok(())
     })

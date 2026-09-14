@@ -147,10 +147,7 @@ impl DataStore {
         &self.data
     }
 
-    fn update_latest<R>(
-        &mut self,
-        f: impl FnOnce(&mut AppData) -> AppResult<R>,
-    ) -> AppResult<R> {
+    fn update_latest<R>(&mut self, f: impl FnOnce(&mut AppData) -> AppResult<R>) -> AppResult<R> {
         let _guard = lock_data_file()?;
         let mut data = load_or_migrate()?;
         let result = f(&mut data)?;
@@ -192,11 +189,7 @@ impl DataStore {
 
     pub fn update(&mut self, profile: WorkspaceProfile) -> AppResult<()> {
         self.update_latest(move |data| {
-            let Some(index) = data
-                .profiles
-                .iter()
-                .position(|item| item.id == profile.id)
-            else {
+            let Some(index) = data.profiles.iter().position(|item| item.id == profile.id) else {
                 return Err(AppError::Message(format!(
                     "workspace not found: {}",
                     profile.id
@@ -269,7 +262,11 @@ impl DataStore {
         })
     }
 
-    pub fn regenerate_workspace_secret(&mut self, profile_id: &str, key: &str) -> AppResult<String> {
+    pub fn regenerate_workspace_secret(
+        &mut self,
+        profile_id: &str,
+        key: &str,
+    ) -> AppResult<String> {
         let value = shared_value_for_key(key);
         self.set_workspace_secret(profile_id, key, &value)?;
         Ok(value)
@@ -330,7 +327,6 @@ impl DataStore {
             Ok(())
         })
     }
-
 }
 
 fn lock_data_file() -> AppResult<std::sync::MutexGuard<'static, ()>> {
@@ -380,7 +376,9 @@ mod tests {
 
         let mut settings = store.settings();
         settings.last_workspace_id = format!("regression-{id}");
-        store.update_settings(settings).expect("update unrelated settings");
+        store
+            .update_settings(settings)
+            .expect("update unrelated settings");
 
         let persisted = crate::secret::SecretStore::get(&id, "oauth_dynamic_clients")
             .expect("read external secret");
@@ -466,10 +464,19 @@ mod tests {
         );
 
         assert!(strip_obsolete_actions_secrets(&mut data));
-        assert_eq!(data.shared_secrets.get("bearer_token").map(String::as_str), Some("keep-shared"));
+        assert_eq!(
+            data.shared_secrets.get("bearer_token").map(String::as_str),
+            Some("keep-shared")
+        );
         assert!(!data.shared_secrets.contains_key("actions_api_key"));
-        let workspace = data.workspace_secrets.get("workspace-1").expect("workspace secrets");
-        assert_eq!(workspace.get("oauth_password").map(String::as_str), Some("keep-workspace"));
+        let workspace = data
+            .workspace_secrets
+            .get("workspace-1")
+            .expect("workspace secrets");
+        assert_eq!(
+            workspace.get("oauth_password").map(String::as_str),
+            Some("keep-workspace")
+        );
         assert!(!workspace.contains_key("actions_oauth_dynamic_clients"));
     }
 }

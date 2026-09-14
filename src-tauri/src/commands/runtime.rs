@@ -1,7 +1,7 @@
 use tauri::State;
 
-use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use tokio::sync::Mutex as AsyncMutex;
@@ -52,11 +52,7 @@ fn validate_start_resources(state: &AppState, id: &str) -> AppResult<()> {
     state.with_workspaces(|store| validate_service_start(store.list(), id))
 }
 
-fn persist_tunnel_url(
-    state: &AppState,
-    id: &str,
-    url: &str,
-) -> AppResult<()> {
+fn persist_tunnel_url(state: &AppState, id: &str, url: &str) -> AppResult<()> {
     if url.is_empty() {
         return Ok(());
     }
@@ -149,10 +145,7 @@ async fn start_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatu
 }
 
 /// Async stop→start for MCP. Used by the Tauri command and secret-change hooks.
-pub(crate) async fn restart_mcp_by_id(
-    state: &AppState,
-    id: &str,
-) -> AppResult<RuntimeStatusDto> {
+pub(crate) async fn restart_mcp_by_id(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
     let _guard = RESTART_GATE.lock().await;
     let was_running = state.with_runtime(|runtime| Ok(runtime.is_running(id)))?;
     if was_running {
@@ -196,10 +189,7 @@ pub async fn restart_runtime(
 
 #[tauri::command]
 pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> {
-    if state
-        .startup_restore_attempted
-        .swap(true, Ordering::SeqCst)
-    {
+    if state.startup_restore_attempted.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
 

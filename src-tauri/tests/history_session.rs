@@ -6,8 +6,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 
-use coding_tools_mcp_desktop_lib::tools::{list_tools_for_profile, ToolContext};
 use coding_tools_mcp_desktop_lib::tools::history;
+use coding_tools_mcp_desktop_lib::tools::{list_tools_for_profile, ToolContext};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -104,9 +104,14 @@ fn selected_history_context_is_bounded_and_does_not_include_archive_body() {
 
     assert_eq!(snapshot["selected_sessions"][0], 1);
     assert_eq!(snapshot["injection_mode"], "index_and_bounded_snippets");
-    assert!(snapshot["context_revision"].as_str().unwrap().starts_with("sha256:"));
+    assert!(snapshot["context_revision"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
     assert!(snapshot["latest_checkpoints"].is_array());
-    assert!(snapshot["key_files"].to_string().contains("src/important.rs"));
+    assert!(snapshot["key_files"]
+        .to_string()
+        .contains("src/important.rs"));
     assert!(snapshot["selected_snippets"].is_array());
     assert!(snapshot.to_string().contains("这里是精选片段"));
     assert!(!snapshot.to_string().contains(&"历史选择项".repeat(20)));

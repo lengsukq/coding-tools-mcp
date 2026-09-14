@@ -21,7 +21,10 @@ fn normalize_legacy_state(value: &mut serde_json::Value) {
         serde_json::Value::from(PLANNING_SCHEMA_VERSION),
     );
 
-    if let Some(goals) = root.get_mut("goals").and_then(serde_json::Value::as_array_mut) {
+    if let Some(goals) = root
+        .get_mut("goals")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         for goal in goals {
             let Some(goal) = goal.as_object_mut() else {
                 continue;
@@ -45,7 +48,10 @@ fn normalize_legacy_state(value: &mut serde_json::Value) {
     }
 
     let mut goal_plan_links = Vec::<(String, String)>::new();
-    if let Some(plans) = root.get_mut("plans").and_then(serde_json::Value::as_array_mut) {
+    if let Some(plans) = root
+        .get_mut("plans")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         for (plan_index, plan) in plans.iter_mut().enumerate() {
             let Some(plan) = plan.as_object_mut() else {
                 continue;
@@ -145,7 +151,10 @@ fn normalize_legacy_state(value: &mut serde_json::Value) {
         }
     }
 
-    if let Some(goals) = root.get_mut("goals").and_then(serde_json::Value::as_array_mut) {
+    if let Some(goals) = root
+        .get_mut("goals")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         for goal in goals {
             let Some(goal) = goal.as_object_mut() else {
                 continue;
@@ -178,6 +187,7 @@ pub struct PlanningStore {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use serde_json::json;
     use tempfile::tempdir;
@@ -227,8 +237,11 @@ mod tests {
                 "updated_at": "2026-09-14T00:00:00Z"
             }]
         });
-        std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()))
-            .expect("legacy state");
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()),
+        )
+        .expect("legacy state");
 
         let state = store.load().expect("legacy state should remain readable");
         assert_eq!(state.goals[0].success_criteria.len(), 1);
@@ -236,13 +249,13 @@ mod tests {
             state.goals[0].success_criteria[0].text,
             "Average content quality score improves by at least 20% against the V1 baseline corpus."
         );
-        assert_eq!(
-            state.goals[0].success_criteria[0].id,
-            "legacy-criterion-1"
-        );
+        assert_eq!(state.goals[0].success_criteria[0].id, "legacy-criterion-1");
         assert_eq!(state.plans[0].steps.len(), 2);
         assert_eq!(state.plans[0].steps[0].id, "legacy-step-1");
-        assert_eq!(state.plans[0].steps[0].status, crate::planning::PlanStepStatus::Pending);
+        assert_eq!(
+            state.plans[0].steps[0].status,
+            crate::planning::PlanStepStatus::Pending
+        );
 
         store
             .update(|state| {
@@ -317,8 +330,11 @@ mod tests {
                 "updated_at": "1789365200"
             }
         });
-        std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()))
-            .expect("legacy state");
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()),
+        )
+        .expect("legacy state");
 
         let state = store.load().expect("Oxpecker legacy plan should load");
         assert_eq!(state.schema_version, PLANNING_SCHEMA_VERSION);
@@ -330,7 +346,10 @@ mod tests {
             state.goals[0].plan_ids,
             vec!["plan-content-quality-v2".to_string()]
         );
-        assert_eq!(state.plans[0].objective, "Decouple editorial reasoning from UI template filling.");
+        assert_eq!(
+            state.plans[0].objective,
+            "Decouple editorial reasoning from UI template filling."
+        );
         assert_eq!(state.plans[0].steps.len(), 1);
         assert_eq!(state.plans[0].steps[0].id, "a1-eval-baseline");
         assert_eq!(
@@ -359,10 +378,7 @@ mod tests {
             normalized["goals"][0]["objective"],
             "Upgrade content generation quality without breaking existing workflows."
         );
-        assert_eq!(
-            normalized["plans"][0]["steps"][0]["id"],
-            "a1-eval-baseline"
-        );
+        assert_eq!(normalized["plans"][0]["steps"][0]["id"], "a1-eval-baseline");
         assert!(normalized["plans"][0]["phases"].is_array());
         assert!(normalized["plans"][0]["architecture"].is_array());
         assert!(normalized["plans"][0]["verification"].is_array());
@@ -379,7 +395,9 @@ mod tests {
 
         assert!(store.load().is_err());
 
-        let reset = store.reset().expect("reset must bypass broken state loading");
+        let reset = store
+            .reset()
+            .expect("reset must bypass broken state loading");
         assert_eq!(reset.mode, crate::planning::PlanningMode::Direct);
         assert!(reset.goals.is_empty());
         assert!(reset.plans.is_empty());
@@ -423,7 +441,10 @@ impl PlanningStore {
         Ok(state)
     }
 
-    pub fn update<R>(&self, mutate: impl FnOnce(&mut PlanningState) -> AppResult<R>) -> AppResult<R> {
+    pub fn update<R>(
+        &self,
+        mutate: impl FnOnce(&mut PlanningState) -> AppResult<R>,
+    ) -> AppResult<R> {
         let mut state = self.load()?;
         state.revision = state.revision.saturating_add(1);
         let result = mutate(&mut state)?;

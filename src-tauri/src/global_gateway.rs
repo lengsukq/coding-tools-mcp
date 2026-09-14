@@ -185,16 +185,35 @@ pub async fn status() -> GlobalGatewayStatusDto {
 
 pub async fn health() -> Vec<GatewayHealthItem> {
     let status = status().await;
-    let client = reqwest::Client::builder().timeout(HEALTH_TIMEOUT).build().expect("health client");
-    let local = check_url(&client, &format!("{}/health", status.local_url.trim_end_matches('/'))).await;
+    let client = reqwest::Client::builder()
+        .timeout(HEALTH_TIMEOUT)
+        .build()
+        .expect("health client");
+    let local = check_url(
+        &client,
+        &format!("{}/health", status.local_url.trim_end_matches('/')),
+    )
+    .await;
     let public = if status.public_url.trim().is_empty() {
         (false, "公网 URL 未配置或尚未获取".into())
     } else {
-        check_url(&client, &format!("{}/health", status.public_url.trim_end_matches('/'))).await
+        check_url(
+            &client,
+            &format!("{}/health", status.public_url.trim_end_matches('/')),
+        )
+        .await
     };
     vec![
-        GatewayHealthItem { label: "全局 Gateway 本地入口".into(), ok: local.0, detail: local.1 },
-        GatewayHealthItem { label: "全局 Gateway 公网入口".into(), ok: public.0, detail: public.1 },
+        GatewayHealthItem {
+            label: "全局 Gateway 本地入口".into(),
+            ok: local.0,
+            detail: local.1,
+        },
+        GatewayHealthItem {
+            label: "全局 Gateway 公网入口".into(),
+            ok: public.0,
+            detail: public.1,
+        },
     ]
 }
 
@@ -202,7 +221,10 @@ async fn check_url(client: &reqwest::Client, url: &str) -> (bool, String) {
     match client.get(url).send().await {
         Ok(response) => {
             let status = response.status();
-            (status.is_success(), format!("HTTP {} · {url}", status.as_u16()))
+            (
+                status.is_success(),
+                format!("HTTP {} · {url}", status.as_u16()),
+            )
         }
         Err(error) => (false, error.to_string()),
     }
@@ -213,7 +235,10 @@ fn status_from_runtime(runtime: &GatewayRuntime) -> GlobalGatewayStatusDto {
         state: "running".into(),
         local_url: format!("http://127.0.0.1:{}", runtime.config.local_port),
         public_url: runtime.public_url.clone(),
-        detail: format!("{} · path prefix /w/<workspace-id>", runtime.config.tunnel_type),
+        detail: format!(
+            "{} · path prefix /w/<workspace-id>",
+            runtime.config.tunnel_type
+        ),
     }
 }
 
@@ -251,7 +276,9 @@ async fn start_tunnel(
                 ));
             }
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let log = crate::platform::platform().app_config_dir()?.join("global-gateway-cloudflared.log");
+            let log = crate::platform::platform()
+                .app_config_dir()?
+                .join("global-gateway-cloudflared.log");
             let handle = cloudflare::spawn_cloudflare_tunnel(
                 config.local_port,
                 &cwd,
@@ -260,13 +287,23 @@ async fn start_tunnel(
                 "",
                 "",
                 config.use_proxy,
-            ).await?;
+            )
+            .await?;
             let public_url = handle.public_url.clone();
-            Ok((public_url, Some(TunnelChild::Cloudflare { child: handle.child, pid: handle.pid })))
+            Ok((
+                public_url,
+                Some(TunnelChild::Cloudflare {
+                    child: handle.child,
+                    pid: handle.pid,
+                }),
+            ))
         }
         "frp" => {
             let mut profile = WorkspaceProfile::new(
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).display().to_string(),
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .display()
+                    .to_string(),
                 Some("Global Gateway".into()),
             );
             profile.id = "global-gateway".into();
@@ -278,24 +315,31 @@ async fn start_tunnel(
             profile.tunnel.frp_subdomain = config.frp_subdomain.clone();
             profile.tunnel.use_proxy = config.use_proxy;
             if profile.tunnel.frp_subdomain.trim().is_empty() {
-                return Err(AppError::Message("全局 Gateway FRP 子域名不能为空。".into()));
+                return Err(AppError::Message(
+                    "全局 Gateway FRP 子域名不能为空。".into(),
+                ));
             }
-            let handle = frp::spawn_frpc(
-                "global-gateway",
-                &[&profile],
-                settings,
-            ).await?;
+            let handle = frp::spawn_frpc("global-gateway", &[&profile], settings).await?;
             let public_url = frp::frp_public_url(&profile, settings);
-            Ok((public_url, Some(TunnelChild::Frp { child: handle.child, pid: handle.pid })))
+            Ok((
+                public_url,
+                Some(TunnelChild::Frp {
+                    child: handle.child,
+                    pid: handle.pid,
+                }),
+            ))
         }
-        other => Err(AppError::Message(format!("不支持的全局 Gateway tunnel_type: {other}"))),
+        other => Err(AppError::Message(format!(
+            "不支持的全局 Gateway tunnel_type: {other}"
+        ))),
     }
 }
 
 fn bind_listener(port: u16, allow_lan_access: bool) -> AppResult<tokio::net::TcpListener> {
     let addr = local_network::bind_addr(port, allow_lan_access);
-    let listener = std::net::TcpListener::bind(addr)
-        .map_err(|error| AppError::Message(format!("全局 Gateway 端口 {port} 绑定失败: {error}")))?;
+    let listener = std::net::TcpListener::bind(addr).map_err(|error| {
+        AppError::Message(format!("全局 Gateway 端口 {port} 绑定失败: {error}"))
+    })?;
     listener.set_nonblocking(true)?;
     tokio::net::TcpListener::from_std(listener).map_err(AppError::from)
 }
@@ -309,7 +353,10 @@ async fn serve(
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let app = Router::new()
-        .route("/health", get(|| async { Json(json!({ "ok": true, "service": "global-gateway" })) }))
+        .route(
+            "/health",
+            get(|| async { Json(json!({ "ok": true, "service": "global-gateway" })) }),
+        )
         .route(
             "/.well-known/oauth-protected-resource/w/{workspace_id}/mcp",
             get(proxy_mcp_protected_resource_metadata),
@@ -330,7 +377,9 @@ async fn serve(
         .route("/w/{workspace_id}/{*path}", any(proxy_path))
         .with_state(ProxyState { client });
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { let _ = shutdown.await; })
+        .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+        })
         .await?;
     Ok(())
 }
@@ -343,7 +392,16 @@ async fn proxy_root(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    proxy(state, workspace_id, String::new(), method, uri, headers, body).await
+    proxy(
+        state,
+        workspace_id,
+        String::new(),
+        method,
+        uri,
+        headers,
+        body,
+    )
+    .await
 }
 
 async fn proxy_path(
@@ -367,21 +425,38 @@ async fn proxy(
     body: Bytes,
 ) -> Response {
     let profile = match DataStore::read_file(|data| {
-        Ok(data.profiles.iter().find(|profile| profile.id == workspace_id).cloned())
+        Ok(data
+            .profiles
+            .iter()
+            .find(|profile| profile.id == workspace_id)
+            .cloned())
     }) {
         Ok(Some(profile)) => profile,
         Ok(None) => return (StatusCode::NOT_FOUND, "workspace not found").into_response(),
-        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+        }
     };
 
     if !profile.tunnel.use_global_gateway {
-        return (StatusCode::NOT_FOUND, "mcp is not routed through global gateway").into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            "mcp is not routed through global gateway",
+        )
+            .into_response();
     }
 
     let port = profile.runtime.local_port;
     let upstream_path = format!("/{}", path.trim_start_matches('/'));
-    let upstream_path = if upstream_path == "/" { "/".to_string() } else { upstream_path };
-    let query = uri.query().map(|value| format!("?{value}")).unwrap_or_default();
+    let upstream_path = if upstream_path == "/" {
+        "/".to_string()
+    } else {
+        upstream_path
+    };
+    let query = uri
+        .query()
+        .map(|value| format!("?{value}"))
+        .unwrap_or_default();
     let target = format!("http://127.0.0.1:{port}{upstream_path}{query}");
 
     let mut request = state.client.request(method, &target).body(body);
@@ -392,7 +467,13 @@ async fn proxy(
     }
     let response = match request.send().await {
         Ok(response) => response,
-        Err(error) => return (StatusCode::BAD_GATEWAY, format!("upstream unavailable: {error}")).into_response(),
+        Err(error) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("upstream unavailable: {error}"),
+            )
+                .into_response()
+        }
     };
     let status = response.status();
     let response_headers = response.headers().clone();
@@ -412,7 +493,13 @@ async fn proxy(
 fn is_hop_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "connection" | "keep-alive" | "proxy-authenticate" | "proxy-authorization"
-            | "te" | "trailer" | "transfer-encoding" | "upgrade"
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
     )
 }

@@ -6,40 +6,39 @@ mod auth;
 mod commands;
 mod data;
 mod error;
+mod global_gateway;
 pub mod harness;
 mod health;
-mod global_gateway;
 mod local_network;
 mod mcp;
-mod platform;
 pub mod planning;
+mod platform;
 mod runtime;
 mod secret;
 mod settings;
 pub mod tools;
 mod tunnel;
-pub(crate) mod usage;
 mod update;
+pub(crate) mod usage;
 mod workspace;
 
 use app_state::AppState;
 use commands::{
-    accept_goal_review, accept_plan_review, check_app_update, create_workspace, delete_frp_profile, delete_workspace, scan_agent_context, scan_global_agent_context,
-    get_app_settings, get_download_config,
-    get_global_gateway_config, get_global_gateway_status, list_history_sessions,
-    get_service_usage_stats,
-    get_global_runtime_settings, get_last_workspace_id, get_proxy, get_runtime_status,
-    get_planning_state, get_shared_secret, get_webview_memory_sample,
-    get_workspace_secret, hide_to_tray, install_software, list_frp_profiles, list_software,
+    accept_goal_review, accept_plan_review, check_app_update, check_global_gateway_health,
+    create_workspace, delete_frp_profile, delete_workspace, get_app_settings, get_download_config,
+    get_global_gateway_config, get_global_gateway_status, get_global_runtime_settings,
+    get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
+    get_service_usage_stats, get_shared_secret, get_webview_memory_sample, get_workspace_secret,
+    hide_to_tray, install_software, list_frp_profiles, list_history_sessions, list_software,
     list_workspaces, open_url, open_workspace_directory, quit_app, read_workspace_logs,
-    recreate_ui_webview, regenerate_shared_secret, regenerate_workspace_secret,
-    reject_goal_review, reject_plan_review, reset_planning_state,
-    restart_runtime, restart_tunnel, restore_runtime_state, run_health_checks, save_frp_profile,
-    set_download_config, set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
-    set_shared_secret, set_workspace_secret,
-    show_main_window, start_global_gateway, start_runtime,
-    stop_global_gateway, stop_runtime, stop_tunnel, test_tunnel, uninstall_software, update_workspace,
-    check_global_gateway_health,
+    recreate_ui_webview, regenerate_shared_secret, regenerate_workspace_secret, reject_goal_review,
+    reject_plan_review, reset_planning_state, restart_runtime, restart_tunnel,
+    restore_runtime_state, run_health_checks, save_frp_profile, scan_agent_context,
+    scan_global_agent_context, set_download_config, set_global_gateway_config,
+    set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
+    set_shared_secret, set_workspace_secret, show_main_window, start_global_gateway, start_runtime,
+    stop_global_gateway, stop_runtime, stop_tunnel, test_tunnel, uninstall_software,
+    update_workspace,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -48,7 +47,7 @@ use tauri::{Emitter, Manager, WindowEvent};
 #[cfg(target_os = "windows")]
 fn signal_existing_instance() -> bool {
     use windows::core::w;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
     use windows::Win32::System::Threading::{
         CreateEventW, CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
     };

@@ -12,16 +12,27 @@ pub fn list_skills(ctx: &ToolContext, _args: &Value) -> Result<Value, WorkspaceE
 }
 
 pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
-    let id = args.get("id").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
-    let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    let id = args
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
     if id.is_none() && name.is_none() {
         return Err(WorkspaceError::invalid_argument("id or name is required"));
     }
     let skills = ctx.current_skills();
-    let matches = skills.iter().filter(|skill| {
-        id.is_some_and(|value| skill.descriptor.id == value)
-            || name.is_some_and(|value| skill.descriptor.name.eq_ignore_ascii_case(value))
-    }).collect::<Vec<_>>();
+    let matches = skills
+        .iter()
+        .filter(|skill| {
+            id.is_some_and(|value| skill.descriptor.id == value)
+                || name.is_some_and(|value| skill.descriptor.name.eq_ignore_ascii_case(value))
+        })
+        .collect::<Vec<_>>();
     match matches.as_slice() {
         [] => Err(WorkspaceError::Tool {
             code: "SKILL_NOT_FOUND",
@@ -55,19 +66,20 @@ mod tests {
     fn get_skill_loads_body_on_demand() {
         let workspace = tempfile::tempdir().expect("workspace");
         let harness = tempfile::tempdir().expect("harness");
-        let ctx = ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
-            .expect("context")
-            .with_skills(vec![SkillEntry {
-                descriptor: SkillDescriptor {
-                    id: "abc".into(),
-                    name: "release".into(),
-                    description: "Release safely".into(),
-                    provider: "codex".into(),
-                    path: ".agents/skills/release/SKILL.md".into(),
-                    scope: "workspace".into(),
-                },
-                body: "Run tests first.".into(),
-            }]);
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context")
+                .with_skills(vec![SkillEntry {
+                    descriptor: SkillDescriptor {
+                        id: "abc".into(),
+                        name: "release".into(),
+                        description: "Release safely".into(),
+                        provider: "codex".into(),
+                        path: ".agents/skills/release/SKILL.md".into(),
+                        scope: "workspace".into(),
+                    },
+                    body: "Run tests first.".into(),
+                }]);
         let result = get_skill(&ctx, &json!({"name":"release"})).expect("skill");
         assert_eq!(result["content"], "Run tests first.");
     }
@@ -76,14 +88,15 @@ mod tests {
     fn list_skills_refreshes_files_created_after_context_initialization() {
         let workspace = tempfile::tempdir().expect("workspace");
         let harness = tempfile::tempdir().expect("harness");
-        let ctx = ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
-            .expect("context")
-            .with_agent_context(AgentContextRuntimeConfig {
-                instruction_sources: vec!["codex".into()],
-                skill_sources: vec!["custom".into()],
-                custom_instruction_paths: String::new(),
-                custom_skill_paths: ".agents/skills".into(),
-            });
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context")
+                .with_agent_context(AgentContextRuntimeConfig {
+                    instruction_sources: vec!["codex".into()],
+                    skill_sources: vec!["custom".into()],
+                    custom_instruction_paths: String::new(),
+                    custom_skill_paths: ".agents/skills".into(),
+                });
 
         let empty = list_skills(&ctx, &json!({})).expect("empty skills");
         assert_eq!(empty["count"], 0);

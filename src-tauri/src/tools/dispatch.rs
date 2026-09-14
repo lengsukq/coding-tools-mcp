@@ -1,6 +1,6 @@
-use std::path::Path;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 
 use serde_json::{json, Value};
 
@@ -63,14 +63,21 @@ fn record_execution_ledger(
     tracked_task_id: Option<&str>,
 ) {
     if !mutating_tool_call(name, args)
-        && !matches!(name, "start_task" | "update_task" | "pause_task" | "resume_task" | "finish_task")
+        && !matches!(
+            name,
+            "start_task" | "update_task" | "pause_task" | "resume_task" | "finish_task"
+        )
     {
         return;
     }
     let succeeded = output.get("ok").and_then(Value::as_bool) != Some(false);
     let task_id = tracked_task_id
         .map(str::to_string)
-        .or_else(|| args.get("task_id").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            args.get("task_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .or_else(|| {
             output
                 .get("task")
@@ -101,7 +108,12 @@ fn record_execution_ledger(
         || (name == "history_manage"
             && args.get("action").and_then(Value::as_str) == Some("checkpoint"));
     let history_checkpoint_ref = is_checkpoint
-        .then(|| output.get("path").and_then(Value::as_str).map(str::to_string))
+        .then(|| {
+            output
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .flatten();
     let verification = args
         .get("tests")
@@ -188,18 +200,20 @@ fn plan_mode_blocks_tool(name: &str, args: &Value) -> bool {
 }
 
 fn load_planning_state(ctx: &ToolContext) -> Result<PlanningState, Value> {
-    PlanningService::new(ctx.workspace.root()).state().map_err(|error| {
-        tool_err(WorkspaceError::ToolDetails {
-            code: "PLANNING_STATE_UNAVAILABLE",
-            message: format!("Cannot read project planning state: {error}"),
-            category: "storage",
-            retryable: false,
-            details: json!({
-                "storage_path": PLANNING_RELATIVE_PATH,
-                "fail_closed_for_mutations": true
-            }),
+    PlanningService::new(ctx.workspace.root())
+        .state()
+        .map_err(|error| {
+            tool_err(WorkspaceError::ToolDetails {
+                code: "PLANNING_STATE_UNAVAILABLE",
+                message: format!("Cannot read project planning state: {error}"),
+                category: "storage",
+                retryable: false,
+                details: json!({
+                    "storage_path": PLANNING_RELATIVE_PATH,
+                    "fail_closed_for_mutations": true
+                }),
+            })
         })
-    })
 }
 
 fn planning_gate(state: &PlanningState, name: &str, args: &Value) -> Option<Value> {
@@ -208,17 +222,19 @@ fn planning_gate(state: &PlanningState, name: &str, args: &Value) -> Option<Valu
     }
     match state.mode {
         PlanningMode::Direct => None,
-        PlanningMode::Plan if plan_mode_blocks_tool(name, args) => Some(tool_err(WorkspaceError::ToolDetails {
-            code: "PLAN_MODE_READ_ONLY",
-            message: format!("{name} is disabled while this workspace is in Plan mode"),
-            category: "permission",
-            retryable: false,
-            details: json!({
-                "mode": "plan",
-                "revision": state.revision,
-                "suggestion": "Use read/planning tools, or switch the workspace to Goal/Direct mode from the desktop app."
-            }),
-        })),
+        PlanningMode::Plan if plan_mode_blocks_tool(name, args) => {
+            Some(tool_err(WorkspaceError::ToolDetails {
+                code: "PLAN_MODE_READ_ONLY",
+                message: format!("{name} is disabled while this workspace is in Plan mode"),
+                category: "permission",
+                retryable: false,
+                details: json!({
+                    "mode": "plan",
+                    "revision": state.revision,
+                    "suggestion": "Use read/planning tools, or switch the workspace to Goal/Direct mode from the desktop app."
+                }),
+            }))
+        }
         PlanningMode::Plan => None,
         PlanningMode::Goal => goal_mode_gate(state, name),
     }
@@ -305,7 +321,11 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     let effective_args = apply_default_cwd(ctx, name, args);
     let planning_state = match load_planning_state(ctx) {
         Ok(state) => Some(state),
-        Err(error) if planning_protected_tool(name, &effective_args) || name == "exec_health_check" => return error,
+        Err(error)
+            if planning_protected_tool(name, &effective_args) || name == "exec_health_check" =>
+        {
+            return error
+        }
         Err(_) => None,
     };
     if let Some(state) = planning_state.as_ref() {
@@ -602,7 +622,11 @@ fn attach_planning_context(mut output: Value, state: &PlanningState) -> Value {
         .as_deref()
         .and_then(|id| state.goals.iter().find(|goal| goal.id == id))
         .map(|goal| {
-            let completed = goal.success_criteria.iter().filter(|item| item.completed).count();
+            let completed = goal
+                .success_criteria
+                .iter()
+                .filter(|item| item.completed)
+                .count();
             json!({
                 "id": goal.id,
                 "title": goal.title,
@@ -754,8 +778,8 @@ fn history_write_affects_baseline(args: &Value) -> bool {
         .unwrap_or("docs/history-session")
         .replace('\\', "/");
     let history_dir = history_dir.trim_start_matches("./").trim_end_matches('/');
-    let managed_default = history_dir == "docs/history-session"
-        || history_dir.starts_with("docs/history-session/");
+    let managed_default =
+        history_dir == "docs/history-session" || history_dir.starts_with("docs/history-session/");
     let managed_runtime = history_dir
         .split('/')
         .any(|component| component == ".coding-tools");
@@ -830,9 +854,7 @@ fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String
 
 pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
     let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
-    let history_context = crate::tools::history::context_snapshot(ctx)
-        .ok()
-        .flatten();
+    let history_context = crate::tools::history::context_snapshot(ctx).ok().flatten();
     Ok(tool_ok(json!({
         "server": "coding-tools-mcp",
         "title": "Coding Tools MCP",
@@ -859,6 +881,59 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
     })))
 }
 
+pub fn check_exec_environment(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
+    Ok(tool_ok(json!({
+        "workspace": ctx.workspace.root_display(),
+        "permission_mode": ctx.permission_mode,
+        "network_allowed": ctx.policy.network_allowed(),
+        "landlock_enabled": false,
+        "filesystem_sandbox": {
+            "available": false,
+            "enforced": false,
+            "default_scope": "workspace",
+            "host_scope_available": false
+        },
+        "global_tmp_write": if ctx.permission_mode == "dangerous" { "allowed" } else { "tmp-prefix" },
+        "workspace_exec_available": true,
+        "workspace_exec_sandbox_enforced": false,
+        "workspace_exec_boundary": "policy_only",
+        "system_command_allowlist": ctx.policy.allowed_commands.iter().cloned().collect::<Vec<_>>(),
+        "configured_executable_paths": ctx.executable_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+        "workspace_local_entries": {
+            "enabled": ctx.policy.workspace_local_entries,
+            "script_extensions": ctx.policy.workspace_script_extensions.iter().cloned().collect::<Vec<_>>(),
+            "resolution": "workdir_first"
+        },
+        // Backward-compatible alias for older MCP clients.
+        "allowed_commands": ctx.policy.allowed_commands.iter().cloned().collect::<Vec<_>>(),
+        "warnings": ["Workspace 子进程当前允许执行，但尚未启用操作系统级文件系统沙箱"]
+    })))
+}
+
+pub fn get_default_cwd(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
+    Ok(tool_ok(json!({
+        "workspace": ctx.workspace.root_display(),
+        "default_cwd": ctx.default_cwd_display(),
+        "resolved_cwd": ctx.default_cwd_path().display().to_string()
+    })))
+}
+
+pub fn set_default_cwd(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
+    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
+    let resolved = ctx.workspace.resolve_existing(path)?;
+    if !resolved.path.is_dir() {
+        return Err(WorkspaceError::not_a_directory(
+            "Default cwd must be a directory",
+        ));
+    }
+    ctx.set_default_cwd(resolved.path.clone());
+    Ok(tool_ok(json!({
+        "workspace": ctx.workspace.root_display(),
+        "default_cwd": resolved.display,
+        "resolved_cwd": resolved.path.display().to_string()
+    })))
+}
+
 #[cfg(test)]
 mod planning_tests {
     use tempfile::tempdir;
@@ -868,11 +943,9 @@ mod planning_tests {
     fn context() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
         let workspace = tempdir().expect("workspace");
         let harness = tempdir().expect("harness");
-        let ctx = ToolContext::for_test(
-            workspace.path().to_path_buf(),
-            harness.path().to_path_buf(),
-        )
-        .expect("context");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
         (workspace, harness, ctx)
     }
 
@@ -882,7 +955,9 @@ mod planning_tests {
         PlanningService::new(ctx.workspace.root())
             .set_mode(PlanningMode::Plan)
             .expect("plan mode");
-        let state = PlanningService::new(ctx.workspace.root()).state().expect("state");
+        let state = PlanningService::new(ctx.workspace.root())
+            .state()
+            .expect("state");
 
         let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
@@ -962,9 +1037,7 @@ mod planning_tests {
         );
         assert_eq!(created["ok"], true);
         let plan_id = created["plan"]["id"].as_str().expect("plan id");
-        let step_id = created["plan"]["steps"][0]["id"]
-            .as_str()
-            .expect("step id");
+        let step_id = created["plan"]["steps"][0]["id"].as_str().expect("step id");
 
         let updated = call_tool(
             &ctx,
@@ -1080,57 +1153,4 @@ mod planning_tests {
             })
         ));
     }
-}
-
-pub fn check_exec_environment(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
-    Ok(tool_ok(json!({
-        "workspace": ctx.workspace.root_display(),
-        "permission_mode": ctx.permission_mode,
-        "network_allowed": ctx.policy.network_allowed(),
-        "landlock_enabled": false,
-        "filesystem_sandbox": {
-            "available": false,
-            "enforced": false,
-            "default_scope": "workspace",
-            "host_scope_available": false
-        },
-        "global_tmp_write": if ctx.permission_mode == "dangerous" { "allowed" } else { "tmp-prefix" },
-        "workspace_exec_available": true,
-        "workspace_exec_sandbox_enforced": false,
-        "workspace_exec_boundary": "policy_only",
-        "system_command_allowlist": ctx.policy.allowed_commands.iter().cloned().collect::<Vec<_>>(),
-        "configured_executable_paths": ctx.executable_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-        "workspace_local_entries": {
-            "enabled": ctx.policy.workspace_local_entries,
-            "script_extensions": ctx.policy.workspace_script_extensions.iter().cloned().collect::<Vec<_>>(),
-            "resolution": "workdir_first"
-        },
-        // Backward-compatible alias for older MCP clients.
-        "allowed_commands": ctx.policy.allowed_commands.iter().cloned().collect::<Vec<_>>(),
-        "warnings": ["Workspace 子进程当前允许执行，但尚未启用操作系统级文件系统沙箱"]
-    })))
-}
-
-pub fn get_default_cwd(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
-    Ok(tool_ok(json!({
-        "workspace": ctx.workspace.root_display(),
-        "default_cwd": ctx.default_cwd_display(),
-        "resolved_cwd": ctx.default_cwd_path().display().to_string()
-    })))
-}
-
-pub fn set_default_cwd(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
-    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
-    let resolved = ctx.workspace.resolve_existing(path)?;
-    if !resolved.path.is_dir() {
-        return Err(WorkspaceError::not_a_directory(
-            "Default cwd must be a directory",
-        ));
-    }
-    ctx.set_default_cwd(resolved.path.clone());
-    Ok(tool_ok(json!({
-        "workspace": ctx.workspace.root_display(),
-        "default_cwd": resolved.display,
-        "resolved_cwd": resolved.path.display().to_string()
-    })))
 }

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use sha2::Digest;
 
 use crate::agent_context::{
-    discover_instructions, discover_skills, render_instruction_documents, AgentContextRuntimeConfig,
-    SkillEntry,
+    discover_instructions, discover_skills, render_instruction_documents,
+    AgentContextRuntimeConfig, SkillEntry,
 };
 use crate::harness::Harness;
 use crate::tools::policy::PolicySettings;
@@ -273,7 +273,7 @@ impl ToolContext {
 pub fn merge_executable_paths(workspace_paths: &str, global_paths: &str) -> Vec<PathBuf> {
     let mut output = Vec::new();
     for configured in [workspace_paths, global_paths] {
-        for group in configured.split(|c| c == '\n' || c == ',') {
+        for group in configured.split(['\n', ',']) {
             let group = group.trim();
             if group.is_empty() {
                 continue;
@@ -302,7 +302,10 @@ fn expand_home(value: &str) -> PathBuf {
     if value == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
     }
-    if let Some(rest) = value.strip_prefix("~/").or_else(|| value.strip_prefix("~\\")) {
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
         if let Some(home) = dirs::home_dir() {
             return home.join(rest);
         }
@@ -322,10 +325,8 @@ mod tests {
 
     #[test]
     fn workspace_paths_precede_global_paths_and_duplicates_are_removed() {
-        let paths = merge_executable_paths(
-            "/workspace/bin\n/common/bin",
-            "/global/bin\n/common/bin",
-        );
+        let paths =
+            merge_executable_paths("/workspace/bin\n/common/bin", "/global/bin\n/common/bin");
 
         assert_eq!(
             paths,
@@ -345,7 +346,10 @@ mod tests {
             .into_owned();
         let paths = merge_executable_paths(&joined, "");
 
-        assert_eq!(paths, vec![PathBuf::from("/first"), PathBuf::from("/second")]);
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("/first"), PathBuf::from("/second")]
+        );
     }
 
     #[test]

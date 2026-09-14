@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::{AppError, AppResult};
 
 use super::model::{
-    ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningMode,
-    PlanningState, SuccessCriterion,
+    ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus,
+    PlanningMode, PlanningState, SuccessCriterion,
 };
 use super::store::PlanningStore;
 
@@ -48,7 +48,9 @@ impl PlanningService {
                 .find(|goal| goal.id == goal_id)
                 .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
             if matches!(goal.status, GoalStatus::Archived | GoalStatus::Cancelled) {
-                return Err(AppError::Message("Archived or cancelled goals cannot be submitted for review".into()));
+                return Err(AppError::Message(
+                    "Archived or cancelled goals cannot be submitted for review".into(),
+                ));
             }
             let now = timestamp();
             goal.status = GoalStatus::AwaitingAcceptance;
@@ -69,7 +71,9 @@ impl PlanningService {
                 .find(|plan| plan.id == plan_id)
                 .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
             if matches!(plan.status, PlanStatus::Archived | PlanStatus::Cancelled) {
-                return Err(AppError::Message("Archived or cancelled plans cannot be submitted for review".into()));
+                return Err(AppError::Message(
+                    "Archived or cancelled plans cannot be submitted for review".into(),
+                ));
             }
             let now = timestamp();
             plan.status = PlanStatus::AwaitingAcceptance;
@@ -90,7 +94,9 @@ impl PlanningService {
                 .position(|goal| goal.id == goal_id)
                 .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
             if state.goals[goal_index].status != GoalStatus::AwaitingAcceptance {
-                return Err(AppError::Message("Goal is not waiting for human acceptance".into()));
+                return Err(AppError::Message(
+                    "Goal is not waiting for human acceptance".into(),
+                ));
             }
 
             let now = timestamp();
@@ -137,7 +143,9 @@ impl PlanningService {
                 .position(|goal| goal.id == goal_id)
                 .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
             if state.goals[goal_index].status != GoalStatus::AwaitingAcceptance {
-                return Err(AppError::Message("Goal is not waiting for human acceptance".into()));
+                return Err(AppError::Message(
+                    "Goal is not waiting for human acceptance".into(),
+                ));
             }
             let linked_plan_ids = state.goals[goal_index].plan_ids.clone();
             let now = timestamp();
@@ -171,7 +179,9 @@ impl PlanningService {
                 .find(|plan| plan.id == plan_id)
                 .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
             if plan.status != PlanStatus::AwaitingAcceptance {
-                return Err(AppError::Message("Plan is not waiting for human acceptance".into()));
+                return Err(AppError::Message(
+                    "Plan is not waiting for human acceptance".into(),
+                ));
             }
             let now = timestamp();
             plan.status = PlanStatus::Archived;
@@ -195,7 +205,9 @@ impl PlanningService {
                 .find(|plan| plan.id == plan_id)
                 .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
             if plan.status != PlanStatus::AwaitingAcceptance {
-                return Err(AppError::Message("Plan is not waiting for human acceptance".into()));
+                return Err(AppError::Message(
+                    "Plan is not waiting for human acceptance".into(),
+                ));
             }
             let now = timestamp();
             plan.status = PlanStatus::Active;
@@ -226,7 +238,11 @@ impl PlanningService {
                 plan.steps
                     .iter()
                     .find(|step| step.status == PlanStepStatus::InProgress)
-                    .or_else(|| plan.steps.iter().find(|step| step.status == PlanStepStatus::Pending))
+                    .or_else(|| {
+                        plan.steps
+                            .iter()
+                            .find(|step| step.status == PlanStepStatus::Pending)
+                    })
                     .map(|step| step.id.clone())
             });
             let completed_step_ids = focused_plan
@@ -468,11 +484,11 @@ impl PlanningService {
             Ok(output)
         })
     }
-
 }
 
 fn required_text(value: &str, label: &str) -> AppResult<String> {
-    non_empty(value.to_string()).ok_or_else(|| AppError::Message(format!("{label} cannot be empty")))
+    non_empty(value.to_string())
+        .ok_or_else(|| AppError::Message(format!("{label} cannot be empty")))
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -520,8 +536,13 @@ mod tests {
             )
             .expect("create plan");
 
-        assert!(workspace.path().join(super::super::PLANNING_RELATIVE_PATH).exists());
-        let reloaded = PlanningService::new(workspace.path()).state().expect("reload");
+        assert!(workspace
+            .path()
+            .join(super::super::PLANNING_RELATIVE_PATH)
+            .exists());
+        let reloaded = PlanningService::new(workspace.path())
+            .state()
+            .expect("reload");
         assert_eq!(reloaded.goals.len(), 1);
         assert_eq!(reloaded.plans.len(), 1);
         assert_eq!(reloaded.goals[0].plan_ids, vec![plan.id]);
@@ -564,7 +585,12 @@ mod tests {
             .update_goal(&goal.id, None, None, None, None, None, Some(true))
             .expect("focus goal");
         let plan = service
-            .create_plan(Some(goal.id.clone()), "Plan", "Objective", vec!["Step".into()])
+            .create_plan(
+                Some(goal.id.clone()),
+                "Plan",
+                "Objective",
+                vec!["Step".into()],
+            )
             .expect("plan");
         let step_id = plan.steps[0].id.clone();
         service
@@ -595,7 +621,15 @@ mod tests {
             state.execution.history_checkpoint_ref.as_deref(),
             Some("docs/history-session/6.md")
         );
-        assert_eq!(state.goals[0].execution_checkpoint.as_ref().unwrap().current_step_id.as_deref(), Some(step_id.as_str()));
+        assert_eq!(
+            state.goals[0]
+                .execution_checkpoint
+                .as_ref()
+                .unwrap()
+                .current_step_id
+                .as_deref(),
+            Some(step_id.as_str())
+        );
     }
 
     #[test]
@@ -603,7 +637,12 @@ mod tests {
         let workspace = tempdir().expect("workspace");
         let service = PlanningService::new(workspace.path());
         let goal = service
-            .create_goal("AI goal", "Finish the requested work", Vec::new(), Vec::new())
+            .create_goal(
+                "AI goal",
+                "Finish the requested work",
+                Vec::new(),
+                Vec::new(),
+            )
             .expect("goal");
         service
             .update_goal(&goal.id, None, None, None, None, None, Some(true))
@@ -636,7 +675,12 @@ mod tests {
         assert_eq!(state.focus_goal_id, None);
         assert_eq!(state.focus_plan_id, None);
         assert_eq!(
-            state.plans.iter().find(|item| item.id == plan.id).unwrap().status,
+            state
+                .plans
+                .iter()
+                .find(|item| item.id == plan.id)
+                .unwrap()
+                .status,
             PlanStatus::Archived
         );
     }
@@ -657,7 +701,10 @@ mod tests {
             .expect("reject review");
         let state = service.state().expect("state");
         assert_eq!(rejected.status, GoalStatus::Active);
-        assert_eq!(rejected.review_feedback.as_deref(), Some("Add one more regression test"));
+        assert_eq!(
+            rejected.review_feedback.as_deref(),
+            Some("Add one more regression test")
+        );
         assert_eq!(state.focus_goal_id.as_deref(), Some(goal.id.as_str()));
     }
 }

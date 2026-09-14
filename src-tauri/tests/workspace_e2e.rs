@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use coding_tools_mcp_desktop_lib::planning::{PlanningMode, PlanningService, PLANNING_SCHEMA_VERSION};
+use coding_tools_mcp_desktop_lib::planning::{
+    PlanningMode, PlanningService, PLANNING_SCHEMA_VERSION,
+};
 use coding_tools_mcp_desktop_lib::tools::{call_tool, ToolContext};
 use serde_json::{json, Value};
 
@@ -171,14 +173,18 @@ fn large_command_output_keeps_head_and_tail_with_eviction_metadata() {
         }
     }
     assert_eq!(snapshot["ok"], true, "{snapshot}");
-    assert!(snapshot["stdout_retention"]["total_bytes"]
-        .as_u64()
-        .unwrap_or(0)
-        >= payload_bytes as u64);
-    assert!(snapshot["stdout_retention"]["evicted_bytes"]
-        .as_u64()
-        .unwrap_or(0)
-        > 0);
+    assert!(
+        snapshot["stdout_retention"]["total_bytes"]
+            .as_u64()
+            .unwrap_or(0)
+            >= payload_bytes as u64
+    );
+    assert!(
+        snapshot["stdout_retention"]["evicted_bytes"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
     let preview = snapshot["stdout"].as_str().unwrap_or_default();
     assert!(preview.contains("UNIQUE_HEAD_ERROR"));
     assert!(preview.contains("UNIQUE_TAIL_ERROR"));
@@ -189,7 +195,10 @@ fn large_command_output_keeps_head_and_tail_with_eviction_metadata() {
         &json!({"output_ref": stdout_ref, "offset": 0, "limit": 131_072}),
     );
     assert_eq!(head["ok"], true, "{head}");
-    assert!(head["content"].as_str().unwrap_or_default().contains("UNIQUE_HEAD_ERROR"));
+    assert!(head["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("UNIQUE_HEAD_ERROR"));
     assert!(head["evicted_bytes"].as_u64().unwrap_or(0) > 0);
     let tail_offset = head["next_offset"].as_u64().expect("tail offset");
     assert!(tail_offset > head["head_retained_bytes"].as_u64().unwrap_or(0));
@@ -200,7 +209,10 @@ fn large_command_output_keeps_head_and_tail_with_eviction_metadata() {
         &json!({"output_ref": stdout_ref, "offset": tail_offset, "limit": 1_048_576}),
     );
     assert_eq!(tail["ok"], true, "{tail}");
-    assert!(tail["content"].as_str().unwrap_or_default().contains("UNIQUE_TAIL_ERROR"));
+    assert!(tail["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("UNIQUE_TAIL_ERROR"));
     assert_eq!(tail["next_offset"], Value::Null);
 
     let killed = call_tool(
@@ -216,7 +228,11 @@ fn fixture_root(name: &str) -> WorkspaceFixture {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/workspaces")
         .join(name);
-    assert!(source.is_dir(), "missing workspace fixture: {}", source.display());
+    assert!(
+        source.is_dir(),
+        "missing workspace fixture: {}",
+        source.display()
+    );
     let root = temp.path().join("workspace");
     copy_dir_all(&source, &root).expect("copy workspace fixture");
     let harness = temp.path().join("harness");
@@ -251,22 +267,33 @@ fn legacy_planning_workspace_migrates_without_losing_plan_details() {
     let service = PlanningService::new(&fixture.root);
 
     let state = service.state().expect("legacy planning state should load");
-    assert_eq!(state.goals[0].objective, "Upgrade generation quality without breaking existing workflows.");
+    assert_eq!(
+        state.goals[0].objective,
+        "Upgrade generation quality without breaking existing workflows."
+    );
     assert_eq!(state.goals[0].success_criteria.len(), 1);
-    assert_eq!(state.plans[0].objective, "Separate planning from final payload mapping.");
+    assert_eq!(
+        state.plans[0].objective,
+        "Separate planning from final payload mapping."
+    );
     assert_eq!(state.plans[0].steps.len(), 2);
     assert_eq!(state.plans[0].steps[0].id, "task-baseline");
     assert!(state.plans[0].extra.contains_key("phases"));
     assert!(state.plans[0].extra.contains_key("architecture"));
 
-    service.set_mode(PlanningMode::Plan).expect("persist migrated state");
+    service
+        .set_mode(PlanningMode::Plan)
+        .expect("persist migrated state");
     let normalized: Value = serde_json::from_str(
         &fs::read_to_string(fixture.root.join(".coding-tools/planning/state.json"))
             .expect("normalized planning state"),
     )
     .expect("normalized planning json");
     assert_eq!(normalized["schema_version"], PLANNING_SCHEMA_VERSION);
-    assert_eq!(normalized["goals"][0]["objective"], "Upgrade generation quality without breaking existing workflows.");
+    assert_eq!(
+        normalized["goals"][0]["objective"],
+        "Upgrade generation quality without breaking existing workflows."
+    );
     assert!(normalized["goals"][0]["success_criteria"][0].is_object());
     assert_eq!(normalized["plans"][0]["steps"][0]["id"], "task-baseline");
     assert!(normalized["plans"][0]["phases"].is_array());
@@ -346,7 +373,10 @@ fn plan_and_goal_modes_keep_planning_writable_and_gate_project_mutation() {
         }),
     );
     assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
-    assert_eq!(blocked["error"]["recovery"]["action"], "switch_planning_mode");
+    assert_eq!(
+        blocked["error"]["recovery"]["action"],
+        "switch_planning_mode"
+    );
 
     service.set_mode(PlanningMode::Goal).expect("goal mode");
     let changed = call_tool(
@@ -391,8 +421,7 @@ fn harness_ignores_managed_planning_and_history_but_detects_real_external_change
 
     let internal_state_only = call_tool(&ctx, "exec_command", &json!({"cmd": "pwd"}));
     assert_ne!(
-        internal_state_only["error"]["code"],
-        "FILE_CHANGED_EXTERNALLY",
+        internal_state_only["error"]["code"], "FILE_CHANGED_EXTERNALLY",
         "managed planning/history files must not poison the Harness baseline"
     );
 

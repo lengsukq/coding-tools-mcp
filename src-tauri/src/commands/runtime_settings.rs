@@ -50,12 +50,11 @@ pub fn set_global_runtime_settings(
     runtime: GlobalRuntimeSettingsDto,
 ) -> AppResult<()> {
     let should_capture_running = state.with_settings(|store| {
-        Ok(runtime.restore_runtime_state_on_launch && !store.settings().restore_runtime_state_on_launch)
+        Ok(runtime.restore_runtime_state_on_launch
+            && !store.settings().restore_runtime_state_on_launch)
     })?;
     let running_snapshot = if should_capture_running {
-        Some(state.with_runtime(|supervisor| {
-            Ok(supervisor.running_workspace_ids())
-        })?)
+        Some(state.with_runtime(|supervisor| Ok(supervisor.running_workspace_ids()))?)
     } else {
         None
     };
@@ -66,7 +65,8 @@ pub fn set_global_runtime_settings(
         settings.global_ai_instructions = runtime.ai_instructions.trim().to_string();
         settings.global_instruction_sources = runtime.instruction_sources;
         settings.global_skill_sources = runtime.skill_sources;
-        settings.global_custom_instruction_paths = runtime.custom_instruction_paths.trim().to_string();
+        settings.global_custom_instruction_paths =
+            runtime.custom_instruction_paths.trim().to_string();
         settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
         settings.allow_lan_access = runtime.allow_lan_access;
         settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;

@@ -123,24 +123,18 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     let _ = window.show();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let outer_position = window
-        .outer_position()
-        .ok()
-        .filter(|pos| is_sane_position(pos));
-    let outer_size = window.outer_size().ok().filter(|size| is_sane_size(size));
+    let outer_position = window.outer_position().ok().filter(is_sane_position);
+    let outer_size = window.outer_size().ok().filter(is_sane_size);
 
     // Keepalive window: ensures destroy(main) is not "close last window → exit".
-    let keepalive = WebviewWindowBuilder::new(
-        &app,
-        KEEPALIVE_LABEL,
-        WebviewUrl::App("index.html".into()),
-    )
-    .visible(false)
-    .skip_taskbar(true)
-    .title(" ")
-    .inner_size(1.0, 1.0)
-    .build()
-    .map_err(|err| AppError::Message(format!("keepalive window failed: {err}")))?;
+    let keepalive =
+        WebviewWindowBuilder::new(&app, KEEPALIVE_LABEL, WebviewUrl::App("index.html".into()))
+            .visible(false)
+            .skip_taskbar(true)
+            .title(" ")
+            .inner_size(1.0, 1.0)
+            .build()
+            .map_err(|err| AppError::Message(format!("keepalive window failed: {err}")))?;
 
     window
         .destroy()
@@ -163,16 +157,18 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
 
     let new_window = match new_window {
         Ok(w) => w,
-        Err(config_err) => WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-            .title("Coding Tools MCP")
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(960.0, 640.0)
-            .build()
-            .map_err(|err| {
-                AppError::Message(format!(
-                    "rebuild webview failed ({config_err}); fallback also failed: {err}"
-                ))
-            })?,
+        Err(config_err) => {
+            WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+                .title("Coding Tools MCP")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(960.0, 640.0)
+                .build()
+                .map_err(|err| {
+                    AppError::Message(format!(
+                        "rebuild webview failed ({config_err}); fallback also failed: {err}"
+                    ))
+                })?
+        }
     };
 
     if let Some(size) = outer_size {

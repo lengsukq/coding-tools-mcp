@@ -13,8 +13,8 @@ pub fn list_history_sessions(state: State<'_, AppState>, id: String) -> AppResul
             .cloned()
             .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
     })?;
-    let workspace = Workspace::new(profile.path.into())
-        .map_err(|error| AppError::Message(error.message()))?;
+    let workspace =
+        Workspace::new(profile.path.into()).map_err(|error| AppError::Message(error.message()))?;
     history::list_sessions_for_workspace(&workspace)
         .map_err(|error| AppError::Message(error.message()))
 }

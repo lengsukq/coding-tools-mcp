@@ -55,7 +55,6 @@ impl SecretStore {
             Ok(())
         })
     }
-
 }
 
 fn workspace_secret_map<'a>(
