@@ -32,6 +32,13 @@ impl PlanningService {
         }
     }
 
+    /// Replace the project-local planning file with a clean default state.
+    /// This intentionally does not call `load()` first, so it remains usable
+    /// even when an older or manually edited state file can no longer deserialize.
+    pub fn reset_state(&self) -> AppResult<PlanningState> {
+        self.store.reset()
+    }
+
     pub fn request_goal_review(&self, goal_id: &str, summary: &str) -> AppResult<Goal> {
         let summary = required_text(summary, "Review summary")?;
         self.store.update(|state| {
@@ -351,6 +358,7 @@ impl PlanningService {
                 review_summary: None,
                 review_feedback: None,
                 execution_checkpoint: None,
+                extra: Default::default(),
             };
             let plan = Plan {
                 id: new_id(),
@@ -372,6 +380,7 @@ impl PlanningService {
                 review_requested_at: None,
                 review_summary: None,
                 review_feedback: None,
+                extra: Default::default(),
             };
             state.focus_goal_id = Some(goal.id.clone());
             state.focus_plan_id = Some(plan.id.clone());
@@ -422,6 +431,7 @@ impl PlanningService {
                 review_summary: None,
                 review_feedback: None,
                 execution_checkpoint: None,
+                extra: Default::default(),
             };
             if state.focus_goal_id.is_none() {
                 state.focus_goal_id = Some(goal.id.clone());
@@ -516,6 +526,7 @@ impl PlanningService {
                 review_requested_at: None,
                 review_summary: None,
                 review_feedback: None,
+                extra: Default::default(),
             };
             if let Some(id) = goal_id.as_deref() {
                 if let Some(goal) = state.goals.iter_mut().find(|goal| goal.id == id) {

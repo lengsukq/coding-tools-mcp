@@ -65,7 +65,11 @@ pub fn task_manage(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
 pub fn action_is_mutating(name: &str, args: &Value) -> Option<bool> {
     let action = args.get("action").and_then(Value::as_str)?;
     match name {
-        "history_manage" => Some(matches!(action, "bootstrap" | "checkpoint" | "validate")),
+        "history_manage" => Some(match action {
+            "bootstrap" | "checkpoint" => true,
+            "validate" => args.get("repair").and_then(Value::as_bool).unwrap_or(false),
+            _ => false,
+        }),
         "planning_manage" => Some(!matches!(action, "state")),
         "task_manage" => Some(matches!(
             action,
@@ -121,6 +125,8 @@ mod tests {
     fn managers_reject_unknown_actions() {
         let (_workspace, _harness, ctx) = context();
         let error = planning_manage(&ctx, &json!({"action":"explode"})).expect_err("invalid");
-        assert_eq!(error.to_error_value()["code"], "INVALID_ARGUMENT");
+        let value = error.to_error_value();
+        assert_eq!(value["code"], "INVALID_ARGUMENT");
+        assert_eq!(value["recovery"]["action"], "fix_input");
     }
 }

@@ -168,6 +168,10 @@ export async function getPlanningState(workspaceId: string): Promise<PlanningSta
   return invoke<PlanningStateDto>("get_planning_state", { workspaceId });
 }
 
+export async function resetPlanningState(workspaceId: string): Promise<PlanningStateDto> {
+  return invoke<PlanningStateDto>("reset_planning_state", { workspaceId });
+}
+
 export async function setPlanningMode(
   workspaceId: string,
   mode: PlanningMode,

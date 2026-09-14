@@ -16,6 +16,7 @@
     getPlanningState,
     rejectGoalReview,
     rejectPlanReview,
+    resetPlanningState,
     setPlanningMode,
     type GoalDto,
     type PlanDto,
@@ -96,6 +97,26 @@
         return "已跳过";
       default:
         return status;
+    }
+  }
+
+  async function resetPlanning() {
+    if (busy) return;
+    const confirmed = window.confirm(
+      "确认重置当前工作区的 AI Planning？\n\n这会清空 Goal、Plan、执行记录和当前规划模式，但不会修改项目源码。",
+    );
+    if (!confirmed) return;
+
+    busy = true;
+    try {
+      planning = await resetPlanningState(workspaceId);
+      error = "";
+      reviewFeedback = {};
+      showToast("规划状态已重置。", { title: "AI Planning", kind: "success" });
+    } catch (err) {
+      showToast(String(err), { title: "重置规划失败", kind: "error" });
+    } finally {
+      busy = false;
     }
   }
 
@@ -253,6 +274,15 @@
       <button class="tx-btn-ghost min-h-10 px-3 text-xs" type="button" disabled={loading} onclick={() => void load()}>
         <RefreshCw size={13} class={loading ? "animate-spin" : ""} />
         刷新
+      </button>
+      <button
+        class="tx-btn-primary tx-btn-danger min-h-10 px-3 text-xs"
+        type="button"
+        disabled={busy}
+        onclick={() => void resetPlanning()}
+      >
+        <RotateCcw size={13} />
+        重置规划
       </button>
     </div>
   </div>

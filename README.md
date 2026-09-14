@@ -239,6 +239,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 如果 AI 客户端不在本机，需要把本地 MCP 暴露为 HTTPS 地址：
 
+- **零门槛推荐：Cloudflare Quick Tunnel**。在工作区隧道配置中选择 Cloudflare 快速模式，无需任何账号即可生成 `https://<随机>.trycloudflare.com` 公网地址，适合首次接入和临时演示；长期使用建议 FRP 固定子域名或 Cloudflare 命名隧道。
 - 在“软件管理”中安装或识别 `frpc` / `cloudflared`。
 - 在“FRP 配置”中保存服务器、端口和 Token，或在工作区选择 Cloudflare。
 - 每个工作区填写独立子域名。应用会统一管理 FRP 进程和多条代理线路。
@@ -273,6 +274,8 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 *日志可快速确认工具列表、历史初始化和检查点调用是否真正到达服务端。*
 
 ### 5. 连接 AI 客户端
+
+除 ChatGPT 外，claude.ai、Grok、Gemini 等支持远程 MCP Connector 的网页客户端都可以接入同一工作区：[网页 Chat 客户端接入矩阵](docs/web-chat-connectors.md) 提供逐客户端配置、认证选择和排查表。
 
 支持 MCP 的客户端使用界面中的公网 MCP URL。OAuth 当前支持 Authorization Code + PKCE S256、Dynamic Client Registration（`/register`）和 Refresh Token。支持动态注册的客户端可以直接读取服务端 metadata 并注册自己的 Client；不支持 DCR 的旧客户端仍可继续使用桌面端配置的静态 Client ID / Secret。
 
@@ -416,6 +419,8 @@ MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用�
 
 聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；旧工具继续保留给兼容 profile。
 
+长运行命令现在归属于 Workspace Runtime，而不是某一次 MCP transport 连接。`exec_command` 返回稳定 `command_id`，重新连接或从同一 Workspace 的另一运行入口仍可继续 `read_output` / `write_stdin` / `kill_session`；旧 `session_id` 参数继续兼容。stdout/stderr 各自保留固定预算的 Head + Tail，中间被淘汰的内容通过 `evicted_bytes` 明确报告，避免长日志只剩最后几行而丢失最初错误。
+
 典型开发过程：
 
 ```text
@@ -453,11 +458,15 @@ npm run desktop
 常用验证命令：
 
 ```bash
+npm run test:workspace
+npm run test:release
 npm run check
 npm run build
 cd src-tauri && cargo test
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 ```
+
+`npm run test:workspace` 专门运行真实 Workspace 生命周期回归，包括旧/损坏 Planning、Plan/Goal 门禁、History/Harness 内部状态和真实外部修改检测。`npm run test:release` 是本地发布前的统一 dogfood 入口，会串联版本检查、前端检查/构建和全部 Rust test targets。
 
 Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌面应用，它只启动 Vite，不会启动 Tauri 外壳。
 

@@ -42,6 +42,11 @@ fn unknown_tool_is_validation_error() {
     let err = assert_err(&out);
     assert_eq!(err["error"]["code"], "INVALID_ARGUMENT");
     assert_eq!(err["error"]["category"], "validation");
+    assert_eq!(err["error"]["recovery"]["action"], "fix_input");
+    assert!(err["error"]["recovery"]["instruction"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("capability_health_check"));
 }
 
 #[test]
@@ -74,6 +79,10 @@ fn request_permissions_is_unsupported_not_silent_grant() {
     assert_eq!(out["error"]["code"], "ELICITATION_UNSUPPORTED");
     assert_eq!(out["status"], "unsupported");
     assert_eq!(out["error"]["retryable"], false);
+    assert_eq!(
+        out["error"]["recovery"]["action"],
+        "continue_without_permission_request"
+    );
     assert!(out["error"]["message"]
         .as_str()
         .unwrap_or_default()
@@ -336,6 +345,10 @@ fn retained_session_timeout_stops_the_process_after_deadline() {
     assert_eq!(payload["command_ok"], Value::Null);
     assert_eq!(payload["stdin_open"], true);
     let session_id = payload["session_id"].as_str().expect("session id");
+    assert_eq!(payload["command_id"], session_id);
+    assert_eq!(payload["command_state"], "running");
+    assert!(payload["created_at"].as_str().is_some());
+    assert!(payload["started_at"].as_str().is_some());
 
     std::thread::sleep(std::time::Duration::from_millis(250));
     let after = invoke(
@@ -348,6 +361,8 @@ fn retained_session_timeout_stops_the_process_after_deadline() {
     assert_eq!(after["transport_ok"], true);
     assert_eq!(after["command_ok"], false);
     assert_eq!(after["stdin_open"], false);
+    assert_eq!(after["command_state"], "failed");
+    assert!(after["finished_at"].as_str().is_some());
     #[cfg(unix)]
     assert_eq!(after["exit_code"], Value::Null);
 }
@@ -368,19 +383,36 @@ fn killed_session_reports_command_failure_even_when_transport_succeeds() {
     );
     let payload = assert_ok(&result);
     let session_id = payload["session_id"].as_str().expect("session id");
+    let command_id = payload["command_id"].as_str().expect("command id");
+    assert_eq!(session_id, command_id);
+    let stdout_ref = payload["output_refs"]["stdout"]
+        .as_str()
+        .expect("stdout ref")
+        .to_string();
 
     let killed = invoke(
         &ctx,
         "kill_session",
-        json!({"session_id": session_id, "wait_ms": 2_000}),
+        json!({"command_id": command_id, "wait_ms": 2_000}),
     );
     let killed = assert_ok(&killed);
     assert_eq!(killed["status"], "killed");
     assert_eq!(killed["killed"], true);
     assert_eq!(killed["transport_ok"], true);
     assert_eq!(killed["command_ok"], false);
+    assert_eq!(killed["command_state"], "killed");
+    assert!(killed["finished_at"].as_str().is_some());
     #[cfg(unix)]
     assert_eq!(killed["exit_code"], Value::Null);
+
+    let evicted = invoke(
+        &ctx,
+        "read_output",
+        json!({"output_ref": stdout_ref, "limit": 1024}),
+    );
+    assert_err(&evicted);
+    assert_eq!(evicted["error"]["code"], "COMMAND_EVICTED");
+    assert_eq!(evicted["error"]["details"]["command_state"], "evicted");
 }
 
 #[test]

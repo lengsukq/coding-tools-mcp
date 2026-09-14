@@ -126,7 +126,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "create_plan",
         "Create plan",
-        "AI conversation workflow: create, activate, and focus a durable project Plan, optionally linked to a Goal. No pre-approval is required.",
+        "AI conversation workflow: create, activate, and focus a durable project Plan, optionally linked to a Goal. This planning-metadata write is allowed in Plan mode; no pre-approval is required.",
         false,
         false,
         false,
@@ -134,7 +134,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "update_plan",
         "Update plan",
-        "Update Plan status, focus, and individual step progress.",
+        "Update Plan status, focus, and individual step progress. This planning-metadata write is allowed in Plan mode.",
         false,
         false,
         false,
@@ -326,7 +326,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "write_stdin",
         "Write stdin",
-        "Write characters to a server-managed running command session.",
+        "Write characters to a workspace-owned running command. Prefer command_id; legacy session_id remains accepted.",
         false,
         false,
         false,
@@ -334,7 +334,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "kill_session",
         "Kill session",
-        "Terminate a server-managed running command session.",
+        "Terminate a workspace-owned running command. Prefer command_id; legacy session_id remains accepted.",
         false,
         true,
         false,
@@ -785,7 +785,7 @@ fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
     match name {
         "server_info" => "Return compact server and workspace metadata.",
         "history_manage" => "Manage project history through one stable action-based API.",
-        "planning_manage" => "Manage Goal and Plan state through one stable action-based API.",
+        "planning_manage" => "Manage Goal and Plan state through one stable action-based API. Goal/Plan writes remain allowed in Plan mode.",
         "task_manage" => "Manage durable task state through one stable action-based API.",
         "history_session_bootstrap" => "Create or resume a history archive when explicitly requested; returns bounded metadata only.",
         "history_session_checkpoint" => "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization.",
@@ -1186,23 +1186,23 @@ pub fn input_schema(name: &str) -> Value {
         "write_stdin" => json!({
             "type": "object",
             "properties": {
+                "command_id": { "type": "string", "minLength": 1, "description": "Stable workspace-owned command id." },
                 "session_id": { "type": "string", "minLength": 1 },
                 "chars": { "type": "string", "default": "" },
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
-            "required": ["session_id"],
             "additionalProperties": false
         }),
         "kill_session" => json!({
             "type": "object",
             "properties": {
+                "command_id": { "type": "string", "minLength": 1, "description": "Stable workspace-owned command id." },
                 "session_id": { "type": "string", "minLength": 1 },
                 "signal": { "type": "string", "enum": ["TERM", "KILL", "INT"], "default": "TERM" },
                 "wait_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 5000 },
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
-            "required": ["session_id"],
             "additionalProperties": false
         }),
         "read_output" => json!({

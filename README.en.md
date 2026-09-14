@@ -239,6 +239,7 @@ The macOS build is currently unsigned. If macOS blocks the first launch, allow i
 
 When the AI client is not running on the same machine, expose MCP through HTTPS:
 
+- **Zero-setup default: Cloudflare Quick Tunnel.** Select the Cloudflare quick mode in the workspace tunnel settings to generate a `https://<random>.trycloudflare.com` public URL without any account — ideal for first-time setup and temporary demos. For long-term use, prefer FRP with a fixed subdomain or a named Cloudflare tunnel.
 - Install or detect `frpc` / `cloudflared` from **Software management**.
 - Save the server, port, and token under **FRP settings**, or select Cloudflare in the workspace.
 - Give each workspace a distinct subdomain. The app manages the FRP process and aggregates multiple proxy routes.
@@ -273,6 +274,8 @@ When a connection fails, inspect recent MCP requests without leaving the desktop
 *The log quickly confirms whether tool discovery, history bootstrap, and checkpoint calls reached the server.*
 
 ### 5. Connect an AI client
+
+Beyond ChatGPT, any web client with a remote MCP connector can reach the same workspace — claude.ai, Grok, Gemini, and generic connectors included. See the [web chat connector matrix](docs/web-chat-connectors.md) for per-client configuration, authentication choices, and troubleshooting.
 
 Use the public MCP URL shown by the app. OAuth now supports Authorization Code + PKCE S256, Dynamic Client Registration (`/register`), and Refresh Tokens. Clients with DCR support can register themselves from the server metadata; older clients can continue to use the static Client ID / Secret configured in the desktop app.
 
@@ -406,6 +409,8 @@ The default `core` profile provides a stable, composable development tool set:
 
 Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while legacy profiles retain the old tool names.
 
+Long-running commands are owned by the Workspace Runtime rather than one MCP transport connection. `exec_command` returns a stable `command_id`, so reconnecting or using another runtime entry point for the same Workspace can continue with `read_output`, `write_stdin`, or `kill_session`; legacy `session_id` arguments remain supported. stdout and stderr each retain a bounded head and tail, while discarded middle bytes are reported through `evicted_bytes` so long logs preserve both the first diagnostic and the latest output.
+
 A typical development loop is:
 
 ```text
@@ -443,11 +448,15 @@ npm run desktop
 Useful verification commands:
 
 ```bash
+npm run test:workspace
+npm run test:release
 npm run check
 npm run build
 cd src-tauri && cargo test
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 ```
+
+`npm run test:workspace` runs the real Workspace lifecycle regression suite, including legacy/corrupt Planning, Plan/Goal gates, managed History/Harness state, and real external-change detection. `npm run test:release` is the local pre-release dogfood entry point and runs version checks, frontend checks/build, and every Rust test target.
 
 On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone to validate the desktop application; it starts Vite without the Tauri shell.
 

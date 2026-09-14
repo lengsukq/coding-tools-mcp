@@ -204,13 +204,26 @@ fn map_error(error: HarnessError) -> WorkspaceError {
 }
 
 fn tool_error(code: &'static str, message: impl Into<String>) -> WorkspaceError {
+    let category = match code {
+        "INVALID_ARGUMENT" | "INVALID_TASK_TRANSITION" => "validation",
+        "STORE_UNAVAILABLE" | "STORE_IO_FAILED" | "STORE_SERIALIZE_FAILED" | "STORE_CORRUPT" => {
+            "storage"
+        }
+        "WORKSPACE_UNAVAILABLE" => "runtime",
+        _ => "permission",
+    };
     WorkspaceError::Tool {
         code,
         message: message.into(),
-        category: "permission",
+        category,
         retryable: matches!(
             code,
-            "TASK_ALREADY_ACTIVE" | "FILE_CHANGED_EXTERNALLY" | "BASELINE_STALE"
+            "TASK_ALREADY_ACTIVE"
+                | "FILE_CHANGED_EXTERNALLY"
+                | "BASELINE_STALE"
+                | "STORE_UNAVAILABLE"
+                | "STORE_IO_FAILED"
+                | "WORKSPACE_UNAVAILABLE"
         ),
     }
 }

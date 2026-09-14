@@ -13,6 +13,28 @@ use crate::workspace::AuthConfig;
 
 pub type SharedState = SharedToolContext;
 
+/// 中转层支持协商的 MCP 协议版本，按版本升序排列（固定日期格式可直接字典序比较）。
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+/// 客户端未声明协议版本时的兼容默认值，保持历史行为。
+pub const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
+/// 服务端支持的最新协议版本。
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// 按 MCP 规则协商协议版本：支持集合内直接回显；未知版本回退到服务端最新版本，
+/// 由客户端自行决定是否继续；缺省时沿用历史默认版本。
+pub fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
+    let requested = requested.map(str::trim).filter(|value| !value.is_empty());
+    let Some(requested) = requested else {
+        return DEFAULT_PROTOCOL_VERSION;
+    };
+    SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|version| *version == requested)
+        .unwrap_or(LATEST_PROTOCOL_VERSION)
+}
+
 pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     let method = body.get("method").and_then(Value::as_str).unwrap_or("");
     let id = body.get("id").cloned().unwrap_or(Value::Null);
@@ -24,7 +46,11 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
 
     let result = match method {
         "initialize" => {
-            Ok(initialize_result(state))
+            let requested = params.get("protocolVersion").and_then(Value::as_str);
+            Ok(initialize_result(
+                state,
+                negotiate_protocol_version(requested),
+            ))
         }
         "ping" => Ok(serde_json::json!({})),
         "tools/list" => {
@@ -45,10 +71,10 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     }
 }
 
-fn initialize_result(state: &SharedState) -> Value {
-    let base_instructions = "Use these tools only for local coding operations inside the configured workspace. Planning mode is controlled exclusively by the desktop app: every tool response may contain planning_context with the authoritative current mode, revision, focused Goal, and focused Plan. Never assume or attempt to change the mode from chat. Goal and Plan records are AI-driven conversation artifacts: when a user request benefits from durable tracking, create_goal and create_plan may be called directly from the conversation without asking the user to fill desktop forms or approve a proposal first. Keep their criteria and steps updated as work progresses. When the work is ready for acceptance, call request_goal_review and/or request_plan_review with a concise verification summary. Never archive or claim final acceptance yourself; only the human desktop review action can accept and archive. If a review is rejected, continue from the reactivated Goal/Plan and incorporate the human feedback. In Plan mode, project writes and command execution are intentionally blocked by the server. In Goal mode, project mutations require an active focused Goal and must respect any focused Plan relationship/status. If the client reports missing tools while server authorization is still valid, treat it as a capability discovery mismatch rather than a permission loss: refresh the MCP session/tool list before requesting permissions. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
+fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
+    let base_instructions = "Use these tools only for local coding operations inside the configured workspace. Planning mode is controlled exclusively by the desktop app: every tool response may contain planning_context with the authoritative current mode, revision, focused Goal, and focused Plan. Never assume or attempt to change the mode from chat. Goal and Plan records are AI-driven conversation artifacts: when a user request benefits from durable tracking, create_goal and create_plan may be called directly from the conversation without asking the user to fill desktop forms or approve a proposal first. Keep their criteria and steps updated as work progresses. When the work is ready for acceptance, call request_goal_review and/or request_plan_review with a concise verification summary. Never archive or claim final acceptance yourself; only the human desktop review action can accept and archive. If a review is rejected, continue from the reactivated Goal/Plan and incorporate the human feedback. In Plan mode, Goal/Plan metadata operations remain writable: create/update Goal or Plan records and request their review as needed. Plan mode blocks project/source file mutations, command execution, and task mutations; do not interpret it as blocking the planning tools themselves. In Goal mode, project mutations require an active focused Goal and must respect any focused Plan relationship/status. If the client reports missing tools while server authorization is still valid, treat it as a capability discovery mismatch rather than a permission loss: refresh the MCP session/tool list before requesting permissions. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
     let base_instructions = if state.tool_profile == "compact" {
-        "Use these tools only for local coding operations inside the configured workspace. This profile uses Stable Tool API v2: use history_manage, planning_manage, and task_manage with their action field instead of relying on lifecycle-specific tool names. The desktop app controls permissions and planning mode. History recording is controlled by the workspace setting; history bootstrap is optional and is never required before the first response. Use history_manage action=search/read only when exact older context is needed. Selected history context below is a bounded snapshot; do not repeat it in tool responses. Checkpoints may omit session_key and expected_path because the server can lazily create the current workspace session. If a dangerous operation requires confirmation, retry only the original tool with confirm=true when the user's request clearly authorizes it."
+        "Use these tools only for local coding operations inside the configured workspace. This profile uses Stable Tool API v2: use history_manage, planning_manage, and task_manage with their action field instead of relying on lifecycle-specific tool names. The desktop app controls permissions and planning mode. In Plan mode, planning_manage remains writable for Goal/Plan create, update, and review actions; only project/source mutations, command execution, and task mutations are blocked. History recording is controlled by the workspace setting; history bootstrap is optional and is never required before the first response. Use history_manage action=search/read only when exact older context is needed. Selected history context below is a bounded snapshot; do not repeat it in tool responses. Checkpoints may omit session_key and expected_path because the server can lazily create the current workspace session. If a dangerous operation requires confirmation, retry only the original tool with confirm=true when the user's request clearly authorizes it."
     } else {
         base_instructions
     };
@@ -94,7 +120,7 @@ fn initialize_result(state: &SharedState) -> Value {
         .collect::<Vec<_>>()
         .join("\n\n");
     serde_json::json!({
-        "protocolVersion": "2025-06-18",
+        "protocolVersion": protocol_version,
         "capabilities": {
             "tools": { "listChanged": false },
             "logging": {}
@@ -190,7 +216,10 @@ mod tests {
 
     use crate::tools::ToolContext;
 
-    use super::{handle_request, initialize_result, tool_arguments};
+    use super::{
+        handle_request, initialize_result, negotiate_protocol_version, tool_arguments,
+        DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION,
+    };
 
     fn test_context() -> ToolContext {
         let workspace = tempfile::tempdir().expect("workspace");
@@ -210,7 +239,7 @@ mod tests {
                 .with_history_config(true, Vec::new())
                 .with_agent_runtime(Vec::new(), String::new()),
         );
-        let initialized = initialize_result(&state);
+        let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
         let instructions = initialized["instructions"].as_str().expect("instructions");
         assert!(instructions.contains("history bootstrap is optional"));
         assert!(!instructions.contains("exactly once"));
@@ -220,7 +249,7 @@ mod tests {
     #[test]
     fn legacy_initialize_keeps_the_history_persistence_workflow() {
         let state = test_state();
-        let initialized = initialize_result(&state);
+        let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
         let instructions = initialized["instructions"].as_str().expect("instructions");
         assert!(instructions.contains("history_session_bootstrap"));
         assert!(instructions.contains("At the start of every new ChatGPT conversation"));
@@ -248,7 +277,7 @@ mod tests {
     #[test]
     fn initialize_does_not_claim_tool_catalog_notifications_without_a_stream() {
         let state = test_state();
-        let initialized = initialize_result(&state);
+        let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
 
         assert_eq!(initialized["capabilities"]["tools"]["listChanged"], false);
     }
@@ -261,12 +290,68 @@ mod tests {
                 "Global rule\n\nWorkspace rule".into(),
             ),
         );
-        let initialized = initialize_result(&state);
+        let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
         let instructions = initialized["instructions"].as_str().expect("instructions");
 
         assert!(instructions.contains("Configured agent instructions"));
         assert!(instructions.contains("Global rule"));
         assert!(instructions.contains("Workspace rule"));
+    }
+
+    #[test]
+    fn protocol_version_negotiation_matrix() {
+        assert_eq!(
+            negotiate_protocol_version(Some("2024-11-05")),
+            "2024-11-05"
+        );
+        assert_eq!(
+            negotiate_protocol_version(Some("2025-06-18")),
+            "2025-06-18"
+        );
+        assert_eq!(
+            negotiate_protocol_version(Some("2025-11-25")),
+            "2025-11-25"
+        );
+        // 未知新版本：回退到服务端最新版本，由客户端决定是否继续。
+        assert_eq!(
+            negotiate_protocol_version(Some("2099-01-01")),
+            LATEST_PROTOCOL_VERSION
+        );
+        // 未知旧版本：同样回退到服务端最新版本。
+        assert_eq!(
+            negotiate_protocol_version(Some("2000-01-01")),
+            LATEST_PROTOCOL_VERSION
+        );
+        // 缺省或空值：沿用历史默认版本。
+        assert_eq!(negotiate_protocol_version(None), DEFAULT_PROTOCOL_VERSION);
+        assert_eq!(
+            negotiate_protocol_version(Some("  ")),
+            DEFAULT_PROTOCOL_VERSION
+        );
+    }
+
+    #[test]
+    fn initialize_echoes_the_negotiated_protocol_version() {
+        let state = test_state();
+        let response = handle_request(
+            &state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"}
+            }),
+        );
+        assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+
+        let without_version = handle_request(
+            &state,
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}}),
+        );
+        assert_eq!(
+            without_version["result"]["protocolVersion"],
+            DEFAULT_PROTOCOL_VERSION
+        );
     }
 
     #[test]

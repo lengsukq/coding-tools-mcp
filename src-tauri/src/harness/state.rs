@@ -524,8 +524,13 @@ pub fn capture_baseline(root: &Path) -> ProjectBaseline {
 }
 
 fn should_skip(path: &Path, root: &Path) -> bool {
-    path.strip_prefix(root)
-        .ok()
+    let Some(relative) = path.strip_prefix(root).ok() else {
+        return false;
+    };
+    if relative.starts_with(Path::new("docs").join("history-session")) {
+        return true;
+    }
+    std::iter::once(relative)
         .into_iter()
         .flat_map(|p| p.components())
         .filter_map(|component| component.as_os_str().to_str())
@@ -533,6 +538,7 @@ fn should_skip(path: &Path, root: &Path) -> bool {
             matches!(
                 name,
                 ".git"
+                    | ".coding-tools"
                     | ".mcp-probe-kit"
                     | "node_modules"
                     | "target"
@@ -615,5 +621,68 @@ mod tests {
             .join(harness.workspace_id())
             .join("snapshots")
             .exists());
+    }
+
+    #[test]
+    fn planning_runtime_state_does_not_invalidate_harness_baseline() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+        let task = harness.start_task("测试 Planning 运行时状态").expect("start task");
+
+        let planning_dir = workspace.path().join(".coding-tools/planning");
+        fs::create_dir_all(&planning_dir).expect("planning dir");
+        fs::write(planning_dir.join("state.json"), "{\"revision\":1}\n").expect("planning state");
+
+        harness
+            .check_baseline(&task.id)
+            .expect("Harness 自己的 Planning 状态不应被视为外部变化");
+    }
+
+    #[test]
+    fn managed_history_does_not_invalidate_harness_baseline() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+        let task = harness.start_task("测试 History 运行时状态").expect("start task");
+
+        let history_dir = workspace.path().join("docs/history-session");
+        fs::create_dir_all(&history_dir).expect("history dir");
+        fs::write(history_dir.join("1.md"), "# managed history\n").expect("history file");
+
+        harness
+            .check_baseline(&task.id)
+            .expect("MCP 自己的 history archive 不应被视为外部变化");
+    }
+
+    #[test]
+    fn real_workspace_change_still_invalidates_harness_baseline() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+        let task = harness.start_task("测试真实外部变化").expect("start task");
+
+        fs::write(workspace.path().join("main.rs"), "fn main() { println!(\"changed\"); }\n")
+            .expect("external change");
+
+        let error = harness
+            .check_baseline(&task.id)
+            .expect_err("真实项目文件变化必须使 baseline 失效");
+        assert_eq!(error.code(), "FILE_CHANGED_EXTERNALLY");
     }
 }

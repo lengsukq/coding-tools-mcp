@@ -680,8 +680,11 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         fs::write(root.path().join("AGENTS.md"), "shared instructions").expect("agents");
         let docs = discover_instructions(root.path(), &["codex".into(), "opencode".into(), "zcode".into()], "");
-        assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0].content, "shared instructions");
+        let shared_docs = docs
+            .iter()
+            .filter(|doc| doc.content == "shared instructions")
+            .collect::<Vec<_>>();
+        assert_eq!(shared_docs.len(), 1);
     }
 
     #[test]

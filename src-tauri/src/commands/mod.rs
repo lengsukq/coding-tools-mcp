@@ -30,7 +30,8 @@ pub use history::list_history_sessions;
 pub use logs::read_workspace_logs;
 pub use planning::{
     accept_goal_review, accept_plan_review, create_goal, create_plan, get_planning_state,
-    reject_goal_review, reject_plan_review, set_planning_mode, update_goal, update_plan,
+    reject_goal_review, reject_plan_review, reset_planning_state, set_planning_mode, update_goal,
+    update_plan,
 };
 pub use runtime::{
     get_actions_runtime_status, get_runtime_status, restart_actions_runtime, restart_runtime,

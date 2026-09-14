@@ -1,6 +1,6 @@
 {
   "name": "coding-tools-mcp-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Coding Tools MCP desktop client",
   "type": "module",
   "repository": {
@@ -19,6 +19,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test:workspace": "cargo test --manifest-path src-tauri/Cargo.toml --test workspace_e2e --locked",
+    "test:release": "npm run version:check && npm run check && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
     "version:set": "node scripts/sync-version.mjs",
     "version:check": "node scripts/check-version.mjs",
     "tauri": "tauri"

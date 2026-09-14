@@ -10,7 +10,7 @@ use crate::planning::{
 };
 use crate::tools::context::ToolContext;
 use crate::tools::policy::{validate_tool_arguments_for_workspace, PolicyError};
-use crate::tools::workspace::{tool_err, tool_err_code, tool_ok, WorkspaceError};
+use crate::tools::workspace::{tool_err, tool_ok, WorkspaceError};
 use crate::tools::{exec, file, git, history, image_tool, manage, patch, planning, session, skill};
 
 fn policy_tool_err(err: PolicyError) -> Value {
@@ -158,6 +158,9 @@ fn capability_health_check(ctx: &ToolContext) -> Value {
 }
 
 fn mutating_tool_call(name: &str, args: &Value) -> bool {
+    if name == "history_session_validate" {
+        return args.get("repair").and_then(Value::as_bool).unwrap_or(false);
+    }
     manage::action_is_mutating(name, args)
         .unwrap_or_else(|| crate::tools::registry::MUTATING_TOOLS.contains(&name))
 }
@@ -341,7 +344,15 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
             if let Err(error) = ctx.harness.check_baseline(&task.id) {
                 return attach_harness_status(
                     ctx,
-                    tool_err_code(error.code(), error.to_string(), "permission"),
+                    tool_err(WorkspaceError::Tool {
+                        code: error.code(),
+                        message: error.to_string(),
+                        category: "permission",
+                        retryable: matches!(
+                            error.code(),
+                            "TASK_ALREADY_ACTIVE" | "FILE_CHANGED_EXTERNALLY" | "BASELINE_STALE"
+                        ),
+                    }),
                     false,
                 );
             }
@@ -433,41 +444,39 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
                     ]
                 })))
             } else {
-                Ok(tool_ok(json!({
-                    "ok": false,
-                    "status": "unsupported",
-                    "grant_id": null,
-                    "expires_at": null,
-                    "next_actions": [
-                        "Do not retry request_permissions.",
-                        "If the original operation returned DANGEROUS_OPERATION_REQUIRES_CONFIRMATION and the user already explicitly authorized it, retry the original tool with confirm=true."
-                    ],
-                    "error": {
-                        "code": "ELICITATION_UNSUPPORTED",
-                        "message": "Permission elicitation is not available for this client. Do not retry request_permissions; it cannot create a persistent grant.",
-                        "category": "permission",
-                        "retryable": false,
-                        "details": { "requested": effective_args }
-                    }
-                })))
+                let mut output = tool_err(WorkspaceError::ToolDetails {
+                    code: "ELICITATION_UNSUPPORTED",
+                    message: "Permission elicitation is not available for this client. Do not retry request_permissions; it cannot create a persistent grant.".into(),
+                    category: "permission",
+                    retryable: false,
+                    details: json!({ "requested": effective_args }),
+                });
+                if let Some(object) = output.as_object_mut() {
+                    object.insert("status".into(), json!("unsupported"));
+                    object.insert("grant_id".into(), Value::Null);
+                    object.insert("expires_at".into(), Value::Null);
+                    object.insert(
+                        "next_actions".into(),
+                        json!([
+                            "Do not retry request_permissions.",
+                            "If the original operation returned DANGEROUS_OPERATION_REQUIRES_CONFIRMATION and the user already explicitly authorized it, retry the original tool with confirm=true."
+                        ]),
+                    );
+                }
+                Ok(output)
             }
         }
         _ => {
-            let mut output = tool_err_code(
-                "INVALID_ARGUMENT",
-                format!("Unknown tool: {name}"),
-                "validation",
-            );
-            if let Some(object) = output.as_object_mut() {
-                object.insert(
-                    "recovery".into(),
-                    json!({
-                        "type": "capability_discovery_check",
-                        "message": "If this tool exists on the server but is missing in the client session, refresh MCP tool discovery instead of requesting permissions.",
-                        "next_action": "Call capability_health_check and compare the available tool list before retrying."
-                    }),
-                );
-            }
+            let output = tool_err(WorkspaceError::ToolDetails {
+                code: "INVALID_ARGUMENT",
+                message: format!("Unknown tool: {name}"),
+                category: "validation",
+                retryable: false,
+                details: json!({
+                    "reason": "unknown_tool",
+                    "suggestion": "Call capability_health_check and compare the available server tool list. If the tool exists on the server but is missing in the client session, refresh MCP tool discovery before retrying."
+                }),
+            });
             return planning_state
                 .as_ref()
                 .map(|state| attach_planning_context(output.clone(), state))
@@ -719,8 +728,38 @@ fn requires_write_baseline(name: &str, args: &Value) -> bool {
             .get("dry_run")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        "history_session_bootstrap" | "history_session_checkpoint" => {
+            history_write_affects_baseline(args)
+        }
+        "history_session_validate" => {
+            args.get("repair").and_then(Value::as_bool).unwrap_or(false)
+                && history_write_affects_baseline(args)
+        }
+        "history_manage" => match args.get("action").and_then(Value::as_str) {
+            Some("bootstrap" | "checkpoint") => history_write_affects_baseline(args),
+            Some("validate") => {
+                args.get("repair").and_then(Value::as_bool).unwrap_or(false)
+                    && history_write_affects_baseline(args)
+            }
+            _ => false,
+        },
         _ => false,
     }
+}
+
+fn history_write_affects_baseline(args: &Value) -> bool {
+    let history_dir = args
+        .get("history_dir")
+        .and_then(Value::as_str)
+        .unwrap_or("docs/history-session")
+        .replace('\\', "/");
+    let history_dir = history_dir.trim_start_matches("./").trim_end_matches('/');
+    let managed_default = history_dir == "docs/history-session"
+        || history_dir.starts_with("docs/history-session/");
+    let managed_runtime = history_dir
+        .split('/')
+        .any(|component| component == ".coding-tools");
+    !managed_default && !managed_runtime
 }
 
 fn standalone_operation(name: &str) -> bool {
@@ -798,7 +837,8 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         "server": "coding-tools-mcp",
         "title": "Coding Tools MCP",
         "version": env!("CARGO_PKG_VERSION"),
-        "protocol_version": "2025-06-18",
+        "protocol_version": crate::mcp::LATEST_PROTOCOL_VERSION,
+        "supported_protocol_versions": crate::mcp::SUPPORTED_PROTOCOL_VERSIONS,
         "workspace": ctx.workspace.root_display(),
         "permission_mode": ctx.permission_mode,
         "default_cwd": ctx.default_cwd_display(),
@@ -846,6 +886,11 @@ mod planning_tests {
 
         let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
+        assert_eq!(
+            blocked["error"]["recovery"]["action"],
+            "switch_planning_mode"
+        );
+        assert_eq!(blocked["error"]["retryable"], false);
         assert!(planning_gate(&state, "exec_command", &json!({})).is_some());
         assert!(planning_gate(&state, "kill_session", &json!({})).is_none());
     }
@@ -858,6 +903,10 @@ mod planning_tests {
         let state = service.state().expect("state");
         let blocked = planning_gate(&state, "apply_patch", &json!({})).expect("blocked");
         assert_eq!(blocked["error"]["code"], "GOAL_CONTEXT_REQUIRED");
+        assert_eq!(
+            blocked["error"]["recovery"]["action"],
+            "fix_planning_context"
+        );
 
         service
             .create_goal("Goal", "Objective", Vec::new(), Vec::new())
@@ -896,6 +945,71 @@ mod planning_tests {
     }
 
     #[test]
+    fn plan_mode_allows_direct_plan_create_and_update() {
+        let (_workspace, _harness, ctx) = context();
+        PlanningService::new(ctx.workspace.root())
+            .set_mode(PlanningMode::Plan)
+            .expect("plan mode");
+
+        let created = call_tool(
+            &ctx,
+            "create_plan",
+            &json!({
+                "title": "Plan-mode writable metadata",
+                "objective": "Prove Plan mode can persist Plan records",
+                "steps": ["First step"]
+            }),
+        );
+        assert_eq!(created["ok"], true);
+        let plan_id = created["plan"]["id"].as_str().expect("plan id");
+        let step_id = created["plan"]["steps"][0]["id"]
+            .as_str()
+            .expect("step id");
+
+        let updated = call_tool(
+            &ctx,
+            "update_plan",
+            &json!({
+                "plan_id": plan_id,
+                "step_updates": [{"step_id": step_id, "status": "completed"}]
+            }),
+        );
+        assert_eq!(updated["ok"], true);
+        assert_eq!(updated["plan"]["steps"][0]["status"], "completed");
+
+        let blocked = call_tool(
+            &ctx,
+            "apply_patch",
+            &json!({
+                "patch": "*** Begin Patch\n*** Add File: blocked.txt\n+blocked\n*** End Patch\n"
+            }),
+        );
+        assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
+    }
+
+    #[test]
+    fn plan_mode_allows_compact_planning_manager_writes() {
+        let (_workspace, _harness, ctx) = context();
+        let ctx = ctx.with_tool_profile("compact");
+        PlanningService::new(ctx.workspace.root())
+            .set_mode(PlanningMode::Plan)
+            .expect("plan mode");
+
+        let created = call_tool(
+            &ctx,
+            "planning_manage",
+            &json!({
+                "action": "create_plan",
+                "title": "Compact Plan-mode metadata",
+                "objective": "Prove aggregate planning API remains writable in Plan mode",
+                "steps": ["Persist plan"]
+            }),
+        );
+        assert_eq!(created["ok"], true);
+        assert_eq!(created["plan"]["status"], "active");
+    }
+
+    #[test]
     fn every_normal_tool_response_contains_current_planning_context() {
         let (_workspace, _harness, ctx) = context();
         let service = PlanningService::new(ctx.workspace.root());
@@ -913,6 +1027,58 @@ mod planning_tests {
         let output = call_tool(&ctx, "server_info", &json!({}));
         assert!(output.get("planning_context").is_none());
         assert!(output["context_audit"]["blocks"].is_array());
+    }
+
+    #[test]
+    fn history_validation_is_mutating_only_when_repairing() {
+        assert!(!mutating_tool_call(
+            "history_session_validate",
+            &json!({"repair": false})
+        ));
+        assert!(mutating_tool_call(
+            "history_session_validate",
+            &json!({"repair": true})
+        ));
+        assert!(!mutating_tool_call(
+            "history_manage",
+            &json!({"action": "validate", "repair": false})
+        ));
+        assert!(mutating_tool_call(
+            "history_manage",
+            &json!({"action": "validate", "repair": true})
+        ));
+    }
+
+    #[test]
+    fn default_managed_history_does_not_require_harness_baseline_tracking() {
+        assert!(!requires_write_baseline(
+            "history_session_bootstrap",
+            &json!({})
+        ));
+        assert!(!requires_write_baseline(
+            "history_session_validate",
+            &json!({"repair": true})
+        ));
+        assert!(!requires_write_baseline(
+            "history_session_checkpoint",
+            &json!({"history_dir": "docs/history-session/nested"})
+        ));
+        assert!(!requires_write_baseline(
+            "history_session_checkpoint",
+            &json!({"history_dir": "runtime/.coding-tools/history"})
+        ));
+        assert!(requires_write_baseline(
+            "history_session_checkpoint",
+            &json!({"history_dir": "docs/custom-history"})
+        ));
+        assert!(requires_write_baseline(
+            "history_manage",
+            &json!({
+                "action": "validate",
+                "repair": true,
+                "history_dir": "docs/custom-history"
+            })
+        ));
     }
 }
 

@@ -248,7 +248,8 @@ fn mcp_discovery_payload() -> Value {
     json!({
         "name": "coding-tools-mcp",
         "version": env!("CARGO_PKG_VERSION"),
-        "protocolVersion": "2025-06-18"
+        "protocolVersion": crate::mcp::LATEST_PROTOCOL_VERSION,
+        "supportedProtocolVersions": crate::mcp::SUPPORTED_PROTOCOL_VERSIONS
     })
 }
 

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "revision": 12,
+  "mode": "direct",
+  "focus_goal_id": "goal-legacy",
+  "focus_plan_id": "plan-legacy",
+  "proposals": [],
+  "goals": [
+    {
+      "id": "goal-legacy",
+      "title": "Improve generated content",
+      "description": "Upgrade generation quality without breaking existing workflows.",
+      "status": "active",
+      "success_criteria": [
+        "Average content quality improves against the baseline corpus."
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "plan-legacy",
+      "goal_id": "goal-legacy",
+      "title": "Generation Quality V2",
+      "status": "active",
+      "strategy": "Separate planning from final payload mapping.",
+      "architecture": [
+        "Planning -> Writing -> Mapping -> Review"
+      ],
+      "phases": [
+        {
+          "id": "phase-a",
+          "title": "Phase A",
+          "status": "pending",
+          "tasks": [
+            {
+              "id": "task-baseline",
+              "title": "Create evaluation baseline",
+              "status": "pending",
+              "details": ["Capture representative quality cases."],
+              "files": ["tests/evals/"]
+            },
+            {
+              "id": "task-prompt",
+              "title": "Improve generation prompt",
+              "status": "pending",
+              "details": ["Remove sample-content anchoring."],
+              "files": ["src/prompt.ts"]
+            }
+          ]
+        }
+      ],
+      "verification": ["Run content evaluation."],
+      "rollout_order": ["Baseline first", "Prompt second"]
+    }
+  ],
+  "execution": {
+    "goal_id": "goal-legacy",
+    "plan_id": "plan-legacy",
+    "step_id": null,
+    "task_id": null,
+    "last_tool": "apply_patch",
+    "state": "planned",
+    "last_error": null,
+    "changed_files": [".coding-tools/planning/state.json"],
+    "history_checkpoint_ref": null,
+    "verification": [],
+    "updated_at": "1789365200"
+  }
+}

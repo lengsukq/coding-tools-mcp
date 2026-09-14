@@ -1,6 +1,9 @@
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-pub const PLANNING_SCHEMA_VERSION: u32 = 1;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub const PLANNING_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,13 +84,41 @@ pub struct SuccessCriterion {
     pub completed: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum SuccessCriterionCompat {
+    Structured(SuccessCriterion),
+    LegacyText(String),
+}
+
+fn deserialize_success_criteria<'de, D>(deserializer: D) -> Result<Vec<SuccessCriterion>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values = Vec::<SuccessCriterionCompat>::deserialize(deserializer)?;
+    Ok(values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            SuccessCriterionCompat::Structured(value) => value,
+            SuccessCriterionCompat::LegacyText(text) => SuccessCriterion {
+                // Legacy files never had criterion ids. Keep the generated id
+                // deterministic until the normalized state is saved again.
+                id: format!("legacy-criterion-{}", index + 1),
+                text,
+                completed: false,
+            },
+        })
+        .collect())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Goal {
     pub id: String,
     pub title: String,
     pub objective: String,
     pub status: GoalStatus,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_success_criteria")]
     pub success_criteria: Vec<SuccessCriterion>,
     #[serde(default)]
     pub constraints: Vec<String>,
@@ -105,6 +136,8 @@ pub struct Goal {
     pub review_feedback: Option<String>,
     #[serde(default)]
     pub execution_checkpoint: Option<ExecutionCheckpoint>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,7 +173,35 @@ pub struct PlanStep {
     pub id: String,
     pub title: String,
     pub status: PlanStepStatus,
+    #[serde(default)]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum PlanStepCompat {
+    Structured(PlanStep),
+    LegacyTitle(String),
+}
+
+fn deserialize_plan_steps<'de, D>(deserializer: D) -> Result<Vec<PlanStep>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values = Vec::<PlanStepCompat>::deserialize(deserializer)?;
+    Ok(values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            PlanStepCompat::Structured(value) => value,
+            PlanStepCompat::LegacyTitle(title) => PlanStep {
+                id: format!("legacy-step-{}", index + 1),
+                title,
+                status: PlanStepStatus::Pending,
+                notes: None,
+            },
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,7 +211,7 @@ pub struct Plan {
     pub title: String,
     pub objective: String,
     pub status: PlanStatus,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_plan_steps")]
     pub steps: Vec<PlanStep>,
     #[serde(default)]
     pub task_ids: Vec<String>,
@@ -165,6 +226,8 @@ pub struct Plan {
     pub review_summary: Option<String>,
     #[serde(default)]
     pub review_feedback: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

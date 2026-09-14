@@ -19,6 +19,14 @@ pub fn get_planning_state(
 }
 
 #[tauri::command]
+pub fn reset_planning_state(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> AppResult<PlanningState> {
+    service_for_workspace(&state, &workspace_id)?.reset_state()
+}
+
+#[tauri::command]
 pub fn set_planning_mode(
     state: State<'_, AppState>,
     workspace_id: String,

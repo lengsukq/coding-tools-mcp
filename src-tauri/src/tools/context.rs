@@ -93,8 +93,7 @@ impl ToolContext {
         harness_root: PathBuf,
     ) -> Self {
         let root = workspace.root().to_path_buf();
-        let sessions = Arc::new(SessionStore::new());
-        crate::tools::session::register_workspace_session_store(&root, &sessions);
+        let sessions = crate::tools::session::workspace_session_store(&root);
         Self {
             workspace,
             auth,

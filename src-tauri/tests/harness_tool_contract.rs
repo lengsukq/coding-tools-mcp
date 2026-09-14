@@ -30,6 +30,67 @@ fn 无任务时仍可执行_dry_run_预检() {
 }
 
 #[test]
+fn planning状态更新后正常执行不应被误判为外部变化() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let workspace = temp.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("创建工作区");
+    fs::write(workspace.join("README.md"), "初始内容\n").expect("写入文件");
+    let ctx =
+        ToolContext::for_test(workspace.clone(), temp.path().join("harness")).expect("创建上下文");
+    let started = call_tool(&ctx, "start_task", &json!({"objective": "检查 Harness 自身状态写入"}));
+    assert_eq!(started["ok"], true);
+    let task_id = started["task"]["id"].as_str().expect("任务 ID");
+
+    let goal = call_tool(
+        &ctx,
+        "create_goal",
+        &json!({
+            "title": "Harness regression",
+            "objective": "验证 Planning 自写不会使 Harness baseline 失效"
+        }),
+    );
+    assert_eq!(goal["ok"], true);
+
+    ctx.harness
+        .check_baseline(task_id)
+        .expect("Planning 状态更新不应被 Harness 当成外部文件变化");
+
+    let result = call_tool(
+        &ctx,
+        "exec_command",
+        &json!({"cmd": "git status", "filesystem_scope": "workspace"}),
+    );
+
+    assert_ne!(result["error"]["code"], "FILE_CHANGED_EXTERNALLY");
+}
+
+#[test]
+fn 默认history写入不应使harness基线失效() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let workspace = temp.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("创建工作区");
+    fs::write(workspace.join("README.md"), "初始内容\n").expect("写入文件");
+    let ctx =
+        ToolContext::for_test(workspace.clone(), temp.path().join("harness")).expect("创建上下文");
+    let started = call_tool(&ctx, "start_task", &json!({"objective": "检查 history 写入"}));
+    assert_eq!(started["ok"], true);
+    let task_id = started["task"]["id"].as_str().expect("任务 ID");
+
+    let history = call_tool(
+        &ctx,
+        "history_session_bootstrap",
+        &json!({
+            "initial_user_input": "测试 history baseline",
+            "session_key": "harness-history-regression"
+        }),
+    );
+    assert_eq!(history["ok"], true);
+
+    ctx.harness
+        .check_baseline(task_id)
+        .expect("默认 history archive 属于 MCP 管理元数据，不应使 Harness baseline 失效");
+}
+#[test]
 fn codex_patch格式支持新增文件dry_run和实际应用() {
     let temp = tempfile::tempdir().expect("创建临时目录");
     let workspace = temp.path().join("workspace");
@@ -212,6 +273,11 @@ fn 外部修改会在写工具执行前被拒绝() {
 
     assert_eq!(result["ok"], false);
     assert_eq!(result["error"]["code"], "FILE_CHANGED_EXTERNALLY");
+    assert_eq!(
+        result["error"]["recovery"]["action"],
+        "review_external_changes"
+    );
+    assert_eq!(result["error"]["retryable"], true);
     assert_eq!(
         ctx.harness
             .current_task()

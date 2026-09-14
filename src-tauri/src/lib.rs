@@ -34,7 +34,7 @@ use commands::{
     get_workspace_secret, hide_to_tray, install_software, list_frp_profiles, list_software,
     list_workspaces, open_url, open_workspace_directory, quit_app, read_workspace_logs,
     recreate_ui_webview, regenerate_shared_secret, regenerate_workspace_secret,
-    reject_goal_review, reject_plan_review,
+    reject_goal_review, reject_plan_review, reset_planning_state,
     restart_actions_runtime, restart_runtime, restart_tunnel, restore_runtime_state, run_health_checks, save_frp_profile,
     set_download_config, set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
     set_shared_secret, set_workspace_secret,
@@ -182,6 +182,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_workspaces,
             get_planning_state,
+            reset_planning_state,
             set_planning_mode,
             create_goal,
             update_goal,

@@ -146,6 +146,10 @@ pub fn assert_err(result: &Value) -> &Value {
     assert!(err.get("category").and_then(Value::as_str).is_some());
     assert!(err.get("retryable").map(Value::is_boolean).unwrap_or(false));
     assert!(err.get("details").map(Value::is_object).unwrap_or(false));
+    let recovery = err.get("recovery").expect("recovery object");
+    assert!(recovery.get("action").and_then(Value::as_str).is_some());
+    assert!(recovery.get("instruction").and_then(Value::as_str).is_some());
+    assert!(recovery.get("retry_when").is_some());
     result
 }
 
