@@ -5,20 +5,35 @@
     Activity,
     ArrowUpRight,
     Boxes,
+    Check,
     CircleAlert,
     CircleCheck,
+    Copy,
     FolderKanban,
+    FolderOpen,
     Gauge,
     GitBranch,
     LayoutDashboard,
     ListChecks,
     Network,
+    Play,
     Radio,
+    RotateCw,
+    Square,
   } from "@lucide/svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
   import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
   import { getLastWorkspaceId } from "$lib/api/settings";
   import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
+  import {
+    openWorkspaceDirectory,
+    startActionsRuntime,
+    startRuntime,
+    stopActionsRuntime,
+    stopRuntime,
+  } from "$lib/api/workspaces";
+  import { runServiceToggle } from "$lib/runtime/service";
+  import { showToast } from "$lib/stores/toast";
   import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import { actionsConfig, type RuntimeState, type WorkspaceProfile } from "$lib/types";
 
@@ -41,6 +56,10 @@
   let usageWorkspaceKey = $state("");
   let planningGeneration = 0;
   let usageGeneration = 0;
+  let mcpBusyMap = $state<Record<string, boolean>>({});
+  let actionsBusyMap = $state<Record<string, boolean>>({});
+  let copiedPathId = $state<string | null>(null);
+  let copiedEndpointId = $state<string | null>(null);
 
   const workspaceCount = $derived($workspaces.length);
   const mcpRunning = $derived(
@@ -298,6 +317,67 @@
     goto(`/workspace/${id}`);
   }
 
+  async function toggleWorkspaceMcp(id: string) {
+    if (mcpBusyMap[id]) return;
+    const currentState = $mcpRuntimeStates[id];
+    const wasRunning = currentState === "running";
+    mcpBusyMap = { ...mcpBusyMap, [id]: true };
+    try {
+      const status = await runServiceToggle(
+        wasRunning,
+        () => startRuntime(id),
+        () => stopRuntime(id),
+        "MCP",
+      );
+      if (status) {
+        mcpRuntimeStates.update((map) => ({ ...map, [id]: status.state }));
+      }
+    } finally {
+      mcpBusyMap = { ...mcpBusyMap, [id]: false };
+    }
+  }
+
+  async function toggleWorkspaceActions(id: string) {
+    if (actionsBusyMap[id]) return;
+    const currentState = $actionsRuntimeStates[id];
+    const wasRunning = currentState === "running";
+    actionsBusyMap = { ...actionsBusyMap, [id]: true };
+    try {
+      const status = await runServiceToggle(
+        wasRunning,
+        () => startActionsRuntime(id),
+        () => stopActionsRuntime(id),
+        "Actions",
+      );
+      if (status) {
+        actionsRuntimeStates.update((map) => ({ ...map, [id]: status.state }));
+      }
+    } finally {
+      actionsBusyMap = { ...actionsBusyMap, [id]: false };
+    }
+  }
+
+  async function copyWorkspacePath(id: string, path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      copiedPathId = id;
+      setTimeout(() => {
+        if (copiedPathId === id) copiedPathId = null;
+      }, 2000);
+      showToast("工作区物理路径已复制", { kind: "success", duration: 2500 });
+    } catch {
+      showToast("复制路径失败", { kind: "error" });
+    }
+  }
+
+  async function revealDirectory(path: string) {
+    try {
+      await openWorkspaceDirectory(path);
+    } catch (err) {
+      showToast(`打开目录失败: ${err instanceof Error ? err.message : String(err)}`, { kind: "error" });
+    }
+  }
+
   onMount(() => {
     const usageTimer = window.setInterval(() => {
       void loadUsage($workspaces);
@@ -405,26 +485,97 @@
               <p class="tx-section-label">最近工作区</p>
             </div>
             {#if recentWorkspace}
-              <button class="tx-icon-button" type="button" title="打开工作区" onclick={() => openWorkspace(recentWorkspace!.id)}>
-                <ArrowUpRight size={15} />
-              </button>
+              <div class="flex items-center gap-1.5">
+                <button
+                  class="tx-dashboard-action-icon"
+                  type="button"
+                  title="在访达/资源管理器中打开"
+                  onclick={() => void revealDirectory(recentWorkspace!.path)}
+                >
+                  <FolderOpen size={13} />
+                </button>
+                <button
+                  class="tx-dashboard-action-icon"
+                  type="button"
+                  title="复制物理路径"
+                  onclick={() => void copyWorkspacePath(recentWorkspace!.id, recentWorkspace!.path)}
+                >
+                  {#if copiedPathId === recentWorkspace.id}
+                    <Check size={13} class="text-[var(--success)]" />
+                  {:else}
+                    <Copy size={13} />
+                  {/if}
+                </button>
+                <button
+                  class="tx-dashboard-action-icon primary"
+                  type="button"
+                  title="进入工作区"
+                  onclick={() => openWorkspace(recentWorkspace!.id)}
+                >
+                  <ArrowUpRight size={14} />
+                </button>
+              </div>
             {/if}
           </div>
           {#if recentWorkspace}
             <div class="tx-dashboard-recent-main">
-              <strong>{recentWorkspace.name}</strong>
-              <span>{recentWorkspace.path}</span>
+              <button
+                type="button"
+                class="text-left font-bold truncate block hover:text-[var(--primary)] transition-colors cursor-pointer"
+                onclick={() => openWorkspace(recentWorkspace!.id)}
+              >
+                {recentWorkspace.name}
+              </button>
+              <span class="truncate">{recentWorkspace.path}</span>
             </div>
             <div class="tx-dashboard-service-pair">
-              <div class="tx-dashboard-service-state {stateClass($mcpRuntimeStates[recentWorkspace.id])}">
-                <Radio size={13} />
-                <span>MCP</span>
-                <strong>{stateLabel($mcpRuntimeStates[recentWorkspace.id])}</strong>
+              <div class="tx-dashboard-service-state {stateClass($mcpRuntimeStates[recentWorkspace.id])} flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Radio size={13} class="shrink-0" />
+                  <span>MCP</span>
+                  <strong class="truncate">{stateLabel($mcpRuntimeStates[recentWorkspace.id])}</strong>
+                </div>
+                <button
+                  type="button"
+                  class="tx-dashboard-quick-toggle"
+                  class:running={$mcpRuntimeStates[recentWorkspace.id] === "running"}
+                  disabled={mcpBusyMap[recentWorkspace.id] || $mcpRuntimeStates[recentWorkspace.id] === "starting" || $mcpRuntimeStates[recentWorkspace.id] === "stopping"}
+                  onclick={() => void toggleWorkspaceMcp(recentWorkspace!.id)}
+                >
+                  {#if mcpBusyMap[recentWorkspace.id]}
+                    <RotateCw size={10} class="animate-spin" />
+                  {:else if $mcpRuntimeStates[recentWorkspace.id] === "running"}
+                    <Square size={10} />
+                    <span>停止</span>
+                  {:else}
+                    <Play size={10} />
+                    <span>启动</span>
+                  {/if}
+                </button>
               </div>
-              <div class="tx-dashboard-service-state {stateClass($actionsRuntimeStates[recentWorkspace.id])}">
-                <Activity size={13} />
-                <span>Actions</span>
-                <strong>{stateLabel($actionsRuntimeStates[recentWorkspace.id])}</strong>
+              <div class="tx-dashboard-service-state {stateClass($actionsRuntimeStates[recentWorkspace.id])} flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Activity size={13} class="shrink-0" />
+                  <span>Actions</span>
+                  <strong class="truncate">{stateLabel($actionsRuntimeStates[recentWorkspace.id])}</strong>
+                </div>
+                <button
+                  type="button"
+                  class="tx-dashboard-quick-toggle"
+                  class:running={$actionsRuntimeStates[recentWorkspace.id] === "running"}
+                  disabled={actionsBusyMap[recentWorkspace.id] || $actionsRuntimeStates[recentWorkspace.id] === "starting" || $actionsRuntimeStates[recentWorkspace.id] === "stopping"}
+                  onclick={() => void toggleWorkspaceActions(recentWorkspace!.id)}
+                >
+                  {#if actionsBusyMap[recentWorkspace.id]}
+                    <RotateCw size={10} class="animate-spin" />
+                  {:else if $actionsRuntimeStates[recentWorkspace.id] === "running"}
+                    <Square size={10} />
+                    <span>停止</span>
+                  {:else}
+                    <Play size={10} />
+                    <span>启动</span>
+                  {/if}
+                </button>
               </div>
             </div>
           {/if}
@@ -475,40 +626,129 @@
           {#each $workspaces as workspace (workspace.id)}
             {@const actions = actionsConfig(workspace)}
             {@const planning = planningByWorkspace[workspace.id]}
-            <button class="tx-dashboard-workspace-card" type="button" onclick={() => openWorkspace(workspace.id)}>
+            {@const isMcpRunning = $mcpRuntimeStates[workspace.id] === "running"}
+            {@const isActionsRunning = $actionsRuntimeStates[workspace.id] === "running"}
+            <div class="tx-dashboard-workspace-card">
+              <!-- Top identity line with name, path, Finder open and jump buttons -->
               <div class="tx-dashboard-workspace-topline">
-                <div class="min-w-0">
-                  <strong class="truncate">{workspace.name}</strong>
-                  <span class="truncate">{workspace.path}</span>
+                <div class="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    class="text-left font-bold truncate block hover:text-[var(--primary)] transition-colors cursor-pointer"
+                    onclick={() => openWorkspace(workspace.id)}
+                    title="点击进入工作区"
+                  >
+                    {workspace.name}
+                  </button>
+                  <span class="truncate block font-mono text-[10px] text-[var(--text-muted)]" title={workspace.path}>
+                    {workspace.path}
+                  </span>
                 </div>
-                <ArrowUpRight size={15} />
+
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    class="tx-dashboard-action-icon"
+                    title="在访达/资源管理器中打开"
+                    onclick={() => void revealDirectory(workspace.path)}
+                  >
+                    <FolderOpen size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    class="tx-dashboard-action-icon"
+                    title="复制完整路径"
+                    onclick={() => void copyWorkspacePath(workspace.id, workspace.path)}
+                  >
+                    {#if copiedPathId === workspace.id}
+                      <Check size={13} class="text-[var(--success)]" />
+                    {:else}
+                      <Copy size={13} />
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="tx-dashboard-action-icon primary"
+                    title="进入工作区"
+                    onclick={() => openWorkspace(workspace.id)}
+                  >
+                    <ArrowUpRight size={14} />
+                  </button>
+                </div>
               </div>
 
+              <!-- Runtime Grid with Direct Toggles -->
               <div class="tx-dashboard-runtime-grid">
-                <div class="tx-dashboard-runtime-block">
-                  <div class="tx-dashboard-runtime-title">
-                    <span class="tx-dashboard-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
-                    <strong>MCP</strong>
-                    <small>{stateLabel($mcpRuntimeStates[workspace.id])}</small>
+                <!-- MCP Block -->
+                <div class="tx-dashboard-runtime-block flex flex-col justify-between gap-2">
+                  <div>
+                    <div class="tx-dashboard-runtime-title">
+                      <span class="tx-dashboard-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
+                      <strong>MCP</strong>
+                      <small>{stateLabel($mcpRuntimeStates[workspace.id])}</small>
+                    </div>
+                    <div class="tx-dashboard-runtime-meta">
+                      <span>:{workspace.runtime.local_port}</span>
+                      <span>{tunnelLabel(workspace, "mcp")}</span>
+                    </div>
                   </div>
-                  <div class="tx-dashboard-runtime-meta">
-                    <span>:{workspace.runtime.local_port}</span>
-                    <span>{tunnelLabel(workspace, "mcp")}</span>
+                  <div class="flex items-center justify-end pt-1">
+                    <button
+                      type="button"
+                      class="tx-dashboard-quick-toggle"
+                      class:running={isMcpRunning}
+                      disabled={mcpBusyMap[workspace.id] || $mcpRuntimeStates[workspace.id] === "starting" || $mcpRuntimeStates[workspace.id] === "stopping"}
+                      onclick={() => void toggleWorkspaceMcp(workspace.id)}
+                    >
+                      {#if mcpBusyMap[workspace.id]}
+                        <RotateCw size={10} class="animate-spin" />
+                      {:else if isMcpRunning}
+                        <Square size={10} />
+                        <span>停止</span>
+                      {:else}
+                        <Play size={10} />
+                        <span>启动</span>
+                      {/if}
+                    </button>
                   </div>
                 </div>
-                <div class="tx-dashboard-runtime-block">
-                  <div class="tx-dashboard-runtime-title">
-                    <span class="tx-dashboard-dot {stateClass($actionsRuntimeStates[workspace.id])}"></span>
-                    <strong>Actions</strong>
-                    <small>{stateLabel($actionsRuntimeStates[workspace.id])}</small>
+
+                <!-- Actions Block -->
+                <div class="tx-dashboard-runtime-block flex flex-col justify-between gap-2">
+                  <div>
+                    <div class="tx-dashboard-runtime-title">
+                      <span class="tx-dashboard-dot {stateClass($actionsRuntimeStates[workspace.id])}"></span>
+                      <strong>Actions</strong>
+                      <small>{stateLabel($actionsRuntimeStates[workspace.id])}</small>
+                    </div>
+                    <div class="tx-dashboard-runtime-meta">
+                      <span>:{actions.local_port}</span>
+                      <span>{tunnelLabel(workspace, "actions")}</span>
+                    </div>
                   </div>
-                  <div class="tx-dashboard-runtime-meta">
-                    <span>:{actions.local_port}</span>
-                    <span>{tunnelLabel(workspace, "actions")}</span>
+                  <div class="flex items-center justify-end pt-1">
+                    <button
+                      type="button"
+                      class="tx-dashboard-quick-toggle"
+                      class:running={isActionsRunning}
+                      disabled={actionsBusyMap[workspace.id] || $actionsRuntimeStates[workspace.id] === "starting" || $actionsRuntimeStates[workspace.id] === "stopping"}
+                      onclick={() => void toggleWorkspaceActions(workspace.id)}
+                    >
+                      {#if actionsBusyMap[workspace.id]}
+                        <RotateCw size={10} class="animate-spin" />
+                      {:else if isActionsRunning}
+                        <Square size={10} />
+                        <span>停止</span>
+                      {:else}
+                        <Play size={10} />
+                        <span>启动</span>
+                      {/if}
+                    </button>
                   </div>
                 </div>
               </div>
 
+              <!-- Footer Planning Line -->
               <div class="tx-dashboard-planning-line">
                 <GitBranch size={13} />
                 <span class="truncate">{planningLabel(workspace.id)}</span>
@@ -516,7 +756,7 @@
                   <small>{planning.mode.toUpperCase()}</small>
                 {/if}
               </div>
-            </button>
+            </div>
           {/each}
         </div>
       </section>
