@@ -43,18 +43,11 @@
 1. 当前代码与测试；
 2. `docs/project-context/` 当前事实文档；
 3. 当前功能对应的 `docs/specs/`；
-4. `old/` Python 参考实现，仅用于兼容性对照。
+4. 带日期的历史规格、验证记录与 `docs/history-session/`，仅用于追溯，不作为当前 Runtime 实现依据。
 
 不要再使用已废弃的 `start_feature`、`add_feature`、`check_spec` 等旧 MCP Probe Kit 流程作为当前开发前置条件。
 
-## 参考实现
-
-`old/` 仍用于行为回归和迁移参考，但不是当前 Runtime：
-
-- `old/coding_tools_mcp/server.py`
-- `old/apps/desktop-client/`
-- `old/docs/profile-v0.1.md`
-- `old/tests/compliance/`
+原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
 *当前事实更新: 2026-09-14*

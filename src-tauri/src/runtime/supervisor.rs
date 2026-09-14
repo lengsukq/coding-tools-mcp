@@ -13,14 +13,9 @@ use crate::runtime::port::{
     wait_for_port_free_blocking,
 };
 use crate::secret::SecretStore;
-use crate::tunnel::{append_profile_log, cleanup_orphan_for_runtime, TunnelServiceKind};
+use crate::tunnel::{append_profile_log, cleanup_orphan_for_runtime};
 use crate::usage::{ServiceUsage, ServiceUsageStats};
 use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ServiceKind {
-    Mcp,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RuntimePhase {
@@ -42,21 +37,21 @@ struct RuntimeEntry {
 
 #[derive(Default)]
 pub struct RuntimeSupervisor {
-    entries: HashMap<(String, ServiceKind), RuntimeEntry>,
-    usage: HashMap<(String, ServiceKind), Arc<ServiceUsage>>,
+    entries: HashMap<String, RuntimeEntry>,
+    usage: HashMap<String, Arc<ServiceUsage>>,
 }
 
 impl RuntimeSupervisor {
     pub fn mcp_status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
-        self.status(profile, ServiceKind::Mcp)
+        self.status(profile)
     }
 
-    pub fn running_workspace_ids(&self, kind: ServiceKind) -> Vec<String> {
+    pub fn running_workspace_ids(&self) -> Vec<String> {
         let mut ids = self
             .entries
             .iter()
-            .filter_map(|((workspace_id, entry_kind), entry)| {
-                (*entry_kind == kind && matches!(entry.phase, RuntimePhase::Running | RuntimePhase::Starting))
+            .filter_map(|(workspace_id, entry)| {
+                matches!(entry.phase, RuntimePhase::Running | RuntimePhase::Starting)
                     .then(|| workspace_id.clone())
             })
             .collect::<Vec<_>>();
@@ -65,59 +60,47 @@ impl RuntimeSupervisor {
         ids
     }
 
-    pub fn usage_stats(&self, workspace_id: &str, kind: ServiceKind) -> ServiceUsageStats {
-        let service = match kind {
-            ServiceKind::Mcp => "mcp",
-        };
+    pub fn usage_stats(&self, workspace_id: &str) -> ServiceUsageStats {
         self.usage
-            .get(&(workspace_id.to_string(), kind))
-            .map(|usage| usage.snapshot(workspace_id, service))
-            .unwrap_or_else(|| ServiceUsage::empty(workspace_id, service))
+            .get(workspace_id)
+            .map(|usage| usage.snapshot(workspace_id, "mcp"))
+            .unwrap_or_else(|| ServiceUsage::empty(workspace_id, "mcp"))
     }
 
     pub fn start_mcp(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        self.start(profile, ServiceKind::Mcp)
-    }
-
-    #[allow(dead_code)] // Kept for sync callers (tests / teardown helpers).
-    pub fn restart_mcp(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        self.restart(profile, ServiceKind::Mcp)
+        self.start(profile)
     }
 
     /// True when the service for this workspace is currently running.
-    pub fn is_running(&self, workspace_id: &str, kind: ServiceKind) -> bool {
+    pub fn is_running(&self, workspace_id: &str) -> bool {
         matches!(
             self.entries
-                .get(&(workspace_id.to_string(), kind))
+                .get(workspace_id)
                 .map(|entry| &entry.phase),
             Some(RuntimePhase::Running)
         )
     }
 
     pub fn refresh_mcp(&mut self, profile: &WorkspaceProfile) {
-        self.refresh(profile, ServiceKind::Mcp);
+        self.refresh(profile);
     }
 
     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
-        self.sync_stop_and_wait(profile, ServiceKind::Mcp);
+        self.sync_stop_and_wait(profile);
     }
 
-    pub fn active_tunnel_service_keys(&self) -> HashSet<(String, TunnelServiceKind)> {
+    pub fn active_tunnel_workspace_ids(&self) -> HashSet<String> {
         self.entries
             .iter()
-            .filter_map(|((workspace_id, _kind), entry)| match entry.phase {
-                RuntimePhase::Running | RuntimePhase::Starting => Some((
-                    workspace_id.clone(),
-                    TunnelServiceKind::Mcp,
-                )),
+            .filter_map(|(workspace_id, entry)| match entry.phase {
+                RuntimePhase::Running | RuntimePhase::Starting => Some(workspace_id.clone()),
                 _ => None,
             })
             .collect()
     }
 
-    pub fn begin_stop(&mut self, workspace_id: &str, kind: ServiceKind) -> Option<JoinHandle<()>> {
-        let key = (workspace_id.to_string(), kind);
-        let entry = self.entries.get_mut(&key)?;
+    pub fn begin_stop(&mut self, workspace_id: &str) -> Option<JoinHandle<()>> {
+        let entry = self.entries.get_mut(workspace_id)?;
 
         entry.phase = RuntimePhase::Stopping;
         let shutdown = entry.shutdown.take();
@@ -128,28 +111,29 @@ impl RuntimeSupervisor {
         handle
     }
 
-    pub fn finish_stop(&mut self, workspace_id: &str, kind: ServiceKind) {
-        self.entries.remove(&(workspace_id.to_string(), kind));
+    pub fn finish_stop(&mut self, workspace_id: &str) {
+        self.entries.remove(workspace_id);
     }
 
-    fn status(&self, profile: &WorkspaceProfile, kind: ServiceKind) -> RuntimeStatusDto {
-        let key = (profile.id.clone(), kind);
+    fn status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
+        let key = profile.id.as_str();
         let phase = self
             .entries
-            .get(&key)
+            .get(key)
             .map(|entry| entry.phase.clone())
             .unwrap_or(RuntimePhase::Stopped);
 
-        let (local_endpoint, public_endpoint) = endpoints(profile, kind);
-        let port = port_for(profile, kind);
-        let service_label = service_label(kind);
+        let local_endpoint = profile.local_endpoint();
+        let public_endpoint = profile.public_endpoint();
+        let port = profile.runtime.local_port;
+        let service_label = "本地 MCP ";
 
         match phase {
             RuntimePhase::Running => RuntimeStatusDto {
                 state: "running".into(),
                 pid: None,
                 local_message: format!("{service_label}正在监听 127.0.0.1:{port}"),
-                public_message: public_message_for(profile, kind),
+                public_message: profile.effective_public_url(),
                 local_endpoint,
                 public_endpoint,
             },
@@ -172,7 +156,7 @@ impl RuntimeSupervisor {
             RuntimePhase::Error => {
                 let message = self
                     .entries
-                    .get(&key)
+                    .get(key)
                     .and_then(|entry| entry.error_message.clone())
                     .unwrap_or_else(|| "运行失败".into());
                 RuntimeStatusDto {
@@ -195,17 +179,13 @@ impl RuntimeSupervisor {
         }
     }
 
-    fn start(
-        &mut self,
-        profile: &WorkspaceProfile,
-        kind: ServiceKind,
-    ) -> AppResult<RuntimeStatusDto> {
-        let key = (profile.id.clone(), kind);
+    fn start(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
+        let key = profile.id.clone();
         if matches!(
             self.entries.get(&key).map(|e| &e.phase),
             Some(RuntimePhase::Running) | Some(RuntimePhase::Starting)
         ) {
-            return Ok(self.status(profile, kind));
+            return Ok(self.status(profile));
         }
         if matches!(
             self.entries.get(&key).map(|e| &e.phase),
@@ -213,7 +193,7 @@ impl RuntimeSupervisor {
         ) {
             return Err(crate::error::AppError::Message(format!(
                 "{}正在停止，请稍后再试",
-                service_label(kind).trim()
+                "本地 MCP"
             )));
         }
 
@@ -235,7 +215,7 @@ impl RuntimeSupervisor {
             },
         );
 
-        let port = port_for(profile, kind);
+        let port = profile.runtime.local_port;
         if let Some(pid) = platform().find_pid_listening_on_port(port)? {
             if is_own_process(pid) {
                 wait_for_port_free_blocking(port, Duration::from_secs(3));
@@ -246,10 +226,10 @@ impl RuntimeSupervisor {
             }
             if let Some(pid) = platform().find_pid_listening_on_port(port)? {
                 self.entries.remove(&key);
-                let message = port_busy_message(port, service_label(kind).trim(), pid);
+                let message = port_busy_message(port, "本地 MCP", pid);
                 append_profile_log(
                     &profile.id,
-                    stderr_log_name(kind),
+                    "stderr.log",
                     &format!("[start] {message}"),
                 );
                 return Err(crate::error::AppError::Message(message));
@@ -315,8 +295,8 @@ impl RuntimeSupervisor {
                 // failure was previously invisible in the log viewer. Record it here.
                 append_profile_log(
                     &profile.id,
-                    stderr_log_name(kind),
-                    &format!("[start] {}启动失败：{err}", service_label(kind).trim()),
+                    "stderr.log",
+                    &format!("[start] 本地 MCP 启动失败：{err}"),
                 );
                 self.entries.insert(
                     key,
@@ -332,30 +312,12 @@ impl RuntimeSupervisor {
             }
         }
 
-        Ok(self.status(profile, kind))
+        Ok(self.status(profile))
     }
 
-    /// Stop the current service (if running), then immediately start a new one.
-    /// This is the canonical "restart" — used when the user regenerates a key or
-    /// toggles the shared-secret switch, so the listener picks up the new value.
-    ///
-    /// stop_internal sends the graceful-shutdown signal but the OS port may not
-    /// be freed instantly (the old listener's socket is closed on the tokio
-    /// event loop). We retry `start` with a short back-off to smooth over this
-    /// window.
-    #[allow(dead_code)]
-    fn restart(
-        &mut self,
-        profile: &WorkspaceProfile,
-        kind: ServiceKind,
-    ) -> AppResult<RuntimeStatusDto> {
-        self.sync_stop_and_wait(profile, kind);
-        self.start(profile, kind)
-    }
-
-    fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
-        let port = port_for(profile, kind);
-        let handle = self.begin_stop(&profile.id, kind);
+    fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile) {
+        let port = profile.runtime.local_port;
+        let handle = self.begin_stop(&profile.id);
         if handle.is_some() {
             crate::runtime::port::await_listener_shutdown_blocking(handle, port);
         } else if platform()
@@ -366,12 +328,12 @@ impl RuntimeSupervisor {
         {
             wait_for_port_free_blocking(port, Duration::from_secs(3));
         }
-        self.finish_stop(&profile.id, kind);
+        self.finish_stop(&profile.id);
     }
 
-    fn refresh(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
-        let key = (profile.id.clone(), kind);
-        let port = port_for(profile, kind);
+    fn refresh(&mut self, profile: &WorkspaceProfile) {
+        let key = profile.id.clone();
+        let port = profile.runtime.local_port;
         let mut should_cleanup_tunnel = false;
         if let Some(entry) = self.entries.get_mut(&key) {
             if entry.phase == RuntimePhase::Running {
@@ -380,7 +342,7 @@ impl RuntimeSupervisor {
                     Err(error) => {
                         append_profile_log(
                             &profile.id,
-                            stderr_log_name(kind),
+                            "stderr.log",
                             &format!("[refresh] 检查端口 {port} 失败，保留当前线路：{error}"),
                         );
                         return;
@@ -403,13 +365,13 @@ impl RuntimeSupervisor {
                     let message = if occupied_by_self {
                         format!(
                             "{}端口 {} 未能成功启动，可能仍被本应用上一次服务占用，请先停止后再试",
-                            service_label(kind).trim(),
+                            "本地 MCP",
                             port
                         )
                     } else {
                         format!(
                             "{}端口 {} 未能成功启动，可能已被其他程序占用",
-                            service_label(kind).trim(),
+                            "本地 MCP",
                             port
                         )
                     };
@@ -429,14 +391,12 @@ impl RuntimeSupervisor {
             return;
         }
 
-        let tunnel_kind = TunnelServiceKind::Mcp;
-
         let profile = profile.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(error) = cleanup_orphan_for_runtime(&profile, tunnel_kind, false).await {
+            if let Err(error) = cleanup_orphan_for_runtime(&profile, false).await {
                 append_profile_log(
                     &profile.id,
-                    stderr_log_name(kind),
+                    "stderr.log",
                     &format!("[refresh] 清理失效隧道失败：{error}"),
                 );
             }
@@ -459,36 +419,6 @@ fn should_mark_runtime_error(entry: &mut RuntimeEntry, listening: bool) -> bool 
             .started_at
             .map(|started| started.elapsed() > Duration::from_millis(200))
             .unwrap_or(true)
-}
-
-fn port_for(profile: &WorkspaceProfile, kind: ServiceKind) -> u16 {
-    match kind {
-        ServiceKind::Mcp => profile.runtime.local_port,
-    }
-}
-
-fn endpoints(profile: &WorkspaceProfile, kind: ServiceKind) -> (String, String) {
-    match kind {
-        ServiceKind::Mcp => (profile.local_endpoint(), profile.public_endpoint()),
-    }
-}
-
-fn public_message_for(profile: &WorkspaceProfile, kind: ServiceKind) -> String {
-    match kind {
-        ServiceKind::Mcp => profile.effective_public_url(),
-    }
-}
-
-fn service_label(kind: ServiceKind) -> &'static str {
-    match kind {
-        ServiceKind::Mcp => "本地 MCP ",
-    }
-}
-
-fn stderr_log_name(kind: ServiceKind) -> &'static str {
-    match kind {
-        ServiceKind::Mcp => "stderr.log",
-    }
 }
 
 /// Resolve a secret from the shared pool or per-workspace keyring.

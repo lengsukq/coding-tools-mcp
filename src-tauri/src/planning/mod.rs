@@ -4,7 +4,7 @@ mod store;
 
 pub use model::{
     ExecutionLedger, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningMode,
-    PlanningProposal, PlanningState, ProposalStatus, SuccessCriterion, PLANNING_SCHEMA_VERSION,
+    PlanningState, SuccessCriterion, PLANNING_SCHEMA_VERSION,
 };
 pub use service::{ExecutionLedgerUpdate, PlanningService};
 

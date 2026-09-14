@@ -1,7 +1,5 @@
 export type RuntimeState = "stopped" | "starting" | "running" | "stopping" | "error";
 
-export const DEFAULT_SERVICE_PORT = 28766;
-
 export interface TunnelConfig {
   type: string;
   public_url: string;
@@ -26,7 +24,6 @@ export interface RuntimeConfig {
   history_recording?: boolean;
   history_context_sessions?: number[];
   permission_mode: string;
-  runtime_command?: string;
   allowed_commands?: string;
   executable_paths?: string;
   ai_instructions?: string;
@@ -58,28 +55,4 @@ export interface RuntimeStatus {
 
 export function mcpLocalEndpoint(port: number): string {
   return `http://127.0.0.1:${port}/mcp`;
-}
-
-export interface FrpProfileSummary {
-  id: string;
-  name: string;
-  server: string;
-  serverPort: number;
-}
-
-export function frpPublicUrl(
-  tunnelType: string,
-  frpSubdomain: string,
-  frpServer: string,
-  frpProfileId: string | undefined,
-  profiles: FrpProfileSummary[],
-  publicUrl = "",
-): string {
-  if (tunnelType !== "frp" || !frpSubdomain) {
-    return publicUrl.replace(/\/$/, "");
-  }
-  const server =
-    profiles.find((profile) => profile.id === frpProfileId)?.server ?? frpServer;
-  if (!server) return publicUrl.replace(/\/$/, "");
-  return `https://${frpSubdomain}.${server}`;
 }

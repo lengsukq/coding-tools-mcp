@@ -11,7 +11,6 @@ use crate::error::{AppError, AppResult};
 use crate::platform::platform;
 use crate::tunnel::cloudflare::stop_child;
 use crate::tunnel::supervisor::log_dir_for_profile;
-use crate::tunnel::TunnelServiceKind;
 use crate::workspace::WorkspaceProfile;
 
 use super::{
@@ -274,17 +273,17 @@ fn same_process_image(left: &Path, right: &Path) -> bool {
 
 pub async fn spawn_frpc(
     workspace_id: &str,
-    routes: &[(&WorkspaceProfile, TunnelServiceKind)],
+    routes: &[&WorkspaceProfile],
     settings: &crate::settings::AppSettings,
 ) -> AppResult<FrpcHandle> {
-    let Some((first_profile, _)) = routes.first() else {
+    let Some(first_profile) = routes.first().copied() else {
         return Err(AppError::Message("没有可启动的 FRP 线路。".into()));
     };
     let frpc = ensure_frpc().await?;
 
     let configs: Vec<FrpServerConfig> = routes
         .iter()
-        .map(|(profile, kind)| frp_server_config(profile, *kind, settings, None))
+        .map(|profile| frp_server_config(profile, settings, None))
         .collect();
     for config in &configs {
         validate_frp_config(config)?;
@@ -293,10 +292,10 @@ pub async fn spawn_frpc(
     let config_path = managed_frpc_config_path(workspace_id)?;
     let log_paths: Vec<PathBuf> = routes
         .iter()
-        .map(|(profile, kind)| -> AppResult<PathBuf> {
+        .map(|profile| -> AppResult<PathBuf> {
             let profile_log_dir = log_dir_for_profile(&profile.id);
             std::fs::create_dir_all(&profile_log_dir)?;
-            Ok(profile_log_dir.join(frpc_log_name(*kind)))
+            Ok(profile_log_dir.join(frpc_log_name()))
         })
         .collect::<AppResult<Vec<_>>>()?;
     let log_path = log_paths
@@ -377,15 +376,8 @@ pub async fn spawn_frpc(
     Ok(FrpcHandle { child, pid })
 }
 
-fn aggregate_uses_proxy(routes: &[(&WorkspaceProfile, TunnelServiceKind)]) -> bool {
-    routes.iter().any(|(profile, kind)| match kind {
-        TunnelServiceKind::Mcp => profile.tunnel.use_proxy,
-    })
-}
-
-#[allow(dead_code)]
-pub async fn stop_frpc(child: Child, pid: Option<u32>) -> AppResult<()> {
-    stop_child(child, pid).await
+fn aggregate_uses_proxy(routes: &[&WorkspaceProfile]) -> bool {
+    routes.iter().any(|profile| profile.tunnel.use_proxy)
 }
 
 fn validate_frp_config(config: &FrpServerConfig) -> AppResult<()> {
@@ -435,10 +427,8 @@ pub(crate) fn frpc_binary_name() -> &'static str {
     }
 }
 
-pub(crate) fn frpc_log_name(kind: TunnelServiceKind) -> &'static str {
-    match kind {
-        TunnelServiceKind::Mcp => "frpc-mcp.log",
-    }
+pub(crate) fn frpc_log_name() -> &'static str {
+    "frpc-mcp.log"
 }
 
 const FRPC_LOG_TAIL_BYTES: u64 = 12_288;
@@ -896,7 +886,6 @@ mod tests {
         aggregate_uses_proxy, classify_public_mcp_body, frpc_reconnect_loop_detected,
         managed_frpc_config_path, managed_frpc_pid_path, successful_proxy_names, PublicMcpProbe,
     };
-    use crate::tunnel::TunnelServiceKind;
     use crate::workspace::WorkspaceProfile;
 
     #[test]
@@ -925,15 +914,9 @@ mod tests {
         let mut proxied = WorkspaceProfile::new("C:/workspace/proxied".into(), None);
         proxied.tunnel.use_proxy = true;
 
-        assert!(aggregate_uses_proxy(&[
-            (&direct, TunnelServiceKind::Mcp),
-            (&proxied, TunnelServiceKind::Mcp),
-        ]));
-        assert!(aggregate_uses_proxy(&[
-            (&proxied, TunnelServiceKind::Mcp),
-            (&direct, TunnelServiceKind::Mcp),
-        ]));
-        assert!(!aggregate_uses_proxy(&[(&direct, TunnelServiceKind::Mcp)]));
+        assert!(aggregate_uses_proxy(&[&direct, &proxied]));
+        assert!(aggregate_uses_proxy(&[&proxied, &direct]));
+        assert!(!aggregate_uses_proxy(&[&direct]));
     }
 
     #[test]

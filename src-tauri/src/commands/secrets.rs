@@ -172,7 +172,7 @@ async fn restart_running_services_async(
         && profile.auth.use_shared_secrets == shared
         && state
             .with_runtime(|runtime| {
-                Ok(runtime.is_running(&profile.id, crate::runtime::ServiceKind::Mcp))
+                Ok(runtime.is_running(&profile.id))
             })
             .unwrap_or(false);
     if should_restart_mcp {

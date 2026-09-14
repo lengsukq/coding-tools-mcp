@@ -17,8 +17,6 @@ export type PlanStatus =
   | "archived"
   | "cancelled";
 export type PlanStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "skipped";
-export type ProposalStatus = "pending_approval" | "approved" | "rejected";
-
 export interface SuccessCriterionDto {
   id: string;
   text: string;
@@ -84,18 +82,6 @@ export async function rejectPlanReview(
   });
 }
 
-export interface PlanningProposalDto {
-  id: string;
-  source_request: string;
-  title: string;
-  objective: string;
-  success_criteria: string[];
-  constraints: string[];
-  plan_steps: string[];
-  approval_status: ProposalStatus;
-  created_at: string;
-}
-
 export interface GoalDto {
   id: string;
   title: string;
@@ -143,25 +129,9 @@ export interface PlanningStateDto {
   mode: PlanningMode;
   focus_goal_id: string | null;
   focus_plan_id: string | null;
-  proposals: PlanningProposalDto[];
   goals: GoalDto[];
   plans: PlanDto[];
   execution: ExecutionLedgerDto;
-}
-
-export interface GoalUpdate {
-  title?: string;
-  objective?: string;
-  status?: GoalStatus;
-  constraints?: string[];
-  completedCriteriaIds?: string[];
-  focus?: boolean;
-}
-
-export interface PlanStepUpdate {
-  step_id: string;
-  status: PlanStepStatus;
-  notes?: string;
 }
 
 export async function getPlanningState(workspaceId: string): Promise<PlanningStateDto> {
@@ -177,61 +147,4 @@ export async function setPlanningMode(
   mode: PlanningMode,
 ): Promise<PlanningStateDto> {
   return invoke<PlanningStateDto>("set_planning_mode", { workspaceId, mode });
-}
-
-export async function createGoal(
-  workspaceId: string,
-  title: string,
-  objective: string,
-  successCriteria: string[],
-  constraints: string[],
-): Promise<GoalDto> {
-  return invoke<GoalDto>("create_goal", {
-    workspaceId,
-    title,
-    objective,
-    successCriteria,
-    constraints,
-  });
-}
-
-export async function updateGoal(
-  workspaceId: string,
-  goalId: string,
-  update: GoalUpdate,
-): Promise<GoalDto> {
-  return invoke<GoalDto>("update_goal", {
-    workspaceId,
-    goalId,
-    title: update.title ?? null,
-    objective: update.objective ?? null,
-    status: update.status ?? null,
-    constraints: update.constraints ?? null,
-    completedCriteriaIds: update.completedCriteriaIds ?? null,
-    focus: update.focus ?? null,
-  });
-}
-
-export async function createPlan(
-  workspaceId: string,
-  goalId: string | null,
-  title: string,
-  objective: string,
-  steps: string[],
-): Promise<PlanDto> {
-  return invoke<PlanDto>("create_plan", { workspaceId, goalId, title, objective, steps });
-}
-
-export async function updatePlan(
-  workspaceId: string,
-  planId: string,
-  update: { status?: PlanStatus; stepUpdates?: PlanStepUpdate[]; focus?: boolean },
-): Promise<PlanDto> {
-  return invoke<PlanDto>("update_plan", {
-    workspaceId,
-    planId,
-    status: update.status ?? null,
-    stepUpdates: update.stepUpdates ?? [],
-    focus: update.focus ?? null,
-  });
 }

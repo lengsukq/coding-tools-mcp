@@ -16,8 +16,6 @@ use crate::secret::SecretStore;
 pub const OAUTH_CODE_TTL_SECONDS: u64 = 300;
 pub const OAUTH_TOKEN_TTL_SECONDS: i64 = 60 * 60 * 24 * 30;
 pub const OAUTH_REFRESH_TOKEN_TTL_SECONDS: i64 = 60 * 60 * 24 * 90;
-#[allow(dead_code)]
-pub const OAUTH_MAX_BODY_BYTES: usize = 8_192;
 
 #[derive(Clone)]
 pub struct OAuthRuntime {
@@ -61,12 +59,10 @@ struct RegisteredClient {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct PendingCode {
     code_challenge: String,
     client_id: String,
     redirect_uri: String,
-    state: String,
     expires_at: u64,
     server_url: String,
 }
@@ -439,7 +435,6 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
                 code_challenge: form.code_challenge.clone(),
                 client_id: form.client_id.clone(),
                 redirect_uri: form.redirect_uri.clone(),
-                state: form.state.clone(),
                 expires_at: now + OAUTH_CODE_TTL_SECONDS,
                 server_url: server_url.clone(),
             },

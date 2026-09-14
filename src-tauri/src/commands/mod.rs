@@ -29,9 +29,8 @@ pub use health::run_health_checks;
 pub use history::list_history_sessions;
 pub use logs::read_workspace_logs;
 pub use planning::{
-    accept_goal_review, accept_plan_review, create_goal, create_plan, get_planning_state,
-    reject_goal_review, reject_plan_review, reset_planning_state, set_planning_mode, update_goal,
-    update_plan,
+    accept_goal_review, accept_plan_review, get_planning_state, reject_goal_review,
+    reject_plan_review, reset_planning_state, set_planning_mode,
 };
 pub use runtime::{get_runtime_status, restart_runtime, restore_runtime_state, start_runtime, stop_runtime};
 pub use runtime_settings::{get_global_runtime_settings, set_global_runtime_settings};
@@ -43,7 +42,7 @@ pub use software::{
     get_download_config, install_software, list_software, set_download_config,
     uninstall_software,
 };
-pub use tunnel::{get_frp_snippet, restart_tunnel, start_tunnel, stop_tunnel, test_tunnel};
+pub use tunnel::{restart_tunnel, stop_tunnel, test_tunnel};
 pub use usage::get_service_usage_stats;
 pub use workspace::{
     create_workspace, delete_workspace, list_workspaces, open_workspace_directory, update_workspace,

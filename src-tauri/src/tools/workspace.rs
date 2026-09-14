@@ -558,12 +558,6 @@ impl Workspace {
         false
     }
 
-    pub fn is_safe_existing_path(&self, path: &Path) -> bool {
-        path.canonicalize()
-            .map(|p| p.starts_with(&self.root))
-            .unwrap_or(false)
-    }
-
     pub fn is_safe_read_path(&self, path: &Path) -> bool {
         path.exists() || path.is_symlink()
     }
@@ -602,28 +596,6 @@ pub fn tool_err(error: WorkspaceError) -> Value {
         "status": "error",
         "summary": error.message(),
         "error": error.to_error_value()
-    })
-}
-
-pub fn tool_err_code(
-    code: &'static str,
-    message: impl Into<String>,
-    category: &'static str,
-) -> Value {
-    let message = message.into();
-    let details = json!({});
-    json!({
-        "ok": false,
-        "status": "error",
-        "summary": message.clone(),
-        "error": {
-            "code": code,
-            "message": message,
-            "category": category,
-            "retryable": false,
-            "details": details,
-            "recovery": recovery_contract_value(code, category, false, &json!({}))
-        }
     })
 }
 

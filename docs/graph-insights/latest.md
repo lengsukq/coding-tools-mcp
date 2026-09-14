@@ -67,7 +67,7 @@ Svelte 页面
 
 - 当前产品运行时已经收敛为 MCP-only：Actions listener、OpenAPI 网关、双服务状态、Actions 隧道/认证/日志/健康与前端入口均已删除。
 - 旧 `profiles.json` 中的 `actions` 配置、`restore_actions_workspace_ids` 与 Actions 专属密钥会在升级加载时被定向清理；MCP 密钥保持不变。
-- `docs/specs/**`、带日期的 `docs/verification/**`、`docs/history-session/**` 与 `old/**` 保留历史 Actions 记录，不代表当前产品能力。
+- `docs/specs/**`、带日期的 `docs/verification/**` 与 `docs/history-session/**` 仍保留历史 Actions 记录，不代表当前产品能力；旧 Python/Actions 参考实现目录已从当前仓库移除。
 - 当前 README、project-context 与本文件已经同步 MCP-only 架构。
 
 ## 验证结果

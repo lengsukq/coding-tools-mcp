@@ -12,29 +12,20 @@ use crate::global_gateway;
 use crate::platform::platform;
 use crate::runtime::{
     await_listener_shutdown, port_busy_message, try_reclaim_previous_macos_app_port,
-    wait_for_port_free, ServiceKind,
+    wait_for_port_free,
 };
-use crate::tunnel::{
-    maybe_start_for_runtime, stop_for_runtime, sync_managed_runtime_routes, TunnelServiceKind,
-};
-use crate::workspace::resources::{validate_service_start, WorkspaceService};
+use crate::tunnel::{maybe_start_for_runtime, stop_for_runtime, sync_managed_runtime_routes};
+use crate::workspace::resources::validate_service_start;
 use crate::workspace::RuntimeStatusDto;
 
 /// Serialize MCP restarts so secret-save and form-save cannot tear down
 /// the same listener concurrently (that race could abort the process on Windows).
 static RESTART_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
-fn remember_runtime_state(
-    state: &AppState,
-    id: &str,
-    kind: ServiceKind,
-    running: bool,
-) -> AppResult<()> {
+fn remember_runtime_state(state: &AppState, id: &str, running: bool) -> AppResult<()> {
     state.with_settings(|store| {
         let mut settings = store.settings();
-        let ids = match kind {
-            ServiceKind::Mcp => &mut settings.restore_mcp_workspace_ids,
-        };
+        let ids = &mut settings.restore_mcp_workspace_ids;
 
         if running {
             if !ids.iter().any(|workspace_id| workspace_id == id) {
@@ -57,18 +48,13 @@ fn profile_by_id(state: &AppState, id: &str) -> AppResult<crate::workspace::Work
     })
 }
 
-fn validate_start_resources(
-    state: &AppState,
-    id: &str,
-    service: WorkspaceService,
-) -> AppResult<()> {
-    state.with_workspaces(|store| validate_service_start(store.list(), id, service))
+fn validate_start_resources(state: &AppState, id: &str) -> AppResult<()> {
+    state.with_workspaces(|store| validate_service_start(store.list(), id))
 }
 
 fn persist_tunnel_url(
     state: &AppState,
     id: &str,
-    kind: TunnelServiceKind,
     url: &str,
 ) -> AppResult<()> {
     if url.is_empty() {
@@ -80,9 +66,7 @@ fn persist_tunnel_url(
             return Ok(());
         };
 
-        match kind {
-            TunnelServiceKind::Mcp => profile.tunnel.public_url = url.to_string(),
-        }
+        profile.tunnel.public_url = url.to_string();
 
         store.update(profile)?;
         Ok(())
@@ -90,7 +74,7 @@ fn persist_tunnel_url(
 }
 
 async fn sync_tunnel_routes_from_runtime(state: &AppState) -> AppResult<()> {
-    let active_keys = state.with_runtime(|runtime| Ok(runtime.active_tunnel_service_keys()))?;
+    let active_keys = state.with_runtime(|runtime| Ok(runtime.active_tunnel_workspace_ids()))?;
     sync_managed_runtime_routes(active_keys).await
 }
 
@@ -124,19 +108,19 @@ async fn ensure_port_available(port: u16, service_label: &str) -> AppResult<()> 
 async fn stop_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
     let profile = profile_by_id(state, id)?;
     let port = profile.runtime.local_port;
-    let handle = state.with_runtime(|runtime| Ok(runtime.begin_stop(id, ServiceKind::Mcp)))?;
+    let handle = state.with_runtime(|runtime| Ok(runtime.begin_stop(id)))?;
     await_listener_shutdown(handle, port).await;
     state.with_runtime(|runtime| {
-        runtime.finish_stop(id, ServiceKind::Mcp);
+        runtime.finish_stop(id);
         Ok(runtime.mcp_status(&profile))
     })?;
-    stop_for_runtime(&profile, TunnelServiceKind::Mcp).await?;
+    stop_for_runtime(&profile).await?;
     sync_tunnel_routes_from_runtime(state).await?;
     state.with_runtime(|runtime| Ok(runtime.mcp_status(&profile)))
 }
 
 async fn start_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
-    validate_start_resources(state, id, WorkspaceService::Mcp)?;
+    validate_start_resources(state, id)?;
     let profile = profile_by_id(state, id)?;
     ensure_port_available(profile.runtime.local_port, "本地 MCP").await?;
     if profile.tunnel.use_global_gateway {
@@ -146,9 +130,9 @@ async fn start_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatu
     state.with_runtime(|runtime| runtime.start_mcp(&profile))?;
     sync_tunnel_routes_from_runtime(state).await?;
 
-    match maybe_start_for_runtime(&profile, TunnelServiceKind::Mcp).await {
+    match maybe_start_for_runtime(&profile).await {
         Ok(Some(url)) => {
-            persist_tunnel_url(state, id, TunnelServiceKind::Mcp, &url)?;
+            persist_tunnel_url(state, id, &url)?;
         }
         Ok(None) => {}
         Err(error) => {
@@ -170,9 +154,7 @@ pub(crate) async fn restart_mcp_by_id(
     id: &str,
 ) -> AppResult<RuntimeStatusDto> {
     let _guard = RESTART_GATE.lock().await;
-    let was_running = state.with_runtime(|runtime| {
-        Ok(runtime.is_running(id, ServiceKind::Mcp))
-    })?;
+    let was_running = state.with_runtime(|runtime| Ok(runtime.is_running(id)))?;
     if was_running {
         let _ = stop_mcp_service(state, id).await?;
     }
@@ -183,7 +165,7 @@ pub(crate) async fn restart_mcp_by_id(
 pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
     let status = start_mcp_service(&state, &id).await?;
     if status.state == "running" || status.state == "starting" {
-        remember_runtime_state(&state, &id, ServiceKind::Mcp, true)?;
+        remember_runtime_state(&state, &id, true)?;
     }
     Ok(status)
 }
@@ -191,7 +173,7 @@ pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<
 #[tauri::command]
 pub async fn stop_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
     let status = stop_mcp_service(&state, &id).await?;
-    remember_runtime_state(&state, &id, ServiceKind::Mcp, false)?;
+    remember_runtime_state(&state, &id, false)?;
     Ok(status)
 }
 

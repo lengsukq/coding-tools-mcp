@@ -33,6 +33,20 @@ pub struct DataStore {
     data: AppData,
 }
 
+fn apply_settings_update(base: &AppData, latest: &mut AppData, settings: AppSettings) {
+    // Global Gateway may persist a newly resolved public URL directly from its
+    // async runtime, outside the long-lived AppState DataStore snapshot. An
+    // unrelated settings save must not overwrite that newer runtime value.
+    let gateway_changed_by_caller = settings.global_gateway != base.global_gateway;
+    let latest_gateway = latest.global_gateway.clone();
+
+    settings.apply_to(latest);
+
+    if !gateway_changed_by_caller {
+        latest.global_gateway = latest_gateway;
+    }
+}
+
 fn strip_obsolete_actions_secrets(data: &mut AppData) -> bool {
     let mut changed = false;
     for key in OBSOLETE_ACTIONS_SECRET_KEYS {
@@ -133,9 +147,16 @@ impl DataStore {
         &self.data
     }
 
-    pub fn save(&self) -> AppResult<()> {
+    fn update_latest<R>(
+        &mut self,
+        f: impl FnOnce(&mut AppData) -> AppResult<R>,
+    ) -> AppResult<R> {
         let _guard = lock_data_file()?;
-        self.persist_unlocked()
+        let mut data = load_or_migrate()?;
+        let result = f(&mut data)?;
+        save(&data)?;
+        self.data = data;
+        Ok(result)
     }
 
     fn persist_unlocked(&self) -> AppResult<()> {
@@ -147,8 +168,11 @@ impl DataStore {
     }
 
     pub fn update_settings(&mut self, settings: AppSettings) -> AppResult<()> {
-        settings.apply_to(&mut self.data);
-        self.save()
+        let base = self.data.clone();
+        self.update_latest(move |data| {
+            apply_settings_update(&base, data, settings);
+            Ok(())
+        })
     }
 
     pub fn list(&self) -> &[WorkspaceProfile] {
@@ -160,68 +184,74 @@ impl DataStore {
     }
 
     pub fn add(&mut self, profile: WorkspaceProfile) -> AppResult<()> {
-        self.data.profiles.push(profile);
-        self.save()
+        self.update_latest(move |data| {
+            data.profiles.push(profile);
+            Ok(())
+        })
     }
 
     pub fn update(&mut self, profile: WorkspaceProfile) -> AppResult<()> {
-        let Some(index) = self
-            .data
-            .profiles
-            .iter()
-            .position(|item| item.id == profile.id)
-        else {
-            return Err(AppError::Message(format!(
-                "workspace not found: {}",
-                profile.id
-            )));
-        };
-        self.data.profiles[index] = profile;
-        self.save()
+        self.update_latest(move |data| {
+            let Some(index) = data
+                .profiles
+                .iter()
+                .position(|item| item.id == profile.id)
+            else {
+                return Err(AppError::Message(format!(
+                    "workspace not found: {}",
+                    profile.id
+                )));
+            };
+            data.profiles[index] = profile;
+            Ok(())
+        })
     }
 
     pub fn remove(&mut self, id: &str) -> AppResult<Option<WorkspaceProfile>> {
-        let Some(index) = self.data.profiles.iter().position(|item| item.id == id) else {
-            return Ok(None);
-        };
-        let removed = self.data.profiles.remove(index);
-        self.data.workspace_secrets.remove(id);
-        self.save()?;
-        Ok(Some(removed))
+        self.update_latest(|data| {
+            let Some(index) = data.profiles.iter().position(|item| item.id == id) else {
+                return Ok(None);
+            };
+            let removed = data.profiles.remove(index);
+            data.workspace_secrets.remove(id);
+            Ok(Some(removed))
+        })
     }
 
     pub fn init_workspace_secrets(&mut self, profile_id: &str) -> AppResult<()> {
-        // oauth_client_secret is optional for MCP OAuth (ChatGPT PKCE); not auto-generated.
-        self.set_workspace_secret(profile_id, "oauth_password", &random_secret())?;
-        self.set_workspace_secret(profile_id, "oauth_token_secret", &random_secret())?;
-        self.set_workspace_secret(profile_id, "bearer_token", &random_secret())?;
-        Ok(())
+        self.update_latest(|data| {
+            // oauth_client_secret is optional for MCP OAuth (ChatGPT PKCE); not auto-generated.
+            let secrets = data
+                .workspace_secrets
+                .entry(profile_id.to_string())
+                .or_default();
+            secrets.insert("oauth_password".into(), random_secret());
+            secrets.insert("oauth_token_secret".into(), random_secret());
+            secrets.insert("bearer_token".into(), random_secret());
+            Ok(())
+        })
     }
 
     pub fn init_shared_secrets(&mut self) -> AppResult<()> {
-        let mut changed = false;
-        for key in SHARED_KEYS {
-            if !self.data.shared_secrets.contains_key(*key) {
-                self.data
-                    .shared_secrets
-                    .insert(key.to_string(), shared_value_for_key(key));
-                changed = true;
+        self.update_latest(|data| {
+            for key in SHARED_KEYS {
+                data.shared_secrets
+                    .entry((*key).to_string())
+                    .or_insert_with(|| shared_value_for_key(key));
             }
-        }
-        if changed {
-            self.save()?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn get_workspace_secret(&self, profile_id: &str, key: &str) -> AppResult<Option<String>> {
-        Ok(self
-            .data
-            .workspace_secrets
-            .get(profile_id)
-            .and_then(|secrets| secrets.get(key))
-            .filter(|value| !value.is_empty())
-            .cloned())
+        Self::read_file(|data| {
+            Ok(data
+                .workspace_secrets
+                .get(profile_id)
+                .and_then(|secrets| secrets.get(key))
+                .filter(|value| !value.is_empty())
+                .cloned())
+        })
     }
 
     pub fn set_workspace_secret(
@@ -230,12 +260,13 @@ impl DataStore {
         key: &str,
         value: &str,
     ) -> AppResult<()> {
-        self.data
-            .workspace_secrets
-            .entry(profile_id.to_string())
-            .or_default()
-            .insert(key.to_string(), value.to_string());
-        self.save()
+        self.update_latest(|data| {
+            data.workspace_secrets
+                .entry(profile_id.to_string())
+                .or_default()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        })
     }
 
     pub fn regenerate_workspace_secret(&mut self, profile_id: &str, key: &str) -> AppResult<String> {
@@ -245,8 +276,10 @@ impl DataStore {
     }
 
     pub fn remove_workspace_secrets(&mut self, profile_id: &str) -> AppResult<()> {
-        self.data.workspace_secrets.remove(profile_id);
-        self.save()
+        self.update_latest(|data| {
+            data.workspace_secrets.remove(profile_id);
+            Ok(())
+        })
     }
 
     pub fn get_shared_secret(&self, key: &str) -> Option<String> {
@@ -254,10 +287,11 @@ impl DataStore {
     }
 
     pub fn set_shared_secret(&mut self, key: &str, value: &str) -> AppResult<()> {
-        self.data
-            .shared_secrets
-            .insert(key.to_string(), value.to_string());
-        self.save()
+        self.update_latest(|data| {
+            data.shared_secrets
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        })
     }
 
     pub fn regenerate_shared_secret(&mut self, key: &str) -> AppResult<String> {
@@ -276,22 +310,25 @@ impl DataStore {
     }
 
     pub fn set_app_secret(&mut self, scope: &str, item_id: &str, value: &str) -> AppResult<()> {
-        self.data
-            .app_secrets
-            .entry(scope.to_string())
-            .or_default()
-            .insert(item_id.to_string(), value.to_string());
-        self.save()
+        self.update_latest(|data| {
+            data.app_secrets
+                .entry(scope.to_string())
+                .or_default()
+                .insert(item_id.to_string(), value.to_string());
+            Ok(())
+        })
     }
 
     pub fn delete_app_secret(&mut self, scope: &str, item_id: &str) -> AppResult<()> {
-        if let Some(items) = self.data.app_secrets.get_mut(scope) {
-            items.remove(item_id);
-            if items.is_empty() {
-                self.data.app_secrets.remove(scope);
+        self.update_latest(|data| {
+            if let Some(items) = data.app_secrets.get_mut(scope) {
+                items.remove(item_id);
+                if items.is_empty() {
+                    data.app_secrets.remove(scope);
+                }
             }
-        }
-        self.save()
+            Ok(())
+        })
     }
 
 }
@@ -330,6 +367,61 @@ mod tests {
             .expect("get");
         assert_eq!(loaded.as_deref(), Some("roundtrip-secret"));
         store.remove_workspace_secrets(&id).expect("remove");
+    }
+
+    #[test]
+    fn stale_store_update_does_not_overwrite_externally_persisted_workspace_secret() {
+        let id = uuid::Uuid::new_v4().to_string().replace('-', "");
+        let marker = format!("stale-store-regression-{id}");
+        let mut store = DataStore::load().expect("load");
+
+        crate::secret::SecretStore::set(&id, "oauth_dynamic_clients", &marker)
+            .expect("persist external secret");
+
+        let mut settings = store.settings();
+        settings.last_workspace_id = format!("regression-{id}");
+        store.update_settings(settings).expect("update unrelated settings");
+
+        let persisted = crate::secret::SecretStore::get(&id, "oauth_dynamic_clients")
+            .expect("read external secret");
+        assert_eq!(persisted.as_deref(), Some(marker.as_str()));
+
+        let _ = crate::secret::SecretStore::remove_workspace_secrets(&id);
+    }
+
+    #[test]
+    fn unrelated_settings_update_preserves_newer_global_gateway_state() {
+        let base = AppData::default();
+        let mut latest = base.clone();
+        latest.global_gateway.public_url = "https://runtime.example.test".into();
+
+        let mut settings = AppSettings::from_data(&base);
+        settings.last_workspace_id = "workspace-2".into();
+        apply_settings_update(&base, &mut latest, settings);
+
+        assert_eq!(latest.last_workspace_id, "workspace-2");
+        assert_eq!(
+            latest.global_gateway.public_url,
+            "https://runtime.example.test"
+        );
+    }
+
+    #[test]
+    fn explicit_global_gateway_update_still_wins_over_runtime_snapshot() {
+        let base = AppData::default();
+        let mut latest = base.clone();
+        latest.global_gateway.public_url = "https://runtime.example.test".into();
+
+        let mut settings = AppSettings::from_data(&base);
+        settings.global_gateway.enabled = true;
+        settings.global_gateway.public_url = "https://configured.example.test".into();
+        apply_settings_update(&base, &mut latest, settings);
+
+        assert!(latest.global_gateway.enabled);
+        assert_eq!(
+            latest.global_gateway.public_url,
+            "https://configured.example.test"
+        );
     }
 
     #[test]

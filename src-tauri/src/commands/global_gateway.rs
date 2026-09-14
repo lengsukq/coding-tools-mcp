@@ -1,13 +1,14 @@
 use tauri::State;
 
 use crate::app_state::AppState;
+use crate::data::DataStore;
 use crate::error::AppResult;
 use crate::global_gateway::{self, GatewayHealthItem, GlobalGatewayStatusDto};
-use crate::settings::GlobalGatewayConfig;
+use crate::settings::{AppSettings, GlobalGatewayConfig};
 
 #[tauri::command]
-pub fn get_global_gateway_config(state: State<'_, AppState>) -> AppResult<GlobalGatewayConfig> {
-    state.with_settings(|store| Ok(store.settings().global_gateway))
+pub fn get_global_gateway_config(_state: State<'_, AppState>) -> AppResult<GlobalGatewayConfig> {
+    DataStore::read_file(|data| Ok(AppSettings::from_data(data).global_gateway))
 }
 
 #[tauri::command]

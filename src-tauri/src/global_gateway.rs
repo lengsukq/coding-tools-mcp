@@ -16,7 +16,7 @@ use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
 use crate::local_network;
 use crate::settings::{AppSettings, GlobalGatewayConfig};
-use crate::tunnel::{cloudflare, frp, TunnelServiceKind};
+use crate::tunnel::{cloudflare, frp};
 use crate::workspace::WorkspaceProfile;
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -94,15 +94,6 @@ struct GatewayRuntime {
 }
 
 static RUNTIME: LazyLock<Mutex<Option<GatewayRuntime>>> = LazyLock::new(|| Mutex::new(None));
-
-#[allow(dead_code)]
-pub fn workspace_public_base(public_url: &str, workspace_id: &str) -> String {
-    let base = public_url.trim_end_matches('/');
-    if base.is_empty() {
-        return String::new();
-    }
-    format!("{base}/w/{workspace_id}")
-}
 
 pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
     let settings = AppSettings::load_or_default();
@@ -291,10 +282,10 @@ async fn start_tunnel(
             }
             let handle = frp::spawn_frpc(
                 "global-gateway",
-                &[(&profile, TunnelServiceKind::Mcp)],
+                &[&profile],
                 settings,
             ).await?;
-            let public_url = frp::frp_public_url(&profile, TunnelServiceKind::Mcp, settings);
+            let public_url = frp::frp_public_url(&profile, settings);
             Ok((public_url, Some(TunnelChild::Frp { child: handle.child, pid: handle.pid })))
         }
         other => Err(AppError::Message(format!("不支持的全局 Gateway tunnel_type: {other}"))),
@@ -424,17 +415,4 @@ fn is_hop_header(name: &str) -> bool {
         "connection" | "keep-alive" | "proxy-authenticate" | "proxy-authorization"
             | "te" | "trailer" | "transfer-encoding" | "upgrade"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workspace_prefixes_are_stable() {
-        assert_eq!(
-            workspace_public_base("https://mcp.example.com/", "abc"),
-            "https://mcp.example.com/w/abc"
-        );
-    }
 }

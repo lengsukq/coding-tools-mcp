@@ -153,7 +153,7 @@
         await saveDraft({ skipTunnelRestart: true, skipServicePrompt: true });
       }
 
-      const result = await invokeTunnelTest(workspaceId, "mcp");
+      const result = await invokeTunnelTest(workspaceId);
       if (result.publicUrl && draft.cloudflare_mode === "quick") {
         draft.public_url = result.publicUrl;
       }

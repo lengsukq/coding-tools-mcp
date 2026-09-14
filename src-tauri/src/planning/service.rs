@@ -5,7 +5,7 @@ use crate::error::{AppError, AppResult};
 
 use super::model::{
     ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningMode,
-    PlanningProposal, PlanningState, ProposalStatus, SuccessCriterion,
+    PlanningState, SuccessCriterion,
 };
 use super::store::PlanningStore;
 
@@ -212,27 +212,6 @@ impl PlanningService {
         })
     }
 
-    pub fn reject_proposal(&self, proposal_id: &str) -> AppResult<PlanningProposal> {
-        self.store.update(|state| {
-            let proposal = state
-                .proposals
-                .iter_mut()
-                .find(|proposal| proposal.id == proposal_id)
-                .ok_or_else(|| AppError::Message(format!("proposal not found: {proposal_id}")))?;
-            proposal.approval_status = ProposalStatus::Rejected;
-            Ok(proposal.clone())
-        })
-    }
-
-    pub fn pending_proposals(&self) -> AppResult<Vec<PlanningProposal>> {
-        let state = self.store.load()?;
-        Ok(state
-            .proposals
-            .into_iter()
-            .filter(|proposal| proposal.approval_status == ProposalStatus::PendingApproval)
-            .collect())
-    }
-
     pub fn state(&self) -> AppResult<PlanningState> {
         self.store.load()
     }
@@ -296,97 +275,6 @@ impl PlanningService {
                 }
             }
             Ok(state.clone())
-        })
-    }
-
-    pub fn create_proposal(
-        &self,
-        source_request: &str,
-        title: &str,
-        objective: &str,
-        success_criteria: Vec<String>,
-        constraints: Vec<String>,
-        plan_steps: Vec<String>,
-    ) -> AppResult<PlanningProposal> {
-        let source_request = required_text(source_request, "Proposal request")?;
-        let title = required_text(title, "Proposal title")?;
-        let objective = required_text(objective, "Proposal objective")?;
-        self.store.update(|state| {
-            let proposal = PlanningProposal {
-                id: new_id(),
-                source_request,
-                title,
-                objective,
-                success_criteria,
-                constraints,
-                plan_steps,
-                approval_status: ProposalStatus::PendingApproval,
-                created_at: timestamp(),
-            };
-            state.proposals.push(proposal.clone());
-            Ok(proposal)
-        })
-    }
-
-    pub fn approve_proposal(&self, proposal_id: &str) -> AppResult<(Goal, Plan)> {
-        self.store.update(|state| {
-            let proposal = state
-                .proposals
-                .iter_mut()
-                .find(|proposal| proposal.id == proposal_id)
-                .ok_or_else(|| AppError::Message(format!("proposal not found: {proposal_id}")))?;
-            proposal.approval_status = ProposalStatus::Approved;
-
-            let now = timestamp();
-            let goal = Goal {
-                id: new_id(),
-                title: proposal.title.clone(),
-                objective: proposal.objective.clone(),
-                status: GoalStatus::Active,
-                success_criteria: proposal
-                    .success_criteria
-                    .iter()
-                    .cloned()
-                    .map(|text| SuccessCriterion { id: new_id(), text, completed: false })
-                    .collect(),
-                constraints: proposal.constraints.clone(),
-                plan_ids: Vec::new(),
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                archived_at: None,
-                review_requested_at: None,
-                review_summary: None,
-                review_feedback: None,
-                execution_checkpoint: None,
-                extra: Default::default(),
-            };
-            let plan = Plan {
-                id: new_id(),
-                goal_id: Some(goal.id.clone()),
-                title: proposal.title.clone(),
-                objective: proposal.objective.clone(),
-                status: PlanStatus::Active,
-                steps: proposal.plan_steps.iter().cloned().map(|title| PlanStep {
-                    id: new_id(),
-                    title,
-                    status: PlanStepStatus::Pending,
-                    notes: None,
-                }).collect(),
-                task_ids: Vec::new(),
-                revision: 1,
-                created_at: now.clone(),
-                updated_at: now,
-                archived_at: None,
-                review_requested_at: None,
-                review_summary: None,
-                review_feedback: None,
-                extra: Default::default(),
-            };
-            state.focus_goal_id = Some(goal.id.clone());
-            state.focus_plan_id = Some(plan.id.clone());
-            state.goals.push(goal.clone());
-            state.plans.push(plan.clone());
-            Ok((goal, plan))
         })
     }
 
@@ -581,44 +469,6 @@ impl PlanningService {
         })
     }
 
-    pub fn update_execution_checkpoint(
-        &self,
-        goal_id: &str,
-        current_step_id: Option<String>,
-        completed_step_ids: Vec<String>,
-        last_error: Option<String>,
-    ) -> AppResult<Goal> {
-        self.store.update(|state| {
-            let goal = state
-                .goals
-                .iter_mut()
-                .find(|goal| goal.id == goal_id)
-                .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
-            goal.execution_checkpoint = Some(ExecutionCheckpoint {
-                current_step_id,
-                completed_step_ids,
-                last_error,
-                updated_at: timestamp(),
-            });
-            goal.updated_at = timestamp();
-            Ok(goal.clone())
-        })
-    }
-
-    pub fn resume_context(&self) -> AppResult<Option<(Goal, Plan)>> {
-        let state = self.store.load()?;
-        let Some(goal_id) = state.focus_goal_id else {
-            return Ok(None);
-        };
-        let Some(goal) = state.goals.iter().find(|goal| goal.id == goal_id) else {
-            return Ok(None);
-        };
-        let plan = state
-            .focus_plan_id
-            .as_deref()
-            .and_then(|id| state.plans.iter().find(|plan| plan.id == id));
-        Ok(plan.cloned().map(|plan| (goal.clone(), plan)))
-    }
 }
 
 fn required_text(value: &str, label: &str) -> AppResult<String> {

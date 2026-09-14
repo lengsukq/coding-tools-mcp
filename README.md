@@ -446,8 +446,8 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 | `src-tauri/src/tools/` | 文件、Patch、Exec、Git 等共享工具内核 |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP 服务 |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 隧道和进程管理 |
+| `src-tauri/tests/fixtures/` | 当前 Rust 集成测试使用的隔离 fixture |
 | `src/` | SvelteKit 桌面界面 |
-| `old/` | Python 参考实现和兼容性基线 |
 
 ## 致谢
 感谢 [Linux.do](https://linux.do/) 社区对项目推广与反馈的支持。

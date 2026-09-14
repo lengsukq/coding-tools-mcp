@@ -12,7 +12,7 @@ use crate::platform::platform;
 use crate::settings::AppSettings;
 use crate::workspace::WorkspaceProfile;
 
-use super::{TunnelServiceKind, TunnelSupervisor};
+use super::TunnelSupervisor;
 
 static TUNNEL_SUPERVISOR: LazyLock<Mutex<TunnelSupervisor>> =
     LazyLock::new(|| Mutex::new(TunnelSupervisor::new()));
@@ -39,37 +39,32 @@ pub fn ensure_frp_health_loop() {
     });
 }
 
-fn tunnel_type_for(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> &str {
-    match kind {
-        TunnelServiceKind::Mcp if profile.tunnel.use_global_gateway => "none",
-        TunnelServiceKind::Mcp => profile.tunnel.tunnel_type.as_str(),
+fn tunnel_type_for(profile: &WorkspaceProfile) -> &str {
+    if profile.tunnel.use_global_gateway {
+        "none"
+    } else {
+        profile.tunnel.tunnel_type.as_str()
     }
 }
 
-pub async fn maybe_start_for_runtime(
-    profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
-) -> AppResult<Option<String>> {
-    let tunnel_type = tunnel_type_for(profile, kind);
+pub async fn maybe_start_for_runtime(profile: &WorkspaceProfile) -> AppResult<Option<String>> {
+    let tunnel_type = tunnel_type_for(profile);
     if tunnel_type.is_empty() || tunnel_type == "none" {
         return Ok(None);
     }
     let settings = AppSettings::load_or_default();
     let mut guard = supervisor().lock().await;
-    let status = guard.start(profile, kind, &settings).await?;
+    let status = guard.start(profile, &settings).await?;
     Ok(Some(status.public_url))
 }
 
-pub async fn stop_for_runtime(
-    profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
-) -> AppResult<()> {
-    if matches!(kind, TunnelServiceKind::Mcp) && profile.tunnel.use_global_gateway {
+pub async fn stop_for_runtime(profile: &WorkspaceProfile) -> AppResult<()> {
+    if profile.tunnel.use_global_gateway {
         return Ok(());
     }
     let settings = AppSettings::load_or_default();
     let mut guard = supervisor().lock().await;
-    guard.stop(profile, kind, &settings).await
+    guard.stop(profile, &settings).await
 }
 
 pub async fn drop_workspace(workspace_id: &str) -> AppResult<()> {
@@ -78,7 +73,7 @@ pub async fn drop_workspace(workspace_id: &str) -> AppResult<()> {
 }
 
 pub async fn sync_managed_runtime_routes(
-    active_runtime_keys: HashSet<(String, TunnelServiceKind)>,
+    active_runtime_keys: HashSet<String>,
 ) -> AppResult<()> {
     let settings = AppSettings::load_or_default();
     let profiles = DataStore::read_file(|data| Ok(data.profiles.clone()))?;
@@ -89,12 +84,9 @@ pub async fn sync_managed_runtime_routes(
 
 pub async fn cleanup_orphan_for_runtime(
     profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
     runtime_listening: bool,
 ) -> AppResult<()> {
-    let port = match kind {
-        TunnelServiceKind::Mcp => profile.runtime.local_port,
-    };
+    let port = profile.runtime.local_port;
     if runtime_listening || platform().find_pid_listening_on_port(port)?.is_some() {
         return Ok(());
     }
@@ -103,5 +95,5 @@ pub async fn cleanup_orphan_for_runtime(
     if platform().find_pid_listening_on_port(port)?.is_some() {
         return Ok(());
     }
-    guard.cleanup_orphan(profile, kind, false).await
+    guard.cleanup_orphan(profile, false).await
 }

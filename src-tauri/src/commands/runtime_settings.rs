@@ -54,7 +54,7 @@ pub fn set_global_runtime_settings(
     })?;
     let running_snapshot = if should_capture_running {
         Some(state.with_runtime(|supervisor| {
-            Ok(supervisor.running_workspace_ids(crate::runtime::ServiceKind::Mcp))
+            Ok(supervisor.running_workspace_ids())
         })?)
     } else {
         None

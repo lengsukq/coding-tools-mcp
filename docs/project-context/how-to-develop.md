@@ -106,9 +106,5 @@ cargo test --all-targets --locked
 
 本机缺少 rustfmt/clippy component 时不要静默跳过；记录环境限制，并保证 CI 的 stable toolchain 安装对应 component。
 
-## 参考旧版
-
-`old/` 只用于兼容行为对照。当前代码、当前测试和 `docs/project-context/` 的优先级高于旧 Python 实现。
-
 ---
 *返回索引: [../project-context.md](../project-context.md)*

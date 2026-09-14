@@ -13,22 +13,6 @@ use crate::workspace::WorkspaceProfile;
 use super::cloudflare::{self, CloudflareTunnelHandle};
 use super::frp::{self, FrpServerConfig};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TunnelServiceKind {
-    Mcp,
-}
-
-impl TunnelServiceKind {
-    pub fn parse(service: &str) -> AppResult<Self> {
-        match service.to_ascii_lowercase().as_str() {
-            "mcp" => Ok(Self::Mcp),
-            other => Err(AppError::Message(format!(
-                "unknown tunnel service: {other}"
-            ))),
-        }
-    }
-}
-
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TunnelStatus {
@@ -45,7 +29,6 @@ struct TunnelSession {
 
 struct FrpRoute {
     profile: WorkspaceProfile,
-    kind: TunnelServiceKind,
 }
 
 struct FrpcProcess {
@@ -60,8 +43,8 @@ struct FrpcHealthState {
 }
 
 pub struct TunnelSupervisor {
-    sessions: HashMap<(String, TunnelServiceKind), TunnelSession>,
-    frp_routes: HashMap<(String, TunnelServiceKind), FrpRoute>,
+    sessions: HashMap<String, TunnelSession>,
+    frp_routes: HashMap<String, FrpRoute>,
     frpc: HashMap<String, FrpcProcess>,
     frpc_health: HashMap<String, FrpcHealthState>,
 }
@@ -75,7 +58,6 @@ impl Default for TunnelSupervisor {
 const FRPC_HEALTH_STREAK_TO_RESTART: u32 = 2;
 const FRPC_HEALTH_RESTART_COOLDOWN: Duration = Duration::from_secs(90);
 
-#[allow(dead_code)]
 impl TunnelSupervisor {
     pub fn new() -> Self {
         Self {
@@ -148,62 +130,38 @@ impl TunnelSupervisor {
             return Some("frpc process exited".into());
         }
 
-        let routes: Vec<&FrpRoute> = self
-            .frp_routes
-            .iter()
-            .filter(|((id, _), _)| id == workspace_id)
-            .map(|(_, route)| route)
-            .collect();
-        if routes.is_empty() {
+        let Some(route) = self.frp_routes.get(workspace_id) else {
             return None;
-        }
+        };
 
-        let log_path =
-            log_dir_for_profile(workspace_id).join(frp::frpc_log_name(TunnelServiceKind::Mcp));
+        let log_path = log_dir_for_profile(workspace_id).join(frp::frpc_log_name());
         let log_tail = frp::read_frpc_log_tail(&log_path);
         if frp::frpc_reconnect_loop_detected(&log_tail) {
             return Some("frpc reconnect loop detected in log".into());
         }
 
-        for route in routes {
-            let public_url = route.profile.public_endpoint();
-            if public_url.is_empty() {
-                continue;
-            }
-            // Only treat FRP's own 404 page as proof the proxy is dead. Network
-            // blips (Unreachable) alone must not force a restart.
-            let local_ok = frp::probe_local_mcp_ok(route.profile.runtime.local_port).await;
-            if !local_ok {
-                continue;
-            }
-            if frp::probe_public_mcp_endpoint(&public_url).await == frp::PublicMcpProbe::FrpNotRouted
-            {
-                return Some(format!(
-                    "public endpoint returns FRP not-found page ({public_url})"
-                ));
-            }
+        let public_url = route.profile.public_endpoint();
+        if public_url.is_empty() {
+            return None;
+        }
+        // Only treat FRP's own 404 page as proof the proxy is dead. Network
+        // blips (Unreachable) alone must not force a restart.
+        let local_ok = frp::probe_local_mcp_ok(route.profile.runtime.local_port).await;
+        if !local_ok {
+            return None;
+        }
+        if frp::probe_public_mcp_endpoint(&public_url).await == frp::PublicMcpProbe::FrpNotRouted {
+            return Some(format!(
+                "public endpoint returns FRP not-found page ({public_url})"
+            ));
         }
         None
     }
 
-    pub fn frp_snippet(
-        &self,
-        profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
-        settings: &AppSettings,
-    ) -> String {
-        frp::frp_snippet(profile, kind, settings)
-    }
-
-    pub fn status(
-        &self,
-        profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
-        settings: &AppSettings,
-    ) -> TunnelStatus {
-        let key = (profile.id.clone(), kind);
-        if self.session_is_running(&key) {
-            if let Some(session) = self.sessions.get(&key) {
+    pub fn status(&self, profile: &WorkspaceProfile, settings: &AppSettings) -> TunnelStatus {
+        let key = profile.id.as_str();
+        if self.session_is_running(key) {
+            if let Some(session) = self.sessions.get(key) {
                 return TunnelStatus {
                     state: "running".into(),
                     public_url: session.public_url.clone(),
@@ -214,48 +172,26 @@ impl TunnelSupervisor {
 
         TunnelStatus {
             state: "stopped".into(),
-            public_url: public_url_for_profile(profile, kind, settings),
+            public_url: public_url_for_profile(profile, settings),
             tunnel_pid: None,
         }
     }
 
-    pub fn public_url(
-        &self,
-        profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
-        settings: &AppSettings,
-    ) -> String {
-        let key = (profile.id.clone(), kind);
-        if self.session_is_running(&key) {
-            return self
-                .sessions
-                .get(&key)
-                .map(|session| session.public_url.clone())
-                .unwrap_or_default();
-        }
-        public_url_for_profile(profile, kind, settings)
-    }
-
-    pub fn route_profile(
-        &self,
-        workspace_id: &str,
-        kind: TunnelServiceKind,
-    ) -> Option<WorkspaceProfile> {
+    pub fn route_profile(&self, workspace_id: &str) -> Option<WorkspaceProfile> {
         self.frp_routes
-            .get(&(workspace_id.to_string(), kind))
+            .get(workspace_id)
             .map(|route| route.profile.clone())
     }
 
     pub async fn start(
         &mut self,
         profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
         settings: &AppSettings,
     ) -> AppResult<TunnelStatus> {
-        let key = (profile.id.clone(), kind);
-        let tunnel_type = tunnel_type_for(profile, kind);
+        let key = profile.id.clone();
+        let tunnel_type = tunnel_type_for(profile);
         if self.session_is_running(&key) && tunnel_type != "frp" {
-            return Ok(self.status(profile, kind, settings));
+            return Ok(self.status(profile, settings));
         }
 
         // 暂存旧状态，直到新线路完成校验并成功启动。这样配置填写错误、
@@ -264,13 +200,13 @@ impl TunnelSupervisor {
         let mut previous_session = self.sessions.remove(&key);
         let mut previous_route = self.frp_routes.remove(&key);
 
-        if let Err(error) = validate_tunnel_requirements(profile, kind, settings) {
+        if let Err(error) = validate_tunnel_requirements(profile, settings) {
             self.restore_route_state(&key, previous_route.take(), previous_session.take());
             return Err(error);
         }
 
         if tunnel_type == "frp" {
-            let config = frp::frp_server_config(profile, kind, settings, None);
+            let config = frp::frp_server_config(profile, settings, None);
             if let Err(error) =
                 self.validate_frp_route_compatibility(&profile.id, &config, settings)
             {
@@ -282,7 +218,6 @@ impl TunnelSupervisor {
                 key.clone(),
                 FrpRoute {
                     profile: profile.clone(),
-                    kind,
                 },
             );
             if let Err(error) = self.ensure_frpc_matches_routes(&profile.id, settings).await {
@@ -298,7 +233,7 @@ impl TunnelSupervisor {
                 return Err(error);
             }
 
-            let public_url = frp::frp_public_url(profile, kind, settings);
+            let public_url = frp::frp_public_url(profile, settings);
             let pid = self.frpc.get(&profile.id).and_then(|process| process.pid);
             self.sessions.insert(
                 key,
@@ -320,14 +255,14 @@ impl TunnelSupervisor {
             return Err(AppError::Message("当前仅支持 FRP 和 Cloudflare。".into()));
         }
 
-        let (port, mode, token, named_url, log_name) = match cloudflare_config(profile, kind) {
+        let (port, mode, token, named_url, log_name) = match cloudflare_config(profile) {
             Ok(config) => config,
             Err(error) => {
                 self.restore_route_state(&key, previous_route.take(), previous_session.take());
                 return Err(error);
             }
         };
-        let use_proxy = tunnel_use_proxy(profile, kind);
+        let use_proxy = profile.tunnel.use_proxy;
         let log_path = log_dir_for_profile(&profile.id).join(log_name);
         let handle = cloudflare::spawn_cloudflare_tunnel(
             port,
@@ -368,19 +303,13 @@ impl TunnelSupervisor {
     pub async fn stop(
         &mut self,
         profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
         settings: &AppSettings,
     ) -> AppResult<()> {
-        self.stop_internal(&profile.id, kind, settings).await
+        self.stop_internal(&profile.id, settings).await
     }
 
-    async fn stop_internal(
-        &mut self,
-        workspace_id: &str,
-        kind: TunnelServiceKind,
-        settings: &AppSettings,
-    ) -> AppResult<()> {
-        let key = (workspace_id.to_string(), kind);
+    async fn stop_internal(&mut self, workspace_id: &str, settings: &AppSettings) -> AppResult<()> {
+        let key = workspace_id.to_string();
         if let Some(route) = self.frp_routes.remove(&key) {
             let session = self.sessions.remove(&key);
             if let Err(error) = self
@@ -418,44 +347,35 @@ impl TunnelSupervisor {
 
     pub async fn drop_workspace(&mut self, workspace_id: &str) -> AppResult<()> {
         let settings = AppSettings::load_or_default();
-        let keys = [(workspace_id.to_string(), TunnelServiceKind::Mcp)];
+        let key = workspace_id.to_string();
 
         // 非 FRP session 正常情况下必须持有 Child。先完成归属预检，再修改
         // FRP route；不能确认归属时保持所有线路原样，避免部分删除。
-        for key in &keys {
-            if !self.frp_routes.contains_key(key)
-                && self
-                    .sessions
-                    .get(key)
-                    .is_some_and(|session| session.child.is_none())
-            {
-                return Err(AppError::Message(format!(
-                    "无法确认工作区 {} 的 {} 隧道进程归属，已取消删除。",
-                    workspace_id,
-                    tunnel_service_label(key.1)
-                )));
-            }
+        if !self.frp_routes.contains_key(&key)
+            && self
+                .sessions
+                .get(&key)
+                .is_some_and(|session| session.child.is_none())
+        {
+            return Err(AppError::Message(format!(
+                "无法确认工作区 {} 的 MCP 隧道进程归属，已取消删除。",
+                workspace_id,
+            )));
         }
 
-        let mut removed_routes = Vec::new();
+        let removed_route = self.frp_routes.remove(&key);
+        let removed_session = removed_route
+            .as_ref()
+            .and_then(|_| self.sessions.remove(&key));
 
-        for key in &keys {
-            if let Some(route) = self.frp_routes.remove(key) {
-                let session = self.sessions.remove(key);
-                removed_routes.push((key.clone(), route, session));
-            }
-        }
-
-        if !removed_routes.is_empty() {
+        if let Some(route) = removed_route {
             if let Err(error) = self
                 .ensure_frpc_matches_routes(workspace_id, &settings)
                 .await
             {
-                for (key, route, session) in removed_routes {
-                    self.frp_routes.insert(key.clone(), route);
-                    if let Some(session) = session {
-                        self.sessions.insert(key, session);
-                    }
+                self.frp_routes.insert(key.clone(), route);
+                if let Some(session) = removed_session {
+                    self.sessions.insert(key.clone(), session);
                 }
                 if let Err(rollback_error) = self
                     .ensure_frpc_matches_routes(workspace_id, &settings)
@@ -469,10 +389,7 @@ impl TunnelSupervisor {
             }
         }
 
-        for key in keys {
-            let Some(mut session) = self.sessions.remove(&key) else {
-                continue;
-            };
+        if let Some(mut session) = self.sessions.remove(&key) {
             let child = session.child.take().ok_or_else(|| {
                 AppError::Message("隧道进程归属状态在删除期间发生变化，已停止操作。".into())
             })?;
@@ -486,35 +403,33 @@ impl TunnelSupervisor {
     pub async fn cleanup_orphan(
         &mut self,
         profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
         runtime_listening: bool,
     ) -> AppResult<()> {
         if runtime_listening {
             return Ok(());
         }
         let settings = AppSettings::load_or_default();
-        let key = (profile.id.clone(), kind);
+        let key = profile.id.clone();
         if self.frp_routes.contains_key(&key)
-            && !self.frp_route_matches(&key, profile, kind, &settings)
+            && !self.frp_route_matches(&key, profile, &settings)
         {
             // 清理任务携带的是旧 runtime/profile；当前 route 已被新的端口、
             // subdomain 或配置替换，不能按相同 workspace key 删除新线路。
             return Ok(());
         }
-        self.stop_internal(&profile.id, kind, &settings).await
+        self.stop_internal(&profile.id, &settings).await
     }
 
     pub fn restore_active_frp_routes(
         &mut self,
         profiles: &[WorkspaceProfile],
-        active_runtime_keys: &HashSet<(String, TunnelServiceKind)>,
+        active_runtime_keys: &HashSet<String>,
         settings: &AppSettings,
     ) {
         let mut changed_workspaces = HashSet::new();
         for profile in profiles {
-            let kind = TunnelServiceKind::Mcp;
-            let key = (profile.id.clone(), kind);
-            if tunnel_type_for(profile, kind) != "frp" || !active_runtime_keys.contains(&key) {
+            let key = profile.id.clone();
+            if tunnel_type_for(profile) != "frp" || !active_runtime_keys.contains(&key) {
                 continue;
             }
 
@@ -528,7 +443,6 @@ impl TunnelSupervisor {
                         key,
                         FrpRoute {
                             profile: profile.clone(),
-                            kind,
                         },
                     );
                     changed_workspaces.insert(profile.id.clone());
@@ -550,7 +464,7 @@ impl TunnelSupervisor {
         settings: &AppSettings,
     ) -> AppResult<()> {
         if let Some(conflict) = self.frp_routes.values().find(|route| {
-            let existing = frp::frp_server_config(&route.profile, route.kind, settings, None);
+            let existing = frp::frp_server_config(&route.profile, settings, None);
             existing
                 .proxy
                 .subdomain
@@ -561,7 +475,7 @@ impl TunnelSupervisor {
                 "FRP 子域名“{}”已被工作区“{}”的 {} 服务使用，不能重复。",
                 config.proxy.subdomain.trim(),
                 conflict.profile.name,
-                tunnel_service_label(conflict.kind)
+                "MCP"
             )));
         }
 
@@ -595,25 +509,12 @@ impl TunnelSupervisor {
         // supervisor 丢失 Child，也不能按镜像路径批量终止其他工作区实例。
         frp::stop_recorded_frpc_instance(workspace_id).await?;
 
-        if !self
-            .frp_routes
-            .keys()
-            .any(|(route_workspace_id, _)| route_workspace_id == workspace_id)
-        {
+        if !self.frp_routes.contains_key(workspace_id) {
             return Ok(());
         }
 
-        let route_specs: Vec<(WorkspaceProfile, TunnelServiceKind)> = self
-            .frp_routes
-            .iter()
-            .filter(|((route_workspace_id, _), _)| route_workspace_id == workspace_id)
-            .map(|(_, route)| route)
-            .map(|route| (route.profile.clone(), route.kind))
-            .collect();
-        let route_refs: Vec<(&WorkspaceProfile, TunnelServiceKind)> = route_specs
-            .iter()
-            .map(|(profile, kind)| (profile, *kind))
-            .collect();
+        let route_specs = vec![self.frp_routes[workspace_id].profile.clone()];
+        let route_refs: Vec<&WorkspaceProfile> = route_specs.iter().collect();
         let deadline = Instant::now() + Duration::from_secs(35);
         let handle = loop {
             match frp::spawn_frpc(workspace_id, &route_refs, settings).await {
@@ -641,26 +542,14 @@ impl TunnelSupervisor {
         workspace_id: &str,
         settings: &AppSettings,
     ) -> AppResult<()> {
-        let has_routes = self
-            .frp_routes
-            .keys()
-            .any(|(route_workspace_id, _)| route_workspace_id == workspace_id);
+        let has_routes = self.frp_routes.contains_key(workspace_id);
         if !has_routes {
             self.restart_workspace_frpc(workspace_id, settings).await?;
             return Ok(());
         }
 
-        let route_specs: Vec<(WorkspaceProfile, TunnelServiceKind)> = self
-            .frp_routes
-            .iter()
-            .filter(|((route_workspace_id, _), _)| route_workspace_id == workspace_id)
-            .map(|(_, route)| route)
-            .map(|route| (route.profile.clone(), route.kind))
-            .collect();
-        let route_refs: Vec<(&WorkspaceProfile, TunnelServiceKind)> = route_specs
-            .iter()
-            .map(|(profile, kind)| (profile, *kind))
-            .collect();
+        let route_specs = vec![self.frp_routes[workspace_id].profile.clone()];
+        let route_refs: Vec<&WorkspaceProfile> = route_specs.iter().collect();
         let expected = frp::build_frpc_toml_for_route_refs(&route_refs, settings);
 
         let process_alive = self.frpc.get(workspace_id).is_some_and(|process| {
@@ -685,30 +574,21 @@ impl TunnelSupervisor {
         workspace_id: &str,
         pid: Option<u32>,
     ) {
-        let active_keys: HashSet<_> = self
-            .frp_routes
-            .keys()
-            .filter(|(route_workspace_id, _)| route_workspace_id == workspace_id)
-            .cloned()
-            .collect();
+        let has_route = self.frp_routes.contains_key(workspace_id);
         self.sessions.retain(|key, session| {
-            key.0 != workspace_id || session.child.is_some() || active_keys.contains(key)
+            key != workspace_id || session.child.is_some() || has_route
         });
 
-        for (key, route) in self
-            .frp_routes
-            .iter()
-            .filter(|((route_workspace_id, _), _)| route_workspace_id == workspace_id)
-        {
-            let public_url = public_url_for_profile(&route.profile, route.kind, settings);
-            match self.sessions.get_mut(key) {
+        if let Some(route) = self.frp_routes.get(workspace_id) {
+            let public_url = public_url_for_profile(&route.profile, settings);
+            match self.sessions.get_mut(workspace_id) {
                 Some(session) => {
                     session.public_url = public_url.clone();
                     session.pid = pid;
                 }
                 None => {
                     self.sessions.insert(
-                        key.clone(),
+                        workspace_id.to_string(),
                         TunnelSession {
                             public_url,
                             pid,
@@ -722,37 +602,35 @@ impl TunnelSupervisor {
 
     fn restore_route_state(
         &mut self,
-        key: &(String, TunnelServiceKind),
+        key: &str,
         route: Option<FrpRoute>,
         session: Option<TunnelSession>,
     ) {
         if let Some(route) = route {
-            self.frp_routes.insert(key.clone(), route);
+            self.frp_routes.insert(key.to_string(), route);
         }
         if let Some(session) = session {
-            self.sessions.insert(key.clone(), session);
+            self.sessions.insert(key.to_string(), session);
         }
     }
 
     fn frp_route_matches(
         &self,
-        key: &(String, TunnelServiceKind),
+        key: &str,
         profile: &WorkspaceProfile,
-        kind: TunnelServiceKind,
         settings: &AppSettings,
     ) -> bool {
         let Some(route) = self.frp_routes.get(key) else {
             return false;
         };
-        let existing = frp::frp_server_config(&route.profile, route.kind, settings, None);
-        let requested = frp::frp_server_config(profile, kind, settings, None);
-        existing == requested
-            && tunnel_use_proxy(&route.profile, route.kind) == tunnel_use_proxy(profile, kind)
+        let existing = frp::frp_server_config(&route.profile, settings, None);
+        let requested = frp::frp_server_config(profile, settings, None);
+        existing == requested && route.profile.tunnel.use_proxy == profile.tunnel.use_proxy
     }
 
-    fn session_is_running(&self, key: &(String, TunnelServiceKind)) -> bool {
+    fn session_is_running(&self, key: &str) -> bool {
         if self.frp_routes.contains_key(key) {
-            let process_alive = self.frpc.get(&key.0).is_some_and(|process| {
+            let process_alive = self.frpc.get(key).is_some_and(|process| {
                 process
                     .pid
                     .map(|pid| platform().is_process_alive(pid))
@@ -774,50 +652,28 @@ fn proxy_already_exists(error: &AppError) -> bool {
     message.contains("proxy") && message.contains("already exists")
 }
 
-fn tunnel_type_for(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> &str {
-    match kind {
-        TunnelServiceKind::Mcp if profile.tunnel.use_global_gateway => "none",
-        TunnelServiceKind::Mcp => profile.tunnel.tunnel_type.as_str(),
+fn tunnel_type_for(profile: &WorkspaceProfile) -> &str {
+    if profile.tunnel.use_global_gateway {
+        "none"
+    } else {
+        profile.tunnel.tunnel_type.as_str()
     }
 }
 
-fn tunnel_use_proxy(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> bool {
-    match kind {
-        TunnelServiceKind::Mcp => profile.tunnel.use_proxy,
-    }
-}
-
-fn tunnel_service_label(kind: TunnelServiceKind) -> &'static str {
-    match kind {
-        TunnelServiceKind::Mcp => "MCP",
-    }
-}
-
-fn public_url_for_profile(
-    profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
-    settings: &AppSettings,
-) -> String {
-    match kind {
-        TunnelServiceKind::Mcp => profile.effective_public_url_with(settings),
-    }
+fn public_url_for_profile(profile: &WorkspaceProfile, settings: &AppSettings) -> String {
+    profile.effective_public_url_with(settings)
 }
 
 fn validate_tunnel_requirements(
     profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
     settings: &AppSettings,
 ) -> AppResult<()> {
-    let tunnel_type = tunnel_type_for(profile, kind);
+    let tunnel_type = tunnel_type_for(profile);
     if tunnel_type == "frp" {
-        let (profile_id, server, subdomain, port) = match kind {
-            TunnelServiceKind::Mcp => (
-                profile.tunnel.frp_profile_id.as_str(),
-                profile.tunnel.frp_server.as_str(),
-                profile.tunnel.frp_subdomain.as_str(),
-                profile.tunnel.frp_server_port,
-            ),
-        };
+        let profile_id = profile.tunnel.frp_profile_id.as_str();
+        let server = profile.tunnel.frp_server.as_str();
+        let subdomain = profile.tunnel.frp_subdomain.as_str();
+        let port = profile.tunnel.frp_server_port;
         let server = resolve_frp_server(profile_id, server, settings);
         if server.trim().is_empty() {
             return Err(AppError::Message(
@@ -838,13 +694,9 @@ fn validate_tunnel_requirements(
 
     cloudflare::resolve_cloudflared()?;
 
-    let (mode, token, named_url) = match kind {
-        TunnelServiceKind::Mcp => (
-            profile.tunnel.cloudflare_mode.as_str(),
-            SecretStore::get(&profile.id, "cloudflare_token")?.unwrap_or_default(),
-            profile.tunnel.public_url.clone(),
-        ),
-    };
+    let mode = profile.tunnel.cloudflare_mode.as_str();
+    let token = SecretStore::get(&profile.id, "cloudflare_token")?.unwrap_or_default();
+    let named_url = profile.tunnel.public_url.clone();
 
     if mode == "named" {
         if token.trim().is_empty() {
@@ -869,22 +721,15 @@ fn resolve_frp_server(profile_id: &str, inline_server: &str, settings: &AppSetti
     inline_server.to_string()
 }
 
-fn cloudflare_config(
-    profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
-) -> AppResult<(u16, &str, String, String, &'static str)> {
-    match kind {
-        TunnelServiceKind::Mcp => {
-            let token = SecretStore::get(&profile.id, "cloudflare_token")?.unwrap_or_default();
-            Ok((
-                profile.runtime.local_port,
-                profile.tunnel.cloudflare_mode.as_str(),
-                token,
-                profile.tunnel.public_url.clone(),
-                "cloudflared.log",
-            ))
-        }
-    }
+fn cloudflare_config(profile: &WorkspaceProfile) -> AppResult<(u16, &str, String, String, &'static str)> {
+    let token = SecretStore::get(&profile.id, "cloudflare_token")?.unwrap_or_default();
+    Ok((
+        profile.runtime.local_port,
+        profile.tunnel.cloudflare_mode.as_str(),
+        token,
+        profile.tunnel.public_url.clone(),
+        "cloudflared.log",
+    ))
 }
 
 pub fn log_dir_for_profile(profile_id: &str) -> PathBuf {
@@ -931,14 +776,11 @@ mod tests {
         let second = frp_profile("second", "SHARED");
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
-            (first.id.clone(), TunnelServiceKind::Mcp),
-            FrpRoute {
-                profile: first,
-                kind: TunnelServiceKind::Mcp,
-            },
+            first.id.clone(),
+            FrpRoute { profile: first },
         );
 
-        let config = frp::frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None);
+        let config = frp::frp_server_config(&second, &settings, None);
         let error = supervisor
             .validate_frp_route_compatibility(&second.id, &config, &settings)
             .unwrap_err();
@@ -952,14 +794,11 @@ mod tests {
         let second = frp_profile("second", "second");
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
-            (first.id.clone(), TunnelServiceKind::Mcp),
-            FrpRoute {
-                profile: first,
-                kind: TunnelServiceKind::Mcp,
-            },
+            first.id.clone(),
+            FrpRoute { profile: first },
         );
 
-        let config = frp::frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None);
+        let config = frp::frp_server_config(&second, &settings, None);
         assert!(supervisor
             .validate_frp_route_compatibility(&second.id, &config, &settings)
             .is_ok());
@@ -974,14 +813,11 @@ mod tests {
         proxied.tunnel.use_proxy = true;
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
-            (direct.id.clone(), TunnelServiceKind::Mcp),
-            FrpRoute {
-                profile: direct,
-                kind: TunnelServiceKind::Mcp,
-            },
+            direct.id.clone(),
+            FrpRoute { profile: direct },
         );
 
-        let config = frp::frp_server_config(&proxied, TunnelServiceKind::Mcp, &settings, None);
+        let config = frp::frp_server_config(&proxied, &settings, None);
         assert!(supervisor
             .validate_frp_route_compatibility(&proxied.id, &config, &settings)
             .is_ok());
@@ -995,14 +831,11 @@ mod tests {
         second.tunnel.frp_server = "another-frp.example.com".into();
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
-            (first.id.clone(), TunnelServiceKind::Mcp),
-            FrpRoute {
-                profile: first,
-                kind: TunnelServiceKind::Mcp,
-            },
+            first.id.clone(),
+            FrpRoute { profile: first },
         );
 
-        let config = frp::frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None);
+        let config = frp::frp_server_config(&second, &settings, None);
         assert!(supervisor
             .validate_frp_route_compatibility(&second.id, &config, &settings)
             .is_ok());
@@ -1014,17 +847,14 @@ mod tests {
         let current = frp_profile("demo", "aa");
         let mut stale = current.clone();
         stale.tunnel.frp_subdomain = "a".into();
-        let key = (current.id.clone(), TunnelServiceKind::Mcp);
+        let key = current.id.clone();
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
             key.clone(),
-            FrpRoute {
-                profile: current,
-                kind: TunnelServiceKind::Mcp,
-            },
+            FrpRoute { profile: current },
         );
 
-        assert!(!supervisor.frp_route_matches(&key, &stale, TunnelServiceKind::Mcp, &settings));
+        assert!(!supervisor.frp_route_matches(&key, &stale, &settings));
     }
 
     #[test]
@@ -1032,10 +862,7 @@ mod tests {
         let settings = AppSettings::default();
         let first = frp_profile("first", "gp");
         let second = frp_profile("second", "lb");
-        let active_runtime_keys = HashSet::from([
-            (first.id.clone(), TunnelServiceKind::Mcp),
-            (second.id.clone(), TunnelServiceKind::Mcp),
-        ]);
+        let active_runtime_keys = HashSet::from([first.id.clone(), second.id.clone()]);
 
         let mut supervisor = TunnelSupervisor::new();
         supervisor.restore_active_frp_routes(
@@ -1045,17 +872,13 @@ mod tests {
         );
 
         assert_eq!(supervisor.frp_routes.len(), 2);
-        assert!(supervisor
-            .frp_routes
-            .contains_key(&(first.id.clone(), TunnelServiceKind::Mcp)));
-        assert!(supervisor
-            .frp_routes
-            .contains_key(&(second.id.clone(), TunnelServiceKind::Mcp)));
+        assert!(supervisor.frp_routes.contains_key(&first.id));
+        assert!(supervisor.frp_routes.contains_key(&second.id));
         assert_eq!(supervisor.sessions.len(), 2);
         assert_eq!(
             supervisor
                 .sessions
-                .get(&(second.id.clone(), TunnelServiceKind::Mcp))
+                .get(&second.id)
                 .map(|session| session.public_url.as_str()),
             Some("https://lb.frp.example.com")
         );
@@ -1066,26 +889,20 @@ mod tests {
         let settings = AppSettings::default();
         let first = frp_profile("first", "first");
         let second = frp_profile("second", "second");
-        let first_key = (first.id.clone(), TunnelServiceKind::Mcp);
-        let second_key = (second.id.clone(), TunnelServiceKind::Mcp);
+        let first_key = first.id.clone();
+        let second_key = second.id.clone();
         let mut supervisor = TunnelSupervisor::new();
         supervisor.frp_routes.insert(
             first_key.clone(),
-            FrpRoute {
-                profile: first,
-                kind: TunnelServiceKind::Mcp,
-            },
+            FrpRoute { profile: first },
         );
         supervisor.frp_routes.insert(
             second_key.clone(),
-            FrpRoute {
-                profile: second,
-                kind: TunnelServiceKind::Mcp,
-            },
+            FrpRoute { profile: second },
         );
-        supervisor.sync_frp_sessions_for_workspace(&settings, &second_key.0, Some(99));
+        supervisor.sync_frp_sessions_for_workspace(&settings, &second_key, Some(99));
 
-        supervisor.sync_frp_sessions_for_workspace(&settings, &first_key.0, Some(42));
+        supervisor.sync_frp_sessions_for_workspace(&settings, &first_key, Some(42));
 
         assert_eq!(
             supervisor.sessions.get(&first_key).and_then(|s| s.pid),

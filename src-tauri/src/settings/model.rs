@@ -210,9 +210,6 @@ impl AppSettings {
         data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;
         data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();
         data.global_gateway = self.global_gateway.clone();
-        data.shared_secrets = self.shared_secrets.clone();
-        data.workspace_secrets = self.workspace_secrets.clone();
-        data.app_secrets = self.app_secrets.clone();
     }
 
     pub fn load_or_default() -> Self {
@@ -225,18 +222,6 @@ impl AppSettings {
             return None;
         }
         self.frp_profiles.iter().find(|profile| profile.id == id)
-    }
-}
-
-#[allow(dead_code)]
-impl FrpProfile {
-    pub fn new(name: String, server: String, server_port: u16) -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string().replace('-', ""),
-            name,
-            server: server.trim().to_string(),
-            server_port,
-        }
     }
 }
 

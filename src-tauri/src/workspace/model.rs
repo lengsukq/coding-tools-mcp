@@ -60,8 +60,6 @@ pub struct RuntimeConfig {
     pub history_context_sessions: Vec<u64>,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
-    #[serde(default)]
-    pub runtime_command: String,
     /// Workspace execution policy shared by MCP clients.
     #[serde(default = "default_allowed_commands")]
     pub allowed_commands: String,
@@ -184,7 +182,6 @@ impl Default for RuntimeConfig {
             history_recording: default_history_recording(),
             history_context_sessions: Vec::new(),
             permission_mode: default_permission_mode(),
-            runtime_command: String::new(),
             allowed_commands: default_allowed_commands(),
             executable_paths: String::new(),
             ai_instructions: String::new(),

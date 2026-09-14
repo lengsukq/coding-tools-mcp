@@ -436,8 +436,8 @@ On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone t
 | `src-tauri/src/tools/` | Shared file, Patch, Exec, and Git tool kernel |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP server |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare tunnel and process management |
+| `src-tauri/tests/fixtures/` | Isolated fixtures used by current Rust integration tests |
 | `src/` | SvelteKit desktop UI |
-| `old/` | Python reference implementation and compatibility baseline |
 
 ## License
 

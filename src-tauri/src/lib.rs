@@ -24,8 +24,8 @@ mod workspace;
 
 use app_state::AppState;
 use commands::{
-    accept_goal_review, accept_plan_review, check_app_update, create_goal, create_plan, create_workspace, delete_frp_profile, delete_workspace, scan_agent_context, scan_global_agent_context,
-    get_app_settings, get_download_config, get_frp_snippet,
+    accept_goal_review, accept_plan_review, check_app_update, create_workspace, delete_frp_profile, delete_workspace, scan_agent_context, scan_global_agent_context,
+    get_app_settings, get_download_config,
     get_global_gateway_config, get_global_gateway_status, list_history_sessions,
     get_service_usage_stats,
     get_global_runtime_settings, get_last_workspace_id, get_proxy, get_runtime_status,
@@ -37,8 +37,8 @@ use commands::{
     restart_runtime, restart_tunnel, restore_runtime_state, run_health_checks, save_frp_profile,
     set_download_config, set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
     set_shared_secret, set_workspace_secret,
-    show_main_window, start_global_gateway, start_runtime, start_tunnel,
-    stop_global_gateway, stop_runtime, stop_tunnel, test_tunnel, uninstall_software, update_goal, update_plan, update_workspace,
+    show_main_window, start_global_gateway, start_runtime,
+    stop_global_gateway, stop_runtime, stop_tunnel, test_tunnel, uninstall_software, update_workspace,
     check_global_gateway_health,
 };
 use tauri::menu::{Menu, MenuItem};
@@ -183,10 +183,6 @@ pub fn run() {
             get_planning_state,
             reset_planning_state,
             set_planning_mode,
-            create_goal,
-            update_goal,
-            create_plan,
-            update_plan,
             accept_goal_review,
             reject_goal_review,
             accept_plan_review,
@@ -206,9 +202,8 @@ pub fn run() {
             get_runtime_status,
             restart_runtime,
             restore_runtime_state,
-            get_frp_snippet,
-            start_tunnel,
             stop_tunnel,
+            test_tunnel,
             run_health_checks,
             get_workspace_secret,
             set_workspace_secret,
@@ -222,7 +217,6 @@ pub fn run() {
             delete_frp_profile,
             get_app_settings,
             restart_tunnel,
-            test_tunnel,
             set_last_workspace,
             get_last_workspace_id,
             list_software,

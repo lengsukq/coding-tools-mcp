@@ -292,9 +292,9 @@
     if (mcpStatus === "running" && !options?.skipTunnelRestart) {
       try {
         if (config.type === "none") {
-          await stopTunnel(workspaceId, "mcp");
+          await stopTunnel(workspaceId);
         } else {
-          await restartTunnel(workspaceId, "mcp");
+          await restartTunnel(workspaceId);
         }
       } catch (error) {
         showToast(String(error), { title: "隧道重启失败", kind: "error", duration: 8000 });

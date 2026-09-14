@@ -15,7 +15,7 @@
 | Frontend 类型/组件检查 | `npm run check` | SvelteKit / TypeScript |
 | Frontend 生产构建 | `npm run build` | Vite + adapter-static |
 
-当前仓库没有配置 vitest，也没有当前 `tests/compliance/` Rust target；不要把旧 `old/tests/compliance/` 当成可以直接运行的当前测试命令。
+当前仓库没有配置 vitest。历史 Python compliance suite 已退出当前代码路径；Rust contract/security 测试所需的最小 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ## 日常验证
 

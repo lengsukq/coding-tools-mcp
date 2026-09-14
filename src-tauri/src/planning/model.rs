@@ -16,32 +16,6 @@ pub enum PlanningMode {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProposalStatus {
-    #[default]
-    PendingApproval,
-    Approved,
-    Rejected,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanningProposal {
-    pub id: String,
-    pub source_request: String,
-    pub title: String,
-    pub objective: String,
-    #[serde(default)]
-    pub success_criteria: Vec<String>,
-    #[serde(default)]
-    pub constraints: Vec<String>,
-    #[serde(default)]
-    pub plan_steps: Vec<String>,
-    #[serde(default)]
-    pub approval_status: ProposalStatus,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
     #[default]
     Active,
@@ -240,8 +214,6 @@ pub struct PlanningState {
     pub focus_goal_id: Option<String>,
     pub focus_plan_id: Option<String>,
     #[serde(default)]
-    pub proposals: Vec<PlanningProposal>,
-    #[serde(default)]
     pub goals: Vec<Goal>,
     #[serde(default)]
     pub plans: Vec<Plan>,
@@ -257,7 +229,6 @@ impl Default for PlanningState {
             mode: PlanningMode::Direct,
             focus_goal_id: None,
             focus_plan_id: None,
-            proposals: Vec::new(),
             goals: Vec::new(),
             plans: Vec::new(),
             execution: ExecutionLedger::default(),

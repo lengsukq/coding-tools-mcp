@@ -1,12 +1,8 @@
 mod client;
 
 use crate::settings::AppSettings;
-#[allow(unused_imports)]
-use crate::settings::FrpProfile;
 use crate::workspace::WorkspaceProfile;
 use std::collections::HashSet;
-
-use super::TunnelServiceKind;
 
 pub(crate) use client::{
     acquire_frpc_operation_lock, clear_managed_frpc_pid, frpc_log_name, frpc_reconnect_loop_detected,
@@ -19,23 +15,15 @@ pub use client::{resolve_frpc, spawn_frpc};
 const FRP_VERSION: &str = "0.61.2";
 pub(crate) const VERSION: &str = FRP_VERSION;
 
-#[allow(dead_code)]
-pub(crate) fn frp_version() -> &'static str {
-    FRP_VERSION
-}
-
 /// FRP proxy snippet for the MCP listener (`profile.tunnel` + `profile.runtime`).
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn mcp_frp_snippet(profile: &WorkspaceProfile, settings: &AppSettings) -> String {
-    frp_snippet(profile, TunnelServiceKind::Mcp, settings)
+    frp_snippet(profile, settings)
 }
 
-pub fn frp_snippet(
-    profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
-    settings: &AppSettings,
-) -> String {
-    let config = frp_server_config(profile, kind, settings, None);
+#[cfg(test)]
+pub fn frp_snippet(profile: &WorkspaceProfile, settings: &AppSettings) -> String {
+    let config = frp_server_config(profile, settings, None);
     build_proxy_snippet(&config.proxy)
 }
 
@@ -54,13 +42,11 @@ pub(crate) struct FrpServerConfig {
     pub proxy: FrpProxyConfig,
 }
 
-#[allow(dead_code)]
 pub fn frp_public_url(
     profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
     settings: &AppSettings,
 ) -> String {
-    let config = frp_server_config(profile, kind, settings, None);
+    let config = frp_server_config(profile, settings, None);
     if config.server_addr.is_empty() || config.proxy.subdomain.trim().is_empty() {
         return String::new();
     }
@@ -73,18 +59,13 @@ pub fn frp_public_url(
 
 pub fn frp_server_config(
     profile: &WorkspaceProfile,
-    kind: TunnelServiceKind,
     settings: &AppSettings,
     token_override: Option<String>,
 ) -> FrpServerConfig {
-    let proxy = frp_proxy_config(profile, kind);
-    let (profile_id, server_addr, server_port) = match kind {
-        TunnelServiceKind::Mcp => (
-            profile.tunnel.frp_profile_id.as_str(),
-            profile.tunnel.frp_server.clone(),
-            profile.tunnel.frp_server_port,
-        ),
-    };
+    let proxy = frp_proxy_config(profile);
+    let profile_id = profile.tunnel.frp_profile_id.as_str();
+    let server_addr = profile.tunnel.frp_server.clone();
+    let server_port = profile.tunnel.frp_server_port;
 
     let (server_addr, server_port) =
         if let Some(frp_profile) = settings.find_frp_profile(profile_id) {
@@ -93,7 +74,7 @@ pub fn frp_server_config(
             (server_addr, server_port)
         };
 
-    let token = token_override.or_else(|| resolve_frp_token(profile_id, profile, kind, settings));
+    let token = token_override.or_else(|| resolve_frp_token(profile_id, profile, settings));
 
     FrpServerConfig {
         server_addr,
@@ -106,7 +87,6 @@ pub fn frp_server_config(
 fn resolve_frp_token(
     profile_id: &str,
     workspace: &WorkspaceProfile,
-    kind: TunnelServiceKind,
     settings: &AppSettings,
 ) -> Option<String> {
     if !profile_id.trim().is_empty() {
@@ -119,19 +99,14 @@ fn resolve_frp_token(
         }
     }
 
-    let workspace_key = match kind {
-        TunnelServiceKind::Mcp => "frp_token",
-    };
-    if let Ok(Some(token)) = crate::secret::SecretStore::get(&workspace.id, workspace_key) {
+    if let Ok(Some(token)) = crate::secret::SecretStore::get(&workspace.id, "frp_token") {
         if !token.trim().is_empty() {
             return Some(token);
         }
     }
 
     // Manual inline server: reuse token from a global profile with the same host.
-    let inline_server = match kind {
-        TunnelServiceKind::Mcp => workspace.tunnel.frp_server.as_str(),
-    };
+    let inline_server = workspace.tunnel.frp_server.as_str();
     let inline_server = inline_server.trim();
     if !inline_server.is_empty() {
         for profile in &settings.frp_profiles {
@@ -150,7 +125,7 @@ fn resolve_frp_token(
     None
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn build_frpc_toml(config: &FrpServerConfig) -> String {
     let mut lines = vec![
         format!("serverAddr = \"{}\"", config.server_addr.trim()),
@@ -209,24 +184,22 @@ pub(crate) fn build_frpc_toml_for_routes(configs: &[FrpServerConfig]) -> String 
 }
 
 pub(crate) fn build_frpc_toml_for_route_refs(
-    routes: &[(&WorkspaceProfile, TunnelServiceKind)],
+    routes: &[&WorkspaceProfile],
     settings: &AppSettings,
 ) -> String {
     let configs: Vec<FrpServerConfig> = routes
         .iter()
-        .map(|(profile, kind)| frp_server_config(profile, *kind, settings, None))
+        .map(|profile| frp_server_config(profile, settings, None))
         .collect();
     build_frpc_toml_for_routes(&configs)
 }
 
-fn frp_proxy_config(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> FrpProxyConfig {
+fn frp_proxy_config(profile: &WorkspaceProfile) -> FrpProxyConfig {
     let prefix = workspace_proxy_prefix(&profile.id);
-    match kind {
-        TunnelServiceKind::Mcp => FrpProxyConfig {
-            proxy_name: format!("{prefix}-mcp"),
-            local_port: profile.runtime.local_port,
-            subdomain: profile.tunnel.frp_subdomain.clone(),
-        },
+    FrpProxyConfig {
+        proxy_name: format!("{prefix}-mcp"),
+        local_port: profile.runtime.local_port,
+        subdomain: profile.tunnel.frp_subdomain.clone(),
     }
 }
 
@@ -278,7 +251,7 @@ mod tests {
         profile.tunnel.frp_profile_id = "p1".into();
 
         let snippet = mcp_frp_snippet(&profile, &settings);
-        let proxy_name = frp_server_config(&profile, TunnelServiceKind::Mcp, &settings, None)
+        let proxy_name = frp_server_config(&profile, &settings, None)
             .proxy
             .proxy_name;
         assert!(snippet.contains(&format!("name = \"{proxy_name}\"")));
@@ -302,7 +275,6 @@ mod tests {
         };
         let config = frp_server_config(
             &profile,
-            TunnelServiceKind::Mcp,
             &settings,
             Some("secret".into()),
         );
@@ -328,8 +300,8 @@ mod tests {
 
         let settings = AppSettings::default();
         let configs = vec![
-            frp_server_config(&first, TunnelServiceKind::Mcp, &settings, None),
-            frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None),
+            frp_server_config(&first, &settings, None),
+            frp_server_config(&second, &settings, None),
         ];
         let first_name = configs[0].proxy.proxy_name.clone();
         let second_name = configs[1].proxy.proxy_name.clone();
@@ -358,8 +330,8 @@ mod tests {
 
         let settings = AppSettings::default();
         let configs = vec![
-            frp_server_config(&first, TunnelServiceKind::Mcp, &settings, None),
-            frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None),
+            frp_server_config(&first, &settings, None),
+            frp_server_config(&second, &settings, None),
         ];
         let first_name = configs[0].proxy.proxy_name.clone();
         let second_name = configs[1].proxy.proxy_name.clone();
@@ -381,8 +353,8 @@ mod tests {
         let second = WorkspaceProfile::new("/tmp/second".into(), Some("Same Name".into()));
         let settings = AppSettings::default();
 
-        let first_config = frp_server_config(&first, TunnelServiceKind::Mcp, &settings, None);
-        let second_config = frp_server_config(&second, TunnelServiceKind::Mcp, &settings, None);
+        let first_config = frp_server_config(&first, &settings, None);
+        let second_config = frp_server_config(&second, &settings, None);
 
         assert_ne!(
             first_config.proxy.proxy_name,
@@ -397,8 +369,8 @@ mod tests {
         renamed.name = "After".into();
         let settings = AppSettings::default();
 
-        let before = frp_server_config(&original, TunnelServiceKind::Mcp, &settings, None);
-        let after = frp_server_config(&renamed, TunnelServiceKind::Mcp, &settings, None);
+        let before = frp_server_config(&original, &settings, None);
+        let after = frp_server_config(&renamed, &settings, None);
 
         assert_eq!(before.proxy.proxy_name, after.proxy.proxy_name);
     }
@@ -418,7 +390,7 @@ mod tests {
             ..AppSettings::default()
         };
         crate::secret::SecretStore::set_app("frp_profile_token", "p1", "shared-token").unwrap();
-        let config = frp_server_config(&profile, TunnelServiceKind::Mcp, &settings, None);
+        let config = frp_server_config(&profile, &settings, None);
         assert_eq!(config.token.as_deref(), Some("shared-token"));
     }
 }
