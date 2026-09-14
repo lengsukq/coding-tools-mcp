@@ -66,24 +66,6 @@ async fn proxy_mcp_authorization_server_metadata(
     .await
 }
 
-async fn proxy_actions_authorization_server_metadata(
-    State(state): State<ProxyState>,
-    AxumPath(workspace_id): AxumPath<String>,
-    uri: Uri,
-    headers: HeaderMap,
-) -> Response {
-    proxy(
-        state,
-        workspace_id,
-        "actions/.well-known/oauth-authorization-server".into(),
-        Method::GET,
-        uri,
-        headers,
-        Bytes::new(),
-    )
-    .await
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayHealthItem {
@@ -114,16 +96,12 @@ struct GatewayRuntime {
 static RUNTIME: LazyLock<Mutex<Option<GatewayRuntime>>> = LazyLock::new(|| Mutex::new(None));
 
 #[allow(dead_code)]
-pub fn workspace_public_base(public_url: &str, workspace_id: &str, actions: bool) -> String {
+pub fn workspace_public_base(public_url: &str, workspace_id: &str) -> String {
     let base = public_url.trim_end_matches('/');
     if base.is_empty() {
         return String::new();
     }
-    if actions {
-        format!("{base}/w/{workspace_id}/actions")
-    } else {
-        format!("{base}/w/{workspace_id}")
-    }
+    format!("{base}/w/{workspace_id}")
 }
 
 pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
@@ -357,10 +335,6 @@ async fn serve(
             "/.well-known/oauth-authorization-server/w/{workspace_id}/mcp",
             get(proxy_mcp_authorization_server_metadata),
         )
-        .route(
-            "/.well-known/oauth-authorization-server/w/{workspace_id}/actions",
-            get(proxy_actions_authorization_server_metadata),
-        )
         .route("/w/{workspace_id}", any(proxy_root))
         .route("/w/{workspace_id}/{*path}", any(proxy_path))
         .with_state(ProxyState { client });
@@ -409,20 +383,12 @@ async fn proxy(
         Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     };
 
-    let actions_request = path == "actions" || path.starts_with("actions/");
-    if actions_request && !profile.actions.use_global_gateway {
-        return (StatusCode::NOT_FOUND, "actions is not routed through global gateway").into_response();
-    }
-    if !actions_request && !profile.tunnel.use_global_gateway {
+    if !profile.tunnel.use_global_gateway {
         return (StatusCode::NOT_FOUND, "mcp is not routed through global gateway").into_response();
     }
 
-    let (port, upstream_path) = if actions_request {
-        let stripped = path.strip_prefix("actions").unwrap_or("").trim_start_matches('/');
-        (profile.actions.local_port, format!("/{}", stripped))
-    } else {
-        (profile.runtime.local_port, format!("/{}", path.trim_start_matches('/')))
-    };
+    let port = profile.runtime.local_port;
+    let upstream_path = format!("/{}", path.trim_start_matches('/'));
     let upstream_path = if upstream_path == "/" { "/".to_string() } else { upstream_path };
     let query = uri.query().map(|value| format!("?{value}")).unwrap_or_default();
     let target = format!("http://127.0.0.1:{port}{upstream_path}{query}");
@@ -467,12 +433,8 @@ mod tests {
     #[test]
     fn workspace_prefixes_are_stable() {
         assert_eq!(
-            workspace_public_base("https://mcp.example.com/", "abc", false),
+            workspace_public_base("https://mcp.example.com/", "abc"),
             "https://mcp.example.com/w/abc"
-        );
-        assert_eq!(
-            workspace_public_base("https://mcp.example.com", "abc", true),
-            "https://mcp.example.com/w/abc/actions"
         );
     }
 }

@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-13",
+  "updated_at": "2026-09-14",
   "project": "coding-tools-mcp-desktop",
   "analysis_status": "partial",
   "gitnexus": {
@@ -13,7 +13,7 @@
     "frontend": "SvelteKit + Tauri invoke",
     "backend": "Rust + Tauri 2",
     "state": ["AppState", "DataStore", "RuntimeSupervisor"],
-    "services": ["MCP Streamable HTTP", "ChatGPT Actions OpenAPI"],
+    "services": ["MCP Streamable HTTP"],
     "tunnels": ["FRP", "Cloudflare"]
   },
   "entrypoints": {
@@ -23,15 +23,16 @@
     "runtime_commands": "src-tauri/src/commands/runtime.rs"
   },
   "verification": {
-    "cargo_check": "passed_with_16_warnings",
-    "cargo_test_no_run": "passed",
-    "svelte_check": "passed",
-    "frontend_build": "passed"
+    "version_check": "passed_0.2.3",
+    "svelte_check": "passed_zero_errors_zero_warnings",
+    "frontend_build": "passed",
+    "release_gate": "passed",
+    "rust_lib_tests": "164_passed",
+    "clippy_strict": "blocked_by_existing_repository_wide_lints",
+    "rustfmt_check": "blocked_by_existing_repository_wide_format_diffs"
   },
   "risks": [
-    "Secrets are currently serialized into data/profiles.json while documentation promises OS keyring storage.",
-    "Legacy settings/workspace/keyring compatibility APIs remain unused.",
-    "Architecture documentation is stale relative to the current Rust/Tauri implementation.",
-    "Runtime integration coverage is not yet demonstrated by the available checks."
+    "Repository-wide clippy -D warnings is not yet clean and should be addressed as a separate maintenance task.",
+    "Repository-wide rustfmt check currently reports broad pre-existing formatting differences; avoid bulk formatting while unrelated user changes are uncommitted."
   ]
 }

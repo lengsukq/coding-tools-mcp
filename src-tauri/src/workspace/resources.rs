@@ -6,14 +6,12 @@ use crate::workspace::WorkspaceProfile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceService {
     Mcp,
-    Actions,
 }
 
 impl WorkspaceService {
     pub fn label(self) -> &'static str {
         match self {
             Self::Mcp => "MCP",
-            Self::Actions => "Actions",
         }
     }
 }
@@ -43,7 +41,7 @@ pub fn validate_workspace_resources(
     validate_candidate_subdomains(&existing_claims, &candidate_claims)
 }
 
-/// Assign free MCP / Actions ports for a newly created workspace.
+/// Assign a free MCP port for a newly created workspace.
 ///
 /// Creating a workspace should not force the user to edit ports first. Defaults
 /// are kept when free; otherwise the next free ports above the defaults are used.
@@ -58,13 +56,7 @@ pub fn assign_free_workspace_ports(
         .map(|claim| claim.local_port)
         .collect();
 
-    let mcp_port = next_free_port(candidate.runtime.local_port, &reserved)?;
-    let mut reserved_with_mcp = reserved;
-    reserved_with_mcp.insert(mcp_port);
-    let actions_port = next_free_port(candidate.actions.local_port, &reserved_with_mcp)?;
-
-    candidate.runtime.local_port = mcp_port;
-    candidate.actions.local_port = actions_port;
+    candidate.runtime.local_port = next_free_port(candidate.runtime.local_port, &reserved)?;
     Ok(())
 }
 
@@ -235,11 +227,8 @@ fn validate_changed_candidate_subdomains(
     Ok(())
 }
 
-fn service_claims(profile: &WorkspaceProfile) -> [ServiceClaim<'_>; 2] {
-    [
-        claim_for(profile, WorkspaceService::Mcp),
-        claim_for(profile, WorkspaceService::Actions),
-    ]
+fn service_claims(profile: &WorkspaceProfile) -> [ServiceClaim<'_>; 1] {
+    [claim_for(profile, WorkspaceService::Mcp)]
 }
 
 fn service_changed(
@@ -262,13 +251,6 @@ fn claim_for(profile: &WorkspaceProfile, service: WorkspaceService) -> ServiceCl
             local_port: profile.runtime.local_port,
             subdomain: profile.tunnel.frp_subdomain.as_str(),
             uses_frp: profile.tunnel.tunnel_type == "frp",
-        },
-        WorkspaceService::Actions => ServiceClaim {
-            profile,
-            service,
-            local_port: profile.actions.local_port,
-            subdomain: profile.actions.frp_subdomain.as_str(),
-            uses_frp: profile.actions.tunnel_type == "frp",
         },
     }
 }
@@ -310,21 +292,18 @@ mod tests {
     };
     use crate::workspace::WorkspaceProfile;
 
-    fn profile(name: &str, mcp_port: u16, actions_port: u16) -> WorkspaceProfile {
+    fn profile(name: &str, mcp_port: u16) -> WorkspaceProfile {
         let mut profile = WorkspaceProfile::new(format!("C:/workspace/{name}"), Some(name.into()));
         profile.runtime.local_port = mcp_port;
-        profile.actions.local_port = actions_port;
         profile.tunnel.tunnel_type = "frp".into();
         profile.tunnel.frp_subdomain = format!("{name}-mcp");
-        profile.actions.tunnel_type = "frp".into();
-        profile.actions.frp_subdomain = format!("{name}-actions");
         profile
     }
 
     #[test]
     fn rejects_duplicate_mcp_port_across_workspaces_before_start() {
-        let owner = profile("owner", 28_766, 8_787);
-        let target = profile("target", 28_766, 8_788);
+        let owner = profile("owner", 28_766);
+        let target = profile("target", 28_766);
 
         let error = validate_service_start(
             &[owner.clone(), target.clone()],
@@ -346,77 +325,31 @@ mod tests {
         assign_free_workspace_ports(&[], &mut candidate).expect("assign");
 
         assert_eq!(candidate.runtime.local_port, 28_766);
-        assert_eq!(candidate.actions.local_port, 8_787);
     }
 
     #[test]
     fn assign_free_ports_skips_ports_claimed_by_other_workspaces() {
-        let owner = profile("owner", 28_766, 8_787);
+        let owner = profile("owner", 28_766);
         let mut candidate = WorkspaceProfile::new("C:/workspace/new".into(), Some("new".into()));
 
         assign_free_workspace_ports(std::slice::from_ref(&owner), &mut candidate).expect("assign");
 
         assert_eq!(candidate.runtime.local_port, 28_767);
-        assert_eq!(candidate.actions.local_port, 8_788);
         assert!(validate_workspace_resources(&[owner], &candidate).is_ok());
     }
 
     #[test]
-    fn assign_free_ports_avoids_colliding_mcp_and_actions() {
-        // MCP default is free, but preferred actions port is already claimed as MCP.
-        let owner = profile("owner", 8_787, 9_001);
-        let mut candidate = WorkspaceProfile::new("C:/workspace/new".into(), Some("new".into()));
-
-        assign_free_workspace_ports(std::slice::from_ref(&owner), &mut candidate).expect("assign");
-
-        assert_eq!(candidate.runtime.local_port, 28_766);
-        assert_eq!(candidate.actions.local_port, 8_788);
-        assert_ne!(candidate.runtime.local_port, candidate.actions.local_port);
-    }
-
-    #[test]
-    fn rejects_port_shared_by_mcp_and_another_workspace_actions() {
-        let mut owner = profile("owner", 28_765, 8_787);
-        owner.actions.local_port = 28_766;
-        let target = profile("target", 28_766, 8_788);
-
-        let error = validate_service_start(
-            &[owner.clone(), target.clone()],
-            &target.id,
-            WorkspaceService::Mcp,
-        )
-        .unwrap_err();
-
-        let message = error.to_string();
-        assert!(message.contains("28766"));
-        assert!(message.contains(&owner.name));
-        assert!(message.contains("Actions"));
-    }
-
-    #[test]
-    fn rejects_duplicate_ports_between_services_in_one_workspace() {
-        let candidate = profile("target", 28_766, 28_766);
-
-        let error = validate_workspace_resources(&[], &candidate).unwrap_err();
-
-        let message = error.to_string();
-        assert!(message.contains("28766"));
-        assert!(message.contains("MCP"));
-        assert!(message.contains("Actions"));
-    }
-
-    #[test]
     fn allows_a_workspace_to_keep_its_own_ports() {
-        let original = profile("target", 28_766, 8_787);
+        let original = profile("target", 28_766);
         let updated = original.clone();
 
         assert!(validate_workspace_resources(&[original], &updated).is_ok());
     }
 
     #[test]
-    fn allows_fixing_mcp_port_when_legacy_actions_conflict_is_unchanged() {
-        let owner = profile("owner", 28_765, 8_787);
-        let current = profile("target", 28_766, 8_787);
+    fn allows_fixing_mcp_port_when_other_fields_are_unchanged() {
+        let owner = profile("owner", 28_765);
+        let current = profile("target", 28_766);
         let mut candidate = current.clone();
         candidate.runtime.local_port = 28_767;
 
@@ -429,9 +362,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_changed_mcp_port_that_conflicts_with_another_service() {
-        let owner = profile("owner", 28_765, 8_787);
-        let current = profile("target", 28_766, 8_788);
+    fn rejects_changed_mcp_port_that_conflicts_with_another_workspace() {
+        let owner = profile("owner", 28_765);
+        let current = profile("target", 28_766);
         let mut candidate = current.clone();
         candidate.runtime.local_port = owner.runtime.local_port;
 
@@ -444,17 +377,17 @@ mod tests {
 
     #[test]
     fn unrelated_update_is_not_blocked_by_legacy_duplicates() {
-        let first = profile("first", 28_766, 8_787);
-        let second = profile("second", 28_766, 8_788);
-        let candidate = profile("candidate", 28_769, 8_789);
+        let first = profile("first", 28_766);
+        let second = profile("second", 28_766);
+        let candidate = profile("candidate", 28_769);
 
         assert!(validate_workspace_resources(&[first, second], &candidate).is_ok());
     }
 
     #[test]
     fn start_is_blocked_when_target_participates_in_legacy_duplicate() {
-        let first = profile("first", 28_766, 8_787);
-        let target = profile("target", 28_766, 8_788);
+        let first = profile("first", 28_766);
+        let target = profile("target", 28_766);
 
         let error =
             validate_service_start(&[first, target.clone()], &target.id, WorkspaceService::Mcp)
@@ -465,8 +398,8 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_subdomains_with_owner_details() {
-        let owner = profile("owner", 28_765, 8_787);
-        let mut candidate = profile("target", 28_766, 8_788);
+        let owner = profile("owner", 28_765);
+        let mut candidate = profile("target", 28_766);
         candidate.tunnel.frp_subdomain = owner.tunnel.frp_subdomain.clone();
 
         let error =
@@ -480,8 +413,8 @@ mod tests {
 
     #[test]
     fn ignores_blank_subdomain_claims() {
-        let mut first = profile("first", 28_765, 8_787);
-        let mut second = profile("second", 28_766, 8_788);
+        let mut first = profile("first", 28_765);
+        let mut second = profile("second", 28_766);
         first.tunnel.frp_subdomain.clear();
         second.tunnel.frp_subdomain.clear();
 

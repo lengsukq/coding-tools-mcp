@@ -23,17 +23,16 @@ Coding Tools MCP 是一个 Rust + Tauri 2 桌面应用。选择项目目录并�
 
 ![Coding Tools MCP 工作区总览](docs/images/workspace-overview.png)
 
-*当前版本的工作区概览：当前选中的工作区是 `coding-tools-mcp`，集中查看 MCP / Actions 状态、项目目录和会话恢复入口。*
+*当前版本的工作区概览：当前选中的工作区是 `coding-tools-mcp`，集中查看 MCP 状态、项目目录和会话恢复入口。*
 
 ## 功能全景：特点与优势
 
-Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspace-first** 为核心的 AI 开发运行时：桌面端管理项目和服务，统一工具运行时负责安全执行，MCP 与 GPT Actions 负责连接不同的 AI 客户端。
+Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspace-first** 为核心的 AI 开发运行时：桌面端管理项目和服务，统一工具运行时负责安全执行，并通过 MCP 为 AI 客户端提供开发能力。
 
 | 功能 | 主要特点 | 带来的优势 |
 | --- | --- | --- |
 | 工作区管理 | 每个项目有独立目录、名称、端口、认证和隧道配置 | 多项目切换更清晰，降低把命令或凭据发到错误项目的风险 |
-| MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | MCP 与 Actions 的行为一致，策略、错误和权限不会因入口不同而漂移 |
-| GPT Actions | 自动提供 OpenAPI Schema、隐私政策地址和认证配置 | 不支持 MCP Connector 的场景也能通过自定义 GPT 使用同一套开发能力 |
+| MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | 单一协议入口减少重复状态机和兼容分支，策略、错误和权限更容易保持一致 |
 | 连接与公网入口 | 支持本地地址、Global Gateway、FRP 和 Cloudflare Tunnel | 本机开发和远程 ChatGPT 接入可以使用同一工作区，部署方式更灵活 |
 | 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer 和静态 Client | 既能提供现代 OAuth 安全流程，也能兼容旧客户端和简单部署 |
 | Planning / Goal / Task | Direct、Plan、Goal 三种约束模式，Execution Ledger 统一记录执行状态 | 复杂任务可拆分、可恢复、可验收，减少 AI 在中途偏离目标的情况 |
@@ -43,7 +42,7 @@ Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspa
 
 ### 桌面端全局 Dashboard：不进入工作区也能掌握全局状态
 
-全局 Dashboard 把多个 Workspace 的运行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看服务在线率、最近工作区、MCP / Actions 状态、工作区运行矩阵和当前 Planning 焦点。
+全局 Dashboard 把多个 Workspace 的运行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看服务在线率、最近工作区、MCP 状态、工作区运行矩阵和当前 Planning 焦点。
 
 ![全局 Dashboard 运行总览](docs/images/dashboard-overview.png)
 
@@ -62,7 +61,7 @@ Dashboard 还会持续刷新当前应用会话的 Token 估算，并提供连接
 **特点**
 
 - 项目目录是事实来源，工作区名称和服务配置分离维护。
-- MCP、Actions、规划状态和历史会话都围绕当前工作区组织。
+- MCP、规划状态和历史会话都围绕当前工作区组织。
 - 支持从侧边栏快速切换项目，并在概览页查看服务是否运行。
 
 **优势**
@@ -73,7 +72,7 @@ Dashboard 还会持续刷新当前应用会话的 Token 估算，并提供连接
 
 ### 2. MCP 工具运行时：一套内核覆盖真实开发动作
 
-Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git、图片、Skill 和状态管理能力。MCP Streamable HTTP 与 GPT Actions 不各自复制一份工具实现，而是最终进入同一个分发入口。
+Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git、图片、Skill 和状态管理能力。所有远程工具调用都通过 MCP Streamable HTTP 进入同一个分发入口。
 
 **特点**
 
@@ -87,23 +86,7 @@ Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git�
 - AI 可以完成从理解代码、修改文件、运行测试到检查 Git 的完整闭环。
 - 复杂操作的权限与失败原因更容易解释、审计和恢复。
 
-### 3. GPT Actions：为自定义 GPT 保留另一条接入路径
-
-除了 MCP Connector，桌面端还可以启动 GPT Actions OpenAPI 网关。Actions 页面会显示 OpenAPI Schema、隐私政策地址和认证信息，适合直接在 GPT 编辑器中通过 “Import from URL” 配置。
-
-**特点**
-
-- MCP 和 Actions 可以为同一个工作区同时运行，也可以使用不同端口和公网域名。
-- 两条入口共享同一个工具运行时、工作区策略和历史/规划状态。
-- 支持 None、API Key（Bearer）和 OAuth 等与客户端能力匹配的认证方式。
-
-**优势**
-
-- 客户端不支持 MCP Connector 时，仍能通过自定义 GPT 使用项目工具。
-- 同一套项目权限和执行边界不会因为切换接入方式而改变。
-- OpenAPI 地址、认证字段和隐私政策入口集中展示，配置更容易复现。
-
-### 4. 连接与公网入口：从本机调试平滑走向远程开发
+### 3. 连接与公网入口：从本机调试平滑走向远程开发
 
 每个服务都保留本地端点，便于开发和健康检查；需要让远程 AI 客户端访问时，可以使用独立隧道，也可以通过 Global Gateway 以 `/w/<workspace-id>` 前缀统一转发多个工作区。
 
@@ -123,9 +106,9 @@ Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git�
 
 *Global Gateway 通过 `/w/<workspace-id>` 为多个 Workspace 提供共享入口，同时保留 FRP 和 Cloudflare 等独立隧道方式。*
 
-### 5. OAuth 与认证：兼顾安全流程和客户端兼容
+### 4. OAuth 与认证：兼顾安全流程和客户端兼容
 
-MCP 与 Actions 共用 OAuth runtime，支持 Authorization Code、PKCE S256、Dynamic Client Registration 和 Refresh Token；同时保留 Bearer 及静态 Client ID / Secret，方便旧客户端或简单环境继续接入。
+MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registration 和 Refresh Token；同时保留 Bearer 及静态 Client ID / Secret，方便旧客户端或简单环境继续接入。
 
 **特点**
 
@@ -139,7 +122,7 @@ MCP 与 Actions 共用 OAuth runtime，支持 Authorization Code、PKCE S256、D
 - 旧客户端仍有清晰的兼容路径，不需要为了升级一次性重做接入。
 - 认证设置和健康检查集中在桌面端，授权失败更容易定位。
 
-### 6. Planning、Goal、Task：让复杂任务可控、可恢复、可验收
+### 5. Planning、Goal、Task：让复杂任务可控、可恢复、可验收
 
 规划页面把“目标”“计划”和“执行任务”分开管理。Direct 适合小改动，Plan 适合需要拆步骤的任务，Goal 适合需要长期推进和明确验收标准的工作。AI 可以在对话中创建和维护计划，桌面端负责显示约束、状态和最终验收归档。
 
@@ -290,12 +273,7 @@ check_exec_environment
 
 这样 Agent 不需要依赖聊天上下文猜测当前项目、工作目录和执行能力。需要显式创建或恢复历史目标时，再手动调用 `history_session_bootstrap`。
 
-## ChatGPT 的两种接入方式
-
-| 方式 | 适合场景 | 在客户端中使用什么 |
-| --- | --- | --- |
-| MCP Connector | ChatGPT 直接使用文件、命令和 Git 工具 | 工作区的公网 `/mcp` 地址 |
-| GPT Actions | 在自定义 GPT 中导入 OpenAPI 工具 | Actions 面板中的 `/openapi.json` 地址 |
+## ChatGPT 接入方式
 
 ### MCP Connector
 
@@ -354,22 +332,13 @@ check_exec_environment
 | 看不到新增工具 | 断开并重新连接插件，然后创建一个新对话 |
 | 工具调用失败 | 打开桌面端“日志”和“健康检查”，确认请求是否到达 MCP 服务 |
 
-### GPT Actions
-
-1. 启动工作区的 Actions 服务。
-2. 复制 Actions 面板中的 OpenAPI URL。
-3. 在 GPT 编辑器的 Actions 页面导入该 URL。
-4. 根据桌面端配置选择 None、API Key 或 OAuth。
-
-MCP 和 Actions 可以为同一个工作区同时运行，也可以分别使用不同端口和子域名。
-
 ## 为什么需要它
 
 - **面向真实开发**：文件、命令、Git、测试和长时间运行的进程都在同一个 Workspace 中。
 - **跨会话持续开发**：新对话先获得有界的当前状态，需要精确旧上下文时按关键词定位并读取原始档案，无需反复向 AI 解释项目背景和当前进度。
 - **进度可追溯**：每轮任务完成后可保存结构化检查点，决策、修改、测试结果和下一步都留在项目目录中。
-- **多工作区管理**：一个桌面客户端可以保存多个项目，并管理各自的 MCP、Actions 和公网地址。
-- **连接 ChatGPT 更直接**：内置 Streamable HTTP、OAuth、Bearer Token、OpenAPI、FRP 和 Cloudflare 隧道。
+- **多工作区管理**：一个桌面客户端可以保存多个项目，并管理各自的 MCP 和公网地址。
+- **连接 ChatGPT 更直接**：内置 Streamable HTTP、OAuth、Bearer Token、FRP 和 Cloudflare 隧道。
 - **默认工具面保持简单**：稳定的核心工具默认可用，高级 Harness 能力按需开启。
 
 ## 让项目记住每次对话
@@ -476,7 +445,6 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 | --- | --- |
 | `src-tauri/src/tools/` | 文件、Patch、Exec、Git 等共享工具内核 |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP 服务 |
-| `src-tauri/src/actions/` | ChatGPT Actions OpenAPI 网关 |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 隧道和进程管理 |
 | `src/` | SvelteKit 桌面界面 |
 | `old/` | Python 参考实现和兼容性基线 |

@@ -51,7 +51,7 @@ task_manage
 
 不要无必要增加新的顶层 Tool。旧生命周期 Tool 只作为兼容层继续维护。
 
-所有 MCP 与 Actions 工具执行必须收口到：
+所有 MCP 工具执行必须收口到：
 
 ```rust
 tools::dispatch::call_tool
@@ -61,7 +61,7 @@ Transport 层不得复制 Policy、Planning Gate 或工具业务逻辑。
 
 ## OAuth 开发规则
 
-MCP 与 Actions 共用 `auth/oauth_flow.rs`。修改 OAuth 时至少保持：
+MCP OAuth 使用 `auth/oauth_flow.rs`。修改 OAuth 时至少保持：
 
 - PKCE 仅接受 `S256`；
 - 动态 Client 只能使用已注册 redirect URI；

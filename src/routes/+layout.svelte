@@ -9,12 +9,11 @@
   import WorkspaceNavItem from "$lib/components/WorkspaceNavItem.svelte";
   import {
     createWorkspace,
-    getActionsRuntimeStatus,
     getRuntimeStatus,
     listWorkspaces,
     restoreRuntimeState,
   } from "$lib/api/workspaces";
-  import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
+  import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import { showToast } from "$lib/stores/toast";
   import { startUiMemoryGuard } from "$lib/ui-memory-guard";
   import { startCloseGuard } from "$lib/close-guard";
@@ -29,24 +28,17 @@
     workspaces.set(items);
 
     const mcpStates: Record<string, RuntimeState> = {};
-    const actionsStates: Record<string, RuntimeState> = {};
     await Promise.all(
       items.map(async (item) => {
         try {
-          const [mcp, actions] = await Promise.all([
-            getRuntimeStatus(item.id),
-            getActionsRuntimeStatus(item.id),
-          ]);
+          const mcp = await getRuntimeStatus(item.id);
           mcpStates[item.id] = mcp.state;
-          actionsStates[item.id] = actions.state;
         } catch {
           mcpStates[item.id] = "stopped";
-          actionsStates[item.id] = "stopped";
         }
       }),
     );
     mcpRuntimeStates.set(mcpStates);
-    actionsRuntimeStates.set(actionsStates);
   }
 
   async function addWorkspace() {
@@ -150,7 +142,6 @@
           workspace={workspace}
           active={$page.url.pathname === `/workspace/${workspace.id}`}
           mcpState={$mcpRuntimeStates[workspace.id] ?? "stopped"}
-          actionsState={$actionsRuntimeStates[workspace.id] ?? "stopped"}
           onClick={() => openWorkspace(workspace.id)}
         />
       {/each}

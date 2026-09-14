@@ -19,7 +19,7 @@ const MAX_EVICTED_TOMBSTONES: usize = 256;
 
 /// One command runtime per workspace for the lifetime of the desktop process.
 ///
-/// MCP and Actions listeners each own their own ToolContext, and listeners can be
+/// MCP listeners own a ToolContext, and listener instances can be
 /// restarted without restarting the desktop application. Keeping the store here
 /// makes running commands a workspace resource instead of a transport-session
 /// resource.

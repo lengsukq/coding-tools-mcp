@@ -14,7 +14,7 @@
   } from "$lib/api/global-gateway";
   import { listFrpProfiles, type FrpProfileDto } from "$lib/api/settings";
   import { listWorkspaces } from "$lib/api/workspaces";
-  import { actionsConfig, type WorkspaceProfile } from "$lib/types";
+  import type { WorkspaceProfile } from "$lib/types";
   import { showToast } from "$lib/stores/toast";
   import ConnectionSettingsNav from "$lib/components/ConnectionSettingsNav.svelte";
   import Button from "$lib/components/ui/Button.svelte";
@@ -59,13 +59,6 @@
           workspace: workspace.name,
           service: "MCP",
           path: `/w/${workspace.id}/mcp`,
-        });
-      }
-      if (actionsConfig(workspace).use_global_gateway) {
-        routes.push({
-          workspace: workspace.name,
-          service: "Actions",
-          path: `/w/${workspace.id}/actions`,
         });
       }
       return routes;
@@ -260,7 +253,7 @@
     <Card class="p-5">
       <h3 class="text-sm font-semibold text-[var(--text-main)]">Gateway 配置</h3>
       <p class="mt-0.5 text-xs text-[var(--color-text-muted)]">
-        开启后，使用 Global Gateway 的 Workspace 在启动 MCP / Actions 时会自动确保 Gateway 已运行。
+        开启后，使用 Global Gateway 的 Workspace 在启动 MCP 时会自动确保 Gateway 已运行。
       </p>
 
       <form class="mt-4 grid gap-3.5" onsubmit={(event) => { event.preventDefault(); void saveConfig(); }}>
@@ -377,7 +370,7 @@
     <Card class="p-5">
       <h3 class="text-sm font-semibold text-[var(--text-main)]">Workspace Routes</h3>
       <p class="mt-0.5 text-xs text-[var(--color-text-muted)]">
-        只有在 Workspace 的 MCP 或 Actions 隧道配置中勾选「使用全局共享公网入口」的服务才会出现在这里。
+        只有在 Workspace 的 MCP 隧道配置中勾选「使用全局共享公网入口」的服务才会出现在这里。
       </p>
 
       {#if gatewayRoutes.length === 0}

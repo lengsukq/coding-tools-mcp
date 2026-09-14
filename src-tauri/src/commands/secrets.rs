@@ -9,13 +9,7 @@ const ALLOWED_KEYS: &[&str] = &[
     "oauth_token_secret",
     "bearer_token",
     "cloudflare_token",
-    "actions_cloudflare_token",
-    "actions_api_key",
-    "actions_oauth_client_secret",
-    "actions_oauth_password",
-    "actions_oauth_token_secret",
     "frp_token",
-    "actions_frp_token",
 ];
 
 fn ensure_workspace_exists(state: &AppState, id: &str) -> AppResult<()> {
@@ -86,10 +80,6 @@ const SHARED_KEYS: &[&str] = &[
     "oauth_client_secret",
     "oauth_password",
     "oauth_token_secret",
-    "actions_api_key",
-    "actions_oauth_client_secret",
-    "actions_oauth_password",
-    "actions_oauth_token_secret",
 ];
 
 const MCP_SHARED_KEYS: &[&str] = &[
@@ -98,13 +88,6 @@ const MCP_SHARED_KEYS: &[&str] = &[
     "oauth_client_secret",
     "oauth_password",
     "oauth_token_secret",
-];
-
-const ACTIONS_SHARED_KEYS: &[&str] = &[
-    "actions_api_key",
-    "actions_oauth_client_secret",
-    "actions_oauth_password",
-    "actions_oauth_token_secret",
 ];
 
 #[tauri::command]
@@ -202,21 +185,4 @@ async fn restart_running_services_async(
         }
     }
 
-    let should_restart_actions = ACTIONS_SHARED_KEYS.contains(&key)
-        && profile.actions.use_shared_secrets == shared
-        && state
-            .with_runtime(|runtime| {
-                Ok(runtime.is_running(&profile.id, crate::runtime::ServiceKind::Actions))
-            })
-            .unwrap_or(false);
-    if should_restart_actions {
-        if let Err(error) =
-            crate::commands::runtime::restart_actions_by_id(state, &profile.id).await
-        {
-            eprintln!(
-                "Actions restart after secret change failed for {}: {error}",
-                profile.id
-            );
-        }
-    }
 }

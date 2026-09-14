@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type UsageService = "mcp" | "actions";
+export type UsageService = "mcp";
 
 export interface ServiceUsageStats {
   workspaceId: string;

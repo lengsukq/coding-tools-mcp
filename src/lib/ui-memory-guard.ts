@@ -22,7 +22,7 @@ let releasing = false;
 
 /**
  * Recreate the WebView window (replaces Edge WebView2 processes).
- * Rust AppState keeps MCP / Actions / FRP running.
+ * Rust AppState keeps MCP / FRP running.
  */
 export async function reloadUiOnly(reason: string): Promise<void> {
   if (releasing) return;

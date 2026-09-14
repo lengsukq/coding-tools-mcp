@@ -526,7 +526,7 @@ fn task_manage_schema() -> Value {
 }
 
 /// Legacy-compatible core surface. It keeps lifecycle-specific tool names while
-/// also exposing the Stable Tool API v2 managers so MCP and Actions can migrate
+/// also exposing the Stable Tool API v2 managers so MCP clients can migrate
 /// without a flag day.
 pub const CORE_TOOLS: &[&str] = &[
     "server_info",

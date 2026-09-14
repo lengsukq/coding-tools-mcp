@@ -36,24 +36,8 @@ export async function getRuntimeStatus(id: string): Promise<RuntimeStatus> {
   return invoke<RuntimeStatus>("get_runtime_status", { id });
 }
 
-export async function startActionsRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("start_actions_runtime", { id });
-}
-
-export async function stopActionsRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("stop_actions_runtime", { id });
-}
-
-export async function getActionsRuntimeStatus(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("get_actions_runtime_status", { id });
-}
-
 export async function restartRuntime(id: string): Promise<RuntimeStatus> {
   return invoke<RuntimeStatus>("restart_runtime", { id });
-}
-
-export async function restartActionsRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("restart_actions_runtime", { id });
 }
 
 export async function restoreRuntimeState(): Promise<void> {

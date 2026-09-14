@@ -119,13 +119,6 @@ fn well_known_url(base: &str, path: &str) -> String {
 pub async fn run_health_checks(profile: &WorkspaceProfile) -> Vec<HealthItem> {
     let client = http_client();
     let mcp_public = profile.effective_public_url();
-    let actions_local = profile.actions_local_base_url();
-    let actions_public = profile.actions_effective_public_url();
-    let actions_oauth_base = if actions_public.is_empty() {
-        actions_local.clone()
-    } else {
-        actions_public.clone()
-    };
 
     let (mcp_local_ok, mcp_local_detail) = check_url(&client, &profile.local_endpoint()).await;
     let (mcp_public_ok, mcp_public_detail) =
@@ -143,32 +136,11 @@ pub async fn run_health_checks(profile: &WorkspaceProfile) -> Vec<HealthItem> {
     )
     .await;
 
-    let actions_health_url = format!("{actions_local}/health");
-    let actions_openapi_local = format!("{actions_local}/openapi.json");
-    let actions_openapi_public = profile.actions_openapi_url();
-
-    let (actions_local_ok, actions_local_detail) =
-        check_url(&client, &actions_health_url).await;
-    let (actions_openapi_local_ok, actions_openapi_local_detail) =
-        check_url(&client, &actions_openapi_local).await;
-    let (actions_openapi_public_ok, actions_openapi_public_detail) =
-        check_url(&client, &actions_openapi_public).await;
-    let (actions_oauth_ok, actions_oauth_detail) = check_json_field(
-        &client,
-        &well_known_url(&actions_oauth_base, ".well-known/oauth-authorization-server"),
-        "token_endpoint_auth_methods_supported",
-    )
-    .await;
-
     vec![
         health_item("本地 /mcp", mcp_local_ok, mcp_local_detail, "确认 MCP 服务已启动，端口与工作区配置一致。"),
         health_item("公网 /mcp", mcp_public_ok, mcp_public_detail, "检查隧道是否已连接，或公网 URL 是否填写正确。"),
         health_item("MCP OAuth 授权元数据", mcp_oauth_ok, mcp_oauth_detail, "MCP 认证需设为 OAuth，且公网地址可访问。"),
         health_item("MCP OAuth 受保护资源", mcp_protected_ok, mcp_protected_detail, "确认公网 MCP 根地址与 OAuth 配置一致。"),
-        health_item("本地 Actions /health", actions_local_ok, actions_local_detail, "确认 Actions 服务已启动。"),
-        health_item("本地 Actions /openapi.json", actions_openapi_local_ok, actions_openapi_local_detail, "Actions 监听器异常时请查看 actions-stderr.log。"),
-        health_item("公网 Actions /openapi.json", actions_openapi_public_ok, actions_openapi_public_detail, "检查 Actions 隧道与子域名配置。"),
-        health_item("Actions OAuth 授权元数据", actions_oauth_ok, actions_oauth_detail, "Actions 认证需设为 OAuth，公网地址需可达。"),
     ]
 }
 

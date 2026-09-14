@@ -5,7 +5,7 @@ export interface LogChunk {
   content: string;
 }
 
-export type LogService = "mcp" | "actions";
+export type LogService = "mcp";
 
 export async function readWorkspaceLogs(
   workspaceId: string,

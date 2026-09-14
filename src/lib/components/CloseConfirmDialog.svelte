@@ -48,7 +48,7 @@
         关闭 Coding Tools MCP?
       </h3>
       <p class="text-xs text-[var(--text-secondary)] mt-1.5 leading-relaxed">
-        选择后台运行可隐藏窗口，保持正在运行的 MCP、Actions 与公网隧道服务持续可用；后续可通过系统托盘重新呼出。
+        选择后台运行可隐藏窗口，保持正在运行的 MCP 与公网隧道服务持续可用；后续可通过系统托盘重新呼出。
       </p>
     </div>
   </div>

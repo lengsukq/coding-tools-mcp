@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
 
-use crate::actions;
 use crate::error::AppResult;
 use crate::mcp;
 use crate::platform::platform;
@@ -14,7 +13,6 @@ use crate::runtime::port::{
     wait_for_port_free_blocking,
 };
 use crate::secret::SecretStore;
-use crate::tools::policy::PolicySettings;
 use crate::tunnel::{append_profile_log, cleanup_orphan_for_runtime, TunnelServiceKind};
 use crate::usage::{ServiceUsage, ServiceUsageStats};
 use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
@@ -22,7 +20,6 @@ use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ServiceKind {
     Mcp,
-    Actions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,14 +65,9 @@ impl RuntimeSupervisor {
         ids
     }
 
-    pub fn actions_status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
-        self.status(profile, ServiceKind::Actions)
-    }
-
     pub fn usage_stats(&self, workspace_id: &str, kind: ServiceKind) -> ServiceUsageStats {
         let service = match kind {
             ServiceKind::Mcp => "mcp",
-            ServiceKind::Actions => "actions",
         };
         self.usage
             .get(&(workspace_id.to_string(), kind))
@@ -87,18 +79,9 @@ impl RuntimeSupervisor {
         self.start(profile, ServiceKind::Mcp)
     }
 
-    pub fn start_actions(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        self.start(profile, ServiceKind::Actions)
-    }
-
     #[allow(dead_code)] // Kept for sync callers (tests / teardown helpers).
     pub fn restart_mcp(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
         self.restart(profile, ServiceKind::Mcp)
-    }
-
-    #[allow(dead_code)] // Kept for sync callers (tests / teardown helpers).
-    pub fn restart_actions(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        self.restart(profile, ServiceKind::Actions)
     }
 
     /// True when the service for this workspace is currently running.
@@ -115,25 +98,17 @@ impl RuntimeSupervisor {
         self.refresh(profile, ServiceKind::Mcp);
     }
 
-    pub fn refresh_actions(&mut self, profile: &WorkspaceProfile) {
-        self.refresh(profile, ServiceKind::Actions);
-    }
-
     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
         self.sync_stop_and_wait(profile, ServiceKind::Mcp);
-        self.sync_stop_and_wait(profile, ServiceKind::Actions);
     }
 
     pub fn active_tunnel_service_keys(&self) -> HashSet<(String, TunnelServiceKind)> {
         self.entries
             .iter()
-            .filter_map(|((workspace_id, kind), entry)| match entry.phase {
+            .filter_map(|((workspace_id, _kind), entry)| match entry.phase {
                 RuntimePhase::Running | RuntimePhase::Starting => Some((
                     workspace_id.clone(),
-                    match kind {
-                        ServiceKind::Mcp => TunnelServiceKind::Mcp,
-                        ServiceKind::Actions => TunnelServiceKind::Actions,
-                    },
+                    TunnelServiceKind::Mcp,
                 )),
                 _ => None,
             })
@@ -281,100 +256,38 @@ impl RuntimeSupervisor {
             }
         }
 
-        let spawn_result = match kind {
-            ServiceKind::Mcp => {
-                let use_shared = profile.auth.use_shared_secrets;
-                let mut auth = profile.auth.clone();
-                if use_shared {
-                    if let Some(client_id) = SecretStore::get_shared("oauth_client_id")? {
-                        auth.oauth_client_id = client_id;
-                    }
-                }
-                // MCP OAuth matches legacy Python: client_secret is optional.
-                // ChatGPT connectors use PKCE only and do not send client_secret.
-                let oauth_client_secret = None;
-                let oauth_password = if profile.auth.oauth_enabled() {
-                    resolve_secret(&profile.id, "oauth_password", use_shared)?
-                } else {
-                    None
-                };
-                let oauth_token_secret = if profile.auth.oauth_enabled() {
-                    resolve_secret(&profile.id, "oauth_token_secret", use_shared)?
-                } else {
-                    None
-                };
-                mcp::spawn_listener(
-                    port,
-                    PathBuf::from(&profile.path),
-                    profile.id.clone(),
-                    auth,
-                    profile.effective_public_url(),
-                    oauth_client_secret,
-                    oauth_password,
-                    oauth_token_secret,
-                    profile.runtime.clone(),
-                    usage.clone(),
-                )
+        let use_shared = profile.auth.use_shared_secrets;
+        let mut auth = profile.auth.clone();
+        if use_shared {
+            if let Some(client_id) = SecretStore::get_shared("oauth_client_id")? {
+                auth.oauth_client_id = client_id;
             }
-            ServiceKind::Actions => {
-                let auth_type = profile.actions.auth_type.clone();
-                let use_shared = profile.actions.use_shared_secrets;
-                let api_key = if auth_type == "api_key" {
-                    resolve_secret(&profile.id, "actions_api_key", use_shared)?
-                } else {
-                    None
-                };
-                let oauth_client_secret = if auth_type == "oauth" {
-                    if use_shared {
-                        resolve_secret(&profile.id, "actions_oauth_client_secret", true)?
-                    } else {
-                        Some(actions_oauth_secret(
-                            &profile.id,
-                            "actions_oauth_client_secret",
-                        )?)
-                    }
-                } else {
-                    None
-                };
-                let oauth_password = if auth_type == "oauth" {
-                    if use_shared {
-                        resolve_secret(&profile.id, "actions_oauth_password", true)?
-                    } else {
-                        Some(actions_oauth_secret(&profile.id, "actions_oauth_password")?)
-                    }
-                } else {
-                    None
-                };
-                let oauth_token_secret = if auth_type == "oauth" {
-                    if use_shared {
-                        resolve_secret(&profile.id, "actions_oauth_token_secret", true)?
-                    } else {
-                        Some(actions_oauth_secret(
-                            &profile.id,
-                            "actions_oauth_token_secret",
-                        )?)
-                    }
-                } else {
-                    None
-                };
-                let public_base_url = profile.actions_public_base_url();
-                let policy = PolicySettings::from_actions_config(&profile.actions);
-                actions::spawn_listener(
-                    &profile.id,
-                    port,
-                    PathBuf::from(&profile.path),
-                    public_base_url,
-                    auth_type,
-                    api_key,
-                    profile.actions.oauth_client_id.clone(),
-                    oauth_client_secret,
-                    oauth_password,
-                    oauth_token_secret,
-                    policy,
-                    usage.clone(),
-                )
-            }
+        }
+        // MCP OAuth matches legacy Python: client_secret is optional.
+        // ChatGPT connectors use PKCE only and do not send client_secret.
+        let oauth_client_secret = None;
+        let oauth_password = if profile.auth.oauth_enabled() {
+            resolve_secret(&profile.id, "oauth_password", use_shared)?
+        } else {
+            None
         };
+        let oauth_token_secret = if profile.auth.oauth_enabled() {
+            resolve_secret(&profile.id, "oauth_token_secret", use_shared)?
+        } else {
+            None
+        };
+        let spawn_result = mcp::spawn_listener(
+            port,
+            PathBuf::from(&profile.path),
+            profile.id.clone(),
+            auth,
+            profile.effective_public_url(),
+            oauth_client_secret,
+            oauth_password,
+            oauth_token_secret,
+            profile.runtime.clone(),
+            usage.clone(),
+        );
 
         match spawn_result {
             Ok((shutdown, handle)) => {
@@ -516,10 +429,7 @@ impl RuntimeSupervisor {
             return;
         }
 
-        let tunnel_kind = match kind {
-            ServiceKind::Mcp => TunnelServiceKind::Mcp,
-            ServiceKind::Actions => TunnelServiceKind::Actions,
-        };
+        let tunnel_kind = TunnelServiceKind::Mcp;
 
         let profile = profile.clone();
         tauri::async_runtime::spawn(async move {
@@ -554,38 +464,30 @@ fn should_mark_runtime_error(entry: &mut RuntimeEntry, listening: bool) -> bool 
 fn port_for(profile: &WorkspaceProfile, kind: ServiceKind) -> u16 {
     match kind {
         ServiceKind::Mcp => profile.runtime.local_port,
-        ServiceKind::Actions => profile.actions.local_port,
     }
 }
 
 fn endpoints(profile: &WorkspaceProfile, kind: ServiceKind) -> (String, String) {
     match kind {
         ServiceKind::Mcp => (profile.local_endpoint(), profile.public_endpoint()),
-        ServiceKind::Actions => (
-            profile.actions_local_base_url(),
-            profile.actions_openapi_url(),
-        ),
     }
 }
 
 fn public_message_for(profile: &WorkspaceProfile, kind: ServiceKind) -> String {
     match kind {
         ServiceKind::Mcp => profile.effective_public_url(),
-        ServiceKind::Actions => profile.actions_effective_public_url(),
     }
 }
 
 fn service_label(kind: ServiceKind) -> &'static str {
     match kind {
         ServiceKind::Mcp => "本地 MCP ",
-        ServiceKind::Actions => "本地 Actions ",
     }
 }
 
 fn stderr_log_name(kind: ServiceKind) -> &'static str {
     match kind {
         ServiceKind::Mcp => "stderr.log",
-        ServiceKind::Actions => "actions-stderr.log",
     }
 }
 
@@ -595,13 +497,6 @@ fn resolve_secret(profile_id: &str, key: &str, use_shared: bool) -> AppResult<Op
         SecretStore::get_shared(key)
     } else {
         SecretStore::get(profile_id, key)
-    }
-}
-
-fn actions_oauth_secret(profile_id: &str, key: &str) -> AppResult<String> {
-    match SecretStore::get(profile_id, key)? {
-        Some(value) if !value.is_empty() => Ok(value),
-        _ => SecretStore::regenerate(profile_id, key),
     }
 }
 

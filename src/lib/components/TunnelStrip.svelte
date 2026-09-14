@@ -5,7 +5,6 @@
 
   interface Props {
     workspaceId: string;
-    service: "mcp" | "actions";
     tunnelType: string;
     publicUrl: string;
     onPublicUrlChange?: (url: string) => void;
@@ -13,7 +12,6 @@
 
   let {
     workspaceId,
-    service,
     tunnelType,
     publicUrl,
     onPublicUrlChange,
@@ -31,8 +29,8 @@
     busy = true;
     try {
       status = running
-        ? await stopTunnel(workspaceId, service)
-        : await startTunnel(workspaceId, service);
+        ? await stopTunnel(workspaceId, "mcp")
+        : await startTunnel(workspaceId, "mcp");
       if (status.publicUrl) {
         onPublicUrlChange?.(status.publicUrl);
       }
@@ -45,7 +43,7 @@
 
   async function loadFrpSnippet() {
     try {
-      frpSnippet = await getFrpSnippet(workspaceId, service);
+      frpSnippet = await getFrpSnippet(workspaceId, "mcp");
     } catch (error) {
       await message(String(error), { title: "无法生成 FRP 配置", kind: "error" });
     }

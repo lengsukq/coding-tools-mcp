@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type TunnelService = "mcp" | "actions";
+export type TunnelService = "mcp";
 
 export interface TunnelStatus {
   state: string;

@@ -32,12 +32,11 @@ pub fn import_legacy_profiles_if_empty(data: &mut AppData) -> AppResult<usize> {
     let legacy: LegacyProfilesFile = serde_json::from_str(&raw)?;
     let secrets = load_legacy_secrets(&legacy_home)?;
     let mut imported = 0usize;
-    for mut profile in legacy.profiles {
+    for profile in legacy.profiles {
         if profile.path.trim().is_empty() || !PathBuf::from(&profile.path).exists() {
             continue;
         }
         migrate_legacy_secrets(data, &profile.id, secrets.get(&profile.id));
-        normalize_legacy_profile(&mut profile);
         data.profiles.push(profile);
         imported += 1;
     }
@@ -63,9 +62,6 @@ fn migrate_legacy_secrets(
     };
     let mappings = [
         ("cloudflare_token", "cloudflare_token"),
-        ("actions_cloudflare_token", "actions_cloudflare_token"),
-        ("actions_api_key", "actions_api_key"),
-        ("actions_oauth_client_secret", "actions_oauth_client_secret"),
         ("oauth_client_secret", "oauth_client_secret"),
         ("oauth_password", "oauth_password"),
         ("oauth_token_secret", "oauth_token_secret"),
@@ -80,13 +76,6 @@ fn migrate_legacy_secrets(
             store.insert(store_key.to_string(), value.clone());
         }
     }
-}
-
-fn normalize_legacy_profile(profile: &mut WorkspaceProfile) {
-    if profile.actions.local_port == 28766 {
-        profile.actions.local_port = 8787;
-    }
-    profile.actions.cloudflare_token.clear();
 }
 
 #[cfg(test)]

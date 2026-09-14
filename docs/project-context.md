@@ -7,17 +7,17 @@
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.2.1` |
+| 版本 | `0.2.3` |
 | 桌面端 | Tauri 2 |
 | 前端 | SvelteKit 2 + Svelte 5 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
-| 类型 | AI Coding Workspace Desktop + 内嵌 MCP / GPT Actions Runtime |
+| 类型 | AI Coding Workspace Desktop + 内嵌 MCP Runtime |
 | 核心定位 | 把本地项目变成可被 AI 安全开发、跨会话恢复、可视化管理的持久 Workspace |
 
 ## 当前核心能力
 
 - 多 Workspace 配置与运行时管理；
-- MCP Streamable HTTP 与 GPT Actions OpenAPI；
+- MCP Streamable HTTP；
 - Bearer / OAuth、PKCE S256、Dynamic Client Registration、Refresh Token；
 - 文件、Patch、命令、Git、图片与 Skill 工具；
 - Stable Tool API v2 聚合管理入口；
@@ -57,4 +57,4 @@
 - `old/tests/compliance/`
 
 ---
-*当前事实更新: 2026-08-18*
+*当前事实更新: 2026-09-14*

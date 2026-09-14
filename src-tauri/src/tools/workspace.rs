@@ -627,10 +627,6 @@ pub fn tool_err_code(
     })
 }
 
-pub fn wrap_tool_result(structured: Value) -> Value {
-    wrap_mcp_tool_result("", &serde_json::json!({}), structured)
-}
-
 /// content 文本总预算（字节）；超出按 UTF-8 安全边界截断，完整结果仍在 structuredContent。
 const CONTENT_TEXT_BUDGET: usize = 32 * 1024;
 /// 执行类结果中 stdout/stderr 各自的 head+tail 预览预算（字节）。
@@ -658,12 +654,7 @@ pub fn wrap_mcp_tool_result(tool_name: &str, args: &Value, structured: Value) ->
                 .unwrap_or("application/octet-stream")
         })]
     } else {
-        // 空工具名来自 Actions 网关，保留全量 JSON 文本；MCP 入口输出简洁 content。
-        let text = if tool_name.is_empty() {
-            structured.to_string()
-        } else {
-            concise_content(tool_name, &structured)
-        };
+        let text = concise_content(tool_name, &structured);
         vec![json!({
             "type": "text",
             "text": text
@@ -990,8 +981,8 @@ mod content_budget_tests {
     use serde_json::json;
 
     use super::{
-        apply_content_budget, concise_content, tool_err, wrap_mcp_tool_result, wrap_tool_result,
-        WorkspaceError, CONTENT_TEXT_BUDGET, CONTENT_TRUNCATION_MARKER,
+        apply_content_budget, concise_content, tool_err, wrap_mcp_tool_result, WorkspaceError,
+        CONTENT_TEXT_BUDGET, CONTENT_TRUNCATION_MARKER,
     };
 
     fn content_text(result: &serde_json::Value) -> String {
@@ -1118,13 +1109,6 @@ mod content_budget_tests {
         let result = wrap_mcp_tool_result("view_image", &json!({}), structured);
         assert_eq!(result["content"][0]["type"], "image");
         assert_eq!(result["content"][0]["data"], "aGVsbG8=");
-    }
-
-    #[test]
-    fn actions_wrap_keeps_full_json_text() {
-        let structured = json!({"ok": true, "detail": "value"});
-        let result = wrap_tool_result(structured.clone());
-        assert_eq!(content_text(&result), structured.to_string());
     }
 
     #[test]

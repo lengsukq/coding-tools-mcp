@@ -24,7 +24,6 @@ fn validate_tunnel_start_resources(
 ) -> AppResult<()> {
     let service = match kind {
         TunnelServiceKind::Mcp => WorkspaceService::Mcp,
-        TunnelServiceKind::Actions => WorkspaceService::Actions,
     };
     state.with_workspaces(|store| validate_service_start(store.list(), id, service))
 }
@@ -44,7 +43,6 @@ fn persist_public_url(
         };
         match kind {
             TunnelServiceKind::Mcp => profile.tunnel.public_url = public_url.to_string(),
-            TunnelServiceKind::Actions => profile.actions.public_url = public_url.to_string(),
         }
         store.update(profile)?;
         Ok(())
@@ -69,7 +67,6 @@ fn restore_tunnel_config(
         };
         let unchanged_since_failure = match kind {
             TunnelServiceKind::Mcp => mcp_tunnel_matches(&current, failed),
-            TunnelServiceKind::Actions => actions_tunnel_matches(&current, failed),
         };
         if !unchanged_since_failure {
             return Err(AppError::Message(
@@ -78,17 +75,6 @@ fn restore_tunnel_config(
         }
         match kind {
             TunnelServiceKind::Mcp => current.tunnel = restored.tunnel.clone(),
-            TunnelServiceKind::Actions => {
-                current.actions.public_url = restored.actions.public_url.clone();
-                current.actions.tunnel_type = restored.actions.tunnel_type.clone();
-                current.actions.frp_server = restored.actions.frp_server.clone();
-                current.actions.frp_subdomain = restored.actions.frp_subdomain.clone();
-                current.actions.frp_profile_id = restored.actions.frp_profile_id.clone();
-                current.actions.frp_server_port = restored.actions.frp_server_port;
-                current.actions.cloudflare_mode = restored.actions.cloudflare_mode.clone();
-                current.actions.cloudflare_token = restored.actions.cloudflare_token.clone();
-                current.actions.use_proxy = restored.actions.use_proxy;
-            }
         }
         store.update(current)
     })
@@ -108,25 +94,9 @@ fn mcp_tunnel_matches(
         && left.tunnel.use_proxy == right.tunnel.use_proxy
 }
 
-fn actions_tunnel_matches(
-    left: &crate::workspace::WorkspaceProfile,
-    right: &crate::workspace::WorkspaceProfile,
-) -> bool {
-    left.actions.public_url == right.actions.public_url
-        && left.actions.tunnel_type == right.actions.tunnel_type
-        && left.actions.frp_server == right.actions.frp_server
-        && left.actions.frp_subdomain == right.actions.frp_subdomain
-        && left.actions.frp_profile_id == right.actions.frp_profile_id
-        && left.actions.frp_server_port == right.actions.frp_server_port
-        && left.actions.cloudflare_mode == right.actions.cloudflare_mode
-        && left.actions.cloudflare_token == right.actions.cloudflare_token
-        && left.actions.use_proxy == right.actions.use_proxy
-}
-
 fn tunnel_type_for(profile: &crate::workspace::WorkspaceProfile, kind: TunnelServiceKind) -> &str {
     match kind {
         TunnelServiceKind::Mcp => profile.tunnel.tunnel_type.as_str(),
-        TunnelServiceKind::Actions => profile.actions.tunnel_type.as_str(),
     }
 }
 
@@ -247,7 +217,6 @@ fn local_service_listening(
 ) -> AppResult<bool> {
     let port = match kind {
         TunnelServiceKind::Mcp => profile.runtime.local_port,
-        TunnelServiceKind::Actions => profile.actions.local_port,
     };
     Ok(platform().find_pid_listening_on_port(port)?.is_some())
 }

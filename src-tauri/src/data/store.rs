@@ -16,10 +16,16 @@ const SHARED_KEYS: &[&str] = &[
     "oauth_client_secret",
     "oauth_password",
     "oauth_token_secret",
+];
+
+const OBSOLETE_ACTIONS_SECRET_KEYS: &[&str] = &[
+    "actions_cloudflare_token",
     "actions_api_key",
     "actions_oauth_client_secret",
     "actions_oauth_password",
     "actions_oauth_token_secret",
+    "actions_oauth_dynamic_clients",
+    "actions_frp_token",
 ];
 
 #[derive(Debug)]
@@ -27,15 +33,80 @@ pub struct DataStore {
     data: AppData,
 }
 
+fn strip_obsolete_actions_secrets(data: &mut AppData) -> bool {
+    let mut changed = false;
+    for key in OBSOLETE_ACTIONS_SECRET_KEYS {
+        changed |= data.shared_secrets.remove(*key).is_some();
+    }
+    for secrets in data.workspace_secrets.values_mut() {
+        for key in OBSOLETE_ACTIONS_SECRET_KEYS {
+            changed |= secrets.remove(*key).is_some();
+        }
+    }
+    changed
+}
+
+fn contains_obsolete_actions_json(value: &serde_json::Value) -> bool {
+    let Some(root) = value.as_object() else {
+        return false;
+    };
+    if root.contains_key("restore_actions_workspace_ids") {
+        return true;
+    }
+    if root
+        .get("profiles")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|profiles| {
+            profiles.iter().any(|profile| {
+                profile
+                    .as_object()
+                    .is_some_and(|object| object.contains_key("actions"))
+            })
+        })
+    {
+        return true;
+    }
+    ["shared_secrets", "workspace_secrets"]
+        .into_iter()
+        .filter_map(|key| root.get(key))
+        .any(value_contains_obsolete_actions_secret)
+}
+
+fn value_contains_obsolete_actions_secret(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
+            OBSOLETE_ACTIONS_SECRET_KEYS.contains(&key.as_str())
+                || value_contains_obsolete_actions_secret(value)
+        }),
+        serde_json::Value::Array(values) => {
+            values.iter().any(value_contains_obsolete_actions_secret)
+        }
+        _ => false,
+    }
+}
+
 impl DataStore {
     pub fn load() -> AppResult<Self> {
         let _guard = lock_data_file()?;
         let path = data_file_path()?;
         let existed_before = path.exists();
+        let had_obsolete_actions_json = if existed_before {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .is_some_and(|value| contains_obsolete_actions_json(&value))
+        } else {
+            false
+        };
         let mut data = load_or_migrate()?;
         let imported = import_legacy_profiles_if_empty(&mut data)?;
+        let removed_obsolete_actions_secrets = strip_obsolete_actions_secrets(&mut data);
         let store = Self { data };
-        if !existed_before || imported > 0 {
+        if !existed_before
+            || imported > 0
+            || had_obsolete_actions_json
+            || removed_obsolete_actions_secrets
+        {
             store.persist_unlocked()?;
         }
         if !existed_before {
@@ -124,10 +195,6 @@ impl DataStore {
         self.set_workspace_secret(profile_id, "oauth_password", &random_secret())?;
         self.set_workspace_secret(profile_id, "oauth_token_secret", &random_secret())?;
         self.set_workspace_secret(profile_id, "bearer_token", &random_secret())?;
-        self.set_workspace_secret(profile_id, "actions_api_key", &random_secret())?;
-        self.set_workspace_secret(profile_id, "actions_oauth_client_secret", &random_secret())?;
-        self.set_workspace_secret(profile_id, "actions_oauth_password", &random_secret())?;
-        self.set_workspace_secret(profile_id, "actions_oauth_token_secret", &random_secret())?;
         Ok(())
     }
 
@@ -270,5 +337,47 @@ mod tests {
         let value = shared_value_for_key("oauth_client_id");
         assert!(value.starts_with("chatgpt-client-"));
         assert_eq!(value.len(), "chatgpt-client-".len() + 12);
+    }
+
+    #[test]
+    fn obsolete_actions_data_is_detected_and_removed_without_touching_mcp_secrets() {
+        let legacy = serde_json::json!({
+            "restore_actions_workspace_ids": ["workspace-1"],
+            "profiles": [{"id": "workspace-1", "actions": {"local_port": 8787}}],
+            "shared_secrets": {
+                "bearer_token": "keep-shared",
+                "actions_api_key": "remove-shared"
+            },
+            "workspace_secrets": {
+                "workspace-1": {
+                    "oauth_password": "keep-workspace",
+                    "actions_oauth_dynamic_clients": "remove-workspace"
+                }
+            }
+        });
+        assert!(contains_obsolete_actions_json(&legacy));
+
+        let mut data = AppData::default();
+        data.shared_secrets
+            .insert("bearer_token".into(), "keep-shared".into());
+        data.shared_secrets
+            .insert("actions_api_key".into(), "remove-shared".into());
+        data.workspace_secrets.insert(
+            "workspace-1".into(),
+            std::collections::HashMap::from([
+                ("oauth_password".into(), "keep-workspace".into()),
+                (
+                    "actions_oauth_dynamic_clients".into(),
+                    "remove-workspace".into(),
+                ),
+            ]),
+        );
+
+        assert!(strip_obsolete_actions_secrets(&mut data));
+        assert_eq!(data.shared_secrets.get("bearer_token").map(String::as_str), Some("keep-shared"));
+        assert!(!data.shared_secrets.contains_key("actions_api_key"));
+        let workspace = data.workspace_secrets.get("workspace-1").expect("workspace secrets");
+        assert_eq!(workspace.get("oauth_password").map(String::as_str), Some("keep-workspace"));
+        assert!(!workspace.contains_key("actions_oauth_dynamic_clients"));
     }
 }

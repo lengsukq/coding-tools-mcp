@@ -58,7 +58,7 @@ fn is_sane_size(size: &PhysicalSize<u32>) -> bool {
     size.width >= 200 && size.height >= 200 && size.width < 20_000 && size.height < 20_000
 }
 
-/// Sample UI-related memory. Does not touch MCP/Actions/FRP runtimes.
+/// Sample UI-related memory. Does not touch MCP/FRP runtimes.
 #[command]
 pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
     #[cfg(windows)]
@@ -83,7 +83,7 @@ pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
 }
 
 /// Destroy and recreate the main WebView window so Edge WebView2 processes are
-/// replaced. Does **not** stop MCP / Actions / FRP (`AppState` stays alive).
+/// replaced. Does **not** stop MCP / FRP (`AppState` stays alive).
 ///
 /// Must be async on Windows — synchronous WebView creation deadlocks.
 ///

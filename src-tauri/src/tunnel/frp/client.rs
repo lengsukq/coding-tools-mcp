@@ -380,7 +380,6 @@ pub async fn spawn_frpc(
 fn aggregate_uses_proxy(routes: &[(&WorkspaceProfile, TunnelServiceKind)]) -> bool {
     routes.iter().any(|(profile, kind)| match kind {
         TunnelServiceKind::Mcp => profile.tunnel.use_proxy,
-        TunnelServiceKind::Actions => profile.actions.use_proxy,
     })
 }
 
@@ -439,7 +438,6 @@ pub(crate) fn frpc_binary_name() -> &'static str {
 pub(crate) fn frpc_log_name(kind: TunnelServiceKind) -> &'static str {
     match kind {
         TunnelServiceKind::Mcp => "frpc-mcp.log",
-        TunnelServiceKind::Actions => "frpc-actions.log",
     }
 }
 

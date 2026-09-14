@@ -15,10 +15,5 @@ pub fn get_service_usage_stats(
         return Err(AppError::Message(format!("workspace not found: {id}")));
     }
 
-    state.with_runtime(|runtime| {
-        Ok(vec![
-            runtime.usage_stats(&id, ServiceKind::Mcp),
-            runtime.usage_stats(&id, ServiceKind::Actions),
-        ])
-    })
+    state.with_runtime(|runtime| Ok(vec![runtime.usage_stats(&id, ServiceKind::Mcp)]))
 }

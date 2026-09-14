@@ -4,7 +4,7 @@
 
 ## 总体定位
 
-Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌面控制面**。桌面端负责工作区、认证、公网入口、运行时和可视化配置；Rust Core 在本机直接提供 MCP / GPT Actions，并通过统一工具内核访问代码、Git、命令、Planning、History 与 Harness。
+Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌面控制面**。桌面端负责工作区、认证、公网入口、运行时和可视化配置；Rust Core 在本机直接提供 MCP，并通过统一工具内核访问代码、Git、命令、Planning、History 与 Harness。
 
 ```text
 ┌──────────────────────────────────────────────┐
@@ -19,10 +19,10 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 ├──────────────────────────────────────────────┤
 │ Unified Tool Runtime                        │
 │ file / patch / exec / git / skill / manage │
-├─────────────────────┬────────────────────────┤
-│ MCP Streamable HTTP │ GPT Actions OpenAPI   │
-└──────────┬──────────┴──────────┬─────────────┘
-           │                     │
+├──────────────────────────────────────────────┤
+│ MCP Streamable HTTP                          │
+└──────────────────────┬───────────────────────┘
+                       │
       Local / Global Gateway / FRP / Cloudflare
 ```
 
@@ -32,11 +32,10 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | --- | --- |
 | `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、Dispatch、文件/Git/Exec/History/Planning/Skill |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP transport 与客户端初始化 |
-| `src-tauri/src/actions/` | GPT Actions HTTP/OpenAPI transport |
 | `src-tauri/src/auth/` | Bearer、OAuth Authorization Code、PKCE S256、DCR、Refresh Token |
 | `src-tauri/src/planning/` | Direct / Plan / Goal、Goal/Plan 生命周期、Execution Ledger |
 | `src-tauri/src/harness/` | Durable Task、operation/event log、基线与恢复信息 |
-| `src-tauri/src/runtime/` | MCP / Actions 生命周期与进程监督 |
+| `src-tauri/src/runtime/` | MCP 生命周期与进程监督 |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 下载、配置与进程监督 |
 | `src-tauri/src/global_gateway.rs` | 多 Workspace 共享公网入口 `/w/<workspace-id>` |
 | `src-tauri/src/workspace/` | Workspace 配置、持久化与兼容迁移 |
@@ -46,7 +45,7 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 
 ## Tool Runtime
 
-MCP 和 Actions 不各自实现工具逻辑。两条 transport 最终必须进入：
+所有 MCP 工具调用最终必须进入：
 
 ```text
 tools::dispatch::call_tool
@@ -98,7 +97,7 @@ verification
 
 ## OAuth
 
-MCP 与 Actions 共用同一 OAuth runtime：
+MCP 使用统一 OAuth runtime：
 
 - Authorization Code；
 - PKCE `S256`；
@@ -111,7 +110,7 @@ MCP 与 Actions 共用同一 OAuth runtime：
 
 ## Runtime 与网络
 
-每个 Workspace 可以独立运行 MCP / Actions。Global Gateway 提供统一公网入口并按 `/w/<workspace-id>` 路由到对应工作区。FRP 与 Cloudflare Tunnel 由 Rust supervisor 管理，不要求外部 Python Runtime。
+每个 Workspace 可以独立运行 MCP。Global Gateway 提供统一公网入口并按 `/w/<workspace-id>` 路由到对应工作区。FRP 与 Cloudflare Tunnel 由 Rust supervisor 管理，不要求外部 Python Runtime。
 
 ## 安全边界
 

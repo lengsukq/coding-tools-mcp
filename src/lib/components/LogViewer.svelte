@@ -18,7 +18,7 @@
   let busy = $state(false);
   let error = $state("");
 
-  const heading = $derived(title ?? (service === "mcp" ? "MCP 日志" : "Actions 日志"));
+  const heading = $derived(title ?? "MCP 日志");
 
   async function refresh() {
     if (busy || !workspaceId) return;

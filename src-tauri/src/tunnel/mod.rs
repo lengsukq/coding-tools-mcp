@@ -18,7 +18,7 @@ pub use cloudflare::{
     extract_trycloudflare_url, resolve_cloudflared, spawn_cloudflare_tunnel, stop_child,
 };
 #[allow(unused_imports)]
-pub use frp::{actions_frp_snippet, mcp_frp_snippet};
+pub use frp::mcp_frp_snippet;
 #[allow(unused_imports)]
 pub use software::{install_software, list_software, uninstall_software, SoftwareStatus};
 #[allow(unused_imports)]

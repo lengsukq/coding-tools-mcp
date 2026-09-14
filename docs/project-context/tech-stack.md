@@ -6,7 +6,7 @@
 
 | 属性 | 当前值 |
 | --- | --- |
-| 应用版本 | `0.2.1` |
+| 应用版本 | `0.2.3` |
 | Rust Edition | 2021 |
 | 前端语言 | TypeScript |
 | 桌面框架 | Tauri 2 |
@@ -19,7 +19,7 @@
 | --- | --- |
 | `tauri` / `tauri-plugin-dialog` | 桌面外壳、Tray、IPC、文件选择 |
 | `tokio` | 异步 Runtime、网络、进程、文件与 Session |
-| `axum` | MCP / Actions / OAuth HTTP 服务 |
+| `axum` | MCP / OAuth HTTP 服务 |
 | `tower-http` | CORS |
 | `reqwest` + rustls | 更新、健康检查、网络请求 |
 | `serde` / `serde_json` | 配置、Tool Schema、状态持久化 |

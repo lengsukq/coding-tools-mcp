@@ -28,7 +28,6 @@
 
   interface Props {
     workspaceId: string;
-    service: "mcp" | "actions";
     config: TunnelFormConfig;
     onSave: (config: TunnelFormConfig, options?: SaveTunnelOptions) => void | Promise<void>;
   }
@@ -44,7 +43,7 @@
     { value: "named", label: "Named Tunnel" },
   ] as const;
 
-  let { workspaceId, service, config, onSave }: Props = $props();
+  let { workspaceId, config, onSave }: Props = $props();
 
   let draft = $state<TunnelFormConfig>({
     type: "none",
@@ -73,13 +72,7 @@
   ]);
 
   const secretKey = $derived(
-    service === "mcp"
-      ? draft.type === "frp"
-        ? ("frp_token" as const)
-        : ("cloudflare_token" as const)
-      : draft.type === "frp"
-        ? ("actions_frp_token" as const)
-        : ("actions_cloudflare_token" as const),
+    draft.type === "frp" ? ("frp_token" as const) : ("cloudflare_token" as const),
   );
 
   const selectedProfile = $derived(
@@ -160,7 +153,7 @@
         await saveDraft({ skipTunnelRestart: true, skipServicePrompt: true });
       }
 
-      const result = await invokeTunnelTest(workspaceId, service);
+      const result = await invokeTunnelTest(workspaceId, "mcp");
       if (result.publicUrl && draft.cloudflare_mode === "quick") {
         draft.public_url = result.publicUrl;
       }
@@ -321,9 +314,6 @@
     <div class="grid gap-1.5">
       <span class="text-xs font-medium text-[var(--color-text-muted)]">
         公网 URL
-        {#if service === "actions"}
-          <span class="text-[var(--color-text-muted)]">（OpenAPI 根地址）</span>
-        {/if}
       </span>
       <TextInput
         type="url"

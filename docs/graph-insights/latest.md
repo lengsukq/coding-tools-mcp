@@ -1,6 +1,6 @@
 # 项目图谱洞察
 
-更新时间：2026-07-13
+更新时间：2026-09-14
 
 ## 分析状态
 
@@ -10,7 +10,7 @@
 
 ## 项目定位
 
-这是一个 Rust + Tauri 2 + Svelte 的桌面客户端，将 Coding Tools MCP 能力以内嵌 HTTP 服务形式暴露，并同时提供 ChatGPT Actions OpenAPI 网关。每个工作区可以独立运行 MCP 服务、Actions 服务和 FRP/Cloudflare 隧道。
+这是一个 Rust + Tauri 2 + Svelte 的桌面客户端，将 Coding Tools MCP 能力以内嵌 HTTP 服务形式暴露。每个工作区独立运行 MCP 服务，并可配合 Global Gateway、FRP 或 Cloudflare 隧道提供公网入口。
 
 ## 主执行链路
 
@@ -20,9 +20,8 @@ Svelte 页面
   → src-tauri/src/commands/*
   → AppState
       ├─ DataStore：工作区、设置和密钥数据
-      └─ RuntimeSupervisor：MCP/Actions 生命周期
-            ├─ mcp::spawn_listener：/mcp
-            └─ actions::spawn_listener：/openapi.json、/actions/{tool}
+      └─ RuntimeSupervisor：MCP 生命周期
+            └─ mcp::spawn_listener：/mcp
   → tunnel supervisor：FRP / Cloudflare 公网隧道
 ```
 
@@ -42,7 +41,7 @@ Svelte 页面
 
 ### 运行时
 
-- `src-tauri/src/runtime/supervisor.rs` 以 `(workspace_id, ServiceKind)` 管理 MCP/Actions 状态。
+- `src-tauri/src/runtime/supervisor.rs` 管理每个 Workspace 的 MCP 状态。
 - 生命周期为 `Stopped → Starting → Running/ Error → Stopping`。
 - `src-tauri/src/commands/runtime.rs` 负责端口占用检查、启动/停止、隧道联动及公网 URL 回写。
 - `src-tauri/src/runtime/port.rs` 和 `src-tauri/src/platform/windows/net.rs` 提供端口与进程检测。
@@ -50,8 +49,7 @@ Svelte 页面
 ### HTTP 服务
 
 - `src-tauri/src/mcp/listener.rs` 启动 MCP Streamable HTTP 服务，并接入 Bearer/OAuth/无认证。
-- `src-tauri/src/actions/listener.rs` 生成 OpenAPI 文档，暴露 Actions 执行端点和 OAuth 端点。
-- 两个 listener 都复用 `src-tauri/src/tools/` 的工具内核和策略配置。
+- MCP listener 复用 `src-tauri/src/tools/` 的统一工具内核和策略配置。
 
 ### 隧道
 
@@ -61,30 +59,31 @@ Svelte 页面
 
 ### 前端
 
-- `src/routes/+layout.svelte` 加载工作区、刷新 MCP/Actions 状态并承载全局导航和 Toast。
-- `src/routes/workspace/[id]/+page.svelte` 是核心工作区页面，管理两个服务、认证、策略、隧道、日志和健康检查。
+- `src/routes/+layout.svelte` 加载工作区、刷新 MCP 状态并承载全局导航和 Toast。
+- `src/routes/workspace/[id]/+page.svelte` 是核心工作区页面，管理 MCP、认证、策略、隧道、日志和健康检查。
 - `src/lib/api/` 封装 Tauri IPC；`src/lib/components/` 提供配置表单和状态面板；`src/lib/stores/` 管理前端共享状态。
 
 ## 当前工作区观察
 
-- 当前有 52 个已修改文件，另有若干新增文件，改动集中在 OAuth、运行时、隧道、数据存储及 UI。
-- Rust `cargo check` 通过，但有 16 个 unused/dead-code 警告，表明旧的 `settings::store`、`workspace::store` 和 `secret::keyring_store` 抽象尚未完全清理或接回。
-- 当前 `Cargo.toml` 已移除 `keyring` 依赖，但 `DataStore` 将 `shared_secrets`、`workspace_secrets` 和 `app_secrets` 写入 `data/profiles.json`。这与文档中“系统钥匙串存储密钥”的设计目标不一致，应在发布前明确这是临时迁移方案还是需要恢复 OS keyring。
-- `docs/project-context/architecture.md` 仍描述“尚无 Rust 源码或 Tauri 工程”，已经落后于实际仓库，需要后续同步。
+- 当前产品运行时已经收敛为 MCP-only：Actions listener、OpenAPI 网关、双服务状态、Actions 隧道/认证/日志/健康与前端入口均已删除。
+- 旧 `profiles.json` 中的 `actions` 配置、`restore_actions_workspace_ids` 与 Actions 专属密钥会在升级加载时被定向清理；MCP 密钥保持不变。
+- `docs/specs/**`、带日期的 `docs/verification/**`、`docs/history-session/**` 与 `old/**` 保留历史 Actions 记录，不代表当前产品能力。
+- 当前 README、project-context 与本文件已经同步 MCP-only 架构。
 
 ## 验证结果
 
-- `rtk cargo check --manifest-path src-tauri/Cargo.toml`：通过，16 个警告。
-- `rtk cargo test --manifest-path src-tauri/Cargo.toml --no-run`：通过，测试目标可编译。
-- `rtk npm run check`：通过，0 错误、0 警告。
-- `rtk npm run build`：通过，SvelteKit/Vite 生产构建成功。
+- `npm run version:check`：通过，项目版本 `0.2.3` 一致。
+- `npm run check`：通过，0 错误、0 警告。
+- `npm run build`：通过，SvelteKit/Vite 生产构建成功。
+- `npm run test:release`：通过；Rust library 164/164，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7。
+- 额外 `cargo clippy --all-targets -- -D warnings` 仍会被仓库既有的全局 lint 债务阻塞，主要分布于 Agent Context、Planning、MCP Server 等与 Actions 删除无关的模块。
+- `cargo fmt --all -- --check` 同样揭示仓库既有的大范围格式差异；本次未执行全局自动格式化，以免覆盖当前未提交的其他 UI/代码改动。
 
 ## 建议优先级
 
-1. 先决定 secrets 的最终存储边界：恢复系统钥匙串，或明确加密文件方案并补迁移/权限测试。
-2. 清理未使用的兼容层，避免 `DataStore` 与 `SecretStore` 两套 API 继续并存。
-3. 将 `docs/project-context/architecture.md`、`how-to-test.md` 与实际 Tauri 工程同步。
-4. 补充 MCP/Actions/tunnel 的运行时集成测试，尤其是端口冲突、停止等待、OAuth 回调和隧道自动启动失败场景。
+1. 单独安排一次 Rust lint/format 基线整理，不与功能删除任务混在一起。
+2. 继续保持 MCP-only 产品边界，避免重新引入第二套 transport/runtime 状态机。
+3. 持续补充 MCP/tunnel 的运行时集成测试，尤其是端口冲突、停止等待、OAuth 回调和隧道自动启动失败场景。
 
 ---
 *来源：当前源码、README、项目上下文文档、Git 状态与构建验证；GitNexus 索引作为辅助。*

@@ -46,7 +46,7 @@ cargo test --all-targets --locked
 
 - `compact` profile 应优先暴露 Stable Tool API v2 聚合入口；
 - legacy profile 继续保留旧 Tool；
-- MCP / Actions 都必须进入统一 `call_tool`；
+- MCP 必须进入统一 `call_tool`；
 - Plan / Goal 权限门必须根据聚合 Tool 的 `action` 区分读写。
 
 ### OAuth

@@ -27,15 +27,13 @@
   import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
   import {
     openWorkspaceDirectory,
-    startActionsRuntime,
     startRuntime,
-    stopActionsRuntime,
     stopRuntime,
   } from "$lib/api/workspaces";
   import { runServiceToggle } from "$lib/runtime/service";
   import { showToast } from "$lib/stores/toast";
-  import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
-  import { actionsConfig, type RuntimeState, type WorkspaceProfile } from "$lib/types";
+  import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
+  import type { RuntimeState, WorkspaceProfile } from "$lib/types";
 
   interface UsagePoint {
     timestamp: number;
@@ -57,7 +55,6 @@
   let planningGeneration = 0;
   let usageGeneration = 0;
   let mcpBusyMap = $state<Record<string, boolean>>({});
-  let actionsBusyMap = $state<Record<string, boolean>>({});
   let copiedPathId = $state<string | null>(null);
   let copiedEndpointId = $state<string | null>(null);
 
@@ -65,18 +62,13 @@
   const mcpRunning = $derived(
     $workspaces.filter((workspace) => $mcpRuntimeStates[workspace.id] === "running").length,
   );
-  const actionsRunning = $derived(
-    $workspaces.filter((workspace) => $actionsRuntimeStates[workspace.id] === "running").length,
-  );
   const errorServices = $derived(
     $workspaces.reduce((count, workspace) => {
-      return count
-        + ($mcpRuntimeStates[workspace.id] === "error" ? 1 : 0)
-        + ($actionsRuntimeStates[workspace.id] === "error" ? 1 : 0);
+      return count + ($mcpRuntimeStates[workspace.id] === "error" ? 1 : 0);
     }, 0),
   );
-  const totalServices = $derived(workspaceCount * 2);
-  const runningServices = $derived(mcpRunning + actionsRunning);
+  const totalServices = $derived(workspaceCount);
+  const runningServices = $derived(mcpRunning);
   const serviceHealth = $derived(
     totalServices === 0 ? 0 : Math.round((runningServices / totalServices) * 100),
   );
@@ -105,23 +97,10 @@
   const connectionStats = $derived.by(() => {
     const stats = { gateway: 0, frp: 0, cloudflare: 0, local: 0 };
     for (const workspace of $workspaces) {
-      const actions = actionsConfig(workspace);
-      const services = [
-        {
-          global: workspace.tunnel.use_global_gateway ?? false,
-          type: workspace.tunnel.type,
-        },
-        {
-          global: actions.use_global_gateway ?? false,
-          type: actions.tunnel_type,
-        },
-      ];
-      for (const service of services) {
-        if (service.global) stats.gateway += 1;
-        else if (service.type === "frp") stats.frp += 1;
-        else if (service.type === "cloudflare") stats.cloudflare += 1;
-        else stats.local += 1;
-      }
+      if (workspace.tunnel.use_global_gateway) stats.gateway += 1;
+      else if (workspace.tunnel.type === "frp") stats.frp += 1;
+      else if (workspace.tunnel.type === "cloudflare") stats.cloudflare += 1;
+      else stats.local += 1;
     }
     return stats;
   });
@@ -173,17 +152,10 @@
     return state ?? "stopped";
   }
 
-  function tunnelLabel(workspace: WorkspaceProfile, service: "mcp" | "actions"): string {
-    if (service === "mcp") {
-      if (workspace.tunnel.use_global_gateway) return "Global Gateway";
-      if (workspace.tunnel.type === "frp") return "FRP";
-      if (workspace.tunnel.type === "cloudflare") return "Cloudflare";
-      return "Local";
-    }
-    const actions = actionsConfig(workspace);
-    if (actions.use_global_gateway) return "Global Gateway";
-    if (actions.tunnel_type === "frp") return "FRP";
-    if (actions.tunnel_type === "cloudflare") return "Cloudflare";
+  function tunnelLabel(workspace: WorkspaceProfile): string {
+    if (workspace.tunnel.use_global_gateway) return "Global Gateway";
+    if (workspace.tunnel.type === "frp") return "FRP";
+    if (workspace.tunnel.type === "cloudflare") return "Cloudflare";
     return "Local";
   }
 
@@ -337,26 +309,6 @@
     }
   }
 
-  async function toggleWorkspaceActions(id: string) {
-    if (actionsBusyMap[id]) return;
-    const currentState = $actionsRuntimeStates[id];
-    const wasRunning = currentState === "running";
-    actionsBusyMap = { ...actionsBusyMap, [id]: true };
-    try {
-      const status = await runServiceToggle(
-        wasRunning,
-        () => startActionsRuntime(id),
-        () => stopActionsRuntime(id),
-        "Actions",
-      );
-      if (status) {
-        actionsRuntimeStates.update((map) => ({ ...map, [id]: status.state }));
-      }
-    } finally {
-      actionsBusyMap = { ...actionsBusyMap, [id]: false };
-    }
-  }
-
   async function copyWorkspacePath(id: string, path: string) {
     try {
       await navigator.clipboard.writeText(path);
@@ -453,7 +405,7 @@
               {#if errorServices > 0}
                 当前有 {errorServices} 个服务处于异常状态，建议优先进入对应工作区查看日志。
               {:else if runningServices === totalServices}
-                所有 MCP 与 Actions 服务都处于运行状态。
+                所有 MCP 服务都处于运行状态。
               {:else}
                 当前没有运行时异常，{totalServices - runningServices} 个服务处于停止或切换状态。
               {/if}
@@ -553,30 +505,6 @@
                   {/if}
                 </button>
               </div>
-              <div class="tx-dashboard-service-state {stateClass($actionsRuntimeStates[recentWorkspace.id])} flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2 min-w-0">
-                  <Activity size={13} class="shrink-0" />
-                  <span>Actions</span>
-                  <strong class="truncate">{stateLabel($actionsRuntimeStates[recentWorkspace.id])}</strong>
-                </div>
-                <button
-                  type="button"
-                  class="tx-dashboard-quick-toggle"
-                  class:running={$actionsRuntimeStates[recentWorkspace.id] === "running"}
-                  disabled={actionsBusyMap[recentWorkspace.id] || $actionsRuntimeStates[recentWorkspace.id] === "starting" || $actionsRuntimeStates[recentWorkspace.id] === "stopping"}
-                  onclick={() => void toggleWorkspaceActions(recentWorkspace!.id)}
-                >
-                  {#if actionsBusyMap[recentWorkspace.id]}
-                    <RotateCw size={10} class="animate-spin" />
-                  {:else if $actionsRuntimeStates[recentWorkspace.id] === "running"}
-                    <Square size={10} />
-                    <span>停止</span>
-                  {:else}
-                    <Play size={10} />
-                    <span>启动</span>
-                  {/if}
-                </button>
-              </div>
             </div>
           {/if}
         </section>
@@ -592,11 +520,6 @@
           <span>MCP 在线</span>
           <strong>{mcpRunning}</strong>
           <small>{workspaceCount - mcpRunning} 个未运行</small>
-        </div>
-        <div class="tx-dashboard-metric-card">
-          <span>Actions 在线</span>
-          <strong>{actionsRunning}</strong>
-          <small>{workspaceCount - actionsRunning} 个未运行</small>
         </div>
         <div class="tx-dashboard-metric-card">
           <span>待人工验收</span>
@@ -624,10 +547,8 @@
 
         <div class="tx-dashboard-workspace-grid">
           {#each $workspaces as workspace (workspace.id)}
-            {@const actions = actionsConfig(workspace)}
             {@const planning = planningByWorkspace[workspace.id]}
             {@const isMcpRunning = $mcpRuntimeStates[workspace.id] === "running"}
-            {@const isActionsRunning = $actionsRuntimeStates[workspace.id] === "running"}
             <div class="tx-dashboard-workspace-card">
               <!-- Top identity line with name, path, Finder open and jump buttons -->
               <div class="tx-dashboard-workspace-topline">
@@ -689,7 +610,7 @@
                     </div>
                     <div class="tx-dashboard-runtime-meta">
                       <span>:{workspace.runtime.local_port}</span>
-                      <span>{tunnelLabel(workspace, "mcp")}</span>
+                      <span>{tunnelLabel(workspace)}</span>
                     </div>
                   </div>
                   <div class="flex items-center justify-end pt-1">
@@ -713,39 +634,6 @@
                   </div>
                 </div>
 
-                <!-- Actions Block -->
-                <div class="tx-dashboard-runtime-block flex flex-col justify-between gap-2">
-                  <div>
-                    <div class="tx-dashboard-runtime-title">
-                      <span class="tx-dashboard-dot {stateClass($actionsRuntimeStates[workspace.id])}"></span>
-                      <strong>Actions</strong>
-                      <small>{stateLabel($actionsRuntimeStates[workspace.id])}</small>
-                    </div>
-                    <div class="tx-dashboard-runtime-meta">
-                      <span>:{actions.local_port}</span>
-                      <span>{tunnelLabel(workspace, "actions")}</span>
-                    </div>
-                  </div>
-                  <div class="flex items-center justify-end pt-1">
-                    <button
-                      type="button"
-                      class="tx-dashboard-quick-toggle"
-                      class:running={isActionsRunning}
-                      disabled={actionsBusyMap[workspace.id] || $actionsRuntimeStates[workspace.id] === "starting" || $actionsRuntimeStates[workspace.id] === "stopping"}
-                      onclick={() => void toggleWorkspaceActions(workspace.id)}
-                    >
-                      {#if actionsBusyMap[workspace.id]}
-                        <RotateCw size={10} class="animate-spin" />
-                      {:else if isActionsRunning}
-                        <Square size={10} />
-                        <span>停止</span>
-                      {:else}
-                        <Play size={10} />
-                        <span>启动</span>
-                      {/if}
-                    </button>
-                  </div>
-                </div>
               </div>
 
               <!-- Footer Planning Line -->
@@ -830,7 +718,7 @@
                 <Network size={16} class="text-[var(--primary)]" />
                 <h3>服务连接方式</h3>
               </div>
-              <p>统计 MCP 与 Actions 当前配置的公网暴露方式。</p>
+              <p>统计 MCP 当前配置的公网暴露方式。</p>
             </div>
           </div>
           <div class="tx-dashboard-bars">
@@ -891,7 +779,7 @@
                 <Activity size={16} class="text-[var(--primary)]" />
                 <h3>服务 Token 用量</h3>
               </div>
-              <p>由本地 MCP / Actions 服务统计 JSON 请求大小后估算，不保存请求正文。</p>
+              <p>由本地 MCP 服务统计 JSON 请求大小后估算，不保存请求正文。</p>
             </div>
           </div>
           <div class="tx-dashboard-planning-stats">

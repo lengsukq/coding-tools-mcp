@@ -42,9 +42,7 @@ pub fn ensure_frp_health_loop() {
 fn tunnel_type_for(profile: &WorkspaceProfile, kind: TunnelServiceKind) -> &str {
     match kind {
         TunnelServiceKind::Mcp if profile.tunnel.use_global_gateway => "none",
-        TunnelServiceKind::Actions if profile.actions.use_global_gateway => "none",
         TunnelServiceKind::Mcp => profile.tunnel.tunnel_type.as_str(),
-        TunnelServiceKind::Actions => profile.actions.tunnel_type.as_str(),
     }
 }
 
@@ -66,9 +64,7 @@ pub async fn stop_for_runtime(
     profile: &WorkspaceProfile,
     kind: TunnelServiceKind,
 ) -> AppResult<()> {
-    if matches!(kind, TunnelServiceKind::Mcp) && profile.tunnel.use_global_gateway
-        || matches!(kind, TunnelServiceKind::Actions) && profile.actions.use_global_gateway
-    {
+    if matches!(kind, TunnelServiceKind::Mcp) && profile.tunnel.use_global_gateway {
         return Ok(());
     }
     let settings = AppSettings::load_or_default();
@@ -98,7 +94,6 @@ pub async fn cleanup_orphan_for_runtime(
 ) -> AppResult<()> {
     let port = match kind {
         TunnelServiceKind::Mcp => profile.runtime.local_port,
-        TunnelServiceKind::Actions => profile.actions.local_port,
     };
     if runtime_listening || platform().find_pid_listening_on_port(port)?.is_some() {
         return Ok(());

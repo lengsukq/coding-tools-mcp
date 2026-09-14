@@ -191,7 +191,7 @@
   async function handleReleaseUiMemory() {
     if (releasingUi) return;
     const ok = await ask(
-      "将重建界面进程（WebView）以释放内存。MCP、Actions 与 FRP 隧道会继续在后台运行，不会被停止。",
+      "将重建界面进程（WebView）以释放内存。MCP 与 FRP 隧道会继续在后台运行，不会被停止。",
       { title: "释放界面内存", kind: "info", okLabel: "立即释放", cancelLabel: "取消" },
     );
     if (!ok) return;
@@ -293,7 +293,7 @@
           <Toggle
             bind:checked={runtime.restoreRuntimeStateOnLaunch}
             label="启动时恢复上次运行状态"
-            description="默认关闭。开启后会记住哪些 Workspace 的 MCP / Actions 正在运行，并在下次启动 Coding Tools 时自动恢复。"
+            description="默认关闭。开启后会记住哪些 Workspace 的 MCP 正在运行，并在下次启动 Coding Tools 时自动恢复。"
             onchange={handleRuntimeChange}
           />
           {#if runtime.restoreRuntimeStateOnLaunch}
@@ -307,7 +307,7 @@
           <Toggle
             bind:checked={runtime.allowLanAccess}
             label="允许局域网访问"
-            description="默认关闭。开启后 MCP、Actions 和 Global Gateway 会从仅监听 127.0.0.1 改为监听 0.0.0.0，同一局域网内的服务器即可访问本机端口用于内网穿透。"
+            description="默认关闭。开启后 MCP 和 Global Gateway 会从仅监听 127.0.0.1 改为监听 0.0.0.0，同一局域网内的服务器即可访问本机端口用于内网穿透。"
             onchange={handleRuntimeChange}
           />
           {#if runtime.allowLanAccess}

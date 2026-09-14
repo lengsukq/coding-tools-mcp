@@ -10,8 +10,6 @@ pub struct WorkspaceProfile {
     pub tunnel: TunnelConfig,
     pub auth: AuthConfig,
     pub runtime: RuntimeConfig,
-    #[serde(default)]
-    pub actions: ActionsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,49 +88,6 @@ pub struct RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionsConfig {
-    #[serde(default)]
-    pub public_url: String,
-    #[serde(default = "default_tunnel_type")]
-    pub tunnel_type: String,
-    #[serde(default)]
-    pub frp_server: String,
-    #[serde(default)]
-    pub frp_subdomain: String,
-    #[serde(default)]
-    pub frp_profile_id: String,
-    #[serde(default = "default_frp_server_port")]
-    pub frp_server_port: u16,
-    #[serde(default = "default_cloudflare_mode")]
-    pub cloudflare_mode: String,
-    #[serde(default)]
-    pub cloudflare_token: String,
-    #[serde(default = "default_use_proxy")]
-    pub use_proxy: bool,
-    /// Route this service through the shared global gateway instead of a dedicated tunnel.
-    #[serde(default)]
-    pub use_global_gateway: bool,
-    #[serde(default = "default_actions_port")]
-    pub local_port: u16,
-    #[serde(default = "default_permission_mode")]
-    pub permission_mode: String,
-    #[serde(default)]
-    pub runtime_command: String,
-    #[serde(default = "default_actions_auth_type")]
-    pub auth_type: String,
-    #[serde(default = "default_actions_oauth_client_id")]
-    pub oauth_client_id: String,
-    #[serde(default)]
-    pub oauth_scopes: String,
-    #[serde(default = "default_allowed_commands")]
-    pub allowed_commands: String,
-    #[serde(default = "default_max_patch_bytes")]
-    pub max_patch_bytes: u32,
-    #[serde(default)]
-    pub use_shared_secrets: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatusDto {
     pub state: String,
@@ -163,27 +118,12 @@ fn default_frp_server_port() -> u16 {
     7000
 }
 
-fn default_actions_auth_type() -> String {
-    "api_key".to_string()
-}
-
-fn default_actions_oauth_client_id() -> String {
-    format!(
-        "chatgpt-actions-{}",
-        &uuid::Uuid::new_v4().to_string()[..12]
-    )
-}
-
 fn default_oauth_client_id() -> String {
     format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12])
 }
 
 fn default_mcp_port() -> u16 {
     28766
-}
-
-fn default_actions_port() -> u16 {
-    8787
 }
 
 fn default_tool_profile() -> String {
@@ -208,10 +148,6 @@ fn default_workspace_local_entries() -> bool {
 
 fn default_workspace_script_extensions() -> String {
     ".exe,.bat,.cmd,.ps1".to_string()
-}
-
-fn default_max_patch_bytes() -> u32 {
-    200_000
 }
 
 impl Default for TunnelConfig {
@@ -262,32 +198,6 @@ impl Default for RuntimeConfig {
     }
 }
 
-impl Default for ActionsConfig {
-    fn default() -> Self {
-        Self {
-            public_url: String::new(),
-            tunnel_type: default_tunnel_type(),
-            frp_server: String::new(),
-            frp_subdomain: String::new(),
-            frp_profile_id: String::new(),
-            frp_server_port: default_frp_server_port(),
-            cloudflare_mode: default_cloudflare_mode(),
-            cloudflare_token: String::new(),
-            use_proxy: default_use_proxy(),
-            use_global_gateway: false,
-            local_port: default_actions_port(),
-            permission_mode: default_permission_mode(),
-            runtime_command: String::new(),
-            auth_type: default_actions_auth_type(),
-            oauth_client_id: default_actions_oauth_client_id(),
-            oauth_scopes: String::new(),
-            allowed_commands: default_allowed_commands(),
-            max_patch_bytes: default_max_patch_bytes(),
-            use_shared_secrets: false,
-        }
-    }
-}
-
 #[allow(dead_code)]
 impl WorkspaceProfile {
     pub fn new(path: String, name: Option<String>) -> Self {
@@ -307,7 +217,6 @@ impl WorkspaceProfile {
             tunnel: TunnelConfig::default(),
             auth: AuthConfig::default(),
             runtime: RuntimeConfig::default(),
-            actions: ActionsConfig::default(),
         }
     }
 
@@ -321,7 +230,7 @@ impl WorkspaceProfile {
 
     pub fn effective_public_url_with(&self, settings: &AppSettings) -> String {
         if self.tunnel.use_global_gateway && settings.global_gateway.enabled {
-            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id, false);
+            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id);
         }
         computed_public_url(
             &self.tunnel.tunnel_type,
@@ -341,81 +250,14 @@ impl WorkspaceProfile {
         format!("{}/mcp", base.trim_end_matches('/'))
     }
 
-    pub fn actions_local_base_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.actions.local_port)
-    }
-
-    pub fn actions_effective_public_url(&self) -> String {
-        self.actions_effective_public_url_with(&AppSettings::load_or_default())
-    }
-
-    pub fn actions_effective_public_url_with(&self, settings: &AppSettings) -> String {
-        if self.actions.use_global_gateway && settings.global_gateway.enabled {
-            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id, true);
-        }
-        computed_public_url(
-            &self.actions.tunnel_type,
-            &self.actions.frp_server,
-            &self.actions.frp_subdomain,
-            &self.actions.public_url,
-            &self.actions.frp_profile_id,
-            settings,
-        )
-    }
-
-    pub fn actions_openapi_url(&self) -> String {
-        let base = self.actions_public_base_url();
-        if base.is_empty() {
-            return String::new();
-        }
-        format!("{}/openapi.json", base.trim_end_matches('/'))
-    }
-
-    pub fn actions_privacy_url(&self) -> String {
-        let base = self.actions_public_base_url();
-        if base.is_empty() {
-            return String::new();
-        }
-        format!("{}/privacy", base.trim_end_matches('/'))
-    }
-
-    pub fn actions_oauth_authorization_url(&self) -> String {
-        let base = self.actions_public_base_url();
-        if base.is_empty() {
-            return String::new();
-        }
-        format!("{}/oauth/authorize", base.trim_end_matches('/'))
-    }
-
-    pub fn actions_oauth_token_url(&self) -> String {
-        let base = self.actions_public_base_url();
-        if base.is_empty() {
-            return String::new();
-        }
-        format!("{}/oauth/token", base.trim_end_matches('/'))
-    }
-
-    /// Public URL for GPT schema import; falls back to localhost when no tunnel is configured.
-    pub fn actions_public_base_url(&self) -> String {
-        let public = self.actions_effective_public_url();
-        if public.is_empty() {
-            self.actions_local_base_url()
-        } else {
-            public
-        }
-    }
 }
 
-fn gateway_workspace_base(public_url: &str, workspace_id: &str, actions: bool) -> String {
+fn gateway_workspace_base(public_url: &str, workspace_id: &str) -> String {
     let base = public_url.trim_end_matches('/');
     if base.is_empty() {
         return String::new();
     }
-    if actions {
-        format!("{base}/w/{workspace_id}/actions")
-    } else {
-        format!("{base}/w/{workspace_id}")
-    }
+    format!("{base}/w/{workspace_id}")
 }
 
 fn computed_public_url(

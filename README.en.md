@@ -23,17 +23,16 @@ Coding Tools MCP is a Rust + Tauri 2 desktop application. Select a project direc
 
 ![Coding Tools MCP workspace overview](docs/images/workspace-overview.png)
 
-*Current workspace overview: `coding-tools-mcp` is the active workspace, with MCP / Actions status, the project directory, and the session-recovery entry point visible.*
+*Current workspace overview: `coding-tools-mcp` is the active workspace, with MCP status, the project directory, and the session-recovery entry point visible.*
 
 ## Feature overview: characteristics and advantages
 
-Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** AI development runtime: the desktop app manages projects and services, one tool runtime performs controlled operations, and MCP or GPT Actions provides the client-facing entry point.
+Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** AI development runtime: the desktop app manages projects and services, one tool runtime performs controlled operations, and MCP provides the client-facing entry point.
 
 | Feature | Main characteristics | Practical advantages |
 | --- | --- | --- |
 | Workspace management | Each project has its own directory, name, ports, auth, and tunnel configuration | Clearer multi-project switching and less risk of sending a command or credential to the wrong project |
-| MCP tool runtime | Files, patches, commands, Git, images, Skills, and state management share one core | MCP and Actions behave consistently; policy, errors, and permissions do not drift by entry point |
-| GPT Actions | Exposes an OpenAPI Schema, privacy-policy URL, and authentication settings | Custom GPTs can use the same development capabilities when MCP Connector is unavailable |
+| MCP tool runtime | Files, patches, commands, Git, images, Skills, and state management share one core | A single protocol surface reduces duplicated state machines and compatibility branches |
 | Connectivity and public entry points | Local endpoints, Global Gateway, FRP, and Cloudflare Tunnel | The same workspace can serve local development and remote ChatGPT access |
 | Authentication | OAuth Authorization Code, PKCE S256, DCR, and Refresh Tokens, with Bearer and static-client compatibility | Modern OAuth flows are available without abandoning older clients or simple deployments |
 | Planning / Goal / Task | Direct, Plan, and Goal modes with one Execution Ledger | Complex work can be decomposed, resumed, verified, and handed off with less drift |
@@ -43,7 +42,7 @@ Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** 
 
 ### Global Dashboard: see the whole system without opening a workspace
 
-The global Dashboard summarizes multiple workspaces in one control surface. It does not require opening a project first; it shows service availability, the recent workspace, MCP / Actions status, the workspace runtime matrix, and the current Planning focus.
+The global Dashboard summarizes multiple workspaces in one control surface. It does not require opening a project first; it shows service availability, the recent workspace, MCP status, the workspace runtime matrix, and the current Planning focus.
 
 ![Global Dashboard runtime overview](docs/images/dashboard-overview.png)
 
@@ -62,7 +61,7 @@ A workspace is the basic unit of Coding Tools MCP. It binds a local project dire
 **Characteristics**
 
 - The project directory is the source of truth; the workspace name is maintained separately from service configuration.
-- MCP, Actions, planning state, and conversation history are organized around the active workspace.
+- MCP, planning state, and conversation history are organized around the active workspace.
 - The sidebar switches projects quickly, while the overview page exposes service status at a glance.
 
 **Advantages**
@@ -73,7 +72,7 @@ A workspace is the basic unit of Coding Tools MCP. It binds a local project dire
 
 ### 2. MCP tool runtime: one core for real development actions
 
-The Rust tool runtime provides file reading, search, patches, command execution, Git, images, Skills, and state management. MCP Streamable HTTP and GPT Actions do not maintain separate tool implementations; both enter the same dispatch path.
+The Rust tool runtime provides file reading, search, patches, command execution, Git, images, Skills, and state management. Remote tool calls enter the same dispatch path through MCP Streamable HTTP.
 
 **Characteristics**
 
@@ -87,23 +86,7 @@ The Rust tool runtime provides file reading, search, patches, command execution,
 - The AI can complete the full loop from understanding code to editing files, running tests, and checking Git.
 - Permission decisions and failures are easier to explain, audit, and recover from.
 
-### 3. GPT Actions: keep a second path for custom GPTs
-
-In addition to MCP Connector, the desktop app can run a GPT Actions OpenAPI gateway. The Actions page exposes the OpenAPI Schema, privacy-policy URL, and authentication details for configuration through “Import from URL” in the GPT editor.
-
-**Characteristics**
-
-- MCP and Actions can run together for one workspace, with separate ports and public domains when needed.
-- Both entry points share the same tool runtime, workspace policy, and planning/history state.
-- None, API Key (Bearer), and OAuth can be selected to match the client’s capabilities.
-
-**Advantages**
-
-- Custom GPTs remain viable when a client does not support MCP Connector.
-- Switching entry points does not change the project permissions or execution boundaries.
-- OpenAPI, auth fields, and privacy-policy details are presented in one place and are easier to reproduce.
-
-### 4. Connectivity and public entry points: move from local debugging to remote development
+### 3. Connectivity and public entry points: move from local debugging to remote development
 
 Every service keeps a local endpoint for development and health checks. When a remote AI client needs access, use a dedicated tunnel or route multiple workspaces through Global Gateway under `/w/<workspace-id>`.
 
@@ -123,9 +106,9 @@ Every service keeps a local endpoint for development and health checks. When a r
 
 *Global Gateway provides a shared entry point for multiple workspaces through `/w/<workspace-id>`, while FRP and Cloudflare remain available for independent tunnels.*
 
-### 5. OAuth and authentication: modern security with client compatibility
+### 4. OAuth and authentication: modern security with client compatibility
 
-MCP and Actions share one OAuth runtime with Authorization Code, PKCE S256, Dynamic Client Registration, and Refresh Tokens. Bearer auth and static Client ID / Secret remain available for older clients and simpler environments.
+The MCP OAuth runtime supports Authorization Code, PKCE S256, Dynamic Client Registration, and Refresh Tokens. Bearer auth and static Client ID / Secret remain available for older clients and simpler environments.
 
 **Characteristics**
 
@@ -139,7 +122,7 @@ MCP and Actions share one OAuth runtime with Authorization Code, PKCE S256, Dyna
 - Older clients have a clear compatibility path instead of requiring a one-time migration.
 - Auth settings and health checks live in the desktop app, making authorization failures easier to locate.
 
-### 6. Planning, Goals, and Tasks: keep complex work controlled and resumable
+### 5. Planning, Goals, and Tasks: keep complex work controlled and resumable
 
 The planning page separates goals, plans, and execution tasks. Direct suits small changes, Plan suits work that needs steps, and Goal suits long-running work with explicit acceptance criteria. The AI can create and maintain plans in conversation while the desktop app displays constraints, progress, and final acceptance records.
 
@@ -290,12 +273,7 @@ check_exec_environment
 
 This gives the agent explicit project and capability state instead of guessing from the current chat window.
 
-## Two ways to connect ChatGPT
-
-| Mode | Best for | Use this endpoint |
-| --- | --- | --- |
-| MCP Connector | Direct access to files, commands, and Git | the workspace's public `/mcp` URL |
-| GPT Actions | Importing OpenAPI tools into a custom GPT | the Actions panel's `/openapi.json` URL |
+## Connect ChatGPT
 
 ### MCP Connector
 
@@ -354,22 +332,13 @@ If ChatGPT still shows an old tool list, disconnect and reconnect the plugin or 
 | New tools are missing | Disconnect and reconnect the plugin, then start a new conversation |
 | A tool call fails | Open **Logs** and **Health checks** in the desktop app and confirm that the request reached the MCP service |
 
-### GPT Actions
-
-1. Start the workspace Actions service.
-2. Copy the OpenAPI URL from the Actions panel.
-3. Import the URL in the GPT editor's Actions page.
-4. Select None, API Key, or OAuth to match the desktop configuration.
-
-MCP and Actions can run together for the same workspace, with separate ports and subdomains when needed.
-
 ## Why use it
 
 - **Built for real development**: files, commands, Git, tests, and retained processes live in one Workspace.
 - **Cross-conversation continuity**: a new conversation can recover the complete history summary and the latest detailed handoff.
 - **Auditable progress**: structured checkpoints preserve decisions, changed files, test results, remaining issues, and next steps inside the project.
-- **Multiple workspaces**: one desktop client stores multiple projects and manages their MCP, Actions, and public endpoints.
-- **Direct ChatGPT connectivity**: Streamable HTTP, OAuth, Bearer tokens, OpenAPI, FRP, and Cloudflare are built in.
+- **Multiple workspaces**: one desktop client stores multiple projects and manages their MCP and public endpoints.
+- **Direct ChatGPT connectivity**: Streamable HTTP, OAuth, Bearer tokens, FRP, and Cloudflare are built in.
 - **A focused default tool surface**: stable core tools are available by default; advanced Harness capabilities are opt-in.
 
 ## Let the project remember every conversation
@@ -466,7 +435,6 @@ On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone t
 | --- | --- |
 | `src-tauri/src/tools/` | Shared file, Patch, Exec, and Git tool kernel |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP server |
-| `src-tauri/src/actions/` | ChatGPT Actions OpenAPI gateway |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare tunnel and process management |
 | `src/` | SvelteKit desktop UI |
 | `old/` | Python reference implementation and compatibility baseline |

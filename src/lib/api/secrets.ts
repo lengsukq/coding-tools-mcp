@@ -6,12 +6,6 @@ export type WorkspaceSecretKey =
   | "oauth_token_secret"
   | "bearer_token"
   | "cloudflare_token"
-  | "actions_cloudflare_token"
-  | "actions_api_key"
-  | "actions_oauth_client_secret"
-  | "actions_oauth_password"
-  | "actions_oauth_token_secret"
-  | "actions_frp_token"
   | "frp_token";
 
 export async function getWorkspaceSecret(
@@ -55,11 +49,7 @@ export type SharedSecretKey =
   | "bearer_token"
   | "oauth_client_secret"
   | "oauth_password"
-  | "oauth_token_secret"
-  | "actions_api_key"
-  | "actions_oauth_client_secret"
-  | "actions_oauth_password"
-  | "actions_oauth_token_secret";
+  | "oauth_token_secret";
 
 export async function getSharedSecret(key: SharedSecretKey): Promise<string | null> {
   return invoke<string | null>("get_shared_secret", { key });

@@ -41,16 +41,6 @@ fn log_file_names(profile: &WorkspaceProfile, service: &str) -> AppResult<Vec<&'
             }
             Ok(names)
         }
-        "actions" => {
-            let mut names = vec!["actions-stderr.log", "actions-stdout.log"];
-            if profile.actions.tunnel_type == "cloudflare" {
-                names.insert(0, "actions-cloudflared.log");
-            }
-            if profile.actions.tunnel_type == "frp" {
-                names.insert(0, "frpc-actions.log");
-            }
-            Ok(names)
-        }
         other => Err(AppError::Message(format!("unknown log service: {other}"))),
     }
 }

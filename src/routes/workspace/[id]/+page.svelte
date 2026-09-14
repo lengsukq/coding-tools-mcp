@@ -11,7 +11,6 @@
     RotateCw,
     Settings,
     Radio,
-    Activity,
     FileText,
     Sliders,
     Shield,
@@ -25,10 +24,6 @@
     Trash2,
     HardDrive,
   } from "@lucide/svelte";
-  import ActionsAuthForm from "$lib/components/ActionsAuthForm.svelte";
-  import ActionsPolicyForm, {
-    type ActionsPolicyDraft,
-  } from "$lib/components/ActionsPolicyForm.svelte";
   import AuthConfigForm from "$lib/components/AuthConfigForm.svelte";
   import HealthPanel from "$lib/components/HealthPanel.svelte";
   import HistoryContextPanel from "$lib/components/HistoryContextPanel.svelte";
@@ -52,63 +47,40 @@
   import WorkspaceMetaForm from "$lib/components/WorkspaceMetaForm.svelte";
   import {
     deleteWorkspace,
-    getActionsRuntimeStatus,
     getRuntimeStatus,
     listWorkspaces,
-    startActionsRuntime,
     startRuntime,
     restartRuntime,
-    restartActionsRuntime,
-    stopActionsRuntime,
     stopRuntime,
     updateWorkspace,
     openWorkspaceDirectory,
   } from "$lib/api/workspaces";
-  import { listFrpProfiles, setLastWorkspace, type FrpProfileDto } from "$lib/api/settings";
+  import { setLastWorkspace } from "$lib/api/settings";
   import { restartTunnel, stopTunnel } from "$lib/api/tunnel";
   import { runServiceToggle, notifyStartFailure } from "$lib/runtime/service";
   import { showToast } from "$lib/stores/toast";
   import { promptServiceRestart } from "$lib/runtime/restart-hint";
-  import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
+  import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import {
-    actionsConfig,
-    actionsLocalEndpoint,
-    actionsOAuthAuthorizeUrl,
-    actionsOAuthTokenUrl,
-    actionsOpenApiUrl,
-    actionsPrivacyUrl,
-    frpPublicUrl,
     mcpLocalEndpoint,
     type AuthConfig,
-    type ActionsAuthDraft,
     type RuntimeState,
     type RuntimeStatus,
     type WorkspaceProfile,
   } from "$lib/types";
 
   type WorkspaceTab = "services" | "diagnostics" | "planning" | "settings";
-  type ServiceKind = "mcp" | "actions" | "both";
   type McpConfigSection = "connection" | "auth" | "policy" | "history";
-  type ActionsConfigSection = "connection" | "auth" | "policy";
 
   let profile = $state<WorkspaceProfile | null>(null);
   let mcpStatus = $state<RuntimeState>("stopped");
-  let actionsStatus = $state<RuntimeState>("stopped");
   let mcpStatusMessage = $state("");
-  let actionsStatusMessage = $state("");
   let mcpBusy = $state(false);
-  let actionsBusy = $state(false);
   let mcpLocal = $state("");
   let mcpPublic = $state("");
-  let actionsLocal = $state("");
-  let actionsPublic = $state("");
-  let frpProfiles = $state<FrpProfileDto[]>([]);
 
   let activeWorkspaceTab = $state<WorkspaceTab>("services");
-  let serviceViewMode = $state<ServiceKind>("mcp");
   let mcpConfigSection = $state<McpConfigSection>("connection");
-  let actionsConfigSection = $state<ActionsConfigSection>("connection");
-  let diagnosticLogService = $state<"mcp" | "actions">("mcp");
   let pathCopied = $state(false);
   let endpointCopied = $state<string | null>(null);
   let loadGeneration = 0;
@@ -120,12 +92,6 @@
     { value: "settings", label: "工作区设置" },
   ];
 
-  const serviceViewTabs = [
-    { value: "mcp", label: "MCP 运行时" },
-    { value: "actions", label: "Actions 网关" },
-    { value: "both", label: "双服务全景" },
-  ];
-
   const mcpConfigTabs = [
     { value: "connection", label: "连接与隧道" },
     { value: "auth", label: "访问认证" },
@@ -133,19 +99,7 @@
     { value: "history", label: "历史上下文" },
   ];
 
-  const actionsConfigTabs = [
-    { value: "connection", label: "连接与隧道" },
-    { value: "auth", label: "访问认证" },
-    { value: "policy", label: "执行权限" },
-  ];
-
-  const diagnosticLogTabs = [
-    { value: "mcp", label: "MCP 日志" },
-    { value: "actions", label: "Actions 日志" },
-  ];
-
   const workspaceId = $derived($page.params.id);
-  const actions = $derived(profile ? actionsConfig(profile) : null);
 
   const mcpTunnelForm = $derived<TunnelFormConfig>({
     type: profile?.tunnel.type ?? "none",
@@ -159,24 +113,7 @@
     use_global_gateway: profile?.tunnel.use_global_gateway ?? false,
   });
 
-  const actionsTunnelForm = $derived<TunnelFormConfig>({
-    type: actions?.tunnel_type ?? "none",
-    public_url: actions?.public_url ?? "",
-    frp_server: actions?.frp_server ?? "",
-    frp_subdomain: actions?.frp_subdomain ?? "",
-    frp_profile_id: actions?.frp_profile_id ?? "",
-    frp_server_port: actions?.frp_server_port ?? 7000,
-    cloudflare_mode: actions?.cloudflare_mode ?? "quick",
-    use_proxy: actions?.use_proxy ?? true,
-    use_global_gateway: actions?.use_global_gateway ?? false,
-  });
-
-  const actionsOpenApi = $derived(profile ? actionsOpenApiUrl(profile, frpProfiles) : "");
-  const actionsPrivacy = $derived(profile ? actionsPrivacyUrl(profile, frpProfiles) : "");
-  const actionsOAuthAuth = $derived(profile ? actionsOAuthAuthorizeUrl(profile, frpProfiles) : "");
-  const actionsOAuthToken = $derived(profile ? actionsOAuthTokenUrl(profile, frpProfiles) : "");
   const defaultMcpLocal = $derived(profile ? mcpLocalEndpoint(profile.runtime.local_port) : "");
-  const defaultActionsLocal = $derived(actions ? actionsLocalEndpoint(actions.local_port) : "");
 
   function stateLabel(state: RuntimeState): string {
     switch (state) {
@@ -205,26 +142,12 @@
     mcpRuntimeStates.update((current) => ({ ...current, [id]: runtime.state }));
   }
 
-  function applyActionsRuntime(
-    runtime: RuntimeStatus,
-    id = workspaceId,
-  ) {
-    if (!id || id !== workspaceId) return;
-    actionsStatus = runtime.state;
-    actionsStatusMessage = runtime.localMessage ?? "";
-    actionsLocal = runtime.localEndpoint;
-    actionsPublic = runtime.publicEndpoint;
-    actionsRuntimeStates.update((current) => ({ ...current, [id]: runtime.state }));
-  }
-
   async function load(id = workspaceId) {
     if (!id) return;
     const generation = ++loadGeneration;
     const items = await listWorkspaces();
     if (generation !== loadGeneration || id !== workspaceId) return;
     workspaces.set(items);
-    frpProfiles = await listFrpProfiles();
-    if (generation !== loadGeneration || id !== workspaceId) return;
     const nextProfile = items.find((item) => item.id === id) ?? null;
     if (generation !== loadGeneration || id !== workspaceId) return;
     profile = nextProfile;
@@ -237,13 +160,9 @@
       return;
     }
 
-    const [mcpRuntime, actionsRuntime] = await Promise.all([
-      getRuntimeStatus(id),
-      getActionsRuntimeStatus(id),
-    ]);
+    const mcpRuntime = await getRuntimeStatus(id);
     if (generation !== loadGeneration || id !== workspaceId) return;
     applyMcpRuntime(mcpRuntime, id);
-    applyActionsRuntime(actionsRuntime, id);
   }
 
   async function refreshProfile(id = workspaceId): Promise<WorkspaceProfile | null> {
@@ -260,19 +179,10 @@
     return type === "cloudflare" || type === "frp";
   }
 
-  async function afterServiceStart(
-    service: "mcp" | "actions",
-    runtime: { state: RuntimeState; publicEndpoint: string },
-    id: string,
-  ) {
+  async function afterServiceStart(runtime: { state: RuntimeState; publicEndpoint: string }, id: string) {
     const nextProfile = await refreshProfile(id);
     if (id !== workspaceId) return;
-    const tunnelType =
-      service === "mcp"
-        ? nextProfile?.tunnel.type
-        : nextProfile
-          ? actionsConfig(nextProfile).tunnel_type
-          : undefined;
+    const tunnelType = nextProfile?.tunnel.type;
     const needsTunnel = tunnelConfigured(tunnelType);
     if (runtime.state === "running" && needsTunnel && !runtime.publicEndpoint) {
       showToast(
@@ -298,7 +208,7 @@
         applyMcpRuntime(runtime, id);
         if (!wasRunning) {
           if (runtime.state === "running") {
-            await afterServiceStart("mcp", runtime, id);
+            await afterServiceStart(runtime, id);
           } else {
             notifyStartFailure("MCP", runtime);
           }
@@ -311,59 +221,17 @@
     }
   }
 
-  async function toggleActions() {
-    const id = workspaceId;
-    if (!profile || !id || actionsBusy) return;
-    const wasRunning = actionsStatus === "running";
-    actionsBusy = true;
-    try {
-      const runtime = await runServiceToggle(
-        wasRunning,
-        () => startActionsRuntime(id),
-        () => stopActionsRuntime(id),
-        "Actions",
-      );
-      if (runtime && id === workspaceId) {
-        applyActionsRuntime(runtime, id);
-        if (!wasRunning) {
-          if (runtime.state === "running") {
-            await afterServiceStart("actions", runtime, id);
-          } else {
-            notifyStartFailure("Actions", runtime);
-          }
-        }
-      }
-    } finally {
-      if (id === workspaceId) {
-        actionsBusy = false;
-      }
-    }
-  }
-
-  async function handleRestartService(service: "mcp" | "actions") {
+  async function handleRestartService() {
     if (!workspaceId) return;
-    if (service === "mcp") {
-      mcpBusy = true;
-      try {
-        const res = await restartRuntime(workspaceId);
-        applyMcpRuntime(res);
-        showToast("MCP 服务已重启", { kind: "success" });
-      } catch (err) {
-        showToast(String(err), { title: "重启失败", kind: "error" });
-      } finally {
-        mcpBusy = false;
-      }
-    } else {
-      actionsBusy = true;
-      try {
-        const res = await restartActionsRuntime(workspaceId);
-        applyActionsRuntime(res);
-        showToast("Actions 服务已重启", { kind: "success" });
-      } catch (err) {
-        showToast(String(err), { title: "重启失败", kind: "error" });
-      } finally {
-        actionsBusy = false;
-      }
+    mcpBusy = true;
+    try {
+      const res = await restartRuntime(workspaceId);
+      applyMcpRuntime(res);
+      showToast("MCP 服务已重启", { kind: "success" });
+    } catch (err) {
+      showToast(String(err), { title: "重启失败", kind: "error" });
+    } finally {
+      mcpBusy = false;
     }
   }
 
@@ -403,18 +271,6 @@
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
-  async function saveActionsPort(port: number) {
-    if (!profile) return;
-    const current = actionsConfig(profile);
-    const next: WorkspaceProfile = {
-      ...profile,
-      actions: { ...current, local_port: port },
-    };
-    await updateWorkspace(next);
-    profile = next;
-    await promptServiceRestart(actionsStatus === "running", "Actions 服务");
-  }
-
   async function saveMcpTunnel(config: TunnelFormConfig, options?: SaveTunnelOptions) {
     if (!profile || !workspaceId) return;
     const next: WorkspaceProfile = {
@@ -446,42 +302,6 @@
     }
     if (!options?.skipServicePrompt) {
       await promptServiceRestart(mcpStatus === "running", "MCP 服务");
-    }
-  }
-
-  async function saveActionsTunnel(config: TunnelFormConfig, options?: SaveTunnelOptions) {
-    if (!profile || !workspaceId) return;
-    const current = actionsConfig(profile);
-    const next: WorkspaceProfile = {
-      ...profile,
-      actions: {
-        ...current,
-        tunnel_type: config.type,
-        public_url: config.public_url,
-        frp_server: config.frp_server,
-        frp_subdomain: config.frp_subdomain,
-        frp_profile_id: config.frp_profile_id,
-        frp_server_port: config.frp_server_port,
-        cloudflare_mode: config.cloudflare_mode,
-        use_proxy: config.use_proxy,
-        use_global_gateway: config.use_global_gateway,
-      },
-    };
-    await updateWorkspace(next);
-    profile = next;
-    if (actionsStatus === "running" && !options?.skipTunnelRestart) {
-      try {
-        if (config.type === "none") {
-          await stopTunnel(workspaceId, "actions");
-        } else {
-          await restartTunnel(workspaceId, "actions");
-        }
-      } catch (error) {
-        showToast(String(error), { title: "隧道重启失败", kind: "error", duration: 8000 });
-      }
-    }
-    if (!options?.skipServicePrompt) {
-      await promptServiceRestart(actionsStatus === "running", "Actions 服务");
     }
   }
 
@@ -526,24 +346,6 @@
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
-  async function saveActionsPolicy(draft: ActionsPolicyDraft) {
-    if (!profile) return;
-    const current = actionsConfig(profile);
-    const next: WorkspaceProfile = {
-      ...profile,
-      actions: {
-        ...current,
-        allowed_commands: draft.allowedCommands,
-        max_patch_bytes: draft.maxPatchBytes,
-        permission_mode: draft.permissionMode,
-      },
-    };
-    await updateWorkspace(next);
-    profile = next;
-    await load();
-    await promptServiceRestart(actionsStatus === "running", "Actions 服务");
-  }
-
   async function saveMcpAuth(auth: AuthConfig, options?: { skipRuntimeRestart?: boolean }) {
     if (!profile || !workspaceId) return;
     const next: WorkspaceProfile = { ...profile, auth };
@@ -552,30 +354,6 @@
     if (!options?.skipRuntimeRestart && mcpStatus === "running") {
       try {
         await restartRuntime(workspaceId);
-      } catch (error) {
-        showToast(String(error), { title: "服务重启失败", kind: "error", duration: 8000 });
-      }
-    }
-  }
-
-  async function saveActionsAuth(draft: ActionsAuthDraft) {
-    if (!profile || !workspaceId) return;
-    const current = actionsConfig(profile);
-    const next: WorkspaceProfile = {
-      ...profile,
-      actions: {
-        ...current,
-        auth_type: draft.authType,
-        oauth_client_id: draft.oauthClientId || current.oauth_client_id,
-        oauth_scopes: draft.oauthScopes,
-        use_shared_secrets: draft.useSharedSecrets,
-      },
-    };
-    await updateWorkspace(next);
-    profile = next;
-    if (actionsStatus === "running") {
-      try {
-        await restartActionsRuntime(workspaceId);
       } catch (error) {
         showToast(String(error), { title: "服务重启失败", kind: "error", duration: 8000 });
       }
@@ -599,7 +377,6 @@
     profile = next;
     showToast("工作区目录已更新", { kind: "success" });
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
-    await promptServiceRestart(actionsStatus === "running", "Actions 服务");
   }
 
   let deleteConfirmOpen = $state(false);
@@ -616,11 +393,6 @@
       await deleteWorkspace(workspaceId);
       workspaces.update((items) => items.filter((item) => item.id !== workspaceId));
       mcpRuntimeStates.update((states) => {
-        const next = { ...states };
-        delete next[workspaceId];
-        return next;
-      });
-      actionsRuntimeStates.update((states) => {
         const next = { ...states };
         delete next[workspaceId];
         return next;
@@ -726,26 +498,6 @@
             </Button>
           </div>
 
-          <!-- Actions Capsule -->
-          {#if actions}
-            <div class="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1.5 shadow-sm">
-              <StatusOrb state={actionsStatus} />
-              <div class="text-xs">
-                <span class="font-semibold text-[var(--text-main)]">Actions</span>
-                <span class="text-[11px] text-[var(--text-muted)] font-mono ml-1">:{actions.local_port}</span>
-              </div>
-              <Button
-                variant={actionsStatus === "running" ? "secondary" : "primary"}
-                size="sm"
-                class="ml-1 px-2 py-0.5 text-[11px]"
-                disabled={actionsStatus === "starting" || actionsStatus === "stopping"}
-                busy={actionsBusy}
-                onclick={toggleActions}
-              >
-                {actionsStatus === "running" ? "停止" : "启动"}
-              </Button>
-            </div>
-          {/if}
         </div>
       </div>
     </header>
@@ -767,28 +519,17 @@
       <!-- ══════════════ VIEW 1: 服务与端点 (Cockpit) ══════════════ -->
       {#if activeWorkspaceTab === "services"}
         <div class="grid gap-5">
-          <!-- View mode filter -->
           <div class="flex items-center justify-between gap-4">
             <div>
-              <h3 class="text-sm font-semibold text-[var(--text-main)]">双引擎服务控制台</h3>
+              <h3 class="text-sm font-semibold text-[var(--text-main)]">MCP 服务控制台</h3>
               <p class="text-xs text-[var(--color-text-muted)] mt-0.5">本地端点、公网穿透隧道与一键客户端配置直达</p>
-            </div>
-            <div class="w-72">
-              <SegmentedControl
-                items={serviceViewTabs}
-                value={serviceViewMode}
-                size="sm"
-                onchange={(v) => { serviceViewMode = v as ServiceKind; }}
-              />
             </div>
           </div>
 
-          <!-- Services Grid / Cards -->
-          <div class="grid gap-6 {serviceViewMode === 'both' ? 'lg:grid-cols-2' : ''}">
+          <div class="grid gap-6">
             <!-- MCP Engine Card -->
-            {#if serviceViewMode === "mcp" || serviceViewMode === "both"}
-              <Card class="p-5 flex flex-col gap-4 border-[var(--border)] shadow-sm">
-                <!-- Header & Quick Actions -->
+            <Card class="p-5 flex flex-col gap-4 border-[var(--border)] shadow-sm">
+                <!-- Header & Quick Controls -->
                 <div class="flex items-start justify-between gap-4">
                   <div class="flex items-center gap-3">
                     <div class="flex size-10 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20 shadow-sm">
@@ -814,7 +555,7 @@
                         size="sm"
                         title="重启 MCP 服务"
                         busy={mcpBusy}
-                        onclick={() => void handleRestartService("mcp")}
+                        onclick={() => void handleRestartService()}
                       >
                         <RotateCw size={13} />
                         <span>重启</span>
@@ -892,10 +633,8 @@
                 <div class="pt-1">
                   <GptQuickCopy
                     workspaceId={workspaceId!}
-                    service="mcp"
                     {profile}
                     publicMcpEndpoint={mcpPublic}
-                    {frpProfiles}
                   />
                 </div>
 
@@ -917,7 +656,6 @@
                     {#if mcpConfigSection === "connection"}
                       <TunnelConfigForm
                         workspaceId={workspaceId!}
-                        service="mcp"
                         config={mcpTunnelForm}
                         onSave={saveMcpTunnel}
                       />
@@ -953,169 +691,7 @@
                     {/if}
                   </div>
                 </div>
-              </Card>
-            {/if}
-
-            <!-- Actions Engine Card -->
-            {#if actions && (serviceViewMode === "actions" || serviceViewMode === "both")}
-              <Card class="p-5 flex flex-col gap-4 border-[var(--border)] shadow-sm">
-                <!-- Header & Quick Actions -->
-                <div class="flex items-start justify-between gap-4">
-                  <div class="flex items-center gap-3">
-                    <div class="flex size-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/20 shadow-sm">
-                      <Activity size={20} />
-                    </div>
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <h4 class="text-base font-bold text-[var(--text-main)]">Actions 网关</h4>
-                        <StatusBadge
-                          status={actionsStatus === "running" ? "running" : actionsStatus === "error" ? "error" : "stopped"}
-                          text={stateLabel(actionsStatus)}
-                          size="sm"
-                        />
-                      </div>
-                      <p class="text-xs text-[var(--text-secondary)] mt-0.5">OpenAPI 网关 · ChatGPT Actions 交互运行时</p>
-                    </div>
-                  </div>
-
-                  <div class="flex items-center gap-2">
-                    {#if actionsStatus === "running"}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        title="重启 Actions 服务"
-                        busy={actionsBusy}
-                        onclick={() => void handleRestartService("actions")}
-                      >
-                        <RotateCw size={13} />
-                        <span>重启</span>
-                      </Button>
-                    {/if}
-                    <Button
-                      variant={actionsStatus === "running" ? "danger" : "primary"}
-                      size="sm"
-                      busy={actionsBusy}
-                      disabled={actionsStatus === "starting" || actionsStatus === "stopping"}
-                      onclick={toggleActions}
-                    >
-                      {#if actionsStatus === "running"}
-                        <Square size={13} />
-                        <span>停止服务</span>
-                      {:else}
-                        <Play size={13} />
-                        <span>启动服务</span>
-                      {/if}
-                    </Button>
-                  </div>
-                </div>
-
-                <!-- Endpoints Row -->
-                <div class="grid gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-main)] p-3.5">
-                  <!-- Local endpoint -->
-                  <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span class="font-medium text-[var(--text-secondary)]">本地 OpenAPI</span>
-                    <div class="flex items-center gap-2">
-                      <code class="font-mono text-[11px] text-[var(--text-main)] bg-[var(--card-bg)] px-2 py-0.5 rounded border border-[var(--border)]">
-                        {actionsLocal || defaultActionsLocal}
-                      </code>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        class="px-2 py-0.5 text-[11px]"
-                        onclick={() => copyEndpoint(actionsLocal || defaultActionsLocal, "actions-local")}
-                      >
-                        {#if endpointCopied === "actions-local"}<Check size={12} class="text-[var(--success)]" />{:else}<Copy size={12} />{/if}
-                        <span>复制</span>
-                      </Button>
-                    </div>
-                  </div>
-
-                  <!-- Public endpoint -->
-                  <div class="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t border-[var(--border)]">
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-medium text-[var(--text-secondary)]">公网 OpenAPI Schema</span>
-                      <span class="rounded px-1.5 py-0.2 text-[10px] uppercase font-semibold bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/20">
-                        {actions.use_global_gateway ? "Global Gateway" : actions.tunnel_type}
-                      </span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      {#if actionsPublic || actionsOpenApi}
-                        <code class="font-mono text-[11px] text-[var(--text-main)] bg-[var(--card-bg)] px-2 py-0.5 rounded border border-[var(--border)] truncate max-w-xs">
-                          {actionsPublic || actionsOpenApi}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="px-2 py-0.5 text-[11px]"
-                          onclick={() => copyEndpoint(actionsPublic || actionsOpenApi, "actions-public")}
-                        >
-                          {#if endpointCopied === "actions-public"}<Check size={12} class="text-[var(--success)]" />{:else}<Copy size={12} />{/if}
-                          <span>复制</span>
-                        </Button>
-                      {:else}
-                        <span class="text-[11px] text-[var(--color-text-muted)]">未配置公网地址</span>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Integration Hub Quick Copy -->
-                <div class="pt-1">
-                  <GptQuickCopy
-                    workspaceId={workspaceId!}
-                    service="actions"
-                    {profile}
-                    {frpProfiles}
-                  />
-                </div>
-
-                <!-- Inline Collapsible Config Hub -->
-                <div class="mt-2 pt-4 border-t border-[var(--border)]">
-                  <div class="mb-3.5 flex items-center justify-between">
-                    <p class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider">Actions 高级配置</p>
-                    <div class="w-64">
-                      <SegmentedControl
-                        items={actionsConfigTabs}
-                        value={actionsConfigSection}
-                        size="sm"
-                        onchange={(v) => { actionsConfigSection = v as ActionsConfigSection; }}
-                      />
-                    </div>
-                  </div>
-
-                  <div class="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-4">
-                    {#if actionsConfigSection === "connection"}
-                      <TunnelConfigForm
-                        workspaceId={workspaceId!}
-                        service="actions"
-                        config={actionsTunnelForm}
-                        onSave={saveActionsTunnel}
-                      />
-                    {:else if actionsConfigSection === "auth"}
-                      <ActionsAuthForm
-                        workspaceId={workspaceId!}
-                        authType={actions.auth_type}
-                        oauthClientId={actions.oauth_client_id ?? ""}
-                        oauthScopes={actions.oauth_scopes ?? ""}
-                        openapiUrl={actionsOpenApi}
-                        privacyUrl={actionsPrivacy}
-                        oauthAuthorizeUrl={actionsOAuthAuth}
-                        oauthTokenUrl={actionsOAuthToken}
-                        useSharedSecrets={actions.use_shared_secrets ?? false}
-                        onSave={saveActionsAuth}
-                      />
-                    {:else}
-                      <ActionsPolicyForm
-                        allowedCommands={actions.allowed_commands ?? ""}
-                        maxPatchBytes={actions.max_patch_bytes ?? 200_000}
-                        permissionMode={actions.permission_mode}
-                        onSave={saveActionsPolicy}
-                      />
-                    {/if}
-                  </div>
-                </div>
-              </Card>
-            {/if}
+            </Card>
           </div>
         </div>
 
@@ -1132,21 +708,13 @@
           <!-- Top: Health Panel -->
           <HealthPanel workspaceId={workspaceId!} />
 
-          <!-- Bottom: Unified Log Viewer with fast switcher -->
+          <!-- Bottom: MCP log viewer -->
           <div class="grid gap-3">
             <div class="flex items-center justify-between gap-3">
               <span class="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">实时服务日志</span>
-              <div class="w-56">
-                <SegmentedControl
-                  items={diagnosticLogTabs}
-                  value={diagnosticLogService}
-                  size="sm"
-                  onchange={(v) => { diagnosticLogService = v as "mcp" | "actions"; }}
-                />
-              </div>
             </div>
 
-            <LogViewer workspaceId={workspaceId!} service={diagnosticLogService} />
+            <LogViewer workspaceId={workspaceId!} service="mcp" />
           </div>
         </div>
 
