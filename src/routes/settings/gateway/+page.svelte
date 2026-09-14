@@ -16,6 +16,7 @@
   import { listWorkspaces } from "$lib/api/workspaces";
   import { actionsConfig, type WorkspaceProfile } from "$lib/types";
   import { showToast } from "$lib/stores/toast";
+  import ConnectionSettingsNav from "$lib/components/ConnectionSettingsNav.svelte";
 
   let config = $state<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
   let savedConfig = $state<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
@@ -165,6 +166,8 @@
       Workspace 仍可选择继续使用自己的 FRP 或 Cloudflare Tunnel。
     </p>
   </header>
+
+  <ConnectionSettingsNav />
 
   <div class="page-body flex flex-col gap-6">
     <div class="tx-card p-4">

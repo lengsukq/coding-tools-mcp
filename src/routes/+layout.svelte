@@ -73,14 +73,6 @@
     goto(`/workspace/${id}`);
   }
 
-  function openFrpSettings() {
-    goto("/settings/frp");
-  }
-
-  function openSoftwareSettings() {
-    goto("/settings/software");
-  }
-
   function openGeneralSettings() {
     goto("/settings/general");
   }
@@ -89,7 +81,7 @@
     goto("/settings/keys");
   }
 
-  function openGatewaySettings() {
+  function openConnectionSettings() {
     goto("/settings/gateway");
   }
 
@@ -140,24 +132,10 @@
 
     <button
       type="button"
-      class="tx-settings-link {$page.url.pathname === '/settings/gateway' ? 'active' : ''}"
-      onclick={openGatewaySettings}
+      class="tx-settings-link {['/settings/gateway', '/settings/frp', '/settings/software'].includes($page.url.pathname) ? 'active' : ''}"
+      onclick={openConnectionSettings}
     >
-      全局网关
-    </button>
-    <button
-      type="button"
-      class="tx-settings-link {$page.url.pathname === '/settings/frp' ? 'active' : ''}"
-      onclick={openFrpSettings}
-    >
-      FRP
-    </button>
-    <button
-      type="button"
-      class="tx-settings-link {$page.url.pathname === '/settings/software' ? 'active' : ''}"
-      onclick={openSoftwareSettings}
-    >
-      隧道工具
+      连接
     </button>
   {/snippet}
   {#snippet sidebar()}

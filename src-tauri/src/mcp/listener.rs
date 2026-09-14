@@ -143,13 +143,15 @@ pub fn spawn_listener(
             port,
             &configured_public_url,
         );
-        Some(Arc::new(OAuthRuntime::new(
+        Some(Arc::new(OAuthRuntime::new_persistent(
             oauth_base,
             auth.oauth_client_id.clone(),
             oauth_client_secret.clone(),
             password,
             token_secret,
-        )))
+            workspace_id.clone(),
+            "oauth_dynamic_clients".into(),
+        )?))
     } else {
         None
     };

@@ -13,7 +13,11 @@ use crate::workspace::AuthConfig;
 
 pub type SharedState = SharedToolContext;
 
-/// 中转层支持协商的 MCP 协议版本，按版本升序排列（固定日期格式可直接字典序比较）。
+/// 中转层支持协商的 legacy-era MCP 协议版本，按版本升序排列。
+///
+/// 不要仅为了“跟版本”把 2026-07-28 加到这里：该版本进入 modern/stateless era，
+/// 需要 server/discover、每请求 _meta、HTTP 版本/方法头校验以及无 initialize/session 的
+/// 完整 transport 语义。只有这些行为一起实现并验证后才能对外宣称支持。
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 /// 客户端未声明协议版本时的兼容默认值，保持历史行为。
@@ -74,7 +78,7 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
 fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     let base_instructions = "Use these tools only for local coding operations inside the configured workspace. Planning mode is controlled exclusively by the desktop app: every tool response may contain planning_context with the authoritative current mode, revision, focused Goal, and focused Plan. Never assume or attempt to change the mode from chat. Goal and Plan records are AI-driven conversation artifacts: when a user request benefits from durable tracking, create_goal and create_plan may be called directly from the conversation without asking the user to fill desktop forms or approve a proposal first. Keep their criteria and steps updated as work progresses. When the work is ready for acceptance, call request_goal_review and/or request_plan_review with a concise verification summary. Never archive or claim final acceptance yourself; only the human desktop review action can accept and archive. If a review is rejected, continue from the reactivated Goal/Plan and incorporate the human feedback. In Plan mode, Goal/Plan metadata operations remain writable: create/update Goal or Plan records and request their review as needed. Plan mode blocks project/source file mutations, command execution, and task mutations; do not interpret it as blocking the planning tools themselves. In Goal mode, project mutations require an active focused Goal and must respect any focused Plan relationship/status. If the client reports missing tools while server authorization is still valid, treat it as a capability discovery mismatch rather than a permission loss: refresh the MCP session/tool list before requesting permissions. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
     let base_instructions = if state.tool_profile == "compact" {
-        "Use these tools only for local coding operations inside the configured workspace. This profile uses Stable Tool API v2: use history_manage, planning_manage, and task_manage with their action field instead of relying on lifecycle-specific tool names. The desktop app controls permissions and planning mode. In Plan mode, planning_manage remains writable for Goal/Plan create, update, and review actions; only project/source mutations, command execution, and task mutations are blocked. History recording is controlled by the workspace setting; history bootstrap is optional and is never required before the first response. Use history_manage action=search/read only when exact older context is needed. Selected history context below is a bounded snapshot; do not repeat it in tool responses. Checkpoints may omit session_key and expected_path because the server can lazily create the current workspace session. If a dangerous operation requires confirmation, retry only the original tool with confirm=true when the user's request clearly authorizes it."
+        "Use these tools only for local coding operations inside the configured workspace. This profile uses Stable Tool API v2: use history_manage and planning_manage with their action field instead of relying on lifecycle-specific tool names. Goal → Plan → Steps is the default agent workflow; durable Task/Harness lifecycle remains an advanced compatibility capability and is not part of the compact tool surface. Treat Workspace Root as the stable path base: pass explicit relative paths and use exec_command workdir for subdirectory commands instead of relying on mutable default-cwd session state. The desktop app controls permissions and planning mode. In Plan mode, planning_manage remains writable for Goal/Plan create, update, and review actions; only project/source mutations and command execution are blocked. History recording is controlled by the workspace setting; history bootstrap is optional and is never required before the first response. Use history_manage action=search/read only when exact older context is needed. Selected history context below is a bounded snapshot; do not repeat it in tool responses. Checkpoints may omit session_key and expected_path because the server can lazily create the current workspace session. If a dangerous operation requires confirmation, retry only the original tool with confirm=true when the user's request clearly authorizes it."
     } else {
         base_instructions
     };
@@ -218,7 +222,7 @@ mod tests {
 
     use super::{
         handle_request, initialize_result, negotiate_protocol_version, tool_arguments,
-        DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION,
+        DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS,
     };
 
     fn test_context() -> ToolContext {
@@ -242,6 +246,9 @@ mod tests {
         let initialized = initialize_result(&state, DEFAULT_PROTOCOL_VERSION);
         let instructions = initialized["instructions"].as_str().expect("instructions");
         assert!(instructions.contains("history bootstrap is optional"));
+        assert!(instructions.contains("Workspace Root as the stable path base"));
+        assert!(instructions.contains("exec_command workdir"));
+        assert!(!instructions.contains("task_manage"));
         assert!(!instructions.contains("exactly once"));
         assert!(!instructions.contains("required conversation initialization"));
     }
@@ -300,6 +307,8 @@ mod tests {
 
     #[test]
     fn protocol_version_negotiation_matrix() {
+        assert!(!SUPPORTED_PROTOCOL_VERSIONS.contains(&"2026-07-28"));
+        assert_eq!(LATEST_PROTOCOL_VERSION, "2025-11-25");
         assert_eq!(
             negotiate_protocol_version(Some("2024-11-05")),
             "2024-11-05"

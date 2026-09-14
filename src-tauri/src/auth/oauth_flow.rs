@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::bearer::constant_time_eq_str;
+use crate::secret::SecretStore;
 
 pub const OAUTH_CODE_TTL_SECONDS: u64 = 300;
 pub const OAUTH_TOKEN_TTL_SECONDS: i64 = 60 * 60 * 24 * 30;
@@ -26,6 +27,13 @@ pub struct OAuthRuntime {
     pub token_secret: String,
     pending: Arc<Mutex<HashMap<String, PendingCode>>>,
     clients: Arc<Mutex<HashMap<String, RegisteredClient>>>,
+    client_registry: Option<ClientRegistryPersistence>,
+}
+
+#[derive(Clone)]
+struct ClientRegistryPersistence {
+    workspace_id: String,
+    secret_key: String,
 }
 
 fn registration_error(error: &str, description: &str) -> Response {
@@ -45,7 +53,7 @@ fn valid_redirect_uri(uri: &str) -> bool {
         && !uri.contains(['\r', '\n', '#'])
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct RegisteredClient {
     redirect_uris: Vec<String>,
     token_endpoint_auth_method: String,
@@ -89,7 +97,52 @@ impl OAuthRuntime {
             token_secret,
             pending: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
+            client_registry: None,
         }
+    }
+
+    pub fn new_persistent(
+        base_url: String,
+        client_id: String,
+        client_secret: Option<String>,
+        password: String,
+        token_secret: String,
+        workspace_id: String,
+        secret_key: String,
+    ) -> Result<Self, String> {
+        let clients = SecretStore::get(&workspace_id, &secret_key)
+            .map_err(|error| format!("Unable to load OAuth client registry: {error}"))?
+            .map(|raw| {
+                serde_json::from_str::<HashMap<String, RegisteredClient>>(&raw)
+                    .map_err(|error| format!("OAuth client registry is corrupt: {error}"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
+        runtime.clients = Arc::new(Mutex::new(clients));
+        runtime.client_registry = Some(ClientRegistryPersistence {
+            workspace_id,
+            secret_key,
+        });
+        Ok(runtime)
+    }
+
+    fn insert_registered_client(
+        &self,
+        client_id: String,
+        client: RegisteredClient,
+    ) -> Result<(), String> {
+        let mut clients = self.clients.lock().expect("oauth clients lock");
+        let mut next = clients.clone();
+        next.insert(client_id, client);
+        if let Some(registry) = &self.client_registry {
+            let raw = serde_json::to_string(&next)
+                .map_err(|error| format!("Unable to serialize OAuth client registry: {error}"))?;
+            SecretStore::set(&registry.workspace_id, &registry.secret_key, &raw)
+                .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
+        }
+        *clients = next;
+        Ok(())
     }
 
     pub fn client_id_allowed(&self, client_id: &str) -> bool {
@@ -198,14 +251,23 @@ pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest)
     let client_id = format!("dcr-{}", uuid::Uuid::new_v4().simple());
     let client_secret = (auth_method != "none")
         .then(|| uuid::Uuid::new_v4().simple().to_string());
-    oauth.clients.lock().expect("oauth clients lock").insert(
+    if let Err(error) = oauth.insert_registered_client(
         client_id.clone(),
         RegisteredClient {
             redirect_uris: request.redirect_uris.clone(),
             token_endpoint_auth_method: auth_method.to_string(),
             client_secret: client_secret.clone(),
         },
-    );
+    ) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({
+                "error": "server_error",
+                "error_description": error
+            })),
+        )
+            .into_response();
+    }
 
     let mut body = json!({
         "client_id": client_id,
@@ -780,6 +842,59 @@ mod tests {
             "https://chatgpt.com/connector/oauth/test"
         ));
         assert!(!oauth.redirect_uri_allowed(&client_id, "https://attacker.example/callback"));
+    }
+
+    #[test]
+    fn dynamic_registration_survives_runtime_restart() {
+        let workspace_id = format!("oauth-dcr-{}", uuid::Uuid::new_v4().simple());
+        let registry_key = "oauth_dynamic_clients".to_string();
+        let oauth = OAuthRuntime::new_persistent(
+            "https://lb.example.com".into(),
+            "legacy-client".into(),
+            None,
+            "test-password".into(),
+            "token-signing-secret".into(),
+            workspace_id.clone(),
+            registry_key.clone(),
+        )
+        .expect("persistent oauth runtime");
+        let response = register_client(
+            &oauth,
+            ClientRegistrationRequest {
+                redirect_uris: vec!["https://chatgpt.com/connector/oauth/restart".into()],
+                token_endpoint_auth_method: "none".into(),
+                grant_types: vec!["authorization_code".into(), "refresh_token".into()],
+                response_types: vec!["code".into()],
+                client_name: "ChatGPT".into(),
+            },
+        );
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let client_id = oauth
+            .clients
+            .lock()
+            .expect("clients")
+            .keys()
+            .next()
+            .expect("client id")
+            .clone();
+        drop(oauth);
+
+        let restarted = OAuthRuntime::new_persistent(
+            "https://lb.example.com".into(),
+            "legacy-client".into(),
+            None,
+            "test-password".into(),
+            "token-signing-secret".into(),
+            workspace_id.clone(),
+            registry_key,
+        )
+        .expect("restarted oauth runtime");
+        assert!(restarted.client_id_allowed(&client_id));
+        assert!(restarted.redirect_uri_allowed(
+            &client_id,
+            "https://chatgpt.com/connector/oauth/restart"
+        ));
+        let _ = SecretStore::remove_workspace_secrets(&workspace_id);
     }
 
     #[test]

@@ -577,10 +577,6 @@ pub const COMPACT_TOOLS: &[&str] = &[
     "server_info",
     "history_manage",
     "planning_manage",
-    "task_manage",
-    "check_exec_environment",
-    "get_default_cwd",
-    "set_default_cwd",
     "read_file",
     "list_dir",
     "list_files",
@@ -1390,18 +1386,21 @@ mod tests {
             .map(|tool| tool["name"].as_str().expect("tool name"))
             .collect();
 
-        assert!(names.len() < 30);
+        assert_eq!(names.len(), 20);
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"apply_patch"));
         assert!(names.contains(&"exec_command"));
         assert!(names.contains(&"history_manage"));
         assert!(names.contains(&"planning_manage"));
-        assert!(names.contains(&"task_manage"));
+        assert!(!names.contains(&"task_manage"));
         assert!(!names.contains(&"history_session_search"));
         assert!(!names.contains(&"history_session_read"));
         assert!(!names.contains(&"planning_state"));
         assert!(!names.contains(&"list_skills"));
         assert!(!names.contains(&"request_permissions"));
+        assert!(!names.contains(&"check_exec_environment"));
+        assert!(!names.contains(&"get_default_cwd"));
+        assert!(!names.contains(&"set_default_cwd"));
         assert_eq!(tool_api_descriptor()["version"], "2");
     }
 }

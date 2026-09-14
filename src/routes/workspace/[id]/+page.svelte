@@ -58,7 +58,8 @@
     type WorkspaceProfile,
   } from "$lib/types";
 
-  type WorkspaceTab = "overview" | "mcp" | "actions" | "planning";
+  type WorkspaceTab = "overview" | "services" | "planning";
+  type ServiceKind = "mcp" | "actions";
   type SubTab = "config" | "logs" | "health";
   type ConfigSection = "connection" | "auth" | "policy" | "history";
 
@@ -76,17 +77,20 @@
   let frpProfiles = $state<FrpProfileDto[]>([]);
 
   let activeWorkspaceTab = $state<WorkspaceTab>("overview");
-  let mcpSubTab = $state<SubTab>("config");
-  let actionsSubTab = $state<SubTab>("config");
-  let mcpConfigSection = $state<ConfigSection>("connection");
-  let actionsConfigSection = $state<ConfigSection>("connection");
+  let activeService = $state<ServiceKind>("mcp");
+  let serviceSubTab = $state<SubTab>("config");
+  let serviceConfigSection = $state<ConfigSection>("connection");
   let loadGeneration = 0;
 
   const workspaceTabs = [
     { value: "overview", label: "概览" },
+    { value: "services", label: "服务" },
+    { value: "planning", label: "规划" },
+  ];
+
+  const serviceTabs = [
     { value: "mcp", label: "MCP" },
     { value: "actions", label: "Actions" },
-    { value: "planning", label: "规划" },
   ];
 
   const subTabs = [
@@ -101,6 +105,12 @@
     { value: "policy", label: "权限", description: "工具、命令与执行边界" },
     { value: "history", label: "历史上下文", description: "记录与选择注入的旧会话" },
   ];
+
+  const visibleConfigSections = $derived(
+    activeService === "mcp"
+      ? configSections
+      : configSections.filter((section) => section.value !== "history"),
+  );
 
   const workspaceId = $derived($page.params.id);
   const actions = $derived(profile ? actionsConfig(profile) : null);
@@ -142,6 +152,14 @@
       default:
         return "已停止";
     }
+  }
+
+  function openService(service: ServiceKind) {
+    activeService = service;
+    if (service === "actions" && serviceConfigSection === "history") {
+      serviceConfigSection = "policy";
+    }
+    activeWorkspaceTab = "services";
   }
 
   function applyMcpRuntime(
@@ -592,7 +610,7 @@
               type="button"
               class="tx-service-status-chip"
               class:active={mcpStatus === "running"}
-              onclick={() => (activeWorkspaceTab = "mcp")}
+              onclick={() => openService("mcp")}
             >
               <StatusOrb state={mcpStatus} />
               <span>MCP</span>
@@ -602,7 +620,7 @@
               type="button"
               class="tx-service-status-chip"
               class:active={actionsStatus === "running"}
-              onclick={() => (activeWorkspaceTab = "actions")}
+              onclick={() => openService("actions")}
             >
               <StatusOrb state={actionsStatus} />
               <span>Actions</span>
@@ -629,7 +647,7 @@
             <button
               type="button"
               class="tx-summary-card tx-summary-card-button"
-              onclick={() => (activeWorkspaceTab = "mcp")}
+              onclick={() => openService("mcp")}
             >
               <span class="tx-summary-label">MCP</span>
               <strong class="flex items-center gap-2">
@@ -641,7 +659,7 @@
             <button
               type="button"
               class="tx-summary-card tx-summary-card-button"
-              onclick={() => (activeWorkspaceTab = "actions")}
+              onclick={() => openService("actions")}
             >
               <span class="tx-summary-label">Actions</span>
               <strong class="flex items-center gap-2">
@@ -710,53 +728,86 @@
           </div>
           <PlanningControlPanel workspaceId={workspaceId!} />
         </div>
-      {:else if activeWorkspaceTab === "mcp"}
+      {:else if activeWorkspaceTab === "services"}
         <div class="tx-workspace-section-stack">
-          <ServicePanel
-            title="MCP"
-            subtitle="Streamable HTTP · 工具运行时"
-            status={mcpStatus}
-            statusMessage={mcpStatusMessage}
-            port={profile.runtime.local_port}
-            portEditable={true}
-            busy={mcpBusy}
-            tunnelType={profile.tunnel.type}
-            localEndpoint={mcpLocal || mcpLocalEndpoint(profile.runtime.local_port)}
-            publicEndpoint={mcpPublic}
-            publicLabel="公网 MCP"
-            showToggle={false}
-            onToggle={toggleMcp}
-            onPortChange={saveMcpPort}
-          />
-          <GptQuickCopy
-            workspaceId={workspaceId!}
-            service="mcp"
-            {profile}
-            publicMcpEndpoint={mcpPublic}
-            {frpProfiles}
-          />
+          <div class="tx-service-subtabs">
+            <Tabs
+              items={serviceTabs}
+              value={activeService}
+              onchange={(value) => openService(value as ServiceKind)}
+            />
+          </div>
+
+          {#if activeService === "mcp"}
+            <ServicePanel
+              title="MCP"
+              subtitle="Streamable HTTP · 工具运行时"
+              status={mcpStatus}
+              statusMessage={mcpStatusMessage}
+              port={profile.runtime.local_port}
+              portEditable={true}
+              busy={mcpBusy}
+              tunnelType={profile.tunnel.type}
+              localEndpoint={mcpLocal || mcpLocalEndpoint(profile.runtime.local_port)}
+              publicEndpoint={mcpPublic}
+              publicLabel="公网 MCP"
+              showToggle={false}
+              onToggle={toggleMcp}
+              onPortChange={saveMcpPort}
+            />
+            <GptQuickCopy
+              workspaceId={workspaceId!}
+              service="mcp"
+              {profile}
+              publicMcpEndpoint={mcpPublic}
+              {frpProfiles}
+            />
+          {:else}
+            <ServicePanel
+              title="Actions"
+              subtitle="OpenAPI 网关 · ChatGPT Actions"
+              status={actionsStatus}
+              statusMessage={actionsStatusMessage}
+              port={actions.local_port}
+              portEditable={true}
+              busy={actionsBusy}
+              tunnelType={actions.tunnel_type}
+              localEndpoint={actionsLocal || actionsLocalEndpoint(actions.local_port)}
+              publicEndpoint={actionsPublic || actionsOpenApiUrl(profile, frpProfiles)}
+              publicLabel="OpenAPI"
+              showToggle={false}
+              onToggle={toggleActions}
+              onPortChange={saveActionsPort}
+            />
+            <GptQuickCopy
+              workspaceId={workspaceId!}
+              service="actions"
+              {profile}
+              {frpProfiles}
+            />
+          {/if}
         </div>
 
         <div class="mt-5 tx-service-subtabs">
           <Tabs
             items={subTabs}
-            value={mcpSubTab}
-            onchange={(v) => {
-              mcpSubTab = v as SubTab;
+            value={serviceSubTab}
+            onchange={(value) => {
+              serviceSubTab = value as SubTab;
             }}
           />
         </div>
 
-        {#if mcpSubTab === "config"}
+        {#if serviceSubTab === "config"}
           <div class="tx-config-workbench mt-4">
-            <nav class="tx-config-nav" aria-label="MCP 设置分类">
-              <p class="tx-config-nav-title">MCP 设置</p>
-              {#each configSections as section}
+            <nav class="tx-config-nav" aria-label="服务设置分类">
+              <p class="tx-config-nav-title">{activeService === "mcp" ? "MCP" : "Actions"} 设置</p>
+              {#each visibleConfigSections as section}
                 <button
                   type="button"
                   class="tx-config-nav-item"
-                  class:active={mcpConfigSection === section.value}
-                  onclick={() => (mcpConfigSection = section.value as ConfigSection)}
+                  class:active={serviceConfigSection === section.value}
+                  onclick={() => (serviceConfigSection = section.value as ConfigSection)}
                 >
                   <strong>{section.label}</strong>
                   <small>{section.description}</small>
@@ -765,53 +816,86 @@
             </nav>
 
             <div class="tx-card tx-config-stage p-5">
-              {#if mcpConfigSection === "connection"}
+              {#if serviceConfigSection === "connection"}
                 <div class="tx-config-stage-heading">
                   <div>
                     <p class="tx-section-label">连接与隧道</p>
-                    <p>管理 MCP 的公网访问方式。本地端口可直接在上方服务卡修改。</p>
+                    <p>管理 {activeService === "mcp" ? "MCP" : "Actions"} 的公网访问方式。本地端口可直接在上方服务卡修改。</p>
                   </div>
                 </div>
-                <TunnelConfigForm
-                  workspaceId={workspaceId!}
-                  service="mcp"
-                  config={mcpTunnelForm}
-                  onSave={saveMcpTunnel}
-                />
-              {:else if mcpConfigSection === "auth"}
+                {#if activeService === "mcp"}
+                  <TunnelConfigForm
+                    workspaceId={workspaceId!}
+                    service="mcp"
+                    config={mcpTunnelForm}
+                    onSave={saveMcpTunnel}
+                  />
+                {:else}
+                  <TunnelConfigForm
+                    workspaceId={workspaceId!}
+                    service="actions"
+                    config={actionsTunnelForm}
+                    onSave={saveActionsTunnel}
+                  />
+                {/if}
+              {:else if serviceConfigSection === "auth"}
                 <div class="tx-config-stage-heading">
                   <div>
                     <p class="tx-section-label">访问认证</p>
-                    <p>只处理谁可以访问 MCP，不与执行权限混在一起。</p>
+                    <p>集中管理当前服务的访问身份与 OAuth 配置。</p>
                   </div>
                 </div>
-                <AuthConfigForm
-                  workspaceId={workspaceId!}
-                  auth={profile.auth}
-                  onSaveProfile={saveMcpAuth}
-                />
-              {:else if mcpConfigSection === "policy"}
+                {#if activeService === "mcp"}
+                  <AuthConfigForm
+                    workspaceId={workspaceId!}
+                    auth={profile.auth}
+                    onSaveProfile={saveMcpAuth}
+                  />
+                {:else}
+                  <ActionsAuthForm
+                    workspaceId={workspaceId!}
+                    authType={actions.auth_type}
+                    oauthClientId={actions.oauth_client_id ?? ""}
+                    oauthScopes={actions.oauth_scopes ?? ""}
+                    openapiUrl={actionsOpenApiUrl(profile, frpProfiles)}
+                    privacyUrl={actionsPrivacyUrl(profile, frpProfiles)}
+                    oauthAuthorizeUrl={actionsOAuthAuthorizeUrl(profile, frpProfiles)}
+                    oauthTokenUrl={actionsOAuthTokenUrl(profile, frpProfiles)}
+                    useSharedSecrets={actions.use_shared_secrets ?? false}
+                    onSave={saveActionsAuth}
+                  />
+                {/if}
+              {:else if serviceConfigSection === "policy"}
                 <div class="tx-config-stage-heading">
                   <div>
                     <p class="tx-section-label">执行权限</p>
-                    <p>控制 AI 可以使用哪些工具、命令和本地执行能力。</p>
+                    <p>控制当前服务可以使用的工具、命令与写入边界。</p>
                   </div>
                 </div>
-                <RuntimePolicyForm
-                  workspaceId={workspaceId!}
-                  toolProfile={profile.runtime.tool_profile}
-                  permissionMode={profile.runtime.permission_mode}
-                  allowedCommands={profile.runtime.allowed_commands ?? ""}
-                  executablePaths={profile.runtime.executable_paths ?? ""}
-                  aiInstructions={profile.runtime.ai_instructions ?? ""}
-                  instructionSources={profile.runtime.instruction_sources ?? []}
-                  skillSources={profile.runtime.skill_sources ?? []}
-                  customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
-                  customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
-                  workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
-                  workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
-                  onSave={saveMcpPolicy}
-                />
+                {#if activeService === "mcp"}
+                  <RuntimePolicyForm
+                    workspaceId={workspaceId!}
+                    toolProfile={profile.runtime.tool_profile}
+                    permissionMode={profile.runtime.permission_mode}
+                    allowedCommands={profile.runtime.allowed_commands ?? ""}
+                    executablePaths={profile.runtime.executable_paths ?? ""}
+                    aiInstructions={profile.runtime.ai_instructions ?? ""}
+                    instructionSources={profile.runtime.instruction_sources ?? []}
+                    skillSources={profile.runtime.skill_sources ?? []}
+                    customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
+                    customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
+                    workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
+                    workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
+                    onSave={saveMcpPolicy}
+                  />
+                {:else}
+                  <ActionsPolicyForm
+                    allowedCommands={actions.allowed_commands ?? ""}
+                    maxPatchBytes={actions.max_patch_bytes ?? 200_000}
+                    permissionMode={actions.permission_mode}
+                    onSave={saveActionsPolicy}
+                  />
+                {/if}
               {:else}
                 <HistoryContextPanel
                   workspaceId={workspaceId!}
@@ -822,120 +906,9 @@
               {/if}
             </div>
           </div>
-        {:else if mcpSubTab === "logs"}
+        {:else if serviceSubTab === "logs"}
           <div class="mt-4 tx-card p-4">
-            <LogViewer workspaceId={workspaceId!} service="mcp" />
-          </div>
-        {:else}
-          <div class="mt-4 tx-card p-4">
-            <HealthPanel workspaceId={workspaceId!} />
-          </div>
-        {/if}
-      {:else if activeWorkspaceTab === "actions"}
-        <div class="tx-workspace-section-stack">
-          <ServicePanel
-            title="Actions"
-            subtitle="OpenAPI 网关 · ChatGPT Actions"
-            status={actionsStatus}
-            statusMessage={actionsStatusMessage}
-            port={actions.local_port}
-            portEditable={true}
-            busy={actionsBusy}
-            tunnelType={actions.tunnel_type}
-            localEndpoint={actionsLocal || actionsLocalEndpoint(actions.local_port)}
-            publicEndpoint={actionsPublic || actionsOpenApiUrl(profile, frpProfiles)}
-            publicLabel="OpenAPI"
-            showToggle={false}
-            onToggle={toggleActions}
-            onPortChange={saveActionsPort}
-          />
-          <GptQuickCopy
-            workspaceId={workspaceId!}
-            service="actions"
-            {profile}
-            {frpProfiles}
-          />
-        </div>
-
-        <div class="mt-5 tx-service-subtabs">
-          <Tabs
-            items={subTabs}
-            value={actionsSubTab}
-            onchange={(v) => {
-              actionsSubTab = v as SubTab;
-            }}
-          />
-        </div>
-
-        {#if actionsSubTab === "config"}
-          <div class="tx-config-workbench mt-4">
-            <nav class="tx-config-nav" aria-label="Actions 设置分类">
-              <p class="tx-config-nav-title">Actions 设置</p>
-              {#each configSections as section}
-                <button
-                  type="button"
-                  class="tx-config-nav-item"
-                  class:active={actionsConfigSection === section.value}
-                  onclick={() => (actionsConfigSection = section.value as ConfigSection)}
-                >
-                  <strong>{section.label}</strong>
-                  <small>{section.description}</small>
-                </button>
-              {/each}
-            </nav>
-
-            <div class="tx-card tx-config-stage p-5">
-              {#if actionsConfigSection === "connection"}
-                <div class="tx-config-stage-heading">
-                  <div>
-                    <p class="tx-section-label">连接与隧道</p>
-                    <p>管理 Actions 的公网访问方式。本地端口可直接在上方服务卡修改。</p>
-                  </div>
-                </div>
-                <TunnelConfigForm
-                  workspaceId={workspaceId!}
-                  service="actions"
-                  config={actionsTunnelForm}
-                  onSave={saveActionsTunnel}
-                />
-              {:else if actionsConfigSection === "auth"}
-                <div class="tx-config-stage-heading">
-                  <div>
-                    <p class="tx-section-label">访问认证</p>
-                    <p>集中管理 ChatGPT Actions 的认证方式和 OAuth 配置。</p>
-                  </div>
-                </div>
-                <ActionsAuthForm
-                  workspaceId={workspaceId!}
-                  authType={actions.auth_type}
-                  oauthClientId={actions.oauth_client_id ?? ""}
-                  oauthScopes={actions.oauth_scopes ?? ""}
-                  openapiUrl={actionsOpenApiUrl(profile, frpProfiles)}
-                  privacyUrl={actionsPrivacyUrl(profile, frpProfiles)}
-                  oauthAuthorizeUrl={actionsOAuthAuthorizeUrl(profile, frpProfiles)}
-                  oauthTokenUrl={actionsOAuthTokenUrl(profile, frpProfiles)}
-                  useSharedSecrets={actions.use_shared_secrets ?? false}
-                  onSave={saveActionsAuth}
-                />
-              {:else}
-                <div class="tx-config-stage-heading">
-                  <div>
-                    <p class="tx-section-label">执行权限</p>
-                    <p>控制 Actions 可以执行的命令范围和补丁写入边界。</p>
-                  </div>
-                </div>
-                <ActionsPolicyForm
-                  allowedCommands={actions.allowed_commands ?? ""}
-                  maxPatchBytes={actions.max_patch_bytes ?? 200_000}
-                  permissionMode={actions.permission_mode}
-                  onSave={saveActionsPolicy}
-                />
-              {/if}
-            </div>
-          </div>
-        {:else if actionsSubTab === "logs"}
-          <div class="mt-4 tx-card p-4">
-            <LogViewer workspaceId={workspaceId!} service="actions" />
+            <LogViewer workspaceId={workspaceId!} service={activeService} />
           </div>
         {:else}
           <div class="mt-4 tx-card p-4">
@@ -951,7 +924,7 @@
         <button
           type="button"
           class="tx-runtime-jump"
-          onclick={() => (activeWorkspaceTab = "mcp")}
+          onclick={() => openService("mcp")}
         >
           <StatusOrb state={mcpStatus} />
           <span>
@@ -980,7 +953,7 @@
         <button
           type="button"
           class="tx-runtime-jump"
-          onclick={() => (activeWorkspaceTab = "actions")}
+          onclick={() => openService("actions")}
         >
           <StatusOrb state={actionsStatus} />
           <span>

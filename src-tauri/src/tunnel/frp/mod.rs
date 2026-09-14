@@ -168,6 +168,7 @@ pub fn build_frpc_toml(config: &FrpServerConfig) -> String {
     let mut lines = vec![
         format!("serverAddr = \"{}\"", config.server_addr.trim()),
         format!("serverPort = {}", config.server_port),
+        "loginFailExit = false".to_string(),
         String::new(),
     ];
     if let Some(token) = config.token.as_ref().filter(|t| !t.trim().is_empty()) {
@@ -192,6 +193,7 @@ pub(crate) fn build_frpc_toml_for_routes(configs: &[FrpServerConfig]) -> String 
     let mut lines = vec![
         format!("serverAddr = \"{}\"", first.server_addr.trim()),
         format!("serverPort = {}", first.server_port),
+        "loginFailExit = false".to_string(),
         String::new(),
     ];
     if let Some(token) = first.token.as_ref().filter(|t| !t.trim().is_empty()) {
@@ -324,6 +326,7 @@ mod tests {
         );
         let toml = build_frpc_toml(&config);
         assert!(toml.contains("serverAddr = \"frp.example.com\""));
+        assert!(toml.contains("loginFailExit = false"));
         assert!(toml.contains("auth.token = \"secret\""));
     }
 
@@ -352,6 +355,7 @@ mod tests {
 
         assert_eq!(toml.matches("[[proxies]]").count(), 2);
         assert!(toml.contains("serverAddr = \"frp.example.com\""));
+        assert!(toml.contains("loginFailExit = false"));
         assert!(toml.contains(&format!("name = \"{first_name}\"")));
         assert!(toml.contains(&format!("name = \"{second_name}\"")));
         assert!(toml.contains("localPort = 28766"));

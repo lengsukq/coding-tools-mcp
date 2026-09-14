@@ -614,6 +614,23 @@ mod tests {
     }
 
     #[test]
+    fn preserves_lf_when_inserting_multiple_lines() {
+        let input = "one\ntwo\n";
+        let hunk = Hunk {
+            lines: vec![
+                HunkLine::Context("one".into()),
+                HunkLine::Add("insert-a".into()),
+                HunkLine::Add("insert-b".into()),
+                HunkLine::Context("two".into()),
+            ],
+        };
+        assert_eq!(
+            apply_hunks(input, &[hunk]).expect("patch"),
+            "one\ninsert-a\ninsert-b\ntwo\n"
+        );
+    }
+
+    #[test]
     fn preserves_crlf_when_inserting_multiple_lines() {
         let input = "one\r\ntwo\r\n";
         let hunk = Hunk {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import ConnectionSettingsNav from "$lib/components/ConnectionSettingsNav.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
   import {
     deleteFrpProfile,
@@ -92,6 +93,8 @@
       frpc 配置并重启隧道。
     </p>
   </header>
+
+  <ConnectionSettingsNav />
 
   <div class="page-body flex flex-col gap-6">
     <div class="tx-card p-4">

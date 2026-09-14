@@ -437,3 +437,15 @@ fn computed_public_url(
     }
     public_url.trim_end_matches('/').to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_workspace_defaults_to_compact_agent_workflow() {
+        let profile = WorkspaceProfile::new("/tmp/compact-default".into(), None);
+        assert_eq!(profile.runtime.tool_profile, "compact");
+        assert!(profile.runtime.history_recording);
+    }
+}

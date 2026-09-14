@@ -87,13 +87,15 @@ pub fn spawn_listener(
             actions_port,
             &configured_public_url,
         );
-        Some(Arc::new(OAuthRuntime::new(
+        Some(Arc::new(OAuthRuntime::new_persistent(
             oauth_base,
             oauth_client_id,
             oauth_client_secret.clone(),
             oauth_password.unwrap_or_default(),
             oauth_token_secret.unwrap_or_default(),
-        )))
+            workspace_id.to_string(),
+            "actions_oauth_dynamic_clients".into(),
+        )?))
     } else {
         None
     };

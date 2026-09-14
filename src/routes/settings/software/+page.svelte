@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import ConnectionSettingsNav from "$lib/components/ConnectionSettingsNav.svelte";
   import { message } from "@tauri-apps/plugin-dialog";
   import type { DownloadConfig, SoftwareStatus } from "$lib/api/software";
   import {
@@ -78,6 +79,8 @@
       在此安装或卸载 frpc 和 cloudflared 隧道客户端。安装的软件会放入应用缓存目录，可统一管理。
     </p>
   </header>
+
+  <ConnectionSettingsNav />
 
   <div class="page-body flex flex-col gap-6">
     <!-- Binary status -->
