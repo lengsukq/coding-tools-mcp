@@ -1,18 +1,25 @@
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 use serde_json::{json, Value};
-use tokio::process::Command;
 
 use std::sync::Arc;
 
 use crate::tools::context::ToolContext;
 use crate::tools::session::{ExecSession, SessionStore};
 use crate::tools::workspace::{tool_ok, WorkspaceError};
+
+mod diagnostics;
+mod platform;
+mod resolver;
+
+use diagnostics::run_native_diagnostic;
+use platform::{command_for_program, platform_command_path};
+#[cfg(all(test, windows))]
+use platform::{windows_batch_command_line, windows_hidden_creation_flags};
+use resolver::parse_and_resolve;
+#[cfg(test)]
+use resolver::{resolve_program, which_on_path};
 
 pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
     let cmd = args
@@ -128,102 +135,6 @@ fn validate_child_process_scope(_ctx: &ToolContext, args: &Value) -> Result<(), 
             "filesystem_scope must be workspace",
         )),
     }
-}
-
-fn run_native_diagnostic(
-    ctx: &ToolContext,
-    cmd: &str,
-    cwd: &Path,
-) -> Result<Option<Value>, WorkspaceError> {
-    let parts = shell_words::split(cmd)
-        .map_err(|_| WorkspaceError::invalid_argument("Invalid command syntax"))?;
-    if parts.is_empty() {
-        return Ok(None);
-    }
-
-    let command = parts[0].to_ascii_lowercase();
-    let stdout = match command.as_str() {
-        "pwd" if parts.len() == 1 => Some(format!("{}\n", cwd.display())),
-        "ls" | "dir" => Some(list_directory(ctx, cwd, &parts[1..])?),
-        "which" if parts.len() == 2 => {
-            let search_path = ctx.executable_path_env();
-            let path = which_on_path(&parts[1], cwd, search_path.as_deref()).ok_or_else(|| {
-                WorkspaceError::Tool {
-                    code: "COMMAND_NOT_FOUND",
-                    message: format!("Program not found on PATH: {}", parts[1]),
-                    category: "runtime",
-                    retryable: false,
-                }
-            })?;
-            Some(format!("{}\n", path.display()))
-        }
-        "echo" => Some(format!("{}\n", parts[1..].join(" "))),
-        _ => None,
-    };
-
-    Ok(stdout.map(|stdout| {
-        json!({
-            "command": cmd,
-            "resolved_cwd": cwd.display().to_string(),
-            "status": "exited",
-            "termination_reason": "exited",
-            "recoverable": false,
-            "suggestion": "命令已完成",
-            "exit_code": 0,
-            "stdout": stdout,
-            "stderr": "",
-            "stdout_truncated": false,
-            "stderr_truncated": false,
-            "duration_ms": 0,
-            "elapsed_ms": 0,
-            "execution_mode": "native_builtin",
-            "command_runner": "native_builtin",
-            "warnings": ["native diagnostic without child process"]
-        })
-    }))
-}
-
-fn list_directory(
-    ctx: &ToolContext,
-    cwd: &Path,
-    args: &[String],
-) -> Result<String, WorkspaceError> {
-    let target = match args {
-        [] => cwd.to_path_buf(),
-        [path] => ctx.workspace.resolve_existing(path)?.path,
-        _ => {
-            return Err(WorkspaceError::invalid_argument(
-                "ls/dir accepts at most one directory path",
-            ))
-        }
-    };
-    if !target.is_dir() {
-        return Err(WorkspaceError::not_a_directory(
-            "ls/dir target is not a directory",
-        ));
-    }
-
-    let mut entries = std::fs::read_dir(target)
-        .map_err(|error| WorkspaceError::ToolDetails {
-            code: "DIRECTORY_READ_FAILED",
-            message: format!("Failed to read directory: {error}"),
-            category: "runtime",
-            retryable: true,
-            details: json!({
-                "stage": "native_builtin",
-                "reason": "directory_read_failed",
-                "retryable": true
-            }),
-        })?
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    entries.sort_unstable();
-    Ok(if entries.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", entries.join("\n"))
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -535,170 +446,6 @@ fn merge_exec_result(
     snapshot
 }
 
-fn parse_and_resolve(
-    cmd: &str,
-    cwd: &Path,
-    workspace_root: &Path,
-    policy: &crate::tools::policy::PolicySettings,
-    search_path: Option<&OsStr>,
-) -> Result<(String, Vec<String>), WorkspaceError> {
-    let parts = shell_words::split(cmd)
-        .map_err(|_| WorkspaceError::invalid_argument("Invalid command syntax"))?;
-    if parts.is_empty() {
-        return Err(WorkspaceError::invalid_argument("Empty command"));
-    }
-
-    let program = resolve_program(&parts[0], cwd, workspace_root, policy, search_path)?;
-    Ok((program, parts[1..].to_vec()))
-}
-
-fn resolve_program(
-    raw: &str,
-    cwd: &Path,
-    workspace_root: &Path,
-    policy: &crate::tools::policy::PolicySettings,
-    search_path: Option<&OsStr>,
-) -> Result<String, WorkspaceError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(WorkspaceError::invalid_argument("Empty program"));
-    }
-
-    let explicit_path = trimmed.contains(['/', '\\']);
-    let candidate = if Path::new(trimmed).is_absolute() {
-        Path::new(trimmed).to_path_buf()
-    } else {
-        cwd.join(trimmed)
-    };
-    if candidate.is_file() {
-        let resolved = candidate.canonicalize().map_err(|_| WorkspaceError::Tool {
-            code: "COMMAND_REJECTED",
-            message: format!("Program not found: {trimmed}"),
-            category: "runtime",
-            retryable: false,
-        })?;
-        let canonical_workspace =
-            workspace_root
-                .canonicalize()
-                .map_err(|_| WorkspaceError::Tool {
-                    code: "COMMAND_REJECTED",
-                    message: "Workspace root is unavailable".into(),
-                    category: "runtime",
-                    retryable: true,
-                })?;
-        if !resolved.starts_with(&canonical_workspace) {
-            return Err(WorkspaceError::Tool {
-                code: "EXECUTABLE_OUTSIDE_WORKSPACE",
-                message: format!("Workspace 外可执行文件被拒绝: {trimmed}"),
-                category: "security",
-                retryable: false,
-            });
-        }
-        let extension = resolved
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| format!(".{}", value.to_ascii_lowercase()))
-            .unwrap_or_default();
-        if policy.workspace_local_entries
-            && (extension.is_empty() || policy.workspace_script_extensions.contains(&extension))
-        {
-            return Ok(resolved.to_string_lossy().into_owned());
-        }
-        return Err(WorkspaceError::Tool {
-            code: "COMMAND_REJECTED",
-            message: format!("Workspace 本地入口未获允许: {trimmed}"),
-            category: "policy",
-            retryable: false,
-        });
-    }
-
-    if explicit_path {
-        return Err(WorkspaceError::Tool {
-            code: "COMMAND_REJECTED",
-            message: format!("Program not found: {trimmed}"),
-            category: "runtime",
-            retryable: false,
-        });
-    }
-
-    which_on_path(trimmed, cwd, search_path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| WorkspaceError::Tool {
-            code: "COMMAND_REJECTED",
-            message: format!("Program not found on PATH: {trimmed}"),
-            category: "runtime",
-            retryable: false,
-        })
-}
-
-fn which_on_path(
-    program: &str,
-    cwd: &Path,
-    search_path: Option<&OsStr>,
-) -> Option<std::path::PathBuf> {
-    let Some(paths) = search_path else {
-        return which::which(program).ok();
-    };
-
-    for directory in std::env::split_paths(paths) {
-        let directory = if directory.is_absolute() {
-            directory
-        } else {
-            cwd.join(directory)
-        };
-        for candidate in executable_candidates(directory.join(program)) {
-            if is_executable_file(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn executable_candidates(candidate: PathBuf) -> Vec<PathBuf> {
-    vec![candidate]
-}
-
-#[cfg(windows)]
-fn executable_candidates(candidate: PathBuf) -> Vec<PathBuf> {
-    if candidate.extension().is_some() {
-        return vec![candidate];
-    }
-    let extensions = std::env::var_os("PATHEXT")
-        .map(|value| {
-            value
-                .to_string_lossy()
-                .split(';')
-                .filter_map(|item| {
-                    let extension = item.trim().trim_start_matches('.');
-                    (!extension.is_empty()).then(|| extension.to_ascii_lowercase())
-                })
-                .collect::<Vec<_>>()
-        })
-        .filter(|items| !items.is_empty())
-        .unwrap_or_else(|| vec!["com".into(), "exe".into(), "bat".into(), "cmd".into()]);
-
-    extensions
-        .into_iter()
-        .map(|extension| candidate.with_extension(extension))
-        .collect()
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::metadata(path)
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(windows)]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
-}
-
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -959,90 +706,4 @@ mod tests {
             "{output}"
         );
     }
-}
-
-#[cfg(windows)]
-fn windows_hidden_creation_flags() -> u32 {
-    // Match frpc/cloudflared: hide console-subsystem children (python/cmd/powershell)
-    // so remote exec_command does not flash a console or steal focus.
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
-}
-
-fn command_for_program(program: &str, args: &[String]) -> Command {
-    #[cfg(windows)]
-    {
-        let extension = Path::new(program)
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(str::to_ascii_lowercase);
-        match extension.as_deref() {
-            Some("bat") | Some("cmd") => {
-                let mut command = Command::new("cmd.exe");
-                command.args(["/d", "/s", "/c"]);
-                command
-                    .as_std_mut()
-                    .raw_arg(windows_batch_command_line(program, args));
-                command.creation_flags(windows_hidden_creation_flags());
-                return command;
-            }
-            Some("ps1") => {
-                let shell = which::which("pwsh")
-                    .or_else(|_| which::which("powershell"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("powershell.exe"));
-                let mut command = Command::new(shell);
-                command
-                    .args([
-                        "-NoLogo",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-File",
-                        windows_command_path(program).as_str(),
-                    ])
-                    .args(args);
-                command.creation_flags(windows_hidden_creation_flags());
-                return command;
-            }
-            _ => {}
-        }
-    }
-
-    let mut command = Command::new(program);
-    command.args(args);
-    #[cfg(windows)]
-    command.creation_flags(windows_hidden_creation_flags());
-    command
-}
-
-#[cfg(windows)]
-fn windows_batch_command_line(program: &str, args: &[String]) -> String {
-    let mut command_line = String::from("call ");
-    command_line.push_str(&windows_batch_token(&windows_command_path(program)));
-    for arg in args {
-        command_line.push(' ');
-        command_line.push_str(&windows_batch_token(arg));
-    }
-    command_line
-}
-
-#[cfg(windows)]
-fn windows_batch_token(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-fn platform_command_path(path: &Path) -> std::path::PathBuf {
-    #[cfg(windows)]
-    {
-        std::path::PathBuf::from(windows_command_path(&path.to_string_lossy()))
-    }
-    #[cfg(not(windows))]
-    path.to_path_buf()
-}
-
-#[cfg(windows)]
-fn windows_command_path(path: &str) -> String {
-    path.strip_prefix("\\\\?\\").unwrap_or(path).to_string()
 }

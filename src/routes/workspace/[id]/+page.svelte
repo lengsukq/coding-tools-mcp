@@ -47,8 +47,6 @@
   import WorkspaceMetaForm from "$lib/components/WorkspaceMetaForm.svelte";
   import {
     deleteWorkspace,
-    getRuntimeStatus,
-    listWorkspaces,
     startRuntime,
     restartRuntime,
     stopRuntime,
@@ -62,15 +60,28 @@
   import { promptServiceRestart } from "$lib/runtime/restart-hint";
   import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import {
+    MCP_CONFIG_TABS,
+    WORKSPACE_TABS,
+    loadWorkspaceSnapshot,
+    refreshWorkspaceSnapshot,
+    stateLabel,
+    tunnelConfigured,
+    tunnelFormFromProfile,
+    withAuth,
+    withHistoryContext,
+    withRuntimePolicy,
+    withRuntimePort,
+    withTunnelConfig,
+    type McpConfigSection,
+    type WorkspaceTab,
+  } from "$lib/workspace-page";
+  import {
     mcpLocalEndpoint,
     type AuthConfig,
     type RuntimeState,
     type RuntimeStatus,
     type WorkspaceProfile,
   } from "$lib/types";
-
-  type WorkspaceTab = "services" | "diagnostics" | "planning" | "settings";
-  type McpConfigSection = "connection" | "auth" | "policy" | "history";
 
   let profile = $state<WorkspaceProfile | null>(null);
   let mcpStatus = $state<RuntimeState>("stopped");
@@ -85,50 +96,14 @@
   let endpointCopied = $state<string | null>(null);
   let loadGeneration = 0;
 
-  const workspaceTabs = [
-    { value: "services", label: "服务与端点" },
-    { value: "diagnostics", label: "诊断与日志" },
-    { value: "planning", label: "任务规划" },
-    { value: "settings", label: "工作区设置" },
-  ];
-
-  const mcpConfigTabs = [
-    { value: "connection", label: "连接与隧道" },
-    { value: "auth", label: "访问认证" },
-    { value: "policy", label: "执行权限" },
-    { value: "history", label: "历史上下文" },
-  ];
+  const workspaceTabs = WORKSPACE_TABS;
+  const mcpConfigTabs = MCP_CONFIG_TABS;
 
   const workspaceId = $derived($page.params.id);
 
-  const mcpTunnelForm = $derived<TunnelFormConfig>({
-    type: profile?.tunnel.type ?? "none",
-    public_url: profile?.tunnel.public_url ?? "",
-    frp_server: profile?.tunnel.frp_server ?? "",
-    frp_subdomain: profile?.tunnel.frp_subdomain ?? "",
-    frp_profile_id: profile?.tunnel.frp_profile_id ?? "",
-    frp_server_port: profile?.tunnel.frp_server_port ?? 7000,
-    cloudflare_mode: profile?.tunnel.cloudflare_mode ?? "quick",
-    use_proxy: profile?.tunnel.use_proxy ?? true,
-    use_global_gateway: profile?.tunnel.use_global_gateway ?? false,
-  });
+  const mcpTunnelForm = $derived<TunnelFormConfig>(tunnelFormFromProfile(profile));
 
   const defaultMcpLocal = $derived(profile ? mcpLocalEndpoint(profile.runtime.local_port) : "");
-
-  function stateLabel(state: RuntimeState): string {
-    switch (state) {
-      case "running":
-        return "运行中";
-      case "starting":
-        return "启动中";
-      case "stopping":
-        return "停止中";
-      case "error":
-        return "异常";
-      default:
-        return "已停止";
-    }
-  }
 
   function applyMcpRuntime(
     runtime: RuntimeStatus,
@@ -145,10 +120,10 @@
   async function load(id = workspaceId) {
     if (!id) return;
     const generation = ++loadGeneration;
-    const items = await listWorkspaces();
+    const snapshot = await loadWorkspaceSnapshot(id);
     if (generation !== loadGeneration || id !== workspaceId) return;
-    workspaces.set(items);
-    const nextProfile = items.find((item) => item.id === id) ?? null;
+    workspaces.set(snapshot.items);
+    const nextProfile = snapshot.profile;
     if (generation !== loadGeneration || id !== workspaceId) return;
     profile = nextProfile;
     if (nextProfile) {
@@ -160,23 +135,20 @@
       return;
     }
 
-    const mcpRuntime = await getRuntimeStatus(id);
-    if (generation !== loadGeneration || id !== workspaceId) return;
-    applyMcpRuntime(mcpRuntime, id);
+    if (snapshot.runtime) {
+      if (generation !== loadGeneration || id !== workspaceId) return;
+      applyMcpRuntime(snapshot.runtime, id);
+    }
   }
 
   async function refreshProfile(id = workspaceId): Promise<WorkspaceProfile | null> {
     if (!id) return null;
-    const items = await listWorkspaces();
+    const snapshot = await refreshWorkspaceSnapshot(id);
     if (id !== workspaceId) return null;
-    workspaces.set(items);
-    const nextProfile = items.find((item) => item.id === id) ?? null;
+    workspaces.set(snapshot.items);
+    const nextProfile = snapshot.profile;
     profile = nextProfile;
     return nextProfile;
-  }
-
-  function tunnelConfigured(type: string | undefined): boolean {
-    return type === "cloudflare" || type === "frp";
   }
 
   async function afterServiceStart(runtime: { state: RuntimeState; publicEndpoint: string }, id: string) {
@@ -262,10 +234,7 @@
 
   async function saveMcpPort(port: number) {
     if (!profile) return;
-    const next: WorkspaceProfile = {
-      ...profile,
-      runtime: { ...profile.runtime, local_port: port },
-    };
+    const next = withRuntimePort(profile, port);
     await updateWorkspace(next);
     profile = next;
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
@@ -273,20 +242,7 @@
 
   async function saveMcpTunnel(config: TunnelFormConfig, options?: SaveTunnelOptions) {
     if (!profile || !workspaceId) return;
-    const next: WorkspaceProfile = {
-      ...profile,
-      tunnel: {
-        type: config.type,
-        public_url: config.public_url,
-        frp_server: config.frp_server,
-        frp_subdomain: config.frp_subdomain,
-        frp_profile_id: config.frp_profile_id,
-        frp_server_port: config.frp_server_port,
-        cloudflare_mode: config.cloudflare_mode,
-        use_proxy: config.use_proxy,
-        use_global_gateway: config.use_global_gateway,
-      },
-    };
+    const next = withTunnelConfig(profile, config);
     await updateWorkspace(next);
     profile = next;
     if (mcpStatus === "running" && !options?.skipTunnelRestart) {
@@ -307,23 +263,7 @@
 
   async function saveMcpPolicy(draft: RuntimePolicyDraft) {
     if (!profile) return;
-    const next: WorkspaceProfile = {
-      ...profile,
-      runtime: {
-        ...profile.runtime,
-        tool_profile: draft.toolProfile,
-        permission_mode: draft.permissionMode,
-        allowed_commands: draft.allowedCommands,
-        executable_paths: draft.executablePaths,
-        ai_instructions: draft.aiInstructions,
-        instruction_sources: draft.instructionSources,
-        skill_sources: draft.skillSources,
-        custom_instruction_paths: draft.customInstructionPaths,
-        custom_skill_paths: draft.customSkillPaths,
-        workspace_local_entries: draft.workspaceLocalEntries,
-        workspace_script_extensions: draft.workspaceScriptExtensions,
-      },
-    };
+    const next = withRuntimePolicy(profile, draft);
     await updateWorkspace(next);
     profile = next;
     await load();
@@ -332,14 +272,7 @@
 
   async function saveHistoryContext(recording: boolean, selectedSessions: number[]) {
     if (!profile) return;
-    const next: WorkspaceProfile = {
-      ...profile,
-      runtime: {
-        ...profile.runtime,
-        history_recording: recording,
-        history_context_sessions: selectedSessions,
-      },
-    };
+    const next = withHistoryContext(profile, recording, selectedSessions);
     await updateWorkspace(next);
     profile = next;
     await load();
@@ -348,7 +281,7 @@
 
   async function saveMcpAuth(auth: AuthConfig, options?: { skipRuntimeRestart?: boolean }) {
     if (!profile || !workspaceId) return;
-    const next: WorkspaceProfile = { ...profile, auth };
+    const next = withAuth(profile, auth);
     await updateWorkspace(next);
     profile = next;
     if (!options?.skipRuntimeRestart && mcpStatus === "running") {
@@ -503,7 +436,7 @@
     </header>
 
     <!-- Top-Level Modern View Switcher -->
-    <div class="sticky top-0 z-10 bg-[var(--page-bg)]/85 px-4 py-2.5 backdrop-blur-md border-b border-[var(--border)]">
+    <div class="sticky top-0 z-10 bg-[var(--page-bg)]/85 px-7 pt-4 pb-2.5 backdrop-blur-md sm:px-8">
       <div class="max-w-xl">
         <SegmentedControl
           items={workspaceTabs}
@@ -515,9 +448,11 @@
     </div>
 
     <!-- Workspace Main Body -->
-    <div class="page-body pt-5 pb-12">
-      <!-- ══════════════ VIEW 1: 服务与端点 (Cockpit) ══════════════ -->
-      {#if activeWorkspaceTab === "services"}
+    <div class="page-body pt-7 pb-14 sm:pt-8">
+      {#key activeWorkspaceTab}
+        <div class="tx-tab-content-wrapper">
+          <!-- ══════════════ VIEW 1: 服务与端点 (Cockpit) ══════════════ -->
+          {#if activeWorkspaceTab === "services"}
         <div class="grid gap-5">
           <div class="flex items-center justify-between gap-4">
             <div>
@@ -771,7 +706,9 @@
         </div>
       {/if}
     </div>
-  </section>
+  {/key}
+  </div>
+</section>
 
   <!-- High-Risk Delete Confirmation Dialog -->
   <ConfirmDialog

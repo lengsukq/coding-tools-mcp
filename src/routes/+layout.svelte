@@ -149,7 +149,11 @@
   {/snippet}
 
   {#snippet children()}
-    {@render children()}
+    {#key $page.url.pathname}
+      <div class="tx-page-transition">
+        {@render children()}
+      </div>
+    {/key}
   {/snippet}
 </AppShell>
 

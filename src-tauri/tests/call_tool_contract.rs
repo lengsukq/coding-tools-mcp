@@ -191,7 +191,7 @@ fn git_log_root_does_not_pass_empty_pathspec() {
 fn advanced_profile_exposes_every_declared_tool() {
     let declared = coding_tools_mcp_desktop_lib::tools::registry::P0_TOOLS
         .iter()
-        .map(|(name, ..)| *name)
+        .map(|tool| tool.name)
         .filter(|name| *name != "request_permissions")
         .collect::<std::collections::HashSet<_>>();
     let tool_values = coding_tools_mcp_desktop_lib::tools::list_tools_for_profile("advanced");

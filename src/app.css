@@ -133,9 +133,8 @@
   position: sticky;
   top: 0;
   z-index: 15;
-  padding: 12px 28px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--page-bg) 75%, transparent);
+  padding: 12px 28px 8px;
+  background: color-mix(in srgb, var(--page-bg) 80%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
@@ -461,6 +460,7 @@ button {
 .page-scroll {
   flex: 1;
   overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .page-header {
@@ -2611,29 +2611,48 @@ button:disabled {
   writing-mode: vertical-rl;
 }
 
-.tx-dashboard-quick-nav a {
+.tx-dashboard-quick-nav a,
+.tx-dashboard-quick-nav button,
+.tx-dashboard-quick-nav-btn {
   display: grid;
   width: 34px;
   height: 34px;
   place-items: center;
   border: 1px solid transparent;
   border-radius: 10px;
+  background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
   transition:
     color var(--duration-fast) var(--ease-out),
     background var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.tx-dashboard-quick-nav a:hover {
+.tx-dashboard-quick-nav a:hover,
+.tx-dashboard-quick-nav button:hover,
+.tx-dashboard-quick-nav-btn:hover {
   border-color: color-mix(in srgb, var(--primary) 22%, var(--border));
   background: var(--primary-soft);
   color: var(--primary);
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.04);
 }
 
-.tx-dashboard-quick-nav a:focus-visible {
+.tx-dashboard-quick-nav a.active,
+.tx-dashboard-quick-nav button.active,
+.tx-dashboard-quick-nav-btn.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+  transform: scale(1.06);
+}
+
+.tx-dashboard-quick-nav a:focus-visible,
+.tx-dashboard-quick-nav button:focus-visible,
+.tx-dashboard-quick-nav-btn:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
@@ -2766,31 +2785,31 @@ button:disabled {
 }
 
 .tx-dashboard-service-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 14px;
 }
 
 .tx-dashboard-service-state {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 7px;
+  display: flex;
   align-items: center;
-  padding: 10px 11px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(118, 118, 128, 0.045);
   color: var(--text-muted);
 }
 
 .tx-dashboard-service-state svg {
-  grid-row: span 2;
+  flex-shrink: 0;
 }
 
 .tx-dashboard-service-state span {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .tx-dashboard-service-state strong {
@@ -2820,7 +2839,7 @@ button:disabled {
 
 .tx-dashboard-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -2959,16 +2978,16 @@ button:disabled {
 }
 
 .tx-dashboard-runtime-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
 .tx-dashboard-runtime-block {
   min-width: 0;
-  padding: 10px 11px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(118, 118, 128, 0.035);
 }
 
@@ -3055,11 +3074,16 @@ button:disabled {
 .tx-dashboard-quick-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: max-content;
   border: 1px solid var(--border);
   background: var(--card-bg);
   color: var(--text-secondary);
@@ -3453,6 +3477,42 @@ button:disabled {
   .tx-dashboard-usage-heading {
     flex-direction: column;
     gap: 10px;
+  }
+}
+
+/* ─── Route & Tab Transitions ─── */
+.tx-page-transition {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  animation: pageFadeSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pageFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tx-tab-content-wrapper {
+  animation: tabFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

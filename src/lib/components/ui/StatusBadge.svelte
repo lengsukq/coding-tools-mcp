@@ -68,7 +68,7 @@
 </script>
 
 <span
-  class="inline-flex items-center gap-1.5 font-medium border rounded-full select-none {size === 'sm' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-xs'} {current.bg} {customClass}"
+  class="inline-flex items-center gap-1.5 font-medium border rounded-full select-none whitespace-nowrap shrink-0 {size === 'sm' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-xs'} {current.bg} {customClass}"
 >
   {#if showDot}
     <span class="size-1.5 rounded-full {current.dot}"></span>

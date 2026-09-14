@@ -52,7 +52,7 @@
 <button
   {type}
   disabled={disabled || busy}
-  class="{variant === 'icon' ? iconSizeClasses[size] : sizeClasses[size]} {variantClasses[variant]} inline-flex items-center justify-center font-medium cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed select-none {customClass}"
+  class="{variant === 'icon' ? iconSizeClasses[size] : sizeClasses[size]} {variantClasses[variant]} inline-flex items-center justify-center font-medium cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed select-none whitespace-nowrap shrink-0 {customClass}"
   {title}
   aria-label={ariaLabel}
   onclick={(e) => {

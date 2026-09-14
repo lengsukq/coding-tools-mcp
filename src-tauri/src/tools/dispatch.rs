@@ -1,59 +1,20 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use serde_json::{json, Value};
 
+mod gates;
+mod routing;
+
 use crate::planning::{
-    ExecutionLedgerUpdate, GoalStatus, PlanStatus, PlanningMode, PlanningService, PlanningState,
-    PLANNING_RELATIVE_PATH,
+    ExecutionLedgerUpdate, PlanningService, PlanningState, PLANNING_RELATIVE_PATH,
 };
 use crate::tools::context::ToolContext;
-use crate::tools::policy::{validate_tool_arguments_for_workspace, PolicyError};
+use crate::tools::policy::validate_tool_arguments_for_workspace;
 use crate::tools::workspace::{tool_err, tool_ok, WorkspaceError};
-use crate::tools::{exec, file, git, history, image_tool, manage, patch, planning, session, skill};
-
-fn policy_tool_err(err: PolicyError) -> Value {
-    let dangerous = err
-        .0
-        .strip_prefix("DANGEROUS_OPERATION_REQUIRES_CONFIRMATION: ");
-    let protected = err.0.strip_prefix("PROTECTED_REPOSITORY_ASSET: ");
-    let code = if protected.is_some() {
-        "PROTECTED_REPOSITORY_ASSET"
-    } else if dangerous.is_some() {
-        "DANGEROUS_OPERATION_REQUIRES_CONFIRMATION"
-    } else {
-        "POLICY_REJECTED"
-    };
-    let message = protected.or(dangerous).unwrap_or(&err.0).to_string();
-    let (reason, suggestion) = if dangerous.is_some() {
-        (
-            "confirmation_required",
-            "为危险操作补充 confirm=true，确认后再重试",
-        )
-    } else if message.contains("allowlisted") {
-        ("command_rejected", "改用允许的命令，或调整工作区命令白名单")
-    } else if message.contains("Shell chaining") {
-        (
-            "shell_syntax_rejected",
-            "移除未加引号的 shell 操作符；引号内的程序参数可以保留",
-        )
-    } else {
-        ("policy_rejected", "根据错误信息修正参数后重试")
-    };
-    tool_err(WorkspaceError::ToolDetails {
-        code,
-        message,
-        category: "policy",
-        retryable: false,
-        details: json!({
-            "stage": "policy",
-            "reason": reason,
-            "recoverable": reason != "confirmation_required",
-            "suggestion": suggestion
-        }),
-    })
-}
+use gates::{
+    load_planning_state, mutating_tool_call, planning_gate, planning_protected_tool,
+    policy_tool_err,
+};
 
 fn record_execution_ledger(
     ctx: &ToolContext,
@@ -141,178 +102,6 @@ fn record_execution_ledger(
         history_checkpoint_ref,
         verification,
     });
-}
-
-fn capability_health_check(ctx: &ToolContext) -> Value {
-    let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
-    let mut hasher = DefaultHasher::new();
-    tools.hash(&mut hasher);
-    json!({
-        "authentication": {
-            "status": "available"
-        },
-        "authorization": {
-            "mode": ctx.permission_mode
-        },
-        "workspace": {
-            "path": ctx.workspace.root().display().to_string(),
-            "status": "available"
-        },
-        "capability": {
-            "server_tool_count": tools.len(),
-            "tool_profile": ctx.tool_profile,
-            "tool_fingerprint": format!("{:x}", hasher.finish()),
-            "server_version": env!("CARGO_PKG_VERSION"),
-            "tool_api": crate::tools::registry::tool_api_descriptor()
-        },
-        "recommendation": "If client tools are missing while server capability is healthy, refresh MCP tool discovery instead of requesting permissions."
-    })
-}
-
-fn mutating_tool_call(name: &str, args: &Value) -> bool {
-    if name == "history_session_validate" {
-        return args.get("repair").and_then(Value::as_bool).unwrap_or(false);
-    }
-    manage::action_is_mutating(name, args)
-        .unwrap_or_else(|| crate::tools::registry::MUTATING_TOOLS.contains(&name))
-}
-
-fn planning_protected_tool(name: &str, args: &Value) -> bool {
-    const EXEMPT: &[&str] = &[
-        "history_session_bootstrap",
-        "history_session_checkpoint",
-        "history_session_validate",
-        "create_goal",
-        "update_goal",
-        "create_plan",
-        "update_plan",
-        "kill_session",
-        "set_default_cwd",
-    ];
-    if name == "history_manage" || name == "planning_manage" {
-        return false;
-    }
-    mutating_tool_call(name, args) && !EXEMPT.contains(&name)
-}
-
-fn plan_mode_blocks_tool(name: &str, args: &Value) -> bool {
-    planning_protected_tool(name, args) || name == "exec_health_check"
-}
-
-fn load_planning_state(ctx: &ToolContext) -> Result<PlanningState, Value> {
-    PlanningService::new(ctx.workspace.root())
-        .state()
-        .map_err(|error| {
-            tool_err(WorkspaceError::ToolDetails {
-                code: "PLANNING_STATE_UNAVAILABLE",
-                message: format!("Cannot read project planning state: {error}"),
-                category: "storage",
-                retryable: false,
-                details: json!({
-                    "storage_path": PLANNING_RELATIVE_PATH,
-                    "fail_closed_for_mutations": true
-                }),
-            })
-        })
-}
-
-fn planning_gate(state: &PlanningState, name: &str, args: &Value) -> Option<Value> {
-    if !planning_protected_tool(name, args) && state.mode != PlanningMode::Plan {
-        return None;
-    }
-    match state.mode {
-        PlanningMode::Direct => None,
-        PlanningMode::Plan if plan_mode_blocks_tool(name, args) => {
-            Some(tool_err(WorkspaceError::ToolDetails {
-                code: "PLAN_MODE_READ_ONLY",
-                message: format!("{name} is disabled while this workspace is in Plan mode"),
-                category: "permission",
-                retryable: false,
-                details: json!({
-                    "mode": "plan",
-                    "revision": state.revision,
-                    "suggestion": "Use read/planning tools, or switch the workspace to Goal/Direct mode from the desktop app."
-                }),
-            }))
-        }
-        PlanningMode::Plan => None,
-        PlanningMode::Goal => goal_mode_gate(state, name),
-    }
-}
-
-fn goal_mode_gate(state: &PlanningState, name: &str) -> Option<Value> {
-    let Some(goal_id) = state.focus_goal_id.as_deref() else {
-        return Some(planning_permission_error(
-            "GOAL_CONTEXT_REQUIRED",
-            format!("{name} requires an active Goal while Goal mode is enabled"),
-            state,
-            "Select an active Goal from the desktop app before modifying the project.",
-        ));
-    };
-    let Some(goal) = state.goals.iter().find(|goal| goal.id == goal_id) else {
-        return Some(planning_permission_error(
-            "GOAL_CONTEXT_INVALID",
-            format!("Focused Goal {goal_id} no longer exists"),
-            state,
-            "Select another Goal from the desktop app.",
-        ));
-    };
-    if goal.status != GoalStatus::Active {
-        return Some(planning_permission_error(
-            "GOAL_NOT_ACTIVE",
-            format!("Focused Goal '{}' is {:?}", goal.title, goal.status),
-            state,
-            "Resume/select an active Goal from the desktop app before modifying the project.",
-        ));
-    }
-    if let Some(plan_id) = state.focus_plan_id.as_deref() {
-        let Some(plan) = state.plans.iter().find(|plan| plan.id == plan_id) else {
-            return Some(planning_permission_error(
-                "PLAN_CONTEXT_INVALID",
-                format!("Focused Plan {plan_id} no longer exists"),
-                state,
-                "Select another Plan from the desktop app.",
-            ));
-        };
-        if plan.goal_id.as_deref() != Some(goal_id) {
-            return Some(planning_permission_error(
-                "PLAN_GOAL_MISMATCH",
-                "Focused Plan does not belong to the focused Goal".into(),
-                state,
-                "Select a Plan linked to the active Goal.",
-            ));
-        }
-        if !matches!(plan.status, PlanStatus::Active | PlanStatus::Draft) {
-            return Some(planning_permission_error(
-                "PLAN_NOT_EXECUTABLE",
-                format!("Focused Plan '{}' is {:?}", plan.title, plan.status),
-                state,
-                "Activate the Plan or clear the focused Plan before modifying the project.",
-            ));
-        }
-    }
-    None
-}
-
-fn planning_permission_error(
-    code: &'static str,
-    message: String,
-    state: &PlanningState,
-    suggestion: &str,
-) -> Value {
-    tool_err(WorkspaceError::ToolDetails {
-        code,
-        message,
-        category: "permission",
-        retryable: false,
-        details: json!({
-            "mode": state.mode,
-            "revision": state.revision,
-            "focus_goal_id": state.focus_goal_id,
-            "focus_plan_id": state.focus_plan_id,
-            "suggestion": suggestion
-        }),
-    })
 }
 
 /// **唯一工具执行入口**。MCP `tools/call` 必须且只能调用此函数。
@@ -406,103 +195,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         None
     };
 
-    let ws = &ctx.workspace;
-    let result = match name {
-        "history_manage" => manage::history_manage(ctx, &effective_args),
-        "planning_manage" => manage::planning_manage(ctx, &effective_args),
-        "task_manage" => manage::task_manage(ctx, &effective_args),
-        "history_session_bootstrap" => history::bootstrap(ctx, &effective_args),
-        "history_session_checkpoint" => history::checkpoint(ctx, &effective_args),
-        "history_session_validate" => history::validate(ctx, &effective_args),
-        "history_session_search" => history::search(ctx, &effective_args),
-        "history_session_read" => history::read(ctx, &effective_args),
-        "capability_health_check" => Ok(capability_health_check(ctx)),
-        "planning_state" => planning::planning_state(ctx, &effective_args),
-        "create_goal" => planning::create_goal(ctx, &effective_args),
-        "update_goal" => planning::update_goal(ctx, &effective_args),
-        "create_plan" => planning::create_plan(ctx, &effective_args),
-        "update_plan" => planning::update_plan(ctx, &effective_args),
-        "request_goal_review" => planning::request_goal_review(ctx, &effective_args),
-        "request_plan_review" => planning::request_plan_review(ctx, &effective_args),
-        "server_info" => server_info(ctx),
-        "check_exec_environment" => check_exec_environment(ctx),
-        "exec_health_check" => exec::exec_health_check(ctx),
-        "get_default_cwd" => get_default_cwd(ctx),
-        "set_default_cwd" => set_default_cwd(ctx, &effective_args),
-        "list_skills" => skill::list_skills(ctx, &effective_args),
-        "get_skill" => skill::get_skill(ctx, &effective_args),
-        "read_file" => file::read_file(ws, &effective_args),
-        "list_dir" => file::list_dir(ws, &effective_args),
-        "list_files" => file::list_files(ws, &effective_args),
-        "search_text" | "grep_text" | "grep" => file::search_text(ws, &effective_args),
-        "patch_check" => patch::patch_check(ctx, &effective_args),
-        "apply_patch" => patch::apply_patch(ctx, &effective_args),
-        "exec_command" => exec::exec_command(ctx, &effective_args),
-        "read_output" => session::read_output(&ctx.sessions, &effective_args),
-        "write_stdin" => session::write_stdin(&ctx.sessions, &effective_args),
-        "kill_session" => session::kill_session(&ctx.sessions, &effective_args),
-        "git_status" => git::git_status(ws, &effective_args),
-        "git_diff" => git::git_diff(ws, &effective_args),
-        "git_log" => git::git_log(ws, &effective_args),
-        "git_show" => git::git_show(ws, &effective_args),
-        "git_blame" => git::git_blame(ws, &effective_args),
-        "view_image" => image_tool::view_image(ws, &effective_args),
-        "request_permissions" => {
-            if ctx.policy.skip_permission_gates() {
-                Ok(tool_ok(json!({
-                    "ok": true,
-                    "status": "granted",
-                    "grant_id": "dangerously-skip-all-permissions",
-                    "expires_at": null,
-                    "constraints": {
-                        "mode": "dangerous",
-                        "workspace": ctx.workspace.root_display(),
-                        "requested": effective_args
-                    },
-                    "warnings": [
-                        "dangerous permission mode is enabled; permission-gated operations are auto-granted"
-                    ]
-                })))
-            } else {
-                let mut output = tool_err(WorkspaceError::ToolDetails {
-                    code: "ELICITATION_UNSUPPORTED",
-                    message: "Permission elicitation is not available for this client. Do not retry request_permissions; it cannot create a persistent grant.".into(),
-                    category: "permission",
-                    retryable: false,
-                    details: json!({ "requested": effective_args }),
-                });
-                if let Some(object) = output.as_object_mut() {
-                    object.insert("status".into(), json!("unsupported"));
-                    object.insert("grant_id".into(), Value::Null);
-                    object.insert("expires_at".into(), Value::Null);
-                    object.insert(
-                        "next_actions".into(),
-                        json!([
-                            "Do not retry request_permissions.",
-                            "If the original operation returned DANGEROUS_OPERATION_REQUIRES_CONFIRMATION and the user already explicitly authorized it, retry the original tool with confirm=true."
-                        ]),
-                    );
-                }
-                Ok(output)
-            }
-        }
-        _ => {
-            let output = tool_err(WorkspaceError::ToolDetails {
-                code: "INVALID_ARGUMENT",
-                message: format!("Unknown tool: {name}"),
-                category: "validation",
-                retryable: false,
-                details: json!({
-                    "reason": "unknown_tool",
-                    "suggestion": "Call capability_health_check and compare the available server tool list. If the tool exists on the server but is missing in the client session, refresh MCP tool discovery before retrying."
-                }),
-            });
-            return planning_state
-                .as_ref()
-                .map(|state| attach_planning_context(output.clone(), state))
-                .unwrap_or(output);
-        }
-    };
+    let result = routing::execute_tool(ctx, name, &effective_args);
     let mut output = match result {
         Ok(v) => v,
         Err(e) => tool_err(e),
@@ -937,6 +630,8 @@ pub fn set_default_cwd(ctx: &ToolContext, args: &Value) -> Result<Value, Workspa
 #[cfg(test)]
 mod planning_tests {
     use tempfile::tempdir;
+
+    use crate::planning::PlanningMode;
 
     use super::*;
 

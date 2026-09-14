@@ -22,9 +22,26 @@
     Square,
   } from "@lucide/svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
-  import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
+  import type { PlanningStateDto } from "$lib/api/planning";
   import { getLastWorkspaceId } from "$lib/api/settings";
-  import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
+  import type { ServiceUsageStats } from "$lib/api/usage";
+  import {
+    buildUsageChart,
+    buildUsagePoint,
+    formatCount,
+    formatMillions,
+    formatMetric,
+    loadPlanningByWorkspace,
+    loadUsageByWorkspace,
+    planningLabel as getPlanningLabel,
+    stateClass,
+    stateLabel,
+    summarizeConnections,
+    summarizePlanning,
+    summarizeUsage,
+    tunnelLabel,
+    type UsagePoint,
+  } from "$lib/dashboard";
   import {
     openWorkspaceDirectory,
     startRuntime,
@@ -33,19 +50,7 @@
   import { runServiceToggle } from "$lib/runtime/service";
   import { showToast } from "$lib/stores/toast";
   import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
-  import type { RuntimeState, WorkspaceProfile } from "$lib/types";
-
-  interface UsagePoint {
-    timestamp: number;
-    estimatedTokens: number;
-    requestCount: number;
-    averageTokens: number;
-  }
-
-  interface ChartPoint {
-    x: number;
-    y: number;
-  }
+  import type { WorkspaceProfile } from "$lib/types";
 
   let lastWorkspaceId = $state("");
   let planningByWorkspace = $state<Record<string, PlanningStateDto | null>>({});
@@ -76,56 +81,9 @@
     $workspaces.find((workspace) => workspace.id === lastWorkspaceId) ?? $workspaces[0] ?? null,
   );
 
-  const planningStats = $derived.by(() => {
-    let activeGoals = 0;
-    let activePlans = 0;
-    let pendingReview = 0;
-    const modes = { direct: 0, plan: 0, goal: 0 };
-
-    for (const planning of Object.values(planningByWorkspace)) {
-      if (!planning) continue;
-      modes[planning.mode] += 1;
-      activeGoals += planning.goals.filter((goal) => ["active", "paused"].includes(goal.status)).length;
-      activePlans += planning.plans.filter((plan) => ["draft", "active", "paused"].includes(plan.status)).length;
-      pendingReview += planning.goals.filter((goal) => goal.status === "awaiting_acceptance").length;
-      pendingReview += planning.plans.filter((plan) => plan.status === "awaiting_acceptance").length;
-    }
-
-    return { activeGoals, activePlans, pendingReview, modes };
-  });
-
-  const connectionStats = $derived.by(() => {
-    const stats = { gateway: 0, frp: 0, cloudflare: 0, local: 0 };
-    for (const workspace of $workspaces) {
-      if (workspace.tunnel.use_global_gateway) stats.gateway += 1;
-      else if (workspace.tunnel.type === "frp") stats.frp += 1;
-      else if (workspace.tunnel.type === "cloudflare") stats.cloudflare += 1;
-      else stats.local += 1;
-    }
-    return stats;
-  });
-
-  const usageTotals = $derived.by(() => {
-    const totals = {
-      estimatedTokens: 0,
-      estimatedInputTokens: 0,
-      estimatedOutputTokens: 0,
-      requestCount: 0,
-      toolCallCount: 0,
-      errorCount: 0,
-    };
-    for (const stats of Object.values(usageByWorkspace)) {
-      for (const item of stats) {
-        totals.estimatedTokens += item.estimatedTokens;
-        totals.estimatedInputTokens += item.estimatedInputTokens;
-        totals.estimatedOutputTokens += item.estimatedOutputTokens;
-        totals.requestCount += item.requestCount;
-        totals.toolCallCount += item.toolCallCount;
-        totals.errorCount += item.errorCount;
-      }
-    }
-    return totals;
-  });
+  const planningStats = $derived.by(() => summarizePlanning(planningByWorkspace));
+  const connectionStats = $derived.by(() => summarizeConnections($workspaces));
+  const usageTotals = $derived.by(() => summarizeUsage(usageByWorkspace));
   const averageTokens = $derived(
     usageTotals.requestCount === 0
       ? 0
@@ -133,38 +91,8 @@
   );
   const usageChart = $derived.by(() => buildUsageChart(usageHistory));
 
-  function stateLabel(state: RuntimeState | undefined): string {
-    switch (state) {
-      case "running":
-        return "运行中";
-      case "starting":
-        return "启动中";
-      case "stopping":
-        return "停止中";
-      case "error":
-        return "异常";
-      default:
-        return "已停止";
-    }
-  }
-
-  function stateClass(state: RuntimeState | undefined): string {
-    return state ?? "stopped";
-  }
-
-  function tunnelLabel(workspace: WorkspaceProfile): string {
-    if (workspace.tunnel.use_global_gateway) return "Global Gateway";
-    if (workspace.tunnel.type === "frp") return "FRP";
-    if (workspace.tunnel.type === "cloudflare") return "Cloudflare";
-    return "Local";
-  }
-
   function planningLabel(workspaceId: string): string {
-    const planning = planningByWorkspace[workspaceId];
-    if (!planning) return "Planning 未加载";
-    const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
-    const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
-    return goal?.title ?? plan?.title ?? `${planning.mode.toUpperCase()} 模式`;
+    return getPlanningLabel(planningByWorkspace, workspaceId);
   }
 
   function percentage(count: number): number {
@@ -178,17 +106,9 @@
       return;
     }
 
-    const entries = await Promise.all(
-      items.map(async (workspace) => {
-        try {
-          return [workspace.id, await getPlanningState(workspace.id)] as const;
-        } catch {
-          return [workspace.id, null] as const;
-        }
-      }),
-    );
+    const nextPlanning = await loadPlanningByWorkspace(items);
     if (generation !== planningGeneration) return;
-    planningByWorkspace = Object.fromEntries(entries);
+    planningByWorkspace = nextPlanning;
   }
 
   async function loadUsage(items: WorkspaceProfile[]) {
@@ -206,83 +126,10 @@
       usageHistory = [];
     }
 
-    const entries = await Promise.all(
-      items.map(async (workspace) => {
-        try {
-          return [workspace.id, await getServiceUsageStats(workspace.id)] as const;
-        } catch {
-          return [workspace.id, []] as const;
-        }
-      }),
-    );
+    const nextUsage = await loadUsageByWorkspace(items);
     if (generation !== usageGeneration) return;
-    const nextUsage = Object.fromEntries(entries);
     usageByWorkspace = nextUsage;
     usageHistory = [...usageHistory, buildUsagePoint(nextUsage)].slice(-24);
-  }
-
-  function formatCount(value: number): string {
-    return new Intl.NumberFormat("zh-CN", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(value);
-  }
-
-  function formatMillions(value: number): string {
-    return `${(value / 1_000_000).toFixed(2)}M`;
-  }
-
-  function formatMetric(value: number): string {
-    if (value >= 1_000_000) return formatMillions(value);
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-    return Math.round(value).toLocaleString("zh-CN");
-  }
-
-  function buildUsagePoint(statsByWorkspace: Record<string, ServiceUsageStats[]>): UsagePoint {
-    const stats = Object.values(statsByWorkspace).flat();
-    const estimatedTokens = stats.reduce((sum, item) => sum + item.estimatedTokens, 0);
-    const requestCount = stats.reduce((sum, item) => sum + item.requestCount, 0);
-    return {
-      timestamp: Date.now(),
-      estimatedTokens,
-      requestCount,
-      averageTokens: requestCount === 0 ? 0 : estimatedTokens / requestCount,
-    };
-  }
-
-  function buildUsageChart(history: UsagePoint[]): {
-    path: string;
-    areaPath: string;
-    points: ChartPoint[];
-    max: number;
-  } {
-    if (history.length === 0) {
-      return {
-        path: "M 0 32 L 100 32",
-        areaPath: "M 0 32 L 100 32 L 100 36 L 0 36 Z",
-        points: [],
-        max: 0,
-      };
-    }
-
-    const values = history.map((point) => point.estimatedTokens);
-    const max = Math.max(...values, 1);
-    const samples = values.length === 1 ? [values[0], values[0]] : values;
-    const points = samples.map((value, index) => ({
-      x: samples.length === 1 ? 50 : (index / (samples.length - 1)) * 100,
-      y: 32 - (value / max) * 25,
-    }));
-    const path = points
-      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-      .join(" ");
-    const last = points[points.length - 1];
-    const first = points[0];
-    return {
-      path,
-      areaPath: `${path} L ${last.x.toFixed(2)} 36 L ${first.x.toFixed(2)} 36 Z`,
-      points,
-      max,
-    };
   }
 
   function openWorkspace(id: string) {
@@ -330,6 +177,22 @@
     }
   }
 
+  let activeSection = $state("dashboard-overview");
+
+  function scrollToAnchor(event: MouseEvent, targetId: string) {
+    event.preventDefault();
+    const el = document.getElementById(targetId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      activeSection = targetId;
+      try {
+        history.replaceState(null, "", `#${targetId}`);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   onMount(() => {
     const usageTimer = window.setInterval(() => {
       void loadUsage($workspaces);
@@ -342,7 +205,33 @@
         lastWorkspaceId = "";
       });
 
-    return () => window.clearInterval(usageTimer);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            activeSection = entry.target.id;
+          }
+        }
+      },
+      { rootMargin: "-10% 0px -70% 0px" },
+    );
+
+    const anchorIds = [
+      "dashboard-overview",
+      "dashboard-metrics",
+      "dashboard-workspaces",
+      "dashboard-usage",
+      "dashboard-details",
+    ];
+    for (const id of anchorIds) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+
+    return () => {
+      window.clearInterval(usageTimer);
+      observer.disconnect();
+    };
   });
 
   $effect(() => {
@@ -375,19 +264,49 @@
       <div class="tx-dashboard-canvas">
         <nav class="tx-dashboard-quick-nav" aria-label="Dashboard 快速导航">
           <span class="tx-dashboard-quick-nav-label">快速跳转</span>
-          <a href="#dashboard-overview" aria-label="跳转到运行总览" title="运行总览">
+          <a
+            href="#dashboard-overview"
+            class:active={activeSection === "dashboard-overview"}
+            aria-label="跳转到运行总览"
+            title="运行总览"
+            onclick={(e) => scrollToAnchor(e, "dashboard-overview")}
+          >
             <Gauge size={15} />
           </a>
-          <a href="#dashboard-metrics" aria-label="跳转到关键指标" title="关键指标">
+          <a
+            href="#dashboard-metrics"
+            class:active={activeSection === "dashboard-metrics"}
+            aria-label="跳转到关键指标"
+            title="关键指标"
+            onclick={(e) => scrollToAnchor(e, "dashboard-metrics")}
+          >
             <Activity size={15} />
           </a>
-          <a href="#dashboard-workspaces" aria-label="跳转到工作区运行矩阵" title="运行矩阵">
+          <a
+            href="#dashboard-workspaces"
+            class:active={activeSection === "dashboard-workspaces"}
+            aria-label="跳转到工作区运行矩阵"
+            title="运行矩阵"
+            onclick={(e) => scrollToAnchor(e, "dashboard-workspaces")}
+          >
             <Boxes size={15} />
           </a>
-          <a href="#dashboard-usage" aria-label="跳转到 Token 趋势" title="Token 趋势">
+          <a
+            href="#dashboard-usage"
+            class:active={activeSection === "dashboard-usage"}
+            aria-label="跳转到 Token 趋势"
+            title="Token 趋势"
+            onclick={(e) => scrollToAnchor(e, "dashboard-usage")}
+          >
             <Network size={15} />
           </a>
-          <a href="#dashboard-details" aria-label="跳转到连接与 Planning" title="连接与 Planning">
+          <a
+            href="#dashboard-details"
+            class:active={activeSection === "dashboard-details"}
+            aria-label="跳转到连接与 Planning"
+            title="连接与 Planning"
+            onclick={(e) => scrollToAnchor(e, "dashboard-details")}
+          >
             <ListChecks size={15} />
           </a>
         </nav>
@@ -481,26 +400,30 @@
               <span class="truncate">{recentWorkspace.path}</span>
             </div>
             <div class="tx-dashboard-service-pair">
-              <div class="tx-dashboard-service-state {stateClass($mcpRuntimeStates[recentWorkspace.id])} flex items-center justify-between gap-2">
+              <div class="tx-dashboard-service-state {stateClass($mcpRuntimeStates[recentWorkspace.id])}">
                 <div class="flex items-center gap-2 min-w-0">
                   <Radio size={13} class="shrink-0" />
-                  <span>MCP</span>
+                  <span class="font-semibold text-[var(--text-main)]">MCP</span>
                   <strong class="truncate">{stateLabel($mcpRuntimeStates[recentWorkspace.id])}</strong>
+                  <span class="font-mono text-[10px] text-[var(--text-muted)] shrink-0">:{recentWorkspace.runtime.local_port}</span>
+                  <span class="rounded bg-[var(--surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--text-secondary)] font-medium shrink-0">
+                    {tunnelLabel(recentWorkspace)}
+                  </span>
                 </div>
                 <button
                   type="button"
-                  class="tx-dashboard-quick-toggle"
+                  class="tx-dashboard-quick-toggle shrink-0"
                   class:running={$mcpRuntimeStates[recentWorkspace.id] === "running"}
                   disabled={mcpBusyMap[recentWorkspace.id] || $mcpRuntimeStates[recentWorkspace.id] === "starting" || $mcpRuntimeStates[recentWorkspace.id] === "stopping"}
                   onclick={() => void toggleWorkspaceMcp(recentWorkspace!.id)}
                 >
                   {#if mcpBusyMap[recentWorkspace.id]}
-                    <RotateCw size={10} class="animate-spin" />
+                    <RotateCw size={10} class="animate-spin shrink-0" />
                   {:else if $mcpRuntimeStates[recentWorkspace.id] === "running"}
-                    <Square size={10} />
+                    <Square size={10} class="shrink-0" />
                     <span>停止</span>
                   {:else}
-                    <Play size={10} />
+                    <Play size={10} class="shrink-0" />
                     <span>启动</span>
                   {/if}
                 </button>
@@ -598,42 +521,38 @@
                 </div>
               </div>
 
-              <!-- Runtime Grid with Direct Toggles -->
+              <!-- Runtime Block with Direct Toggle -->
               <div class="tx-dashboard-runtime-grid">
-                <!-- MCP Block -->
-                <div class="tx-dashboard-runtime-block flex flex-col justify-between gap-2">
-                  <div>
-                    <div class="tx-dashboard-runtime-title">
-                      <span class="tx-dashboard-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
-                      <strong>MCP</strong>
-                      <small>{stateLabel($mcpRuntimeStates[workspace.id])}</small>
-                    </div>
-                    <div class="tx-dashboard-runtime-meta">
-                      <span>:{workspace.runtime.local_port}</span>
-                      <span>{tunnelLabel(workspace)}</span>
-                    </div>
+                <div class="tx-dashboard-runtime-block flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="tx-dashboard-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
+                    <strong class="text-xs font-semibold text-[var(--text-main)]">MCP</strong>
+                    <span class="text-[11px] font-medium {isMcpRunning ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'} shrink-0">
+                      {stateLabel($mcpRuntimeStates[workspace.id])}
+                    </span>
+                    <span class="font-mono text-[10px] text-[var(--text-muted)] shrink-0">:{workspace.runtime.local_port}</span>
+                    <span class="rounded bg-[var(--surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--text-secondary)] font-medium shrink-0">
+                      {tunnelLabel(workspace)}
+                    </span>
                   </div>
-                  <div class="flex items-center justify-end pt-1">
-                    <button
-                      type="button"
-                      class="tx-dashboard-quick-toggle"
-                      class:running={isMcpRunning}
-                      disabled={mcpBusyMap[workspace.id] || $mcpRuntimeStates[workspace.id] === "starting" || $mcpRuntimeStates[workspace.id] === "stopping"}
-                      onclick={() => void toggleWorkspaceMcp(workspace.id)}
-                    >
-                      {#if mcpBusyMap[workspace.id]}
-                        <RotateCw size={10} class="animate-spin" />
-                      {:else if isMcpRunning}
-                        <Square size={10} />
-                        <span>停止</span>
-                      {:else}
-                        <Play size={10} />
-                        <span>启动</span>
-                      {/if}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    class="tx-dashboard-quick-toggle shrink-0"
+                    class:running={isMcpRunning}
+                    disabled={mcpBusyMap[workspace.id] || $mcpRuntimeStates[workspace.id] === "starting" || $mcpRuntimeStates[workspace.id] === "stopping"}
+                    onclick={() => void toggleWorkspaceMcp(workspace.id)}
+                  >
+                    {#if mcpBusyMap[workspace.id]}
+                      <RotateCw size={10} class="animate-spin shrink-0" />
+                    {:else if isMcpRunning}
+                      <Square size={10} class="shrink-0" />
+                      <span>停止</span>
+                    {:else}
+                      <Play size={10} class="shrink-0" />
+                      <span>启动</span>
+                    {/if}
+                  </button>
                 </div>
-
               </div>
 
               <!-- Footer Planning Line -->

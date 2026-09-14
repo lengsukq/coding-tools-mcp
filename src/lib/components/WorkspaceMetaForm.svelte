@@ -80,63 +80,68 @@
 </script>
 
 <form
-  class="flex flex-col gap-3.5 sm:flex-row sm:items-end"
+  class="flex flex-col gap-5"
   onsubmit={(event) => {
     event.preventDefault();
     void save();
   }}
 >
-  <div class="min-w-0 flex-1">
-    <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5" for="workspace-name-input">
+  <!-- Row 1: Workspace Name -->
+  <div>
+    <span class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
       工作区名称
-    </label>
-    <TextInput
-      bind:value={draftName}
-      placeholder="输入工作区名称"
-    />
-  </div>
-
-  <div class="min-w-0 flex-1">
-    <span class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">物理路径</span>
-    <div class="flex min-w-0 items-center gap-2">
-      <p
-        class="font-mono text-xs min-w-0 flex-1 truncate rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] px-2.5 py-1.5 text-[var(--text-secondary)]"
-        title={path}
-      >
-        {path}
-      </p>
+    </span>
+    <div class="flex items-center gap-3">
+      <div class="min-w-0 flex-1">
+        <TextInput
+          bind:value={draftName}
+          placeholder="输入工作区名称"
+        />
+      </div>
       <Button
-        variant="ghost"
-        size="sm"
-        disabled={opening || !path.trim()}
-        busy={opening}
-        onclick={() => void openDirectory()}
+        type="submit"
+        variant="primary"
+        size="md"
+        disabled={saving || !dirty}
+        busy={saving}
       >
-        <FolderOpen size={13} strokeWidth={2} />
-        <span>打开</span>
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={updatingPath}
-        busy={updatingPath}
-        onclick={() => void updateDirectory()}
-      >
-        <FolderInput size={13} strokeWidth={2} />
-        <span>更改目录</span>
+        保存名称
       </Button>
     </div>
   </div>
 
-  <div class="shrink-0">
-    <Button
-      type="submit"
-      variant="primary"
-      size="md"
-      disabled={saving || !dirty}
-      busy={saving}
-    >
-      保存名称
-    </Button>
+  <!-- Row 2: Physical Path -->
+  <div>
+    <span class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">物理路径</span>
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <p
+        class="font-mono text-xs min-w-0 flex-1 truncate rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-[var(--text-secondary)] select-all"
+        title={path}
+      >
+        {path}
+      </p>
+      <div class="flex items-center gap-2 shrink-0">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={opening || !path.trim()}
+          busy={opening}
+          onclick={() => void openDirectory()}
+        >
+          <FolderOpen size={13} strokeWidth={2} />
+          <span>打开目录</span>
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={updatingPath}
+          busy={updatingPath}
+          onclick={() => void updateDirectory()}
+        >
+          <FolderInput size={13} strokeWidth={2} />
+          <span>更改目录</span>
+        </Button>
+      </div>
+    </div>
   </div>
 </form>
