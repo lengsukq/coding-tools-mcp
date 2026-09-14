@@ -33,10 +33,10 @@ fn log_file_names(profile: &WorkspaceProfile, service: &str) -> AppResult<Vec<&'
     match service {
         "mcp" => {
             let mut names = vec!["mcp-requests.log", "stderr.log", "stdout.log"];
-            if profile.tunnel.tunnel_type == "cloudflare" {
+            if profile.tunnel.tunnel_type.is_cloudflare() {
                 names.insert(0, "cloudflared.log");
             }
-            if profile.tunnel.tunnel_type == "frp" {
+            if profile.tunnel.tunnel_type.is_frp() {
                 names.insert(0, "frpc-mcp.log");
             }
             Ok(names)

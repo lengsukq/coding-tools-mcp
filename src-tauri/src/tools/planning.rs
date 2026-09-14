@@ -2,7 +2,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::planning::{
-    GoalStatus, PlanStatus, PlanStepStatus, PlanningService, PLANNING_RELATIVE_PATH,
+    GoalStatus, PlanStatus, PlanStepStatus, PlanningService, UpdateGoalRequest, UpdatePlanRequest,
+    PLANNING_RELATIVE_PATH,
 };
 
 use super::context::ToolContext;
@@ -29,7 +30,7 @@ pub fn create_goal(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         )
         .map_err(storage_error)?;
     let goal = planning
-        .update_goal(&goal.id, None, None, None, None, None, Some(true))
+        .update_goal(UpdateGoalRequest::focus(&goal.id, true))
         .map_err(storage_error)?;
     Ok(tool_ok(json!({
         "goal": goal,
@@ -50,15 +51,15 @@ pub fn update_goal(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         ));
     }
     let goal = service(ctx)
-        .update_goal(
-            goal_id,
-            optional_string(args, "title"),
-            optional_string(args, "objective"),
+        .update_goal(UpdateGoalRequest {
+            goal_id: goal_id.to_string(),
+            title: optional_string(args, "title"),
+            objective: optional_string(args, "objective"),
             status,
-            optional_string_list(args.get("constraints"))?,
-            optional_string_list(args.get("completed_criteria_ids"))?,
-            args.get("focus").and_then(Value::as_bool),
-        )
+            constraints: optional_string_list(args.get("constraints"))?,
+            completed_criteria_ids: optional_string_list(args.get("completed_criteria_ids"))?,
+            focus: args.get("focus").and_then(Value::as_bool),
+        })
         .map_err(storage_error)?;
     Ok(tool_ok(
         json!({"goal": goal, "storage_path": PLANNING_RELATIVE_PATH}),
@@ -78,7 +79,7 @@ pub fn create_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         )
         .map_err(storage_error)?;
     let plan = planning
-        .update_plan(&plan.id, Some(PlanStatus::Active), Vec::new(), Some(true))
+        .update_plan(UpdatePlanRequest::activate(&plan.id))
         .map_err(storage_error)?;
     Ok(tool_ok(json!({
         "plan": plan,
@@ -110,12 +111,12 @@ pub fn update_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         .map(|update| (update.step_id, update.status, update.notes))
         .collect();
     let plan = service(ctx)
-        .update_plan(
-            plan_id,
+        .update_plan(UpdatePlanRequest {
+            plan_id: plan_id.to_string(),
             status,
             step_updates,
-            args.get("focus").and_then(Value::as_bool),
-        )
+            focus: args.get("focus").and_then(Value::as_bool),
+        })
         .map_err(storage_error)?;
     Ok(tool_ok(
         json!({"plan": plan, "storage_path": PLANNING_RELATIVE_PATH}),

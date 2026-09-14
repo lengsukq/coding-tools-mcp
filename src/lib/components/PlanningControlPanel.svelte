@@ -1,8 +1,6 @@
 <script lang="ts">
   import {
-    Archive,
     Bot,
-    CheckCircle2,
     Crosshair,
     ListChecks,
     RefreshCw,
@@ -26,6 +24,7 @@
   import { showToast } from "$lib/stores/toast";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import Button from "$lib/components/ui/Button.svelte";
+  import PlanningReviewQueue from "$lib/components/planning/PlanningReviewQueue.svelte";
 
   interface Props {
     workspaceId: string;
@@ -108,20 +107,31 @@
     resetConfirmOpen = true;
   }
 
-  async function handleConfirmReset() {
+  async function runBusyAction(
+    action: () => Promise<void>,
+    successMessage: string,
+    errorTitle: string,
+    successTitle = "AI Planning",
+  ) {
     if (busy) return;
     busy = true;
     try {
+      await action();
+      showToast(successMessage, { title: successTitle, kind: "success" });
+    } catch (err) {
+      showToast(String(err), { title: errorTitle, kind: "error" });
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handleConfirmReset() {
+    await runBusyAction(async () => {
       planning = await resetPlanningState(workspaceId);
       error = "";
       reviewFeedback = {};
       resetConfirmOpen = false;
-      showToast("规划状态已重置。", { title: "AI Planning", kind: "success" });
-    } catch (err) {
-      showToast(String(err), { title: "重置规划失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "规划状态已重置。", "重置规划失败");
   }
 
   function feedbackFor(id: string): string {
@@ -151,82 +161,39 @@
 
   async function switchMode(mode: PlanningMode) {
     if (!planning || busy || planning.mode === mode) return;
-    busy = true;
-    try {
+    await runBusyAction(async () => {
       planning = await setPlanningMode(workspaceId, mode);
-      showToast("执行约束模式已更新。", { title: "AI Planning", kind: "success" });
-    } catch (err) {
-      showToast(String(err), { title: "模式切换失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "执行约束模式已更新。", "模式切换失败");
   }
 
   async function acceptGoal(goal: GoalDto) {
-    if (busy) return;
-    busy = true;
-    try {
+    await runBusyAction(async () => {
       await acceptGoalReview(workspaceId, goal.id);
       await load(true);
-      showToast("Goal 已验收并归档，关联 Plan 也已归档。", {
-        title: "人工验收完成",
-        kind: "success",
-      });
-    } catch (err) {
-      showToast(String(err), { title: "Goal 验收失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "Goal 已验收并归档，关联 Plan 也已归档。", "Goal 验收失败", "人工验收完成");
   }
 
   async function rejectGoal(goal: GoalDto) {
-    if (busy) return;
-    busy = true;
-    try {
+    await runBusyAction(async () => {
       await rejectGoalReview(workspaceId, goal.id, feedbackFor(goal.id));
       setFeedback(goal.id, "");
       await load(true);
-      showToast("Goal 已打回为进行中，AI 可继续处理。", {
-        title: "已打回",
-        kind: "success",
-      });
-    } catch (err) {
-      showToast(String(err), { title: "Goal 打回失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "Goal 已打回为进行中，AI 可继续处理。", "Goal 打回失败", "已打回");
   }
 
   async function acceptPlan(plan: PlanDto) {
-    if (busy) return;
-    busy = true;
-    try {
+    await runBusyAction(async () => {
       await acceptPlanReview(workspaceId, plan.id);
       await load(true);
-      showToast("Plan 已验收并归档。", { title: "人工验收完成", kind: "success" });
-    } catch (err) {
-      showToast(String(err), { title: "Plan 验收失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "Plan 已验收并归档。", "Plan 验收失败", "人工验收完成");
   }
 
   async function rejectPlan(plan: PlanDto) {
-    if (busy) return;
-    busy = true;
-    try {
+    await runBusyAction(async () => {
       await rejectPlanReview(workspaceId, plan.id, feedbackFor(plan.id));
       setFeedback(plan.id, "");
       await load(true);
-      showToast("Plan 已打回为进行中，AI 可继续执行。", {
-        title: "已打回",
-        kind: "success",
-      });
-    } catch (err) {
-      showToast(String(err), { title: "Plan 打回失败", kind: "error" });
-    } finally {
-      busy = false;
-    }
+    }, "Plan 已打回为进行中，AI 可继续执行。", "Plan 打回失败", "已打回");
   }
 
   $effect(() => {
@@ -331,111 +298,17 @@
       </div>
     </div>
 
-    {#if pendingGoals.length > 0 || pendingPlans.length > 0}
-    <div class="mt-5 rounded-[12px] border border-[var(--color-border)] p-4">
-      <div class="flex items-start gap-3">
-        <span class="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--primary-soft)] text-[var(--primary)]">
-          <CheckCircle2 size={15} />
-        </span>
-        <div>
-          <p class="tx-section-label">人工验收</p>
-          <p class="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-            AI 完成工作后只能提交到这里等待验收。点击「验收并归档」才会真正关闭；打回后会重新激活，让 AI 在后续对话继续处理。
-          </p>
-        </div>
-      </div>
-
-        <div class="mt-4 grid gap-3">
-          {#each pendingGoals as goal}
-            <article class="rounded-[12px] border border-[var(--color-border)] p-4">
-              <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <Crosshair size={14} class="text-[var(--primary)]" />
-                    <strong class="text-sm">Goal · {goal.title}</strong>
-                  </div>
-                  <p class="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">{goal.objective}</p>
-                  {#if goal.review_summary}
-                    <div class="mt-3 rounded-[9px] bg-[var(--surface-hover)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
-                      <span class="font-medium text-[var(--color-text)]">AI 验收摘要：</span>{goal.review_summary}
-                    </div>
-                  {/if}
-                  {#if goal.success_criteria.length > 0}
-                    <div class="mt-3 grid gap-1.5 text-xs text-[var(--color-text-secondary)]">
-                      {#each goal.success_criteria as criterion}
-                        <div class="flex items-start gap-2">
-                          <span>{criterion.completed ? "✓" : "○"}</span>
-                          <span>{criterion.text}</span>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-                <div class="flex shrink-0 flex-wrap gap-2">
-                  <Button variant="primary" size="sm" disabled={busy} onclick={() => void acceptGoal(goal)}>
-                    <Archive size={13} /> 验收并归档
-                  </Button>
-                </div>
-              </div>
-              <div class="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row">
-                <input
-                  class="tx-input min-h-9 flex-1 text-xs"
-                  placeholder="可选：填写打回原因，AI 下次继续时可以参考"
-                  value={feedbackFor(goal.id)}
-                  oninput={(event) => setFeedback(goal.id, event.currentTarget.value)}
-                />
-                <Button variant="ghost" size="sm" disabled={busy} onclick={() => void rejectGoal(goal)}>
-                  <RotateCcw size={13} /> 打回继续
-                </Button>
-              </div>
-            </article>
-          {/each}
-
-          {#each pendingPlans as plan}
-            <article class="rounded-[12px] border border-[var(--color-border)] p-4">
-              <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <ListChecks size={14} class="text-[var(--primary)]" />
-                    <strong class="text-sm">Plan · {plan.title}</strong>
-                  </div>
-                  <p class="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">{plan.objective}</p>
-                  {#if plan.review_summary}
-                    <div class="mt-3 rounded-[9px] bg-[var(--surface-hover)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
-                      <span class="font-medium text-[var(--color-text)]">AI 验收摘要：</span>{plan.review_summary}
-                    </div>
-                  {/if}
-                  {#if plan.steps.length > 0}
-                    <div class="mt-3 grid gap-1.5 text-xs text-[var(--color-text-secondary)]">
-                      {#each plan.steps as step}
-                        <div class="flex items-start gap-2">
-                          <span>{step.status === "completed" ? "✓" : step.status === "skipped" ? "–" : "○"}</span>
-                          <span>{step.title}</span>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-                <Button variant="primary" size="sm" disabled={busy} onclick={() => void acceptPlan(plan)}>
-                  <Archive size={13} /> 验收并归档
-                </Button>
-              </div>
-              <div class="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row">
-                <input
-                  class="tx-input min-h-9 flex-1 text-xs"
-                  placeholder="可选：填写打回原因"
-                  value={feedbackFor(plan.id)}
-                  oninput={(event) => setFeedback(plan.id, event.currentTarget.value)}
-                />
-                <Button variant="ghost" size="sm" disabled={busy} onclick={() => void rejectPlan(plan)}>
-                  <RotateCcw size={13} /> 打回继续
-                </Button>
-              </div>
-            </article>
-          {/each}
-        </div>
-    </div>
-    {/if}
+    <PlanningReviewQueue
+      goals={pendingGoals}
+      plans={pendingPlans}
+      {busy}
+      {feedbackFor}
+      onFeedback={setFeedback}
+      onAcceptGoal={acceptGoal}
+      onRejectGoal={rejectGoal}
+      onAcceptPlan={acceptPlan}
+      onRejectPlan={rejectPlan}
+    />
 
     <div class="mt-5 grid gap-4 xl:grid-cols-2">
       <div class="rounded-[12px] border border-[var(--color-border)] p-4">

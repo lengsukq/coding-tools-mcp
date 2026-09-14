@@ -2,6 +2,45 @@ use serde_json::{json, Value};
 
 use super::{input_schema, tool_definition, P0_TOOLS};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolProfile {
+    Compact,
+    Core,
+    Advanced,
+    ReadOnly,
+    CompatReadonlyAll,
+}
+
+impl ToolProfile {
+    pub fn from_config(value: &str) -> Self {
+        match value {
+            "compact" => Self::Compact,
+            "advanced" => Self::Advanced,
+            "read-only" => Self::ReadOnly,
+            "compat-readonly-all" => Self::CompatReadonlyAll,
+            _ => Self::Core,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Core => "core",
+            Self::Advanced => "advanced",
+            Self::ReadOnly => "read-only",
+            Self::CompatReadonlyAll => "compat-readonly-all",
+        }
+    }
+
+    pub fn is_compact(self) -> bool {
+        self == Self::Compact
+    }
+
+    fn is_compat_readonly_all(self) -> bool {
+        self == Self::CompatReadonlyAll
+    }
+}
+
 /// Legacy-compatible core surface. It keeps lifecycle-specific tool names while
 /// also exposing the Stable Tool API v2 managers so MCP clients can migrate
 /// without a flag day.
@@ -197,21 +236,18 @@ pub fn canonical_tool_name(name: &str) -> &str {
 }
 
 pub fn normalize_tool_profile(profile: &str) -> &'static str {
-    match profile {
-        "compact" => "compact",
-        "advanced" => "advanced",
-        "read-only" => "read-only",
-        "compat-readonly-all" => "compat-readonly-all",
-        _ => "core",
-    }
+    ToolProfile::from_config(profile).as_str()
 }
 
 pub fn exposed_tool_names(tool_profile: &str) -> Vec<&'static str> {
-    let names = match normalize_tool_profile(tool_profile) {
-        "compact" => COMPACT_TOOLS.to_vec(),
-        "read-only" => CORE_READ_ONLY_TOOLS.to_vec(),
-        "advanced" | "compat-readonly-all" => P0_TOOLS.iter().map(|tool| tool.name).collect(),
-        _ => CORE_TOOLS.to_vec(),
+    let profile = ToolProfile::from_config(tool_profile);
+    let names = match profile {
+        ToolProfile::Compact => COMPACT_TOOLS.to_vec(),
+        ToolProfile::ReadOnly => CORE_READ_ONLY_TOOLS.to_vec(),
+        ToolProfile::Advanced | ToolProfile::CompatReadonlyAll => {
+            P0_TOOLS.iter().map(|tool| tool.name).collect()
+        }
+        ToolProfile::Core => CORE_TOOLS.to_vec(),
     };
 
     names
@@ -252,7 +288,8 @@ fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
 }
 
 pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
-    let compat = tool_profile == "compat-readonly-all";
+    let profile = ToolProfile::from_config(tool_profile);
+    let compat = profile.is_compat_readonly_all();
     exposed_tool_names(tool_profile)
         .into_iter()
         .filter_map(|name| {
@@ -270,7 +307,7 @@ pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
                 json!({
                     "name": name,
                     "title": title,
-                    "description": if tool_profile == "compact" {
+                    "description": if profile.is_compact() {
                         compact_description(name, description)
                     } else {
                         description

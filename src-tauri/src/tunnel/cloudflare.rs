@@ -165,7 +165,6 @@ fn extract_cloudflared_from_tar_gz(bytes: &[u8], dest: &Path) -> AppResult<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
-#[allow(dead_code)]
 fn extract_cloudflared_from_tar_gz(_bytes: &[u8], _dest: &Path) -> AppResult<()> {
     Err(AppError::Message(
         "当前平台的 cloudflared 无需解压。".into(),

@@ -1,5 +1,211 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct ProviderDescriptor {
+    name: &'static str,
+    home_instruction: Option<&'static str>,
+    workspace_instruction: Option<&'static str>,
+    skill_roots: &'static [&'static str],
+    global_scan_skill_roots: &'static [&'static str],
+    extra_global_skill_roots: &'static [&'static str],
+}
+
+const PROVIDERS: &[ProviderDescriptor] = &[
+    ProviderDescriptor {
+        name: "codex",
+        home_instruction: Some(".codex/AGENTS.md"),
+        workspace_instruction: Some("AGENTS.md"),
+        skill_roots: &[".agents/skills", ".codex/skills"],
+        global_scan_skill_roots: &[".agents/skills", ".codex/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "claude",
+        home_instruction: Some(".claude/CLAUDE.md"),
+        workspace_instruction: Some("CLAUDE.md"),
+        skill_roots: &[".claude/skills", ".agents/skills"],
+        global_scan_skill_roots: &[".claude/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "cursor",
+        home_instruction: None,
+        workspace_instruction: None,
+        skill_roots: &[".cursor/skills", ".agents/skills"],
+        global_scan_skill_roots: &[".cursor/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "copilot",
+        home_instruction: None,
+        workspace_instruction: Some(".github/copilot-instructions.md"),
+        skill_roots: &[".github/skills", ".claude/skills", ".agents/skills"],
+        global_scan_skill_roots: &[".github/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "opencode",
+        home_instruction: Some(".config/opencode/AGENTS.md"),
+        workspace_instruction: Some("AGENTS.md"),
+        skill_roots: &[".opencode/skills", ".claude/skills", ".agents/skills"],
+        global_scan_skill_roots: &[".opencode/skills", ".config/opencode/skills"],
+        extra_global_skill_roots: &[".config/opencode/skills"],
+    },
+    ProviderDescriptor {
+        name: "zcode",
+        home_instruction: Some(".zcode/AGENTS.md"),
+        workspace_instruction: Some("AGENTS.md"),
+        skill_roots: &[".zcode/skills"],
+        global_scan_skill_roots: &[".zcode/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "reasonix",
+        home_instruction: None,
+        workspace_instruction: None,
+        skill_roots: &[
+            ".reasonix/skills",
+            ".agents/skills",
+            ".agent/skills",
+            ".claude/skills",
+        ],
+        global_scan_skill_roots: &[".reasonix/skills", ".agent/skills"],
+        extra_global_skill_roots: &[],
+    },
+];
+
+fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
+    PROVIDERS.iter().find(|item| item.name == provider)
+}
+
+pub(super) fn add_instruction_candidates_for_provider(
+    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    provider: &str,
+    workspace_root: &Path,
+) {
+    match provider {
+        "codex" => {
+            add_home_candidate(candidates, provider, ".codex/AGENTS.md");
+            let override_path = workspace_root.join("AGENTS.override.md");
+            candidates.push((
+                provider.to_string(),
+                if override_path.is_file() {
+                    override_path
+                } else {
+                    workspace_root.join("AGENTS.md")
+                },
+                "workspace",
+            ));
+        }
+        "cursor" => add_cursor_instruction_candidates(candidates, workspace_root),
+        "opencode" => {
+            add_home_candidate(candidates, provider, ".config/opencode/AGENTS.md");
+            let agents = workspace_root.join("AGENTS.md");
+            candidates.push((provider.to_string(), agents.clone(), "workspace"));
+            if !agents.is_file() {
+                candidates.push((
+                    provider.to_string(),
+                    workspace_root.join("CLAUDE.md"),
+                    "workspace",
+                ));
+            }
+        }
+        "reasonix" => add_reasonix_instruction_candidates(candidates, workspace_root),
+        "custom" => {}
+        _ => {
+            let Some(descriptor) = provider_descriptor(provider) else {
+                return;
+            };
+            if let Some(path) = descriptor.home_instruction {
+                add_home_candidate(candidates, provider, path);
+            }
+            if let Some(path) = descriptor.workspace_instruction {
+                candidates.push((provider.to_string(), workspace_root.join(path), "workspace"));
+            }
+        }
+    }
+}
+
+pub(super) fn add_skill_roots_for_provider(
+    roots: &mut Vec<(String, PathBuf, &'static str)>,
+    provider: &str,
+    workspace_root: &Path,
+) {
+    let Some(descriptor) = provider_descriptor(provider) else {
+        return;
+    };
+    for root in descriptor.skill_roots {
+        add_home_skill_root(roots, provider, root);
+        add_skill_root(roots, provider, workspace_root.join(root), "workspace");
+    }
+    for root in descriptor.extra_global_skill_roots {
+        add_home_skill_root(roots, provider, root);
+    }
+}
+
+fn add_cursor_instruction_candidates(
+    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    workspace_root: &Path,
+) {
+    if let Some(rules) = dirs::home_dir()
+        .map(|home| home.join(".cursor/rules"))
+        .filter(|rules| rules.is_dir())
+    {
+        add_cursor_rule_files(candidates, "cursor", &rules, "global");
+    }
+    candidates.push((
+        "cursor".into(),
+        workspace_root.join("AGENTS.md"),
+        "workspace",
+    ));
+    candidates.push((
+        "cursor".into(),
+        workspace_root.join(".cursorrules"),
+        "workspace",
+    ));
+    let rules = workspace_root.join(".cursor/rules");
+    if rules.is_dir() {
+        add_cursor_rule_files(candidates, "cursor", &rules, "workspace");
+    }
+}
+
+fn add_cursor_rule_files(
+    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    provider: &str,
+    root: &Path,
+    scope: &'static str,
+) {
+    for entry in WalkDir::new(root)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.is_file()
+            && matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("mdc") | Some("md")
+            )
+            && cursor_rule_is_always_apply(path)
+        {
+            candidates.push((provider.to_string(), path.to_path_buf(), scope));
+        }
+    }
+}
+
+fn add_reasonix_instruction_candidates(
+    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    workspace_root: &Path,
+) {
+    for name in ["REASONIX.md", "AGENTS.md", "CLAUDE.md"] {
+        add_home_candidate(candidates, "reasonix", &format!(".reasonix/{name}"));
+        let local = name.trim_end_matches(".md").to_string() + ".local.md";
+        add_home_candidate(candidates, "reasonix", &format!(".reasonix/{local}"));
+        candidates.push(("reasonix".into(), workspace_root.join(name), "workspace"));
+        candidates.push(("reasonix".into(), workspace_root.join(local), "workspace"));
+    }
+}
+
 pub(super) fn effective_sources(sources: &[String]) -> (Vec<String>, bool) {
     let normalized = normalized_source_list(sources);
 
@@ -224,16 +430,9 @@ pub(super) fn discover_global_instruction_paths(home: &Path, provider: &str) -> 
 }
 
 pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<String> {
-    let roots: &[&str] = match provider {
-        "codex" => &[".agents/skills", ".codex/skills"],
-        "claude" => &[".claude/skills"],
-        "cursor" => &[".cursor/skills"],
-        "copilot" => &[".github/skills"],
-        "opencode" => &[".opencode/skills", ".config/opencode/skills"],
-        "zcode" => &[".zcode/skills"],
-        "reasonix" => &[".reasonix/skills", ".agent/skills"],
-        _ => &[],
-    };
+    let roots = provider_descriptor(provider)
+        .map(|descriptor| descriptor.global_scan_skill_roots)
+        .unwrap_or(&[]);
 
     let mut result = Vec::new();
     let mut seen = HashSet::new();

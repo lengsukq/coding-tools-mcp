@@ -1,78 +1,39 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import {
-    Folder,
-    FolderOpen,
-    Copy,
-    Check,
-    Play,
-    Square,
-    RotateCw,
-    Settings,
-    Radio,
-    FileText,
-    Sliders,
-    Shield,
-    ListChecks,
-    ExternalLink,
-    ChevronRight,
-    Terminal,
-    Layers,
-    Cpu,
-    RefreshCw,
-    Trash2,
-    HardDrive,
-  } from "@lucide/svelte";
-  import AuthConfigForm from "$lib/components/AuthConfigForm.svelte";
-  import HealthPanel from "$lib/components/HealthPanel.svelte";
-  import HistoryContextPanel from "$lib/components/HistoryContextPanel.svelte";
-  import LogViewer from "$lib/components/LogViewer.svelte";
-  import RuntimePolicyForm, {
-    type RuntimePolicyDraft,
-  } from "$lib/components/RuntimePolicyForm.svelte";
-  import ChatGptSessionPrompt from "$lib/components/ChatGptSessionPrompt.svelte";
+  import { RotateCw } from "@lucide/svelte";
   import PlanningControlPanel from "$lib/components/PlanningControlPanel.svelte";
-  import GptQuickCopy from "$lib/components/GptQuickCopy.svelte";
-  import StatusOrb from "$lib/components/StatusOrb.svelte";
-  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
+  import type { RuntimePolicyDraft } from "$lib/components/RuntimePolicyForm.svelte";
+  import type { SaveTunnelOptions, TunnelFormConfig } from "$lib/components/TunnelConfigForm.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
-  import Button from "$lib/components/ui/Button.svelte";
-  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
-  import Card from "$lib/components/ui/Card.svelte";
-  import TunnelConfigForm, {
-    type TunnelFormConfig,
-    type SaveTunnelOptions,
-  } from "$lib/components/TunnelConfigForm.svelte";
-  import WorkspaceMetaForm from "$lib/components/WorkspaceMetaForm.svelte";
-  import {
-    deleteWorkspace,
-    startRuntime,
-    restartRuntime,
-    stopRuntime,
-    updateWorkspace,
-    openWorkspaceDirectory,
-  } from "$lib/api/workspaces";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
+  import WorkspaceDiagnosticsPanel from "$lib/components/workspace/WorkspaceDiagnosticsPanel.svelte";
+  import WorkspaceHeader from "$lib/components/workspace/WorkspaceHeader.svelte";
+  import WorkspaceServiceCockpit from "$lib/components/workspace/WorkspaceServiceCockpit.svelte";
+  import WorkspaceSettingsPanel from "$lib/components/workspace/WorkspaceSettingsPanel.svelte";
   import { setLastWorkspace } from "$lib/api/settings";
   import { restartTunnel, stopTunnel } from "$lib/api/tunnel";
-  import { runServiceToggle, notifyStartFailure } from "$lib/runtime/service";
-  import { showToast } from "$lib/stores/toast";
+  import {
+    deleteWorkspace,
+    openWorkspaceDirectory,
+    restartRuntime,
+    startRuntime,
+    stopRuntime,
+    updateWorkspace,
+  } from "$lib/api/workspaces";
+  import { notifyStartFailure, runServiceToggle } from "$lib/runtime/service";
   import { promptServiceRestart } from "$lib/runtime/restart-hint";
   import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
+  import { showToast } from "$lib/stores/toast";
   import {
-    MCP_CONFIG_TABS,
     WORKSPACE_TABS,
     loadWorkspaceSnapshot,
     refreshWorkspaceSnapshot,
-    stateLabel,
     tunnelConfigured,
-    tunnelFormFromProfile,
     withAuth,
     withHistoryContext,
     withRuntimePolicy,
-    withRuntimePort,
     withTunnelConfig,
-    type McpConfigSection,
     type WorkspaceTab,
   } from "$lib/workspace-page";
   import {
@@ -85,33 +46,23 @@
 
   let profile = $state<WorkspaceProfile | null>(null);
   let mcpStatus = $state<RuntimeState>("stopped");
-  let mcpStatusMessage = $state("");
   let mcpBusy = $state(false);
   let mcpLocal = $state("");
   let mcpPublic = $state("");
-
   let activeWorkspaceTab = $state<WorkspaceTab>("services");
-  let mcpConfigSection = $state<McpConfigSection>("connection");
   let pathCopied = $state(false);
   let endpointCopied = $state<string | null>(null);
+  let deleteConfirmOpen = $state(false);
+  let deleteBusy = $state(false);
   let loadGeneration = 0;
 
   const workspaceTabs = WORKSPACE_TABS;
-  const mcpConfigTabs = MCP_CONFIG_TABS;
-
   const workspaceId = $derived($page.params.id);
-
-  const mcpTunnelForm = $derived<TunnelFormConfig>(tunnelFormFromProfile(profile));
-
   const defaultMcpLocal = $derived(profile ? mcpLocalEndpoint(profile.runtime.local_port) : "");
 
-  function applyMcpRuntime(
-    runtime: RuntimeStatus,
-    id = workspaceId,
-  ) {
+  function applyMcpRuntime(runtime: RuntimeStatus, id = workspaceId) {
     if (!id || id !== workspaceId) return;
     mcpStatus = runtime.state;
-    mcpStatusMessage = runtime.localMessage ?? "";
     mcpLocal = runtime.localEndpoint;
     mcpPublic = runtime.publicEndpoint;
     mcpRuntimeStates.update((current) => ({ ...current, [id]: runtime.state }));
@@ -122,23 +73,17 @@
     const generation = ++loadGeneration;
     const snapshot = await loadWorkspaceSnapshot(id);
     if (generation !== loadGeneration || id !== workspaceId) return;
+
     workspaces.set(snapshot.items);
-    const nextProfile = snapshot.profile;
+    profile = snapshot.profile;
+    if (profile) await setLastWorkspace(profile.id);
     if (generation !== loadGeneration || id !== workspaceId) return;
-    profile = nextProfile;
-    if (nextProfile) {
-      await setLastWorkspace(nextProfile.id);
-    }
-    if (generation !== loadGeneration || id !== workspaceId) return;
-    if (!nextProfile) {
+
+    if (!profile) {
       await goto("/");
       return;
     }
-
-    if (snapshot.runtime) {
-      if (generation !== loadGeneration || id !== workspaceId) return;
-      applyMcpRuntime(snapshot.runtime, id);
-    }
+    if (snapshot.runtime) applyMcpRuntime(snapshot.runtime, id);
   }
 
   async function refreshProfile(id = workspaceId): Promise<WorkspaceProfile | null> {
@@ -146,16 +91,17 @@
     const snapshot = await refreshWorkspaceSnapshot(id);
     if (id !== workspaceId) return null;
     workspaces.set(snapshot.items);
-    const nextProfile = snapshot.profile;
-    profile = nextProfile;
-    return nextProfile;
+    profile = snapshot.profile;
+    return profile;
   }
 
-  async function afterServiceStart(runtime: { state: RuntimeState; publicEndpoint: string }, id: string) {
+  async function afterServiceStart(
+    runtime: { state: RuntimeState; publicEndpoint: string },
+    id: string,
+  ) {
     const nextProfile = await refreshProfile(id);
     if (id !== workspaceId) return;
-    const tunnelType = nextProfile?.tunnel.type;
-    const needsTunnel = tunnelConfigured(tunnelType);
+    const needsTunnel = tunnelConfigured(nextProfile?.tunnel.type);
     if (runtime.state === "running" && needsTunnel && !runtime.publicEndpoint) {
       showToast(
         "服务已启动，但公网地址尚未就绪。如使用 Cloudflare Quick Tunnel，请稍候；若未自动重连，可在设置中重新连接隧道。",
@@ -176,32 +122,25 @@
         () => stopRuntime(id),
         "MCP",
       );
-      if (runtime && id === workspaceId) {
-        applyMcpRuntime(runtime, id);
-        if (!wasRunning) {
-          if (runtime.state === "running") {
-            await afterServiceStart(runtime, id);
-          } else {
-            notifyStartFailure("MCP", runtime);
-          }
-        }
+      if (!runtime || id !== workspaceId) return;
+      applyMcpRuntime(runtime, id);
+      if (!wasRunning) {
+        if (runtime.state === "running") await afterServiceStart(runtime, id);
+        else notifyStartFailure("MCP", runtime);
       }
     } finally {
-      if (id === workspaceId) {
-        mcpBusy = false;
-      }
+      if (id === workspaceId) mcpBusy = false;
     }
   }
 
   async function handleRestartService() {
-    if (!workspaceId) return;
+    if (!workspaceId || mcpBusy) return;
     mcpBusy = true;
     try {
-      const res = await restartRuntime(workspaceId);
-      applyMcpRuntime(res);
+      applyMcpRuntime(await restartRuntime(workspaceId));
       showToast("MCP 服务已重启", { kind: "success" });
-    } catch (err) {
-      showToast(String(err), { title: "重启失败", kind: "error" });
+    } catch (error) {
+      showToast(String(error), { title: "重启失败", kind: "error" });
     } finally {
       mcpBusy = false;
     }
@@ -211,14 +150,14 @@
     if (!profile?.path) return;
     try {
       await openWorkspaceDirectory(profile.path);
-    } catch (err) {
-      showToast(String(err), { title: "打开目录失败", kind: "error" });
+    } catch (error) {
+      showToast(String(error), { title: "打开目录失败", kind: "error" });
     }
   }
 
   function copyPath() {
     if (!profile?.path) return;
-    navigator.clipboard.writeText(profile.path);
+    void navigator.clipboard.writeText(profile.path);
     pathCopied = true;
     setTimeout(() => { pathCopied = false; }, 1800);
     showToast("路径已复制到剪贴板", { kind: "info" });
@@ -226,18 +165,10 @@
 
   function copyEndpoint(url: string, id: string) {
     if (!url) return;
-    navigator.clipboard.writeText(url);
+    void navigator.clipboard.writeText(url);
     endpointCopied = id;
     setTimeout(() => { endpointCopied = null; }, 1800);
     showToast("地址已复制到剪贴板", { kind: "info" });
-  }
-
-  async function saveMcpPort(port: number) {
-    if (!profile) return;
-    const next = withRuntimePort(profile, port);
-    await updateWorkspace(next);
-    profile = next;
-    await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
   async function saveMcpTunnel(config: TunnelFormConfig, options?: SaveTunnelOptions) {
@@ -247,11 +178,8 @@
     profile = next;
     if (mcpStatus === "running" && !options?.skipTunnelRestart) {
       try {
-        if (config.type === "none") {
-          await stopTunnel(workspaceId);
-        } else {
-          await restartTunnel(workspaceId);
-        }
+        if (config.type === "none") await stopTunnel(workspaceId);
+        else await restartTunnel(workspaceId);
       } catch (error) {
         showToast(String(error), { title: "隧道重启失败", kind: "error", duration: 8000 });
       }
@@ -263,30 +191,27 @@
 
   async function saveMcpPolicy(draft: RuntimePolicyDraft) {
     if (!profile) return;
-    const next = withRuntimePolicy(profile, draft);
-    await updateWorkspace(next);
-    profile = next;
+    profile = withRuntimePolicy(profile, draft);
+    await updateWorkspace(profile);
     await load();
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
   async function saveHistoryContext(recording: boolean, selectedSessions: number[]) {
     if (!profile) return;
-    const next = withHistoryContext(profile, recording, selectedSessions);
-    await updateWorkspace(next);
-    profile = next;
+    profile = withHistoryContext(profile, recording, selectedSessions);
+    await updateWorkspace(profile);
     await load();
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
 
   async function saveMcpAuth(auth: AuthConfig, options?: { skipRuntimeRestart?: boolean }) {
     if (!profile || !workspaceId) return;
-    const next = withAuth(profile, auth);
-    await updateWorkspace(next);
-    profile = next;
+    profile = withAuth(profile, auth);
+    await updateWorkspace(profile);
     if (!options?.skipRuntimeRestart && mcpStatus === "running") {
       try {
-        await restartRuntime(workspaceId);
+        applyMcpRuntime(await restartRuntime(workspaceId));
       } catch (error) {
         showToast(String(error), { title: "服务重启失败", kind: "error", duration: 8000 });
       }
@@ -305,15 +230,11 @@
 
   async function saveWorkspacePath(path: string) {
     if (!profile || profile.path === path) return;
-    const next: WorkspaceProfile = { ...profile, path };
-    await updateWorkspace(next);
-    profile = next;
+    profile = { ...profile, path };
+    await updateWorkspace(profile);
     showToast("工作区目录已更新", { kind: "success" });
     await promptServiceRestart(mcpStatus === "running", "MCP 服务");
   }
-
-  let deleteConfirmOpen = $state(false);
-  let deleteBusy = $state(false);
 
   function requestRemoveWorkspace() {
     deleteConfirmOpen = true;
@@ -331,7 +252,7 @@
         return next;
       });
       deleteConfirmOpen = false;
-      goto("/");
+      await goto("/");
     } catch (error) {
       showToast(String(error), { title: "删除工作区失败", kind: "error" });
     } finally {
@@ -344,10 +265,7 @@
     if (!id) return;
     profile = null;
     void load(id);
-
-    return () => {
-      loadGeneration++;
-    };
+    return () => { loadGeneration += 1; };
   });
 </script>
 
@@ -360,82 +278,16 @@
   </div>
 {:else}
   <section class="page-scroll">
-    <!-- Desktop Native Header Toolbar -->
-    <header class="page-header border-b border-[var(--border)] bg-[var(--glass-bg)] pb-4 backdrop-blur-xl">
-      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <!-- Workspace identity & Path -->
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2.5">
-            <div class="flex size-9 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20 shadow-sm">
-              <Folder size={18} strokeWidth={2.2} />
-            </div>
-            <div class="min-w-0">
-              <h2 class="text-lg font-bold tracking-tight text-[var(--text-main)] truncate leading-tight">
-                {profile.name}
-              </h2>
-            </div>
-          </div>
+    <WorkspaceHeader
+      {profile}
+      runtimeState={mcpStatus}
+      runtimeBusy={mcpBusy}
+      {pathCopied}
+      onRevealDirectory={handleRevealDirectory}
+      onCopyPath={copyPath}
+      onToggleRuntime={toggleMcp}
+    />
 
-          <!-- Path pill & Native folder trigger -->
-          <div class="mt-2 flex flex-wrap items-center gap-2">
-            <div class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--text-secondary)] shadow-sm max-w-full">
-              <HardDrive size={12} class="text-[var(--text-muted)] shrink-0" />
-              <span class="truncate font-mono text-[11px] select-all">{profile.path}</span>
-            </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              title="在系统访达/资源管理器中打开"
-              onclick={handleRevealDirectory}
-            >
-              <FolderOpen size={13} />
-              <span>打开目录</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              title="复制完整物理路径"
-              onclick={copyPath}
-            >
-              {#if pathCopied}
-                <Check size={13} class="text-[var(--success)]" />
-                <span class="text-[var(--success)]">已复制</span>
-              {:else}
-                <Copy size={13} />
-                <span>复制路径</span>
-              {/if}
-            </Button>
-          </div>
-        </div>
-
-        <!-- Persistent Fast Service Controls -->
-        <div class="flex flex-wrap items-center gap-2.5 shrink-0">
-          <!-- MCP Capsule -->
-          <div class="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1.5 shadow-sm">
-            <StatusOrb state={mcpStatus} />
-            <div class="text-xs">
-              <span class="font-semibold text-[var(--text-main)]">MCP</span>
-              <span class="text-[11px] text-[var(--text-muted)] font-mono ml-1">:{profile.runtime.local_port}</span>
-            </div>
-            <Button
-              variant={mcpStatus === "running" ? "secondary" : "primary"}
-              size="sm"
-              class="ml-1 px-2 py-0.5 text-[11px]"
-              disabled={mcpStatus === "starting" || mcpStatus === "stopping"}
-              busy={mcpBusy}
-              onclick={toggleMcp}
-            >
-              {mcpStatus === "running" ? "停止" : "启动"}
-            </Button>
-          </div>
-
-        </div>
-      </div>
-    </header>
-
-    <!-- Top-Level Modern View Switcher -->
     <div class="sticky top-0 z-10 bg-[var(--page-bg)]/85 px-7 pt-4 pb-2.5 backdrop-blur-md sm:px-8">
       <div class="max-w-xl">
         <SegmentedControl
@@ -447,270 +299,50 @@
       </div>
     </div>
 
-    <!-- Workspace Main Body -->
     <div class="page-body pt-7 pb-14 sm:pt-8">
       {#key activeWorkspaceTab}
         <div class="tx-tab-content-wrapper">
-          <!-- ══════════════ VIEW 1: 服务与端点 (Cockpit) ══════════════ -->
           {#if activeWorkspaceTab === "services"}
-        <div class="grid gap-5">
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <h3 class="text-sm font-semibold text-[var(--text-main)]">MCP 服务控制台</h3>
-              <p class="text-xs text-[var(--color-text-muted)] mt-0.5">本地端点、公网穿透隧道与一键客户端配置直达</p>
-            </div>
-          </div>
-
-          <div class="grid gap-6">
-            <!-- MCP Engine Card -->
-            <Card class="p-5 flex flex-col gap-4 border-[var(--border)] shadow-sm">
-                <!-- Header & Quick Controls -->
-                <div class="flex items-start justify-between gap-4">
-                  <div class="flex items-center gap-3">
-                    <div class="flex size-10 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20 shadow-sm">
-                      <Radio size={20} />
-                    </div>
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <h4 class="text-base font-bold text-[var(--text-main)]">MCP 运行时</h4>
-                        <StatusBadge
-                          status={mcpStatus === "running" ? "running" : mcpStatus === "error" ? "error" : "stopped"}
-                          text={stateLabel(mcpStatus)}
-                          size="sm"
-                        />
-                      </div>
-                      <p class="text-xs text-[var(--text-secondary)] mt-0.5">Streamable HTTP · Claude / Cursor 工具运行时</p>
-                    </div>
-                  </div>
-
-                  <div class="flex items-center gap-2">
-                    {#if mcpStatus === "running"}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        title="重启 MCP 服务"
-                        busy={mcpBusy}
-                        onclick={() => void handleRestartService()}
-                      >
-                        <RotateCw size={13} />
-                        <span>重启</span>
-                      </Button>
-                    {/if}
-                    <Button
-                      variant={mcpStatus === "running" ? "danger" : "primary"}
-                      size="sm"
-                      busy={mcpBusy}
-                      disabled={mcpStatus === "starting" || mcpStatus === "stopping"}
-                      onclick={toggleMcp}
-                    >
-                      {#if mcpStatus === "running"}
-                        <Square size={13} />
-                        <span>停止服务</span>
-                      {:else}
-                        <Play size={13} />
-                        <span>启动服务</span>
-                      {/if}
-                    </Button>
-                  </div>
-                </div>
-
-                <!-- Endpoints Row -->
-                <div class="grid gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-main)] p-3.5">
-                  <!-- Local endpoint -->
-                  <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span class="font-medium text-[var(--text-secondary)]">本地端点</span>
-                    <div class="flex items-center gap-2">
-                      <code class="font-mono text-[11px] text-[var(--text-main)] bg-[var(--card-bg)] px-2 py-0.5 rounded border border-[var(--border)]">
-                        {mcpLocal || defaultMcpLocal}
-                      </code>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        class="px-2 py-0.5 text-[11px]"
-                        onclick={() => copyEndpoint(mcpLocal || defaultMcpLocal, "mcp-local")}
-                      >
-                        {#if endpointCopied === "mcp-local"}<Check size={12} class="text-[var(--success)]" />{:else}<Copy size={12} />{/if}
-                        <span>复制</span>
-                      </Button>
-                    </div>
-                  </div>
-
-                  <!-- Public endpoint -->
-                  <div class="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t border-[var(--border)]">
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-medium text-[var(--text-secondary)]">公网端点</span>
-                      <span class="rounded px-1.5 py-0.2 text-[10px] uppercase font-semibold bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20">
-                        {profile.tunnel.use_global_gateway ? "Global Gateway" : profile.tunnel.type}
-                      </span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      {#if mcpPublic}
-                        <code class="font-mono text-[11px] text-[var(--text-main)] bg-[var(--card-bg)] px-2 py-0.5 rounded border border-[var(--border)] truncate max-w-xs">
-                          {mcpPublic}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="px-2 py-0.5 text-[11px]"
-                          onclick={() => copyEndpoint(mcpPublic, "mcp-public")}
-                        >
-                          {#if endpointCopied === "mcp-public"}<Check size={12} class="text-[var(--success)]" />{:else}<Copy size={12} />{/if}
-                          <span>复制</span>
-                        </Button>
-                      {:else}
-                        <span class="text-[11px] text-[var(--color-text-muted)]">未连接 / 未启动公网隧道</span>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Integration Hub Quick Copy -->
-                <div class="pt-1">
-                  <GptQuickCopy
-                    workspaceId={workspaceId!}
-                    {profile}
-                    publicMcpEndpoint={mcpPublic}
-                  />
-                </div>
-
-                <!-- Inline Collapsible Config Hub -->
-                <div class="mt-2 pt-4 border-t border-[var(--border)]">
-                  <div class="mb-3.5 flex items-center justify-between">
-                    <p class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider">MCP 高级配置</p>
-                    <div class="w-80">
-                      <SegmentedControl
-                        items={mcpConfigTabs}
-                        value={mcpConfigSection}
-                        size="sm"
-                        onchange={(v) => { mcpConfigSection = v as McpConfigSection; }}
-                      />
-                    </div>
-                  </div>
-
-                  <div class="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-4">
-                    {#if mcpConfigSection === "connection"}
-                      <TunnelConfigForm
-                        workspaceId={workspaceId!}
-                        config={mcpTunnelForm}
-                        onSave={saveMcpTunnel}
-                      />
-                    {:else if mcpConfigSection === "auth"}
-                      <AuthConfigForm
-                        workspaceId={workspaceId!}
-                        auth={profile.auth}
-                        onSaveProfile={saveMcpAuth}
-                      />
-                    {:else if mcpConfigSection === "policy"}
-                      <RuntimePolicyForm
-                        workspaceId={workspaceId!}
-                        toolProfile={profile.runtime.tool_profile}
-                        permissionMode={profile.runtime.permission_mode}
-                        allowedCommands={profile.runtime.allowed_commands ?? ""}
-                        executablePaths={profile.runtime.executable_paths ?? ""}
-                        aiInstructions={profile.runtime.ai_instructions ?? ""}
-                        instructionSources={profile.runtime.instruction_sources ?? []}
-                        skillSources={profile.runtime.skill_sources ?? []}
-                        customInstructionPaths={profile.runtime.custom_instruction_paths ?? ""}
-                        customSkillPaths={profile.runtime.custom_skill_paths ?? ""}
-                        workspaceLocalEntries={profile.runtime.workspace_local_entries ?? true}
-                        workspaceScriptExtensions={profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1"}
-                        onSave={saveMcpPolicy}
-                      />
-                    {:else}
-                      <HistoryContextPanel
-                        workspaceId={workspaceId!}
-                        recording={profile.runtime.history_recording ?? true}
-                        selectedSessions={profile.runtime.history_context_sessions ?? []}
-                        onSave={saveHistoryContext}
-                      />
-                    {/if}
-                  </div>
-                </div>
-            </Card>
-          </div>
-        </div>
-
-      <!-- ══════════════ VIEW 2: 诊断与实时日志 (Diagnostics & Logs) ══════════════ -->
-      {:else if activeWorkspaceTab === "diagnostics"}
-        <div class="grid gap-6">
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <h3 class="text-sm font-semibold text-[var(--text-main)]">实时诊断与健康中心</h3>
-              <p class="text-xs text-[var(--color-text-muted)] mt-0.5">本地 endpoint、公网穿透、OAuth 签名连通性与服务输出日志</p>
-            </div>
-          </div>
-
-          <!-- Top: Health Panel -->
-          <HealthPanel workspaceId={workspaceId!} />
-
-          <!-- Bottom: MCP log viewer -->
-          <div class="grid gap-3">
-            <div class="flex items-center justify-between gap-3">
-              <span class="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">实时服务日志</span>
-            </div>
-
-            <LogViewer workspaceId={workspaceId!} service="mcp" />
-          </div>
-        </div>
-
-      <!-- ══════════════ VIEW 3: 任务规划 (Planning Board) ══════════════ -->
-      {:else if activeWorkspaceTab === "planning"}
-        <div class="grid gap-4">
-          <PlanningControlPanel workspaceId={workspaceId!} />
-        </div>
-
-      <!-- ══════════════ VIEW 4: 工作区设置 (Settings & Danger) ══════════════ -->
-      {:else if activeWorkspaceTab === "settings"}
-        <div class="grid gap-6 max-w-4xl">
-          <div>
-            <h3 class="text-sm font-semibold text-[var(--text-main)]">工作区基础设置</h3>
-            <p class="text-xs text-[var(--color-text-muted)] mt-0.5">维护工作区展示名称、物理存储目录与 ChatGPT 初始 Prompt</p>
-          </div>
-
-          <Card class="p-5">
-            <h4 class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider mb-4">基本属性</h4>
-            <WorkspaceMetaForm
-              name={profile.name}
-              path={profile.path}
-              onSave={saveWorkspaceName}
-              onUpdatePath={saveWorkspacePath}
+            <WorkspaceServiceCockpit
+              workspaceId={workspaceId!}
+              {profile}
+              runtime={{
+                state: mcpStatus,
+                busy: mcpBusy,
+                localEndpoint: mcpLocal,
+                publicEndpoint: mcpPublic,
+                defaultLocalEndpoint: defaultMcpLocal,
+                endpointCopied,
+              }}
+              actions={{
+                toggle: toggleMcp,
+                restart: handleRestartService,
+                copyEndpoint,
+                saveTunnel: saveMcpTunnel,
+                saveAuth: saveMcpAuth,
+                savePolicy: saveMcpPolicy,
+                saveHistory: saveHistoryContext,
+              }}
             />
-          </Card>
-
-          <Card class="p-5">
-            <h4 class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider mb-2">ChatGPT 初始会话指令</h4>
-            <p class="text-xs text-[var(--color-text-muted)] mb-4 leading-relaxed">
-              为外部 ChatGPT 会话生成一键粘贴的系统初始化 Prompt，指引大模型连接当前工作区并调用工具。
-            </p>
-            <ChatGptSessionPrompt />
-          </Card>
-
-          <div class="rounded-2xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-5 shadow-sm">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h4 class="text-sm font-bold text-[var(--danger)]">删除工作区</h4>
-                <p class="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
-                  仅从 Coding Tools 中移除该工作区配置、历史日志与路由，绝不会删除本地磁盘上的任何源代码项目文件。
-                </p>
-              </div>
-              <Button
-                variant="danger"
-                size="md"
-                onclick={requestRemoveWorkspace}
-              >
-                <Trash2 size={14} />
-                <span>删除工作区</span>
-              </Button>
+          {:else if activeWorkspaceTab === "diagnostics"}
+            <WorkspaceDiagnosticsPanel workspaceId={workspaceId!} />
+          {:else if activeWorkspaceTab === "planning"}
+            <div class="grid gap-4">
+              <PlanningControlPanel workspaceId={workspaceId!} />
             </div>
-          </div>
+          {:else}
+            <WorkspaceSettingsPanel
+              {profile}
+              onSaveName={saveWorkspaceName}
+              onUpdatePath={saveWorkspacePath}
+              onDelete={requestRemoveWorkspace}
+            />
+          {/if}
         </div>
-      {/if}
+      {/key}
     </div>
-  {/key}
-  </div>
-</section>
+  </section>
 
-  <!-- High-Risk Delete Confirmation Dialog -->
   <ConfirmDialog
     open={deleteConfirmOpen}
     title="删除工作区"
@@ -721,8 +353,6 @@
     severity="danger"
     busy={deleteBusy}
     onConfirm={handleConfirmDelete}
-    onCancel={() => {
-      deleteConfirmOpen = false;
-    }}
+    onCancel={() => { deleteConfirmOpen = false; }}
   />
 {/if}

@@ -74,16 +74,14 @@ async fn sync_tunnel_routes_from_runtime(state: &AppState) -> AppResult<()> {
     sync_managed_runtime_routes(active_keys).await
 }
 
-#[allow(clippy::collapsible_if)]
 async fn ensure_port_available(port: u16, service_label: &str) -> AppResult<()> {
     let Some(pid) = platform().find_pid_listening_on_port(port)? else {
         return Ok(());
     };
 
-    if crate::runtime::is_own_process(pid) {
-        if wait_for_port_free(port, Duration::from_secs(3)).await {
-            return Ok(());
-        }
+    if crate::runtime::is_own_process(pid) && wait_for_port_free(port, Duration::from_secs(3)).await
+    {
+        return Ok(());
     }
 
     if try_reclaim_previous_macos_app_port(port) {

@@ -17,12 +17,12 @@ impl<'a> ResourceClaim<'a> {
             profile,
             local_port: profile.runtime.local_port,
             subdomain: profile.tunnel.frp_subdomain.as_str(),
-            uses_frp: profile.tunnel.tunnel_type == "frp",
+            uses_frp: profile.tunnel.tunnel_type.is_frp(),
         }
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub fn validate_workspace_resources(
     profiles: &[WorkspaceProfile],
     candidate: &WorkspaceProfile,

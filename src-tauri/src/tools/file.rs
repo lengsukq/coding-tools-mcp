@@ -97,49 +97,24 @@ pub fn list_dir(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     if !resolved.path.is_dir() {
         return Err(WorkspaceError::not_a_directory("Path is not a directory"));
     }
-    let recursive = args
-        .get("recursive")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let max_depth = args
-        .get("max_depth")
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1) as usize;
-    let max_entries = args
-        .get("max_entries")
-        .and_then(Value::as_u64)
-        .unwrap_or(100) as usize;
-    let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let include_ignored = args
-        .get("include_ignored")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    let mut entries = Vec::new();
-    let mut truncated = false;
+    let options = DirectoryTraversalOptions::from_args(args);
+    let mut state = DirectoryTraversalState::default();
     collect_dir_entries(
         ws,
         &resolved.path,
         &resolved.display,
         1,
-        max_depth,
-        recursive,
-        include_hidden,
-        include_ignored,
-        max_entries,
-        &mut entries,
-        &mut truncated,
+        &options,
+        &mut state,
     );
-    entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    state
+        .entries
+        .sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     Ok(tool_ok(json!({
         "path": resolved.display,
-        "entries": entries,
-        "truncated": truncated,
-        "warnings": if truncated { vec!["entry limit reached"] } else { vec![] }
+        "entries": state.entries,
+        "truncated": state.truncated,
+        "warnings": if state.truncated { vec!["entry limit reached"] } else { vec![] }
     })))
 }
 
@@ -537,30 +512,66 @@ impl Matcher {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_dir_entries(
-    ws: &Workspace,
-    dir: &Path,
-    display: &str,
-    depth: usize,
+struct DirectoryTraversalOptions {
     max_depth: usize,
     recursive: bool,
     include_hidden: bool,
     include_ignored: bool,
     max_entries: usize,
-    entries: &mut Vec<Value>,
-    truncated: &mut bool,
+}
+
+impl DirectoryTraversalOptions {
+    fn from_args(args: &Value) -> Self {
+        Self {
+            recursive: args
+                .get("recursive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            max_depth: args
+                .get("max_depth")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .max(1) as usize,
+            max_entries: args
+                .get("max_entries")
+                .and_then(Value::as_u64)
+                .unwrap_or(100) as usize,
+            include_hidden: args
+                .get("include_hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            include_ignored: args
+                .get("include_ignored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Default)]
+struct DirectoryTraversalState {
+    entries: Vec<Value>,
+    truncated: bool,
+}
+
+fn collect_dir_entries(
+    ws: &Workspace,
+    dir: &Path,
+    display: &str,
+    depth: usize,
+    options: &DirectoryTraversalOptions,
+    state: &mut DirectoryTraversalState,
 ) {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
     };
     for item in read_dir.flatten() {
-        if *truncated {
+        if state.truncated {
             return;
         }
         let p = item.path();
-        if ws.is_ignored_path(&p, include_hidden, include_ignored) {
+        if ws.is_ignored_path(&p, options.include_hidden, options.include_ignored) {
             continue;
         }
         let name = item.file_name().to_string_lossy().into_owned();
@@ -580,7 +591,7 @@ fn collect_dir_entries(
             "other"
         };
         let meta = item.metadata().ok();
-        entries.push(json!({
+        state.entries.push(json!({
             "name": name,
             "path": rel.replace('\\', "/"),
             "type": entry_type,
@@ -589,24 +600,16 @@ fn collect_dir_entries(
             "is_hidden": name.starts_with('.'),
             "is_ignored": false
         }));
-        if entries.len() >= max_entries {
-            *truncated = true;
+        if state.entries.len() >= options.max_entries {
+            state.truncated = true;
             return;
         }
-        if recursive && depth < max_depth && entry_type == "directory" && !p.is_symlink() {
-            collect_dir_entries(
-                ws,
-                &p,
-                &rel.replace('\\', "/"),
-                depth + 1,
-                max_depth,
-                recursive,
-                include_hidden,
-                include_ignored,
-                max_entries,
-                entries,
-                truncated,
-            );
+        if options.recursive
+            && depth < options.max_depth
+            && entry_type == "directory"
+            && !p.is_symlink()
+        {
+            collect_dir_entries(ws, &p, &rel.replace('\\', "/"), depth + 1, options, state);
         }
     }
 }

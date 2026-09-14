@@ -3,52 +3,31 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use std::sync::Arc;
-
 use crate::tools::context::ToolContext;
-use crate::tools::session::{ExecSession, SessionStore};
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 
 mod diagnostics;
 mod platform;
+mod request;
 mod resolver;
+mod runner;
 
 use diagnostics::run_native_diagnostic;
-use platform::{command_for_program, platform_command_path};
 #[cfg(all(test, windows))]
-use platform::{windows_batch_command_line, windows_hidden_creation_flags};
-use resolver::parse_and_resolve;
+use platform::{command_for_program, windows_batch_command_line, windows_hidden_creation_flags};
+use request::{CommandRunOptions, ExecRequest};
 #[cfg(test)]
 use resolver::{resolve_program, which_on_path};
+use runner::run_command;
 
 pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
-    let cmd = args
-        .get("cmd")
-        .and_then(Value::as_str)
-        .ok_or_else(|| WorkspaceError::invalid_argument("cmd is required"))?;
-    let workdir_raw = args
-        .get("workdir")
-        .or_else(|| args.get("cwd"))
-        .and_then(Value::as_str)
-        .unwrap_or(".");
-    let workdir = ctx.workspace.resolve_existing(workdir_raw)?;
-    if !workdir.path.is_dir() {
-        return Err(WorkspaceError::not_a_directory(
-            "workdir is not a directory",
-        ));
-    }
-    let filesystem_scope = args
-        .get("filesystem_scope")
-        .and_then(Value::as_str)
-        .unwrap_or("workspace")
-        .to_string();
-    validate_child_process_scope(ctx, args)?;
-    if let Some(result) = run_native_diagnostic(ctx, cmd, &workdir.path)? {
+    let request = ExecRequest::parse(ctx, args)?;
+    if let Some(result) = run_native_diagnostic(ctx, &request.cmd, &request.workdir)? {
         let mut result = result;
         if let Some(object) = result.as_object_mut() {
             object.insert(
                 "filesystem_scope".into(),
-                Value::String(filesystem_scope.clone()),
+                Value::String(request.filesystem_scope.clone()),
             );
             object.insert("sandbox_enforced".into(), Value::Bool(false));
             object.insert(
@@ -61,40 +40,20 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
         }
         return Ok(tool_ok(result));
     }
-    let timeout_ms = args
-        .get("timeout_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(30_000);
-    let max_output = args
-        .get("max_output_bytes")
-        .and_then(Value::as_u64)
-        .unwrap_or(32_768) as usize;
-    let yield_ms = args
-        .get("yield_time_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(1000)
-        .min(30_000);
-    let tty = args.get("tty").and_then(Value::as_bool).unwrap_or(false);
-    let stdin_text = args.get("stdin").and_then(Value::as_str).unwrap_or("");
-
-    let result = tauri::async_runtime::block_on(async {
-        run_command(
-            ctx,
-            cmd,
-            &workdir.path,
-            Duration::from_millis(timeout_ms),
-            Duration::from_millis(yield_ms),
-            max_output,
-            tty,
-            stdin_text,
-        )
-        .await
-    });
+    let result = tauri::async_runtime::block_on(run_command(
+        ctx,
+        &request.cmd,
+        &request.workdir,
+        &request.options,
+    ));
 
     match result {
         Ok(mut out) => {
             if let Some(object) = out.as_object_mut() {
-                object.insert("filesystem_scope".into(), Value::String(filesystem_scope));
+                object.insert(
+                    "filesystem_scope".into(),
+                    Value::String(request.filesystem_scope),
+                );
                 object.insert("sandbox_enforced".into(), Value::Bool(false));
                 object.insert(
                     "execution_boundary".into(),
@@ -104,185 +63,11 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
             }
             Ok(tool_ok(out))
         }
-        Err(error) => match execution_failure_result(&error, cmd, &workdir.path) {
+        Err(error) => match execution_failure_result(&error, &request.cmd, &request.workdir) {
             Some(result) => Ok(tool_ok(result)),
             None => Err(error),
         },
     }
-}
-
-fn validate_child_process_scope(_ctx: &ToolContext, args: &Value) -> Result<(), WorkspaceError> {
-    let scope = args
-        .get("filesystem_scope")
-        .and_then(Value::as_str)
-        .unwrap_or("workspace");
-    match scope {
-        "workspace" => Ok(()),
-        "host" => Err(WorkspaceError::ToolDetails {
-            code: "EXTERNAL_EXECUTION_NOT_ALLOWED",
-            message: "exec_command 只允许在 Workspace 内执行，Workspace 外执行已禁用。".into(),
-            category: "permission",
-            retryable: false,
-            details: json!({
-                "stage": "policy",
-                "filesystem_scope": "host",
-                "sandbox_enforced": false,
-                "recoverable": false,
-                "suggestion": "将 filesystem_scope 设置为 workspace，并在当前 Workspace 内执行"
-            }),
-        }),
-        _ => Err(WorkspaceError::invalid_argument(
-            "filesystem_scope must be workspace",
-        )),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_command(
-    ctx: &ToolContext,
-    cmd: &str,
-    cwd: &Path,
-    limit: Duration,
-    yield_time: Duration,
-    max_output: usize,
-    tty: bool,
-    stdin_text: &str,
-) -> Result<Value, WorkspaceError> {
-    let search_path = ctx.executable_path_env();
-    let (program, args) = parse_and_resolve(
-        cmd,
-        cwd,
-        ctx.workspace.root(),
-        &ctx.policy,
-        search_path.as_deref(),
-    )?;
-    let start = Instant::now();
-
-    let mut command = command_for_program(&program, &args);
-    if let Some(path) = search_path.as_ref() {
-        command.env("PATH", path);
-    }
-    command
-        .current_dir(platform_command_path(cwd))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    #[cfg(windows)]
-    command
-        .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("PYTHONLEGACYWINDOWSSTDIO", "0");
-
-    let child = command.spawn().map_err(|e| WorkspaceError::ToolDetails {
-        code: "COMMAND_SPAWN_FAILED",
-        message: format!("Failed to start command: {e}"),
-        category: "runtime",
-        retryable: true,
-        details: json!({
-            "termination_reason": "spawn_failed",
-            "recoverable": true,
-            "suggestion": "检查命令路径、权限和运行时环境后重试"
-        }),
-    })?;
-
-    let session = ctx.sessions.insert(ExecSession::new_with_mode(child, tty));
-    session.spawn_readers().await;
-    let deadline = start + limit;
-
-    if yield_time.is_zero() {
-        let snapshot = session.snapshot(max_output);
-        spawn_timeout_monitor(ctx.sessions.clone(), session.clone(), deadline);
-        return Ok(merge_exec_result(snapshot, start, cmd, cwd, true));
-    }
-
-    if !tty && !stdin_text.is_empty() {
-        let mut stdin_guard = session.stdin.lock().await;
-        if let Some(stdin) = stdin_guard.as_mut() {
-            use tokio::io::AsyncWriteExt;
-            if !stdin_text.is_empty() {
-                stdin
-                    .write_all(stdin_text.as_bytes())
-                    .await
-                    .map_err(|_| WorkspaceError::Tool {
-                        code: "SESSION_CLOSED",
-                        message: "Failed to write stdin.".into(),
-                        category: "runtime",
-                        retryable: false,
-                    })?;
-            }
-            let _ = stdin.shutdown().await;
-        }
-        *stdin_guard = None;
-        session.mark_stdin_closed();
-    }
-
-    loop {
-        session.refresh_status().await;
-        if session.has_exited() {
-            session.wait_for_readers().await;
-            let snapshot = session.snapshot(max_output);
-            ctx.sessions.remove(&session.session_id);
-            return Ok(merge_exec_result(snapshot, start, cmd, cwd, false));
-        }
-        if !tty && Instant::now() >= deadline {
-            session.mark_termination_reason("timeout");
-            session.kill_and_wait().await;
-            session.refresh_status().await;
-            session.wait_for_readers().await;
-            let snapshot = session.snapshot(max_output);
-            // Snapshot is embedded; schedule eviction so abandoned timeouts do not linger.
-            schedule_session_eviction(ctx.sessions.clone(), session.session_id.clone());
-            return Err(WorkspaceError::ToolDetails {
-                code: "TIMEOUT",
-                message: "Command timed out.".into(),
-                category: "runtime",
-                retryable: true,
-                details: json!({
-                    "termination_reason": "timeout",
-                    "recoverable": true,
-                    "suggestion": "读取 output_refs，调整 timeout_ms 后重试",
-                    "session": snapshot
-                }),
-            });
-        }
-        if Instant::now() - start >= yield_time || tty {
-            let snapshot = session.snapshot(max_output);
-            spawn_timeout_monitor(ctx.sessions.clone(), session.clone(), deadline);
-            return Ok(merge_exec_result(snapshot, start, cmd, cwd, true));
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-/// How long a timed-out / background session stays readable before map eviction.
-const SESSION_EVICT_AFTER_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn spawn_timeout_monitor(
-    sessions: Arc<SessionStore>,
-    session: Arc<ExecSession>,
-    deadline: Instant,
-) {
-    tauri::async_runtime::spawn(async move {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        tokio::time::sleep(remaining).await;
-        session.refresh_status().await;
-        if !session.has_exited() {
-            session.mark_termination_reason("timeout");
-            session.kill_and_wait().await;
-            session.refresh_status().await;
-            session.wait_for_readers().await;
-        }
-        // Keep the session briefly so clients can still read_output / probe status.
-        schedule_session_eviction(sessions, session.session_id.clone());
-    });
-}
-
-fn schedule_session_eviction(sessions: Arc<SessionStore>, session_id: String) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(SESSION_EVICT_AFTER_TIMEOUT).await;
-        sessions.remove(&session_id);
-    });
 }
 
 pub fn exec_health_check(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
@@ -293,16 +78,14 @@ pub fn exec_health_check(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
     #[cfg(not(windows))]
     let probe = r#"sh -c "printf exec-health; printf exec-health-stderr >&2""#;
 
-    let result = tauri::async_runtime::block_on(run_command(
-        ctx,
-        probe,
-        &cwd,
-        Duration::from_secs(5),
-        Duration::from_secs(5),
-        16_384,
-        false,
-        "",
-    ));
+    let options = CommandRunOptions {
+        limit: Duration::from_secs(5),
+        yield_time: Duration::from_secs(5),
+        max_output: 16_384,
+        tty: false,
+        stdin_text: String::new(),
+    };
+    let result = tauri::async_runtime::block_on(run_command(ctx, probe, &cwd, &options));
 
     let mut response = json!({
         "worker": {"alive": true},
@@ -402,52 +185,7 @@ fn execution_failure_result(error: &WorkspaceError, command: &str, cwd: &Path) -
     Some(result)
 }
 
-fn merge_exec_result(
-    mut snapshot: Value,
-    start: Instant,
-    command: &str,
-    cwd: &Path,
-    keep_session: bool,
-) -> Value {
-    if let Some(obj) = snapshot.as_object_mut() {
-        let duration_ms = start.elapsed().as_millis();
-        obj.insert("command".into(), json!(command));
-        obj.insert("resolved_cwd".into(), json!(cwd.display().to_string()));
-        obj.insert("duration_ms".into(), json!(duration_ms));
-        obj.insert("elapsed_ms".into(), json!(duration_ms));
-        obj.insert("transport_ok".into(), Value::Bool(true));
-        let command_ok = match obj
-            .get("termination_reason")
-            .and_then(Value::as_str)
-            .unwrap_or("running")
-        {
-            "exited" => obj
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .map(|exit_code| exit_code == 0)
-                .or(Some(false)),
-            "running" => None,
-            _ => Some(false),
-        };
-        obj.insert(
-            "command_ok".into(),
-            command_ok.map(Value::Bool).unwrap_or(Value::Null),
-        );
-        obj.insert("execution_mode".into(), json!("direct"));
-        obj.insert(
-            "warnings".into(),
-            json!(if keep_session {
-                vec!["session retained for read_output/write_stdin/kill_session"]
-            } else {
-                vec!["direct execution without shell"]
-            }),
-        );
-    }
-    snapshot
-}
-
 #[cfg(test)]
-#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::tools::context::ToolContext;

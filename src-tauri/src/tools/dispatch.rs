@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 mod gates;
 mod routing;
 
+use crate::harness::OperationRecordInput;
 use crate::planning::{
     ExecutionLedgerUpdate, PlanningService, PlanningState, PLANNING_RELATIVE_PATH,
 };
@@ -108,145 +109,242 @@ fn record_execution_ledger(
 /// 策略校验、分发、错误格式在此统一，传输层不得另做执行前校验。
 pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     let effective_args = apply_default_cwd(ctx, name, args);
-    let planning_state = match load_planning_state(ctx) {
-        Ok(state) => Some(state),
-        Err(error)
-            if planning_protected_tool(name, &effective_args) || name == "exec_health_check" =>
-        {
-            return error
-        }
-        Err(_) => None,
+    let planning_state = match prepare_planning_stage(ctx, name, &effective_args) {
+        Ok(state) => state,
+        Err(output) => return output,
     };
-    if let Some(state) = planning_state.as_ref() {
-        if let Some(error) = planning_gate(state, name, &effective_args) {
-            return attach_planning_context(error, state);
-        }
+    if let Some(output) = policy_stage(ctx, name, &effective_args, planning_state.as_ref()) {
+        return output;
     }
-    if let Err(e) = validate_tool_arguments_for_workspace(
-        name,
-        &effective_args,
-        &ctx.policy,
-        Some(&ctx.workspace),
-    ) {
-        let output = policy_tool_err(e);
-        return planning_state
-            .as_ref()
-            .map(|state| attach_planning_context(output.clone(), state))
-            .unwrap_or(output);
+    if let Some(output) = harness_tool_stage(ctx, name, args, planning_state.as_ref()) {
+        return output;
     }
-
-    if crate::harness::tools::TOOL_NAMES.contains(&name) {
-        let output = match crate::harness::tools::call(ctx, name, args) {
-            Ok(value) => value,
-            Err(error) => attach_harness_status(ctx, tool_err(error), false),
-        };
-        record_execution_ledger(ctx, name, args, &output, None);
-        return planning_state
-            .as_ref()
-            .map(|state| attach_planning_context(output.clone(), state))
-            .unwrap_or(output);
-    }
-
-    let task_id = if requires_write_baseline(name, &effective_args) {
-        let task = ctx.harness.current_task().ok().flatten();
-        if let Some(task) = task {
-            if let Err(error) = ctx.harness.check_baseline(&task.id) {
-                return attach_harness_status(
-                    ctx,
-                    tool_err(WorkspaceError::Tool {
-                        code: error.code(),
-                        message: error.to_string(),
-                        category: "permission",
-                        retryable: matches!(
-                            error.code(),
-                            "TASK_ALREADY_ACTIVE" | "FILE_CHANGED_EXTERNALLY" | "BASELINE_STALE"
-                        ),
-                    }),
-                    false,
-                );
-            }
-            let _ = ctx.harness.record_event(
-                &task.id,
-                "operation_started",
-                Some(name),
-                operation_input(args),
-                json!({"ok": true, "tracking": "task"}),
-            );
-            Some(task.id)
-        } else {
-            None
-        }
-    } else {
-        None
+    let task_id = match begin_task_tracking(ctx, name, args, &effective_args) {
+        Ok(task_id) => task_id,
+        Err(output) => return output,
     };
-
-    let operation = if should_log_operation(name) {
-        ctx.harness
-            .record_operation(
-                None,
-                task_id.as_deref(),
-                name,
-                "started",
-                json!({"arguments_present": !args.is_null()}),
-                json!({"ok": true}),
-            )
-            .ok()
-    } else {
-        None
-    };
+    let operation_id = begin_operation_tracking(ctx, name, args, task_id.as_deref());
 
     let result = routing::execute_tool(ctx, name, &effective_args);
     let mut output = match result {
         Ok(v) => v,
         Err(e) => tool_err(e),
     };
+    enrich_execution_output(
+        ctx,
+        name,
+        task_id.as_deref(),
+        operation_id.as_deref(),
+        &mut output,
+    );
+    finish_task_tracking(ctx, name, args, task_id.as_deref(), &output);
+    finish_operation_tracking(
+        ctx,
+        name,
+        args,
+        task_id.as_deref(),
+        operation_id.as_deref(),
+        &output,
+    );
+    record_execution_ledger(ctx, name, &effective_args, &output, task_id.as_deref());
+    finish_planning_stage(ctx, name, output)
+}
+
+fn prepare_planning_stage(
+    ctx: &ToolContext,
+    name: &str,
+    effective_args: &Value,
+) -> Result<Option<PlanningState>, Value> {
+    let state = match load_planning_state(ctx) {
+        Ok(state) => Some(state),
+        Err(error)
+            if planning_protected_tool(name, effective_args) || name == "exec_health_check" =>
+        {
+            return Err(error)
+        }
+        Err(_) => None,
+    };
+    if let Some(planning) = state.as_ref() {
+        if let Some(error) = planning_gate(planning, name, effective_args) {
+            return Err(attach_planning_context(error, planning));
+        }
+    }
+    Ok(state)
+}
+
+fn policy_stage(
+    ctx: &ToolContext,
+    name: &str,
+    effective_args: &Value,
+    planning_state: Option<&PlanningState>,
+) -> Option<Value> {
+    let error = validate_tool_arguments_for_workspace(
+        name,
+        effective_args,
+        &ctx.policy,
+        Some(&ctx.workspace),
+    )
+    .err()?;
+    let output = policy_tool_err(error);
+    Some(
+        planning_state
+            .map(|state| attach_planning_context(output.clone(), state))
+            .unwrap_or(output),
+    )
+}
+
+fn harness_tool_stage(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    planning_state: Option<&PlanningState>,
+) -> Option<Value> {
+    if !crate::harness::tools::TOOL_NAMES.contains(&name) {
+        return None;
+    }
+    let output = match crate::harness::tools::call(ctx, name, args) {
+        Ok(value) => value,
+        Err(error) => attach_harness_status(ctx, tool_err(error), false),
+    };
+    record_execution_ledger(ctx, name, args, &output, None);
+    Some(
+        planning_state
+            .map(|state| attach_planning_context(output.clone(), state))
+            .unwrap_or(output),
+    )
+}
+
+fn begin_task_tracking(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    effective_args: &Value,
+) -> Result<Option<String>, Value> {
+    if !requires_write_baseline(name, effective_args) {
+        return Ok(None);
+    }
+    let Some(task) = ctx.harness.current_task().ok().flatten() else {
+        return Ok(None);
+    };
+    if let Err(error) = ctx.harness.check_baseline(&task.id) {
+        return Err(attach_harness_status(
+            ctx,
+            tool_err(WorkspaceError::Tool {
+                code: error.code(),
+                message: error.to_string(),
+                category: "permission",
+                retryable: matches!(
+                    error.code(),
+                    "TASK_ALREADY_ACTIVE" | "FILE_CHANGED_EXTERNALLY" | "BASELINE_STALE"
+                ),
+            }),
+            false,
+        ));
+    }
+    let _ = ctx.harness.record_event(
+        &task.id,
+        "operation_started",
+        Some(name),
+        operation_input(args),
+        json!({"ok": true, "tracking": "task"}),
+    );
+    Ok(Some(task.id))
+}
+
+fn begin_operation_tracking(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    task_id: Option<&str>,
+) -> Option<String> {
+    should_log_operation(name)
+        .then(|| {
+            ctx.harness.record_operation(OperationRecordInput {
+                operation_id: None,
+                task_id: task_id.map(str::to_string),
+                tool: name.to_string(),
+                kind: "started".into(),
+                input_summary: json!({"arguments_present": !args.is_null()}),
+                result_summary: json!({"ok": true}),
+            })
+        })
+        .and_then(Result::ok)
+        .map(|operation| operation.id)
+}
+
+fn enrich_execution_output(
+    ctx: &ToolContext,
+    name: &str,
+    task_id: Option<&str>,
+    operation_id: Option<&str>,
+    output: &mut Value,
+) {
     if task_id.is_none()
         && standalone_operation(name)
         && output.get("ok") == Some(&Value::Bool(true))
     {
         attach_standalone_metadata(
-            &mut output,
+            output,
             "当前操作已在 standalone 模式完成；如需继续，直接调用下一个开发工具。",
         );
     }
-    if let Some(operation) = operation.as_ref() {
-        if let Some(object) = output.as_object_mut() {
-            object.insert("operation_id".into(), Value::String(operation.id.clone()));
-        }
+    if let (Some(id), Some(object)) = (operation_id, output.as_object_mut()) {
+        object.insert("operation_id".into(), Value::String(id.to_string()));
     }
     if output.get("ok").and_then(Value::as_bool) == Some(false) {
-        output = attach_harness_status(ctx, output, task_id.is_none());
-        output = attach_recovery_guidance(output);
+        *output = attach_harness_status(ctx, std::mem::take(output), task_id.is_none());
+        *output = attach_recovery_guidance(std::mem::take(output));
     }
-    if let Some(task_id) = task_id.as_deref() {
-        let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
-        let _ = ctx.harness.record_event(
-            task_id,
-            "operation_finished",
-            Some(name),
-            operation_input(args),
-            json!({"ok": succeeded, "tool": name}),
-        );
-        if succeeded {
-            let _ = ctx.harness.refresh_expected_state(task_id);
-        }
+}
+
+fn finish_task_tracking(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    task_id: Option<&str>,
+    output: &Value,
+) {
+    let Some(task_id) = task_id else { return };
+    let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
+    let _ = ctx.harness.record_event(
+        task_id,
+        "operation_finished",
+        Some(name),
+        operation_input(args),
+        json!({"ok": succeeded, "tool": name}),
+    );
+    if succeeded {
+        let _ = ctx.harness.refresh_expected_state(task_id);
     }
-    if let Some(operation) = operation {
-        let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
-        let _ = ctx.harness.record_operation(
-            Some(&operation.id),
-            task_id.as_deref(),
-            name,
-            if succeeded { "completed" } else { "failed" },
-            operation_input(args),
-            json!({
-                "ok": succeeded,
-                "tool": name,
-                "affected_files": output.get("affected_files")
-            }),
-        );
-    }
-    record_execution_ledger(ctx, name, &effective_args, &output, task_id.as_deref());
+}
+
+fn finish_operation_tracking(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    task_id: Option<&str>,
+    operation_id: Option<&str>,
+    output: &Value,
+) {
+    let Some(operation_id) = operation_id else {
+        return;
+    };
+    let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
+    let _ = ctx.harness.record_operation(OperationRecordInput {
+        operation_id: Some(operation_id.to_string()),
+        task_id: task_id.map(str::to_string),
+        tool: name.to_string(),
+        kind: if succeeded { "completed" } else { "failed" }.into(),
+        input_summary: operation_input(args),
+        result_summary: json!({
+            "ok": succeeded,
+            "tool": name,
+            "affected_files": output.get("affected_files")
+        }),
+    });
+}
+
+fn finish_planning_stage(ctx: &ToolContext, name: &str, mut output: Value) -> Value {
     if should_attach_planning_context(ctx, name, &output) {
         if let Ok(latest) = PlanningService::new(ctx.workspace.root()).state() {
             output = attach_planning_context(output, &latest);
@@ -259,7 +357,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
 }
 
 fn should_attach_planning_context(ctx: &ToolContext, name: &str, output: &Value) -> bool {
-    if ctx.tool_profile != "compact" {
+    if !ctx.tool_profile.is_compact() {
         return true;
     }
     let planning_tool = matches!(
@@ -538,7 +636,7 @@ fn attach_standalone_metadata(output: &mut Value, recovery_hint: &str) {
 }
 
 fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String> {
-    let exposed = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
+    let exposed = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
     actions
         .into_iter()
         .filter(|action| exposed.contains(&action.as_str()))
@@ -546,7 +644,7 @@ fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String
 }
 
 pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
-    let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
+    let tools = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
     let history_context = crate::tools::history::context_snapshot(ctx).ok().flatten();
     Ok(tool_ok(json!({
         "server": "coding-tools-mcp",
@@ -555,10 +653,10 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         "protocol_version": crate::mcp::LATEST_PROTOCOL_VERSION,
         "supported_protocol_versions": crate::mcp::SUPPORTED_PROTOCOL_VERSIONS,
         "workspace": ctx.workspace.root_display(),
-        "permission_mode": ctx.permission_mode,
+        "permission_mode": ctx.policy.permission_mode.as_str(),
         "default_cwd": ctx.default_cwd_display(),
         "network_allowed": ctx.policy.network_allowed(),
-        "tool_profile": ctx.tool_profile,
+        "tool_profile": ctx.tool_profile.as_str(),
         "history_recording": ctx.history_recording,
         "history_context_sessions": ctx.history_context_sessions,
         "history_context_revision": history_context
@@ -577,7 +675,7 @@ pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
 pub fn check_exec_environment(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
     Ok(tool_ok(json!({
         "workspace": ctx.workspace.root_display(),
-        "permission_mode": ctx.permission_mode,
+        "permission_mode": ctx.policy.permission_mode.as_str(),
         "network_allowed": ctx.policy.network_allowed(),
         "landlock_enabled": false,
         "filesystem_sandbox": {
@@ -586,7 +684,7 @@ pub fn check_exec_environment(ctx: &ToolContext) -> Result<Value, WorkspaceError
             "default_scope": "workspace",
             "host_scope_available": false
         },
-        "global_tmp_write": if ctx.permission_mode == "dangerous" { "allowed" } else { "tmp-prefix" },
+        "global_tmp_write": if ctx.policy.skip_permission_gates() { "allowed" } else { "tmp-prefix" },
         "workspace_exec_available": true,
         "workspace_exec_sandbox_enforced": false,
         "workspace_exec_boundary": "policy_only",

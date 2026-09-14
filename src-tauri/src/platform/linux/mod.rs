@@ -5,16 +5,11 @@ mod process;
 use std::path::PathBuf;
 
 use crate::error::AppResult;
-use crate::platform::paths as shared_paths;
 use crate::platform::Platform;
 
 pub struct LinuxPlatform;
 
 impl Platform for LinuxPlatform {
-    fn os_name(&self) -> &'static str {
-        "linux"
-    }
-
     fn app_config_dir(&self) -> AppResult<PathBuf> {
         let base = dirs::config_dir()
             .or_else(dirs::home_dir)
@@ -36,10 +31,6 @@ impl Platform for LinuxPlatform {
 
     fn terminate_process_tree(&self, pid: u32) -> AppResult<()> {
         process::terminate_process_tree(pid)
-    }
-
-    fn resolve_executable(&self, name: &str) -> Option<PathBuf> {
-        shared_paths::resolve_from_path(name)
     }
 
     fn cloudflared_candidates(&self) -> Vec<PathBuf> {

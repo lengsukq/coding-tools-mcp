@@ -1,13 +1,17 @@
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 
 use super::model::{
-    ExecutionCheckpoint, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus,
-    PlanningMode, PlanningState, SuccessCriterion,
+    Goal, GoalStatus, Plan, PlanStatus, PlanStepStatus, PlanningMode, PlanningState,
 };
 use super::store::PlanningStore;
+
+mod execution;
+mod goal;
+mod plan;
+mod review;
+mod util;
 
 #[derive(Debug, Clone)]
 pub struct PlanningService {
@@ -25,6 +29,50 @@ pub struct ExecutionLedgerUpdate {
     pub verification: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UpdateGoalRequest {
+    pub goal_id: String,
+    pub title: Option<String>,
+    pub objective: Option<String>,
+    pub status: Option<GoalStatus>,
+    pub constraints: Option<Vec<String>>,
+    pub completed_criteria_ids: Option<Vec<String>>,
+    pub focus: Option<bool>,
+}
+
+impl UpdateGoalRequest {
+    pub fn focus(goal_id: impl Into<String>, focus: bool) -> Self {
+        Self {
+            goal_id: goal_id.into(),
+            title: None,
+            objective: None,
+            status: None,
+            constraints: None,
+            completed_criteria_ids: None,
+            focus: Some(focus),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdatePlanRequest {
+    pub plan_id: String,
+    pub status: Option<PlanStatus>,
+    pub step_updates: Vec<(String, PlanStepStatus, Option<String>)>,
+    pub focus: Option<bool>,
+}
+
+impl UpdatePlanRequest {
+    pub fn activate(plan_id: impl Into<String>) -> Self {
+        Self {
+            plan_id: plan_id.into(),
+            status: Some(PlanStatus::Active),
+            step_updates: Vec::new(),
+            focus: Some(true),
+        }
+    }
+}
+
 impl PlanningService {
     pub fn new(workspace_root: &Path) -> Self {
         Self {
@@ -40,188 +88,27 @@ impl PlanningService {
     }
 
     pub fn request_goal_review(&self, goal_id: &str, summary: &str) -> AppResult<Goal> {
-        let summary = required_text(summary, "Review summary")?;
-        self.store.update(|state| {
-            let goal = state
-                .goals
-                .iter_mut()
-                .find(|goal| goal.id == goal_id)
-                .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
-            if matches!(goal.status, GoalStatus::Archived | GoalStatus::Cancelled) {
-                return Err(AppError::Message(
-                    "Archived or cancelled goals cannot be submitted for review".into(),
-                ));
-            }
-            let now = timestamp();
-            goal.status = GoalStatus::AwaitingAcceptance;
-            goal.review_requested_at = Some(now.clone());
-            goal.review_summary = Some(summary);
-            goal.review_feedback = None;
-            goal.updated_at = now;
-            Ok(goal.clone())
-        })
+        review::request_goal(&self.store, goal_id, summary)
     }
 
     pub fn request_plan_review(&self, plan_id: &str, summary: &str) -> AppResult<Plan> {
-        let summary = required_text(summary, "Review summary")?;
-        self.store.update(|state| {
-            let plan = state
-                .plans
-                .iter_mut()
-                .find(|plan| plan.id == plan_id)
-                .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
-            if matches!(plan.status, PlanStatus::Archived | PlanStatus::Cancelled) {
-                return Err(AppError::Message(
-                    "Archived or cancelled plans cannot be submitted for review".into(),
-                ));
-            }
-            let now = timestamp();
-            plan.status = PlanStatus::AwaitingAcceptance;
-            plan.review_requested_at = Some(now.clone());
-            plan.review_summary = Some(summary);
-            plan.review_feedback = None;
-            plan.updated_at = now;
-            plan.revision = plan.revision.saturating_add(1);
-            Ok(plan.clone())
-        })
+        review::request_plan(&self.store, plan_id, summary)
     }
 
     pub fn accept_goal_review(&self, goal_id: &str) -> AppResult<Goal> {
-        self.store.update(|state| {
-            let goal_index = state
-                .goals
-                .iter()
-                .position(|goal| goal.id == goal_id)
-                .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
-            if state.goals[goal_index].status != GoalStatus::AwaitingAcceptance {
-                return Err(AppError::Message(
-                    "Goal is not waiting for human acceptance".into(),
-                ));
-            }
-
-            let now = timestamp();
-            let linked_plan_ids = state.goals[goal_index].plan_ids.clone();
-            {
-                let goal = &mut state.goals[goal_index];
-                goal.status = GoalStatus::Archived;
-                goal.archived_at = Some(now.clone());
-                goal.review_feedback = None;
-                goal.updated_at = now.clone();
-            }
-
-            for plan in &mut state.plans {
-                if linked_plan_ids.iter().any(|id| id == &plan.id)
-                    && !matches!(plan.status, PlanStatus::Archived | PlanStatus::Cancelled)
-                {
-                    plan.status = PlanStatus::Archived;
-                    plan.archived_at = Some(now.clone());
-                    plan.review_feedback = None;
-                    plan.updated_at = now.clone();
-                    plan.revision = plan.revision.saturating_add(1);
-                }
-            }
-
-            if state.focus_goal_id.as_deref() == Some(goal_id) {
-                state.focus_goal_id = None;
-                if state
-                    .focus_plan_id
-                    .as_ref()
-                    .is_some_and(|id| linked_plan_ids.iter().any(|plan_id| plan_id == id))
-                {
-                    state.focus_plan_id = None;
-                }
-            }
-            Ok(state.goals[goal_index].clone())
-        })
+        review::accept_goal(&self.store, goal_id)
     }
 
     pub fn reject_goal_review(&self, goal_id: &str, feedback: Option<String>) -> AppResult<Goal> {
-        self.store.update(|state| {
-            let goal_index = state
-                .goals
-                .iter()
-                .position(|goal| goal.id == goal_id)
-                .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
-            if state.goals[goal_index].status != GoalStatus::AwaitingAcceptance {
-                return Err(AppError::Message(
-                    "Goal is not waiting for human acceptance".into(),
-                ));
-            }
-            let linked_plan_ids = state.goals[goal_index].plan_ids.clone();
-            let now = timestamp();
-            {
-                let goal = &mut state.goals[goal_index];
-                goal.status = GoalStatus::Active;
-                goal.review_requested_at = None;
-                goal.review_feedback = feedback.and_then(non_empty);
-                goal.updated_at = now.clone();
-            }
-            for plan in &mut state.plans {
-                if linked_plan_ids.iter().any(|id| id == &plan.id)
-                    && plan.status == PlanStatus::AwaitingAcceptance
-                {
-                    plan.status = PlanStatus::Active;
-                    plan.review_requested_at = None;
-                    plan.updated_at = now.clone();
-                    plan.revision = plan.revision.saturating_add(1);
-                }
-            }
-            state.focus_goal_id = Some(goal_id.to_string());
-            Ok(state.goals[goal_index].clone())
-        })
+        review::reject_goal(&self.store, goal_id, feedback)
     }
 
     pub fn accept_plan_review(&self, plan_id: &str) -> AppResult<Plan> {
-        self.store.update(|state| {
-            let plan = state
-                .plans
-                .iter_mut()
-                .find(|plan| plan.id == plan_id)
-                .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
-            if plan.status != PlanStatus::AwaitingAcceptance {
-                return Err(AppError::Message(
-                    "Plan is not waiting for human acceptance".into(),
-                ));
-            }
-            let now = timestamp();
-            plan.status = PlanStatus::Archived;
-            plan.archived_at = Some(now.clone());
-            plan.review_feedback = None;
-            plan.updated_at = now;
-            plan.revision = plan.revision.saturating_add(1);
-            let output = plan.clone();
-            if state.focus_plan_id.as_deref() == Some(plan_id) {
-                state.focus_plan_id = None;
-            }
-            Ok(output)
-        })
+        review::accept_plan(&self.store, plan_id)
     }
 
     pub fn reject_plan_review(&self, plan_id: &str, feedback: Option<String>) -> AppResult<Plan> {
-        self.store.update(|state| {
-            let plan = state
-                .plans
-                .iter_mut()
-                .find(|plan| plan.id == plan_id)
-                .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
-            if plan.status != PlanStatus::AwaitingAcceptance {
-                return Err(AppError::Message(
-                    "Plan is not waiting for human acceptance".into(),
-                ));
-            }
-            let now = timestamp();
-            plan.status = PlanStatus::Active;
-            plan.review_requested_at = None;
-            plan.review_feedback = feedback.and_then(non_empty);
-            plan.updated_at = now;
-            plan.revision = plan.revision.saturating_add(1);
-            let output = plan.clone();
-            state.focus_plan_id = Some(plan_id.to_string());
-            if let Some(goal_id) = output.goal_id.as_ref() {
-                state.focus_goal_id = Some(goal_id.clone());
-            }
-            Ok(output)
-        })
+        review::reject_plan(&self.store, plan_id, feedback)
     }
 
     pub fn state(&self) -> AppResult<PlanningState> {
@@ -229,69 +116,7 @@ impl PlanningService {
     }
 
     pub fn record_execution(&self, update: ExecutionLedgerUpdate) -> AppResult<PlanningState> {
-        self.store.update(|state| {
-            let focused_plan = state
-                .focus_plan_id
-                .as_deref()
-                .and_then(|id| state.plans.iter().find(|plan| plan.id == id));
-            let current_step_id = focused_plan.and_then(|plan| {
-                plan.steps
-                    .iter()
-                    .find(|step| step.status == PlanStepStatus::InProgress)
-                    .or_else(|| {
-                        plan.steps
-                            .iter()
-                            .find(|step| step.status == PlanStepStatus::Pending)
-                    })
-                    .map(|step| step.id.clone())
-            });
-            let completed_step_ids = focused_plan
-                .map(|plan| {
-                    plan.steps
-                        .iter()
-                        .filter(|step| step.status == PlanStepStatus::Completed)
-                        .map(|step| step.id.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            state.execution.goal_id = state.focus_goal_id.clone();
-            state.execution.plan_id = state.focus_plan_id.clone();
-            state.execution.step_id = current_step_id.clone();
-            if update.task_id.is_some() {
-                state.execution.task_id = update.task_id;
-            }
-            if update.last_tool.is_some() {
-                state.execution.last_tool = update.last_tool;
-            }
-            if let Some(value) = update.state {
-                state.execution.state = value;
-            }
-            state.execution.last_error = update.last_error.clone();
-            if !update.changed_files.is_empty() {
-                state.execution.changed_files = update.changed_files;
-            }
-            if update.history_checkpoint_ref.is_some() {
-                state.execution.history_checkpoint_ref = update.history_checkpoint_ref;
-            }
-            if !update.verification.is_empty() {
-                state.execution.verification = update.verification;
-            }
-            state.execution.updated_at = timestamp();
-
-            if let Some(goal_id) = state.focus_goal_id.as_deref() {
-                if let Some(goal) = state.goals.iter_mut().find(|goal| goal.id == goal_id) {
-                    goal.execution_checkpoint = Some(ExecutionCheckpoint {
-                        current_step_id,
-                        completed_step_ids,
-                        last_error: update.last_error,
-                        updated_at: state.execution.updated_at.clone(),
-                    });
-                    goal.updated_at = state.execution.updated_at.clone();
-                }
-            }
-            Ok(state.clone())
-        })
+        execution::record(&self.store, update)
     }
 
     pub fn set_mode(&self, mode: PlanningMode) -> AppResult<PlanningState> {
@@ -308,86 +133,11 @@ impl PlanningService {
         success_criteria: Vec<String>,
         constraints: Vec<String>,
     ) -> AppResult<Goal> {
-        let title = required_text(title, "Goal title")?;
-        let objective = required_text(objective, "Goal objective")?;
-        self.store.update(|state| {
-            let now = timestamp();
-            let goal = Goal {
-                id: new_id(),
-                title,
-                objective,
-                status: GoalStatus::Active,
-                success_criteria: success_criteria
-                    .into_iter()
-                    .filter_map(non_empty)
-                    .map(|text| SuccessCriterion {
-                        id: new_id(),
-                        text,
-                        completed: false,
-                    })
-                    .collect(),
-                constraints: constraints.into_iter().filter_map(non_empty).collect(),
-                plan_ids: Vec::new(),
-                created_at: now.clone(),
-                updated_at: now,
-                archived_at: None,
-                review_requested_at: None,
-                review_summary: None,
-                review_feedback: None,
-                execution_checkpoint: None,
-                extra: Default::default(),
-            };
-            if state.focus_goal_id.is_none() {
-                state.focus_goal_id = Some(goal.id.clone());
-            }
-            state.goals.push(goal.clone());
-            Ok(goal)
-        })
+        goal::create(&self.store, title, objective, success_criteria, constraints)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_goal(
-        &self,
-        goal_id: &str,
-        title: Option<String>,
-        objective: Option<String>,
-        status: Option<GoalStatus>,
-        constraints: Option<Vec<String>>,
-        completed_criteria_ids: Option<Vec<String>>,
-        focus: Option<bool>,
-    ) -> AppResult<Goal> {
-        self.store.update(|state| {
-            let goal = state
-                .goals
-                .iter_mut()
-                .find(|goal| goal.id == goal_id)
-                .ok_or_else(|| AppError::Message(format!("goal not found: {goal_id}")))?;
-            if let Some(value) = title {
-                goal.title = required_text(&value, "Goal title")?;
-            }
-            if let Some(value) = objective {
-                goal.objective = required_text(&value, "Goal objective")?;
-            }
-            if let Some(value) = status {
-                goal.status = value;
-            }
-            if let Some(values) = constraints {
-                goal.constraints = values.into_iter().filter_map(non_empty).collect();
-            }
-            if let Some(ids) = completed_criteria_ids {
-                for criterion in &mut goal.success_criteria {
-                    criterion.completed = ids.iter().any(|id| id == &criterion.id);
-                }
-            }
-            goal.updated_at = timestamp();
-            let output = goal.clone();
-            if focus == Some(true) {
-                state.focus_goal_id = Some(goal_id.to_string());
-            } else if focus == Some(false) && state.focus_goal_id.as_deref() == Some(goal_id) {
-                state.focus_goal_id = None;
-            }
-            Ok(output)
-        })
+    pub fn update_goal(&self, request: UpdateGoalRequest) -> AppResult<Goal> {
+        goal::update(&self.store, request)
     }
 
     pub fn create_plan(
@@ -397,115 +147,12 @@ impl PlanningService {
         objective: &str,
         steps: Vec<String>,
     ) -> AppResult<Plan> {
-        let title = required_text(title, "Plan title")?;
-        let objective = required_text(objective, "Plan objective")?;
-        self.store.update(|state| {
-            if let Some(id) = goal_id.as_deref() {
-                if !state.goals.iter().any(|goal| goal.id == id) {
-                    return Err(AppError::Message(format!("goal not found: {id}")));
-                }
-            }
-            let now = timestamp();
-            let plan = Plan {
-                id: new_id(),
-                goal_id: goal_id.clone(),
-                title,
-                objective,
-                status: PlanStatus::Draft,
-                steps: steps
-                    .into_iter()
-                    .filter_map(non_empty)
-                    .map(|title| PlanStep {
-                        id: new_id(),
-                        title,
-                        status: PlanStepStatus::Pending,
-                        notes: None,
-                    })
-                    .collect(),
-                task_ids: Vec::new(),
-                revision: 1,
-                created_at: now.clone(),
-                updated_at: now,
-                archived_at: None,
-                review_requested_at: None,
-                review_summary: None,
-                review_feedback: None,
-                extra: Default::default(),
-            };
-            if let Some(id) = goal_id.as_deref() {
-                if let Some(goal) = state.goals.iter_mut().find(|goal| goal.id == id) {
-                    goal.plan_ids.push(plan.id.clone());
-                    goal.updated_at = timestamp();
-                }
-            }
-            state.plans.push(plan.clone());
-            Ok(plan)
-        })
+        plan::create(&self.store, goal_id, title, objective, steps)
     }
 
-    pub fn update_plan(
-        &self,
-        plan_id: &str,
-        status: Option<PlanStatus>,
-        step_updates: Vec<(String, PlanStepStatus, Option<String>)>,
-        focus: Option<bool>,
-    ) -> AppResult<Plan> {
-        self.store.update(|state| {
-            let plan = state
-                .plans
-                .iter_mut()
-                .find(|plan| plan.id == plan_id)
-                .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
-            if let Some(value) = status {
-                plan.status = value;
-            }
-            for (step_id, step_status, notes) in step_updates {
-                let step = plan
-                    .steps
-                    .iter_mut()
-                    .find(|step| step.id == step_id)
-                    .ok_or_else(|| AppError::Message(format!("plan step not found: {step_id}")))?;
-                step.status = step_status;
-                if notes.is_some() {
-                    step.notes = notes;
-                }
-            }
-            plan.revision = plan.revision.saturating_add(1);
-            plan.updated_at = timestamp();
-            let output = plan.clone();
-            if focus == Some(true) {
-                state.focus_plan_id = Some(plan_id.to_string());
-                if let Some(goal_id) = output.goal_id.as_ref() {
-                    state.focus_goal_id = Some(goal_id.clone());
-                }
-            } else if focus == Some(false) && state.focus_plan_id.as_deref() == Some(plan_id) {
-                state.focus_plan_id = None;
-            }
-            Ok(output)
-        })
+    pub fn update_plan(&self, request: UpdatePlanRequest) -> AppResult<Plan> {
+        plan::update(&self.store, request)
     }
-}
-
-fn required_text(value: &str, label: &str) -> AppResult<String> {
-    non_empty(value.to_string())
-        .ok_or_else(|| AppError::Message(format!("{label} cannot be empty")))
-}
-
-fn non_empty(value: String) -> Option<String> {
-    let value = value.trim().to_string();
-    (!value.is_empty()).then_some(value)
-}
-
-fn new_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()
-}
-
-fn timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .to_string()
 }
 
 #[cfg(test)]
@@ -561,12 +208,12 @@ mod tests {
         let step_id = plan.steps[0].id.clone();
 
         let updated = service
-            .update_plan(
-                &plan.id,
-                Some(PlanStatus::Active),
-                vec![(step_id, PlanStepStatus::Completed, None)],
-                Some(true),
-            )
+            .update_plan(UpdatePlanRequest {
+                plan_id: plan.id.clone(),
+                status: Some(PlanStatus::Active),
+                step_updates: vec![(step_id, PlanStepStatus::Completed, None)],
+                focus: Some(true),
+            })
             .expect("update");
 
         assert_eq!(updated.status, PlanStatus::Active);
@@ -582,7 +229,7 @@ mod tests {
             .create_goal("Goal", "Objective", Vec::new(), Vec::new())
             .expect("goal");
         service
-            .update_goal(&goal.id, None, None, None, None, None, Some(true))
+            .update_goal(UpdateGoalRequest::focus(&goal.id, true))
             .expect("focus goal");
         let plan = service
             .create_plan(
@@ -594,12 +241,12 @@ mod tests {
             .expect("plan");
         let step_id = plan.steps[0].id.clone();
         service
-            .update_plan(
-                &plan.id,
-                Some(PlanStatus::Active),
-                vec![(step_id.clone(), PlanStepStatus::InProgress, None)],
-                Some(true),
-            )
+            .update_plan(UpdatePlanRequest {
+                plan_id: plan.id.clone(),
+                status: Some(PlanStatus::Active),
+                step_updates: vec![(step_id.clone(), PlanStepStatus::InProgress, None)],
+                focus: Some(true),
+            })
             .expect("focus plan");
 
         let state = service
@@ -645,7 +292,7 @@ mod tests {
             )
             .expect("goal");
         service
-            .update_goal(&goal.id, None, None, None, None, None, Some(true))
+            .update_goal(UpdateGoalRequest::focus(&goal.id, true))
             .expect("focus goal");
         let plan = service
             .create_plan(
@@ -656,7 +303,7 @@ mod tests {
             )
             .expect("plan");
         service
-            .update_plan(&plan.id, Some(PlanStatus::Active), Vec::new(), Some(true))
+            .update_plan(UpdatePlanRequest::activate(&plan.id))
             .expect("focus plan");
 
         let reviewed_plan = service

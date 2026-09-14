@@ -251,15 +251,19 @@ impl RuntimeSupervisor {
             None
         };
         let spawn_result = mcp::spawn_listener(
-            port,
-            PathBuf::from(&profile.path),
-            profile.id.clone(),
-            auth,
-            profile.effective_public_url(),
-            oauth_client_secret,
-            oauth_password,
-            oauth_token_secret,
-            profile.runtime.clone(),
+            mcp::ListenerConfig {
+                port,
+                workspace_path: PathBuf::from(&profile.path),
+                workspace_id: profile.id.clone(),
+                auth,
+                public_base_url: profile.effective_public_url(),
+                runtime: profile.runtime.clone(),
+            },
+            mcp::ListenerSecrets {
+                oauth_client_secret,
+                oauth_password,
+                oauth_token_secret,
+            },
             usage.clone(),
         );
 

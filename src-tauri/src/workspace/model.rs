@@ -12,10 +12,74 @@ pub struct WorkspaceProfile {
     pub runtime: RuntimeConfig,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TunnelType(String);
+
+impl TunnelType {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_frp(&self) -> bool {
+        self.as_str() == "frp"
+    }
+
+    pub fn is_cloudflare(&self) -> bool {
+        self.as_str() == "cloudflare"
+    }
+}
+
+impl From<String> for TunnelType {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for TunnelType {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AuthType(String);
+
+impl AuthType {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        self.as_str() == "oauth"
+    }
+
+    pub fn is_bearer(&self) -> bool {
+        self.as_str() == "bearer"
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.as_str() != "noauth"
+    }
+}
+
+impl From<String> for AuthType {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for AuthType {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelConfig {
     #[serde(rename = "type", default = "default_tunnel_type")]
-    pub tunnel_type: String,
+    pub tunnel_type: TunnelType,
     #[serde(default)]
     pub public_url: String,
     #[serde(default)]
@@ -39,7 +103,7 @@ pub struct TunnelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     #[serde(rename = "type", default = "default_auth_type")]
-    pub auth_type: String,
+    pub auth_type: AuthType,
     #[serde(default = "default_oauth_client_id")]
     pub oauth_client_id: String,
     #[serde(default)]
@@ -96,8 +160,8 @@ pub struct RuntimeStatusDto {
     pub public_endpoint: String,
 }
 
-fn default_tunnel_type() -> String {
-    "frp".to_string()
+fn default_tunnel_type() -> TunnelType {
+    "frp".into()
 }
 
 fn default_cloudflare_mode() -> String {
@@ -108,8 +172,8 @@ fn default_use_proxy() -> bool {
     true
 }
 
-fn default_auth_type() -> String {
-    "oauth".to_string()
+fn default_auth_type() -> AuthType {
+    "oauth".into()
 }
 
 fn default_frp_server_port() -> u16 {
@@ -195,7 +259,6 @@ impl Default for RuntimeConfig {
     }
 }
 
-#[allow(dead_code)]
 impl WorkspaceProfile {
     pub fn new(path: String, name: Option<String>) -> Self {
         let cleaned = path.trim_end_matches(['\\', '/']).to_string();
@@ -230,7 +293,7 @@ impl WorkspaceProfile {
             return gateway_workspace_base(&settings.global_gateway.public_url, &self.id);
         }
         computed_public_url(
-            &self.tunnel.tunnel_type,
+            self.tunnel.tunnel_type.as_str(),
             &self.tunnel.frp_server,
             &self.tunnel.frp_subdomain,
             &self.tunnel.public_url,

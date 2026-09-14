@@ -11,6 +11,7 @@ use crate::agent_context::{
 };
 use crate::harness::Harness;
 use crate::tools::policy::PolicySettings;
+use crate::tools::registry::ToolProfile;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
 use crate::usage::ServiceUsage;
@@ -33,8 +34,7 @@ pub struct ToolContext {
     pub workspace: Workspace,
     pub auth: AuthConfig,
     pub policy: PolicySettings,
-    pub tool_profile: String,
-    pub permission_mode: String,
+    pub tool_profile: ToolProfile,
     pub history_recording: bool,
     pub history_context_sessions: Vec<u64>,
     pub executable_paths: Vec<PathBuf>,
@@ -62,7 +62,6 @@ impl ToolContext {
             auth,
             PolicySettings::default(),
             "full".into(),
-            "trusted".into(),
         ))
     }
 
@@ -71,15 +70,13 @@ impl ToolContext {
         auth: AuthConfig,
         policy: PolicySettings,
         tool_profile: String,
-        permission_mode: String,
     ) -> Self {
         let harness_root = Harness::default_root().expect("无法初始化 Harness 数据目录");
         Self::from_workspace_with_harness_root(
             workspace,
             auth,
             policy,
-            crate::tools::registry::normalize_tool_profile(&tool_profile).into(),
-            permission_mode,
+            ToolProfile::from_config(&tool_profile),
             harness_root,
         )
     }
@@ -88,8 +85,7 @@ impl ToolContext {
         workspace: Workspace,
         auth: AuthConfig,
         policy: PolicySettings,
-        tool_profile: String,
-        permission_mode: String,
+        tool_profile: ToolProfile,
         harness_root: PathBuf,
     ) -> Self {
         let root = workspace.root().to_path_buf();
@@ -98,8 +94,7 @@ impl ToolContext {
             workspace,
             auth,
             policy,
-            tool_profile: crate::tools::registry::normalize_tool_profile(&tool_profile).into(),
-            permission_mode,
+            tool_profile,
             history_recording: true,
             history_context_sessions: Vec::new(),
             executable_paths: Vec::new(),
@@ -123,8 +118,7 @@ impl ToolContext {
                 ..AuthConfig::default()
             },
             PolicySettings::default(),
-            "full".into(),
-            "trusted".into(),
+            ToolProfile::Core,
             harness_root,
         ))
     }
@@ -165,7 +159,7 @@ impl ToolContext {
     }
 
     pub fn with_tool_profile(mut self, profile: &str) -> Self {
-        self.tool_profile = crate::tools::registry::normalize_tool_profile(profile).into();
+        self.tool_profile = ToolProfile::from_config(profile);
         self
     }
 
@@ -178,7 +172,7 @@ impl ToolContext {
             &config.instruction_sources,
             &config.custom_instruction_paths,
         );
-        if self.tool_profile == "compact" {
+        if self.tool_profile.is_compact() {
             repository_instructions.retain(|document| {
                 document.scope == "workspace"
                     && (document.path.ends_with("AGENTS.md")

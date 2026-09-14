@@ -22,6 +22,9 @@
     Square,
   } from "@lucide/svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
+  import DashboardQuickNav from "$lib/components/dashboard/DashboardQuickNav.svelte";
+  import DashboardUsagePanel from "$lib/components/dashboard/DashboardUsagePanel.svelte";
+  import DashboardWorkspaceCard from "$lib/components/dashboard/DashboardWorkspaceCard.svelte";
   import type { PlanningStateDto } from "$lib/api/planning";
   import { getLastWorkspaceId } from "$lib/api/settings";
   import type { ServiceUsageStats } from "$lib/api/usage";
@@ -29,9 +32,6 @@
     buildUsageChart,
     buildUsagePoint,
     formatCount,
-    formatEstimatedTokens,
-    formatMillions,
-    formatMetric,
     loadPlanningByWorkspace,
     loadUsageByWorkspace,
     planningLabel as getPlanningLabel,
@@ -264,54 +264,7 @@
       </div>
     {:else}
       <div class="tx-dashboard-canvas">
-        <nav class="tx-dashboard-quick-nav" aria-label="Dashboard 快速导航">
-          <span class="tx-dashboard-quick-nav-label">快速跳转</span>
-          <a
-            href="#dashboard-overview"
-            class:active={activeSection === "dashboard-overview"}
-            aria-label="跳转到运行总览"
-            title="运行总览"
-            onclick={(e) => scrollToAnchor(e, "dashboard-overview")}
-          >
-            <Gauge size={15} />
-          </a>
-          <a
-            href="#dashboard-metrics"
-            class:active={activeSection === "dashboard-metrics"}
-            aria-label="跳转到关键指标"
-            title="关键指标"
-            onclick={(e) => scrollToAnchor(e, "dashboard-metrics")}
-          >
-            <Activity size={15} />
-          </a>
-          <a
-            href="#dashboard-workspaces"
-            class:active={activeSection === "dashboard-workspaces"}
-            aria-label="跳转到工作区运行矩阵"
-            title="运行矩阵"
-            onclick={(e) => scrollToAnchor(e, "dashboard-workspaces")}
-          >
-            <Boxes size={15} />
-          </a>
-          <a
-            href="#dashboard-usage"
-            class:active={activeSection === "dashboard-usage"}
-            aria-label="跳转到 Token 趋势"
-            title="Token 趋势"
-            onclick={(e) => scrollToAnchor(e, "dashboard-usage")}
-          >
-            <Network size={15} />
-          </a>
-          <a
-            href="#dashboard-details"
-            class:active={activeSection === "dashboard-details"}
-            aria-label="跳转到连接与 Planning"
-            title="连接与 Planning"
-            onclick={(e) => scrollToAnchor(e, "dashboard-details")}
-          >
-            <ListChecks size={15} />
-          </a>
-        </nav>
+        <DashboardQuickNav {activeSection} onNavigate={scrollToAnchor} />
 
         <div class="tx-dashboard-content">
       <div id="dashboard-overview" class="tx-dashboard-hero-grid tx-dashboard-anchor">
@@ -472,170 +425,24 @@
 
         <div class="tx-dashboard-workspace-grid">
           {#each $workspaces as workspace (workspace.id)}
-            {@const planning = planningByWorkspace[workspace.id]}
-            {@const isMcpRunning = $mcpRuntimeStates[workspace.id] === "running"}
-            <div class="tx-dashboard-workspace-card">
-              <!-- Top identity line with name, path, Finder open and jump buttons -->
-              <div class="tx-dashboard-workspace-topline">
-                <div class="min-w-0 flex-1">
-                  <button
-                    type="button"
-                    class="text-left font-bold truncate block hover:text-[var(--primary)] transition-colors cursor-pointer"
-                    onclick={() => openWorkspace(workspace.id)}
-                    title="点击进入工作区"
-                  >
-                    {workspace.name}
-                  </button>
-                  <span class="truncate block font-mono text-[10px] text-[var(--text-muted)]" title={workspace.path}>
-                    {workspace.path}
-                  </span>
-                </div>
-
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    class="tx-dashboard-action-icon"
-                    title="在访达/资源管理器中打开"
-                    onclick={() => void revealDirectory(workspace.path)}
-                  >
-                    <FolderOpen size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    class="tx-dashboard-action-icon"
-                    title="复制完整路径"
-                    onclick={() => void copyWorkspacePath(workspace.id, workspace.path)}
-                  >
-                    {#if copiedPathId === workspace.id}
-                      <Check size={13} class="text-[var(--success)]" />
-                    {:else}
-                      <Copy size={13} />
-                    {/if}
-                  </button>
-                  <button
-                    type="button"
-                    class="tx-dashboard-action-icon primary"
-                    title="进入工作区"
-                    onclick={() => openWorkspace(workspace.id)}
-                  >
-                    <ArrowUpRight size={14} />
-                  </button>
-                </div>
-              </div>
-
-              <!-- Runtime Block with Direct Toggle -->
-              <div class="tx-dashboard-runtime-grid">
-                <div class="tx-dashboard-runtime-block flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <span class="tx-dashboard-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
-                    <strong class="text-xs font-semibold text-[var(--text-main)]">MCP</strong>
-                    <span class="text-[11px] font-medium {isMcpRunning ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'} shrink-0">
-                      {stateLabel($mcpRuntimeStates[workspace.id])}
-                    </span>
-                    <span class="font-mono text-[10px] text-[var(--text-muted)] shrink-0">:{workspace.runtime.local_port}</span>
-                    <span class="rounded bg-[var(--surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--text-secondary)] font-medium shrink-0">
-                      {tunnelLabel(workspace)}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    class="tx-dashboard-quick-toggle shrink-0"
-                    class:running={isMcpRunning}
-                    disabled={mcpBusyMap[workspace.id] || $mcpRuntimeStates[workspace.id] === "starting" || $mcpRuntimeStates[workspace.id] === "stopping"}
-                    onclick={() => void toggleWorkspaceMcp(workspace.id)}
-                  >
-                    {#if mcpBusyMap[workspace.id]}
-                      <RotateCw size={10} class="animate-spin shrink-0" />
-                    {:else if isMcpRunning}
-                      <Square size={10} class="shrink-0" />
-                      <span>停止</span>
-                    {:else}
-                      <Play size={10} class="shrink-0" />
-                      <span>启动</span>
-                    {/if}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Footer Planning Line -->
-              <div class="tx-dashboard-planning-line">
-                <GitBranch size={13} />
-                <span class="truncate">{planningLabel(workspace.id)}</span>
-                {#if planning}
-                  <small>{planning.mode.toUpperCase()}</small>
-                {/if}
-              </div>
-            </div>
+            <DashboardWorkspaceCard
+              {workspace}
+              planning={planningByWorkspace[workspace.id]}
+              planningLabel={planningLabel(workspace.id)}
+              runtimeState={$mcpRuntimeStates[workspace.id]}
+              busy={mcpBusyMap[workspace.id]}
+              copied={copiedPathId === workspace.id}
+              onOpen={openWorkspace}
+              onReveal={revealDirectory}
+              onCopy={copyWorkspacePath}
+              onToggle={toggleWorkspaceMcp}
+            />
           {/each}
         </div>
       </section>
 
       <div id="dashboard-details" class="tx-dashboard-detail-grid tx-dashboard-anchor">
-        <section id="dashboard-usage" class="tx-card tx-dashboard-detail-card tx-dashboard-usage-card">
-          <div class="tx-dashboard-usage-heading">
-            <div>
-              <div class="flex items-center gap-2">
-                <Activity size={16} class="text-[var(--primary)]" />
-                <h3>MCP Token 估算趋势</h3>
-              </div>
-              <p>基于 MCP JSON 请求/响应字节数估算，图表展示最近 24 个采样周期的新增量。</p>
-            </div>
-            <span class="tx-dashboard-usage-badge">估算 Token</span>
-          </div>
-
-          <div class="tx-dashboard-usage-layout">
-            <div class="tx-dashboard-usage-chart">
-              <div class="tx-dashboard-usage-chart-meta">
-                <span>累计 MCP Token 估算</span>
-                <strong>{formatEstimatedTokens(usageTotals.estimatedTokens)}</strong>
-              </div>
-              <svg
-                class="tx-dashboard-line-chart"
-                viewBox="0 0 100 40"
-                role="img"
-                aria-label={`MCP Token 估算趋势，当前累计 ${formatEstimatedTokens(usageTotals.estimatedTokens)}`}
-                preserveAspectRatio="none"
-              >
-                <line class="tx-dashboard-chart-gridline" x1="0" y1="7" x2="100" y2="7" />
-                <line class="tx-dashboard-chart-gridline" x1="0" y1="19.5" x2="100" y2="19.5" />
-                <line class="tx-dashboard-chart-gridline" x1="0" y1="32" x2="100" y2="32" />
-                <path class="tx-dashboard-chart-area" d={usageChart.areaPath} />
-                <path class="tx-dashboard-chart-line" d={usageChart.path} />
-                {#if usageChart.points.length > 0}
-                  {@const lastPoint = usageChart.points[usageChart.points.length - 1]}
-                  <circle class="tx-dashboard-chart-point" cx={lastPoint.x} cy={lastPoint.y} r="1.25" />
-                {/if}
-              </svg>
-              <div class="tx-dashboard-chart-scale">
-                <span>0</span>
-                <span>{formatEstimatedTokens(usageChart.max)} / 采样</span>
-              </div>
-            </div>
-
-            <div class="tx-dashboard-usage-stats">
-              <div class="tx-dashboard-usage-stat">
-                <span>工具调用</span>
-                <strong>{formatMetric(usageTotals.toolCallCount)}</strong>
-                <small>tools/call</small>
-              </div>
-              <div class="tx-dashboard-usage-stat">
-                <span>平均估算 Token / 工具调用</span>
-                <strong>{formatMetric(averageTokens)}</strong>
-                <small>仅统计 tools/call 输入 + 输出</small>
-              </div>
-              <div class="tx-dashboard-usage-stat">
-                <span>估算输入 / 输出</span>
-                <strong>{formatEstimatedTokens(usageTotals.estimatedInputTokens)} / {formatEstimatedTokens(usageTotals.estimatedOutputTokens)}</strong>
-                <small>按 JSON UTF-8 字节估算</small>
-              </div>
-              <div class="tx-dashboard-usage-stat">
-                <span>全部 MCP 请求</span>
-                <strong>{formatMetric(usageTotals.requestCount)}</strong>
-                <small>含 initialize / tools/list 等协议请求</small>
-              </div>
-            </div>
-          </div>
-        </section>
+        <DashboardUsagePanel totals={usageTotals} {averageTokens} chart={usageChart} />
 
         <section class="tx-card tx-dashboard-detail-card">
           <div class="tx-dashboard-section-heading compact">

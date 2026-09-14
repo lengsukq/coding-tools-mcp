@@ -5,15 +5,15 @@ use crate::workspace::AuthConfig;
 
 impl AuthConfig {
     pub fn oauth_enabled(&self) -> bool {
-        self.auth_type == "oauth"
+        self.auth_type.is_oauth()
     }
 
     pub fn bearer_enabled(&self) -> bool {
-        self.auth_type == "bearer"
+        self.auth_type.is_bearer()
     }
 
     pub fn auth_enabled(&self) -> bool {
-        self.auth_type != "noauth"
+        self.auth_type.is_enabled()
     }
 }
 

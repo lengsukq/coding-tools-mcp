@@ -56,7 +56,40 @@ pub struct PolicySettings {
     pub workspace_local_entries: bool,
     pub workspace_script_extensions: HashSet<String>,
     pub max_patch_bytes: usize,
-    pub permission_mode: String,
+    pub permission_mode: PermissionMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionMode(String);
+
+impl PermissionMode {
+    pub fn trusted() -> Self {
+        Self("trusted".into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn network_allowed(&self) -> bool {
+        matches!(self.as_str(), "trusted" | "dangerous")
+    }
+
+    pub fn skip_permission_gates(&self) -> bool {
+        self.as_str() == "dangerous"
+    }
+}
+
+impl From<String> for PermissionMode {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for PermissionMode {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
 }
 
 impl Default for PolicySettings {
@@ -66,7 +99,7 @@ impl Default for PolicySettings {
             workspace_local_entries: true,
             workspace_script_extensions: default_workspace_script_extension_set(),
             max_patch_bytes: 200_000,
-            permission_mode: "trusted".into(),
+            permission_mode: PermissionMode::trusted(),
         }
     }
 }
@@ -80,16 +113,16 @@ impl PolicySettings {
                 &runtime.workspace_script_extensions,
             ),
             max_patch_bytes: 200_000,
-            permission_mode: runtime.permission_mode.clone(),
+            permission_mode: runtime.permission_mode.clone().into(),
         }
     }
 
     pub fn network_allowed(&self) -> bool {
-        self.permission_mode == "trusted" || self.permission_mode == "dangerous"
+        self.permission_mode.network_allowed()
     }
 
     pub fn skip_permission_gates(&self) -> bool {
-        self.permission_mode == "dangerous"
+        self.permission_mode.skip_permission_gates()
     }
 }
 

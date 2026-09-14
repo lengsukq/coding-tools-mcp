@@ -103,7 +103,6 @@ fn request_permissions_is_hidden_from_clients_but_keeps_legacy_dangerous_mode_co
 
     let fx = tiny_js_fixture();
     let mut ctx = ctx_for(&fx.root);
-    ctx.permission_mode = "dangerous".into();
     ctx.policy.permission_mode = "dangerous".into();
     let args = json!({
         "tool_name": "exec_command",

@@ -39,6 +39,11 @@ struct FrpRoute {
     profile: WorkspaceProfile,
 }
 
+struct RouteState {
+    route: Option<FrpRoute>,
+    session: Option<TunnelSession>,
+}
+
 struct FrpcProcess {
     child: Child,
     pid: Option<u32>,
@@ -202,75 +207,89 @@ impl TunnelSupervisor {
 
         // 暂存旧状态，直到新线路完成校验并成功启动。这样配置填写错误、
         // 线路冲突或 frpc 启动失败时，当前可用线路不会因为一次点击而丢失。
-        // 对 FRP 来说，这也是“替换当前 Workspace 代理”而不是先删除再重建。
-        let mut previous_session = self.sessions.remove(&key);
-        let mut previous_route = self.frp_routes.remove(&key);
+        let previous = self.take_route_state(&key);
 
         if let Err(error) = validate_tunnel_requirements(profile, settings) {
-            self.restore_route_state(&key, previous_route.take(), previous_session.take());
+            self.restore_route_state(&key, previous);
             return Err(error);
         }
 
-        if tunnel_type == "frp" {
-            let config = frp::frp_server_config(profile, settings, None);
-            if let Err(error) =
-                self.validate_frp_route_compatibility(&profile.id, &config, settings)
-            {
-                self.restore_route_state(&key, previous_route.take(), previous_session.take());
-                return Err(error);
+        match tunnel_type {
+            "frp" => self.start_frp(profile, settings, previous).await,
+            "cloudflare" => self.start_cloudflare(profile, previous).await,
+            _ => {
+                self.restore_route_state(&key, previous);
+                Err(AppError::Message("当前仅支持 FRP 和 Cloudflare。".into()))
             }
+        }
+    }
 
-            self.frp_routes.insert(
-                key.clone(),
-                FrpRoute {
-                    profile: profile.clone(),
-                },
-            );
-            if let Err(error) = self.ensure_frpc_matches_routes(&profile.id, settings).await {
-                self.frp_routes.remove(&key);
-                self.restore_route_state(&key, previous_route.take(), previous_session.take());
-                if let Err(rollback_error) =
-                    self.ensure_frpc_matches_routes(&profile.id, settings).await
-                {
-                    return Err(AppError::Message(format!(
-                        "启动新的 FRP 线路失败，且恢复原有线路失败：{error}; rollback: {rollback_error}"
-                    )));
-                }
-                return Err(error);
-            }
-
-            let public_url = frp::frp_public_url(profile, settings);
-            let pid = self.frpc.get(&profile.id).and_then(|process| process.pid);
-            self.sessions.insert(
-                key,
-                TunnelSession {
-                    public_url: public_url.clone(),
-                    pid,
-                    child: None,
-                },
-            );
-            return Ok(TunnelStatus {
-                state: "running".into(),
-                public_url,
-                tunnel_pid: pid,
-            });
+    async fn start_frp(
+        &mut self,
+        profile: &WorkspaceProfile,
+        settings: &AppSettings,
+        previous: RouteState,
+    ) -> AppResult<TunnelStatus> {
+        let key = profile.id.clone();
+        let config = frp::frp_server_config(profile, settings, None);
+        if let Err(error) = self.validate_frp_route_compatibility(&profile.id, &config, settings) {
+            self.restore_route_state(&key, previous);
+            return Err(error);
+        }
+        self.frp_routes.insert(
+            key.clone(),
+            FrpRoute {
+                profile: profile.clone(),
+            },
+        );
+        if let Err(error) = self.ensure_frpc_matches_routes(&profile.id, settings).await {
+            self.frp_routes.remove(&key);
+            let error = self
+                .rollback_frp_change(
+                    &key,
+                    previous,
+                    &profile.id,
+                    settings,
+                    error,
+                    "启动新的 FRP 线路",
+                )
+                .await;
+            return Err(error);
         }
 
-        if tunnel_type != "cloudflare" {
-            self.restore_route_state(&key, previous_route.take(), previous_session.take());
-            return Err(AppError::Message("当前仅支持 FRP 和 Cloudflare。".into()));
-        }
+        let public_url = frp::frp_public_url(profile, settings);
+        let pid = self.frpc.get(&profile.id).and_then(|process| process.pid);
+        self.sessions.insert(
+            key,
+            TunnelSession {
+                public_url: public_url.clone(),
+                pid,
+                child: None,
+            },
+        );
+        Ok(TunnelStatus {
+            state: "running".into(),
+            public_url,
+            tunnel_pid: pid,
+        })
+    }
 
+    async fn start_cloudflare(
+        &mut self,
+        profile: &WorkspaceProfile,
+        previous: RouteState,
+    ) -> AppResult<TunnelStatus> {
+        let key = profile.id.clone();
         let (port, mode, token, named_url, log_name) = match cloudflare_config(profile) {
             Ok(config) => config,
             Err(error) => {
-                self.restore_route_state(&key, previous_route.take(), previous_session.take());
+                self.restore_route_state(&key, previous);
                 return Err(error);
             }
         };
         let use_proxy = profile.tunnel.use_proxy;
         let log_path = log_dir_for_profile(&profile.id).join(log_name);
-        let handle = cloudflare::spawn_cloudflare_tunnel(
+        let handle = match cloudflare::spawn_cloudflare_tunnel(
             port,
             std::path::Path::new(&profile.path),
             &log_path,
@@ -280,9 +299,13 @@ impl TunnelSupervisor {
             use_proxy,
         )
         .await
-        .inspect_err(|_| {
-            self.restore_route_state(&key, previous_route.take(), previous_session.take());
-        })?;
+        {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.restore_route_state(&key, previous);
+                return Err(error);
+            }
+        };
 
         let CloudflareTunnelHandle {
             child,
@@ -316,39 +339,26 @@ impl TunnelSupervisor {
 
     async fn stop_internal(&mut self, workspace_id: &str, settings: &AppSettings) -> AppResult<()> {
         let key = workspace_id.to_string();
-        if let Some(route) = self.frp_routes.remove(&key) {
-            let session = self.sessions.remove(&key);
+        if self.frp_routes.contains_key(&key) {
+            let previous = self.take_route_state(&key);
             if let Err(error) = self
                 .ensure_frpc_matches_routes(workspace_id, settings)
                 .await
             {
-                self.frp_routes.insert(key.clone(), route);
-                if let Some(session) = session {
-                    self.sessions.insert(key, session);
-                }
-                if let Err(rollback_error) = self
-                    .ensure_frpc_matches_routes(workspace_id, settings)
-                    .await
-                {
-                    return Err(AppError::Message(format!(
-                        "停止 FRP 线路失败，且恢复原有线路失败：{error}; rollback: {rollback_error}"
-                    )));
-                }
-                return Err(error);
+                return Err(self
+                    .rollback_frp_change(
+                        &key,
+                        previous,
+                        workspace_id,
+                        settings,
+                        error,
+                        "停止 FRP 线路",
+                    )
+                    .await);
             }
             return Ok(());
         }
-
-        let Some(mut session) = self.sessions.remove(&key) else {
-            return Ok(());
-        };
-
-        if let Some(child) = session.child.take() {
-            let _ = cloudflare::stop_child(child, session.pid).await;
-        } else if let Some(pid) = session.pid {
-            let _ = platform().terminate_process_tree(pid);
-        }
-        Ok(())
+        self.stop_cloudflare_session(&key).await
     }
 
     pub async fn drop_workspace(&mut self, workspace_id: &str) -> AppResult<()> {
@@ -369,40 +379,26 @@ impl TunnelSupervisor {
             )));
         }
 
-        let removed_route = self.frp_routes.remove(&key);
-        let removed_session = removed_route
-            .as_ref()
-            .and_then(|_| self.sessions.remove(&key));
-
-        if let Some(route) = removed_route {
+        if self.frp_routes.contains_key(&key) {
+            let previous = self.take_route_state(&key);
             if let Err(error) = self
                 .ensure_frpc_matches_routes(workspace_id, &settings)
                 .await
             {
-                self.frp_routes.insert(key.clone(), route);
-                if let Some(session) = removed_session {
-                    self.sessions.insert(key.clone(), session);
-                }
-                if let Err(rollback_error) = self
-                    .ensure_frpc_matches_routes(workspace_id, &settings)
-                    .await
-                {
-                    return Err(AppError::Message(format!(
-                        "删除工作区 FRP 线路失败，且恢复原有线路失败：{error}; rollback: {rollback_error}"
-                    )));
-                }
-                return Err(error);
+                return Err(self
+                    .rollback_frp_change(
+                        &key,
+                        previous,
+                        workspace_id,
+                        &settings,
+                        error,
+                        "删除工作区 FRP 线路",
+                    )
+                    .await);
             }
+            return Ok(());
         }
-
-        if let Some(mut session) = self.sessions.remove(&key) {
-            let child = session.child.take().ok_or_else(|| {
-                AppError::Message("隧道进程归属状态在删除期间发生变化，已停止操作。".into())
-            })?;
-            cloudflare::stop_child(child, session.pid).await?;
-        }
-
-        Ok(())
+        self.drop_cloudflare_session(&key).await
     }
 
     /// Terminate a supervised tunnel when the local runtime is not listening.
@@ -603,18 +599,63 @@ impl TunnelSupervisor {
         }
     }
 
-    fn restore_route_state(
-        &mut self,
-        key: &str,
-        route: Option<FrpRoute>,
-        session: Option<TunnelSession>,
-    ) {
-        if let Some(route) = route {
+    fn take_route_state(&mut self, key: &str) -> RouteState {
+        RouteState {
+            route: self.frp_routes.remove(key),
+            session: self.sessions.remove(key),
+        }
+    }
+
+    fn restore_route_state(&mut self, key: &str, state: RouteState) {
+        if let Some(route) = state.route {
             self.frp_routes.insert(key.to_string(), route);
         }
-        if let Some(session) = session {
+        if let Some(session) = state.session {
             self.sessions.insert(key.to_string(), session);
         }
+    }
+
+    async fn rollback_frp_change(
+        &mut self,
+        key: &str,
+        previous: RouteState,
+        workspace_id: &str,
+        settings: &AppSettings,
+        error: AppError,
+        action: &str,
+    ) -> AppError {
+        self.restore_route_state(key, previous);
+        match self
+            .ensure_frpc_matches_routes(workspace_id, settings)
+            .await
+        {
+            Ok(()) => error,
+            Err(rollback_error) => AppError::Message(format!(
+                "{action}失败，且恢复原有线路失败：{error}; rollback: {rollback_error}"
+            )),
+        }
+    }
+
+    async fn stop_cloudflare_session(&mut self, key: &str) -> AppResult<()> {
+        let Some(mut session) = self.sessions.remove(key) else {
+            return Ok(());
+        };
+        if let Some(child) = session.child.take() {
+            let _ = cloudflare::stop_child(child, session.pid).await;
+        } else if let Some(pid) = session.pid {
+            let _ = platform().terminate_process_tree(pid);
+        }
+        Ok(())
+    }
+
+    async fn drop_cloudflare_session(&mut self, key: &str) -> AppResult<()> {
+        let Some(mut session) = self.sessions.remove(key) else {
+            return Ok(());
+        };
+        let child = session.child.take().ok_or_else(|| {
+            AppError::Message("隧道进程归属状态在删除期间发生变化，已停止操作。".into())
+        })?;
+        cloudflare::stop_child(child, session.pid).await
     }
 
     fn frp_route_matches(

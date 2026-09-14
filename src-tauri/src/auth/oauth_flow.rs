@@ -23,7 +23,7 @@ pub use handlers::{
     authorize_get, authorize_post, token_exchange, verify_oauth_bearer_header, AuthorizeForm,
     AuthorizeParams, TokenForm,
 };
-use login::{html_error, login_page, urlencoding_encode};
+use login::{html_error, login_page, urlencoding_encode, LoginPage};
 pub use registration::register_client;
 use token::{
     basic_auth_credentials, create_token, decode_token_claims, token_error, valid_code_verifier,
@@ -306,16 +306,16 @@ mod tests {
 
     #[test]
     fn login_page_posts_back_to_workspace_oauth_path() {
-        let html = login_page(
-            "client",
-            "https://chatgpt.com/callback",
-            "challenge",
-            "S256",
-            "state",
-            "",
-            Some("/workspace"),
-            "https://mcp.example.com/w/workspace-id",
-        );
+        let html = login_page(LoginPage {
+            client_id: "client",
+            redirect_uri: "https://chatgpt.com/callback",
+            code_challenge: "challenge",
+            code_challenge_method: "S256",
+            state: "state",
+            error: "",
+            workspace_path: Some("/workspace"),
+            server_url: "https://mcp.example.com/w/workspace-id",
+        });
         assert!(html.contains("action='https://mcp.example.com/w/workspace-id/oauth/authorize'"));
     }
 }

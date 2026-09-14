@@ -1,12 +1,14 @@
 use std::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
-use crate::settings::AppSettings;
 use crate::workspace::legacy_import::import_legacy_profiles_if_empty;
-use crate::workspace::WorkspaceProfile;
 
 use super::migrate::{data_file_path, load_or_migrate, maybe_backup_legacy_files, save};
 use super::model::AppData;
+
+mod secrets;
+mod settings;
+mod workspaces;
 
 static DATA_FILE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -31,20 +33,6 @@ const OBSOLETE_ACTIONS_SECRET_KEYS: &[&str] = &[
 #[derive(Debug)]
 pub struct DataStore {
     data: AppData,
-}
-
-fn apply_settings_update(base: &AppData, latest: &mut AppData, settings: AppSettings) {
-    // Global Gateway may persist a newly resolved public URL directly from its
-    // async runtime, outside the long-lived AppState DataStore snapshot. An
-    // unrelated settings save must not overwrite that newer runtime value.
-    let gateway_changed_by_caller = settings.global_gateway != base.global_gateway;
-    let latest_gateway = latest.global_gateway.clone();
-
-    settings.apply_to(latest);
-
-    if !gateway_changed_by_caller {
-        latest.global_gateway = latest_gateway;
-    }
 }
 
 fn strip_obsolete_actions_secrets(data: &mut AppData) -> bool {
@@ -159,174 +147,6 @@ impl DataStore {
     fn persist_unlocked(&self) -> AppResult<()> {
         save(&self.data)
     }
-
-    pub fn settings(&self) -> AppSettings {
-        AppSettings::from_data(&self.data)
-    }
-
-    pub fn update_settings(&mut self, settings: AppSettings) -> AppResult<()> {
-        let base = self.data.clone();
-        self.update_latest(move |data| {
-            apply_settings_update(&base, data, settings);
-            Ok(())
-        })
-    }
-
-    pub fn list(&self) -> &[WorkspaceProfile] {
-        &self.data.profiles
-    }
-
-    pub fn get(&self, id: &str) -> Option<&WorkspaceProfile> {
-        self.data.profiles.iter().find(|profile| profile.id == id)
-    }
-
-    pub fn add(&mut self, profile: WorkspaceProfile) -> AppResult<()> {
-        self.update_latest(move |data| {
-            data.profiles.push(profile);
-            Ok(())
-        })
-    }
-
-    pub fn update(&mut self, profile: WorkspaceProfile) -> AppResult<()> {
-        self.update_latest(move |data| {
-            let Some(index) = data.profiles.iter().position(|item| item.id == profile.id) else {
-                return Err(AppError::Message(format!(
-                    "workspace not found: {}",
-                    profile.id
-                )));
-            };
-            data.profiles[index] = profile;
-            Ok(())
-        })
-    }
-
-    pub fn remove(&mut self, id: &str) -> AppResult<Option<WorkspaceProfile>> {
-        self.update_latest(|data| {
-            let Some(index) = data.profiles.iter().position(|item| item.id == id) else {
-                return Ok(None);
-            };
-            let removed = data.profiles.remove(index);
-            data.workspace_secrets.remove(id);
-            Ok(Some(removed))
-        })
-    }
-
-    pub fn init_workspace_secrets(&mut self, profile_id: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            // oauth_client_secret is optional for MCP OAuth (ChatGPT PKCE); not auto-generated.
-            let secrets = data
-                .workspace_secrets
-                .entry(profile_id.to_string())
-                .or_default();
-            secrets.insert("oauth_password".into(), random_secret());
-            secrets.insert("oauth_token_secret".into(), random_secret());
-            secrets.insert("bearer_token".into(), random_secret());
-            Ok(())
-        })
-    }
-
-    pub fn init_shared_secrets(&mut self) -> AppResult<()> {
-        self.update_latest(|data| {
-            for key in SHARED_KEYS {
-                data.shared_secrets
-                    .entry((*key).to_string())
-                    .or_insert_with(|| shared_value_for_key(key));
-            }
-            Ok(())
-        })
-    }
-
-    pub fn get_workspace_secret(&self, profile_id: &str, key: &str) -> AppResult<Option<String>> {
-        Self::read_file(|data| {
-            Ok(data
-                .workspace_secrets
-                .get(profile_id)
-                .and_then(|secrets| secrets.get(key))
-                .filter(|value| !value.is_empty())
-                .cloned())
-        })
-    }
-
-    pub fn set_workspace_secret(
-        &mut self,
-        profile_id: &str,
-        key: &str,
-        value: &str,
-    ) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.workspace_secrets
-                .entry(profile_id.to_string())
-                .or_default()
-                .insert(key.to_string(), value.to_string());
-            Ok(())
-        })
-    }
-
-    pub fn regenerate_workspace_secret(
-        &mut self,
-        profile_id: &str,
-        key: &str,
-    ) -> AppResult<String> {
-        let value = shared_value_for_key(key);
-        self.set_workspace_secret(profile_id, key, &value)?;
-        Ok(value)
-    }
-
-    pub fn remove_workspace_secrets(&mut self, profile_id: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.workspace_secrets.remove(profile_id);
-            Ok(())
-        })
-    }
-
-    pub fn get_shared_secret(&self, key: &str) -> Option<String> {
-        self.data.shared_secrets.get(key).cloned()
-    }
-
-    pub fn set_shared_secret(&mut self, key: &str, value: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.shared_secrets
-                .insert(key.to_string(), value.to_string());
-            Ok(())
-        })
-    }
-
-    pub fn regenerate_shared_secret(&mut self, key: &str) -> AppResult<String> {
-        let value = random_secret();
-        self.set_shared_secret(key, &value)?;
-        Ok(value)
-    }
-
-    pub fn get_app_secret(&self, scope: &str, item_id: &str) -> Option<String> {
-        self.data
-            .app_secrets
-            .get(scope)
-            .and_then(|items| items.get(item_id))
-            .filter(|value| !value.is_empty())
-            .cloned()
-    }
-
-    pub fn set_app_secret(&mut self, scope: &str, item_id: &str, value: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.app_secrets
-                .entry(scope.to_string())
-                .or_default()
-                .insert(item_id.to_string(), value.to_string());
-            Ok(())
-        })
-    }
-
-    pub fn delete_app_secret(&mut self, scope: &str, item_id: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            if let Some(items) = data.app_secrets.get_mut(scope) {
-                items.remove(item_id);
-                if items.is_empty() {
-                    data.app_secrets.remove(scope);
-                }
-            }
-            Ok(())
-        })
-    }
 }
 
 fn lock_data_file() -> AppResult<std::sync::MutexGuard<'static, ()>> {
@@ -335,21 +155,12 @@ fn lock_data_file() -> AppResult<std::sync::MutexGuard<'static, ()>> {
         .map_err(|_| AppError::Message("data file lock poisoned".into()))
 }
 
-fn random_secret() -> String {
-    format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()).replace('-', "")
-}
-
-fn shared_value_for_key(key: &str) -> String {
-    if key == "oauth_client_id" {
-        format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12])
-    } else {
-        random_secret()
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::secrets::shared_value_for_key;
+    use super::settings::apply_settings_update;
     use super::*;
+    use crate::settings::AppSettings;
 
     #[test]
     fn workspace_secret_roundtrip() {

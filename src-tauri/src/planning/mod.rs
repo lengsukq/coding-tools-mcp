@@ -6,6 +6,6 @@ pub use model::{
     ExecutionLedger, Goal, GoalStatus, Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningMode,
     PlanningState, SuccessCriterion, PLANNING_SCHEMA_VERSION,
 };
-pub use service::{ExecutionLedgerUpdate, PlanningService};
+pub use service::{ExecutionLedgerUpdate, PlanningService, UpdateGoalRequest, UpdatePlanRequest};
 
 pub const PLANNING_RELATIVE_PATH: &str = ".coding-tools/planning/state.json";

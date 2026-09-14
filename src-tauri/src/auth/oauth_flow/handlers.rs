@@ -84,31 +84,31 @@ pub fn authorize_get(
             StatusCode::BAD_REQUEST,
         );
     }
-    Html(login_page(
-        &params.client_id,
-        &params.redirect_uri,
-        &params.code_challenge,
-        &params.code_challenge_method,
-        &params.state,
-        "",
+    Html(login_page(LoginPage {
+        client_id: &params.client_id,
+        redirect_uri: &params.redirect_uri,
+        code_challenge: &params.code_challenge,
+        code_challenge_method: &params.code_challenge_method,
+        state: &params.state,
+        error: "",
         workspace_path,
         server_url,
-    ))
+    }))
     .into_response()
 }
 
 pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &str) -> Response {
     if !oauth.client_id_allowed(&form.client_id) {
-        return Html(login_page(
-            &form.client_id,
-            &form.redirect_uri,
-            &form.code_challenge,
-            &form.code_challenge_method,
-            &form.state,
-            "Invalid client",
-            None,
+        return Html(login_page(LoginPage {
+            client_id: &form.client_id,
+            redirect_uri: &form.redirect_uri,
+            code_challenge: &form.code_challenge,
+            code_challenge_method: &form.code_challenge_method,
+            state: &form.state,
+            error: "Invalid client",
+            workspace_path: None,
             server_url,
-        ))
+        }))
         .into_response();
     }
     if !oauth.redirect_uri_allowed(&form.client_id, &form.redirect_uri) {
@@ -118,31 +118,31 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
         );
     }
     if form.code_challenge_method != "S256" || form.code_challenge.is_empty() {
-        return Html(login_page(
-            &form.client_id,
-            &form.redirect_uri,
-            &form.code_challenge,
-            &form.code_challenge_method,
-            &form.state,
-            "Invalid PKCE parameters",
-            None,
+        return Html(login_page(LoginPage {
+            client_id: &form.client_id,
+            redirect_uri: &form.redirect_uri,
+            code_challenge: &form.code_challenge,
+            code_challenge_method: &form.code_challenge_method,
+            state: &form.state,
+            error: "Invalid PKCE parameters",
+            workspace_path: None,
             server_url,
-        ))
+        }))
         .into_response();
     }
     if !constant_time_eq_str(&form.password, &oauth.password) {
         return (
             StatusCode::UNAUTHORIZED,
-            Html(login_page(
-                &form.client_id,
-                &form.redirect_uri,
-                &form.code_challenge,
-                &form.code_challenge_method,
-                &form.state,
-                "Invalid password",
-                None,
+            Html(login_page(LoginPage {
+                client_id: &form.client_id,
+                redirect_uri: &form.redirect_uri,
+                code_challenge: &form.code_challenge,
+                code_challenge_method: &form.code_challenge_method,
+                state: &form.state,
+                error: "Invalid password",
+                workspace_path: None,
                 server_url,
-            )),
+            })),
         )
             .into_response();
     }

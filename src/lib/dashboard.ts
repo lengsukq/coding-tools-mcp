@@ -16,6 +16,13 @@ export interface ChartPoint {
   y: number;
 }
 
+export interface UsageChart {
+  path: string;
+  areaPath: string;
+  points: ChartPoint[];
+  max: number;
+}
+
 export interface UsageTotals {
   estimatedTokens: number;
   estimatedInputTokens: number;
@@ -190,12 +197,7 @@ export function buildUsagePoint(
   };
 }
 
-export function buildUsageChart(history: UsagePoint[]): {
-  path: string;
-  areaPath: string;
-  points: ChartPoint[];
-  max: number;
-} {
+export function buildUsageChart(history: UsagePoint[]): UsageChart {
   if (history.length === 0) {
     return {
       path: "M 0 32 L 100 32",

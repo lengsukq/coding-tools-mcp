@@ -5,10 +5,7 @@ use crate::error::AppResult;
 /// Cross-platform OS primitives used by the desktop runtime.
 ///
 /// Windows uses `windows-rs`. macOS and Linux live in dedicated modules.
-#[allow(dead_code)]
 pub trait Platform: Send + Sync {
-    fn os_name(&self) -> &'static str;
-
     fn app_config_dir(&self) -> AppResult<PathBuf>;
 
     fn find_pid_listening_on_port(&self, port: u16) -> AppResult<Option<u32>>;
@@ -30,8 +27,6 @@ pub trait Platform: Send + Sync {
     fn terminate_processes_by_image_path(&self, _image_path: &Path) -> AppResult<usize> {
         Ok(0)
     }
-
-    fn resolve_executable(&self, name: &str) -> Option<PathBuf>;
 
     fn cloudflared_candidates(&self) -> Vec<PathBuf>;
 
@@ -80,9 +75,6 @@ fn create_platform() -> Box<dyn Platform> {
     {
         struct Unsupported;
         impl Platform for Unsupported {
-            fn os_name(&self) -> &'static str {
-                "unsupported"
-            }
             fn app_config_dir(&self) -> AppResult<PathBuf> {
                 Err(crate::error::AppError::Message(
                     "unsupported operating system".into(),
@@ -99,9 +91,6 @@ fn create_platform() -> Box<dyn Platform> {
             }
             fn terminate_process_tree(&self, _pid: u32) -> AppResult<()> {
                 Ok(())
-            }
-            fn resolve_executable(&self, name: &str) -> Option<PathBuf> {
-                paths::resolve_from_path(name)
             }
             fn cloudflared_candidates(&self) -> Vec<PathBuf> {
                 paths::resolve_from_path("cloudflared")

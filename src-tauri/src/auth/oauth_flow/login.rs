@@ -4,23 +4,25 @@ pub(super) fn html_error(message: &str, status: StatusCode) -> Response {
     (status, Html(format!("<h2>Error</h2><p>{message}</p>"))).into_response()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn login_page(
-    client_id: &str,
-    redirect_uri: &str,
-    code_challenge: &str,
-    code_challenge_method: &str,
-    state: &str,
-    error: &str,
-    workspace_path: Option<&str>,
-    server_url: &str,
-) -> String {
-    let error_block = if error.is_empty() {
+pub(super) struct LoginPage<'a> {
+    pub client_id: &'a str,
+    pub redirect_uri: &'a str,
+    pub code_challenge: &'a str,
+    pub code_challenge_method: &'a str,
+    pub state: &'a str,
+    pub error: &'a str,
+    pub workspace_path: Option<&'a str>,
+    pub server_url: &'a str,
+}
+
+pub(super) fn login_page(page: LoginPage<'_>) -> String {
+    let error_block = if page.error.is_empty() {
         String::new()
     } else {
-        format!("<p style=\"color:red\">{}</p>", html_escape(error))
+        format!("<p style=\"color:red\">{}</p>", html_escape(page.error))
     };
-    let workspace_block = workspace_path
+    let workspace_block = page
+        .workspace_path
         .filter(|path| !path.is_empty())
         .map(|path| format!("<p>Workspace: <code>{}</code></p>", html_escape(path)))
         .unwrap_or_default();
@@ -45,14 +47,14 @@ pub(super) fn login_page(
         <label>Password<input type='password' name='password' autocomplete='current-password' required></label>\
         <button type='submit'>Authorize</button>\
         </form></body></html>",
-        html_escape(client_id),
-        html_escape(redirect_uri),
-        html_escape(server_url.trim_end_matches('/')),
-        html_escape(client_id),
-        html_escape(redirect_uri),
-        html_escape(code_challenge),
-        html_escape(code_challenge_method),
-        html_escape(state),
+        html_escape(page.client_id),
+        html_escape(page.redirect_uri),
+        html_escape(page.server_url.trim_end_matches('/')),
+        html_escape(page.client_id),
+        html_escape(page.redirect_uri),
+        html_escape(page.code_challenge),
+        html_escape(page.code_challenge_method),
+        html_escape(page.state),
     )
 }
 

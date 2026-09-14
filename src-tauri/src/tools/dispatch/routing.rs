@@ -64,19 +64,19 @@ pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> Works
 }
 
 fn capability_health_check(ctx: &ToolContext) -> Value {
-    let tools = crate::tools::registry::exposed_tool_names(&ctx.tool_profile);
+    let tools = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
     let mut hasher = DefaultHasher::new();
     tools.hash(&mut hasher);
     json!({
         "authentication": { "status": "available" },
-        "authorization": { "mode": ctx.permission_mode },
+        "authorization": { "mode": ctx.policy.permission_mode.as_str() },
         "workspace": {
             "path": ctx.workspace.root().display().to_string(),
             "status": "available"
         },
         "capability": {
             "server_tool_count": tools.len(),
-            "tool_profile": ctx.tool_profile,
+            "tool_profile": ctx.tool_profile.as_str(),
             "tool_fingerprint": format!("{:x}", hasher.finish()),
             "server_version": env!("CARGO_PKG_VERSION"),
             "tool_api": crate::tools::registry::tool_api_descriptor()

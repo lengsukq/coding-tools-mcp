@@ -7,8 +7,8 @@ mod schema;
 
 pub use profiles::{
     canonical_tool_name, exposed_tool_names, is_allowed_tool, list_tools, list_tools_for_profile,
-    normalize_tool_profile, ALLOWED_TOOLS, COMPACT_TOOLS, CORE_READ_ONLY_TOOLS, CORE_TOOLS,
-    READ_ONLY_TOOLS,
+    normalize_tool_profile, ToolProfile, ALLOWED_TOOLS, COMPACT_TOOLS, CORE_READ_ONLY_TOOLS,
+    CORE_TOOLS, READ_ONLY_TOOLS,
 };
 pub use schema::input_schema;
 

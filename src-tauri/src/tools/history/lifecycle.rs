@@ -141,7 +141,7 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     storage::write_manifest(&history_dir, &manifest)?;
     storage::write_state(&history_dir, &state)?;
 
-    if ctx.tool_profile == "compact" {
+    if ctx.tool_profile.is_compact() {
         return Ok(tool_ok(json!({
             "context_mode": "compact",
             "index_only": true,
@@ -353,7 +353,7 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     if host_session_key_mismatch {
         warnings.push("宿主会话标识已变化；本次仍使用解析出的稳定目标，未切换历史文件。".into());
     }
-    if ctx.tool_profile == "compact" {
+    if ctx.tool_profile.is_compact() {
         return Ok(tool_ok(json!({
             "recorded": true,
             "session_number": document.number,

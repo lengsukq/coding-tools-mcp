@@ -5,16 +5,11 @@ mod process;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
-use crate::platform::paths as shared_paths;
 use crate::platform::Platform;
 
 pub struct MacPlatform;
 
 impl Platform for MacPlatform {
-    fn os_name(&self) -> &'static str {
-        "macos"
-    }
-
     fn app_config_dir(&self) -> AppResult<PathBuf> {
         let base = dirs::home_dir()
             .ok_or_else(|| crate::error::AppError::Message("home dir not found".into()))?;
@@ -42,10 +37,6 @@ impl Platform for MacPlatform {
 
     fn terminate_processes_by_image_path(&self, image_path: &Path) -> AppResult<usize> {
         process::terminate_processes_by_image_path(image_path)
-    }
-
-    fn resolve_executable(&self, name: &str) -> Option<PathBuf> {
-        shared_paths::resolve_from_path(name)
     }
 
     fn cloudflared_candidates(&self) -> Vec<PathBuf> {

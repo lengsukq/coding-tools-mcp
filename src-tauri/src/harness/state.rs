@@ -1,18 +1,13 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
-use walkdir::WalkDir;
 
+use super::baseline::{capture_baseline, timestamp, workspace_id};
 use super::model::{
-    BaselineEntry, CapabilityStatus, FileChangeRecord, HarnessEvent, HarnessStatus,
-    OperationRecord, ProjectBaseline, ProjectFileState, ProjectState, TaskSession, TaskStatus,
-    WorkspaceHarnessState, SCHEMA_VERSION,
+    CapabilityStatus, FileChangeRecord, HarnessEvent, HarnessStatus, OperationRecord,
+    ProjectFileState, ProjectState, TaskSession, TaskStatus, WorkspaceHarnessState, SCHEMA_VERSION,
 };
 use super::store::{HarnessError, HarnessResult, HarnessStore};
 
@@ -21,6 +16,16 @@ pub struct Harness {
     workspace_root: PathBuf,
     workspace_id: String,
     store: HarnessStore,
+}
+
+#[derive(Debug, Clone)]
+pub struct OperationRecordInput {
+    pub operation_id: Option<String>,
+    pub task_id: Option<String>,
+    pub tool: String,
+    pub kind: String,
+    pub input_summary: serde_json::Value,
+    pub result_summary: serde_json::Value,
 }
 
 impl Harness {
@@ -214,30 +219,22 @@ impl Harness {
             .list_events(&self.workspace_id, task_id, offset, limit)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_operation(
-        &self,
-        operation_id: Option<&str>,
-        task_id: Option<&str>,
-        tool: &str,
-        kind: &str,
-        input_summary: serde_json::Value,
-        result_summary: serde_json::Value,
-    ) -> HarnessResult<OperationRecord> {
-        let reason = input_summary
+    pub fn record_operation(&self, input: OperationRecordInput) -> HarnessResult<OperationRecord> {
+        let reason = input
+            .input_summary
             .get("reason")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
         let operation = OperationRecord {
-            id: operation_id
-                .map(str::to_string)
+            id: input
+                .operation_id
                 .unwrap_or_else(|| Uuid::new_v4().simple().to_string()),
             workspace_id: self.workspace_id.clone(),
-            task_id: task_id.map(str::to_string),
-            tool: tool.to_string(),
-            kind: kind.to_string(),
-            input_summary,
-            result_summary,
+            task_id: input.task_id,
+            tool: input.tool,
+            kind: input.kind,
+            input_summary: input.input_summary,
+            result_summary: input.result_summary,
             reason,
             affected_files: Vec::new(),
             created_at: timestamp(),
@@ -481,108 +478,10 @@ impl Harness {
     }
 }
 
-pub fn capture_baseline(root: &Path) -> ProjectBaseline {
-    let mut entries = Vec::new();
-    for item in WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = item.path();
-        if path == root || should_skip(path, root) || !item.file_type().is_file() {
-            continue;
-        }
-        let Ok(bytes) = fs::read(path) else { continue };
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        entries.push(BaselineEntry {
-            path: rel,
-            exists: true,
-            is_binary: bytes.contains(&0),
-            sha256: format!("{:x}", hasher.finalize()),
-            bytes: bytes.len() as u64,
-        });
-    }
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut fingerprint = Sha256::new();
-    for entry in &entries {
-        fingerprint.update(entry.path.as_bytes());
-        fingerprint.update(entry.sha256.as_bytes());
-        fingerprint.update(entry.bytes.to_le_bytes());
-    }
-    ProjectBaseline {
-        branch: git_value(root, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        head: git_value(root, &["rev-parse", "HEAD"]),
-        worktree_fingerprint: format!("{:x}", fingerprint.finalize()),
-        entries,
-        captured_at: timestamp(),
-    }
-}
-
-fn should_skip(path: &Path, root: &Path) -> bool {
-    let Some(relative) = path.strip_prefix(root).ok() else {
-        return false;
-    };
-    if relative.starts_with(Path::new("docs").join("history-session")) {
-        return true;
-    }
-    std::iter::once(relative)
-        .flat_map(|p| p.components())
-        .filter_map(|component| component.as_os_str().to_str())
-        .any(|name| {
-            matches!(
-                name,
-                ".git"
-                    | ".coding-tools"
-                    | ".mcp-probe-kit"
-                    | "node_modules"
-                    | "target"
-                    | "dist"
-                    | "build"
-                    | ".svelte-kit"
-            )
-        })
-}
-
-fn git_value(root: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(root).args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!value.is_empty()).then_some(value)
-}
-
-fn workspace_id(root: &Path) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(root.to_string_lossy().as_bytes());
-    format!("{:x}", hasher.finalize())[..32].to_string()
-}
-
-fn timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().to_string())
-        .unwrap_or_else(|_| "0".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
