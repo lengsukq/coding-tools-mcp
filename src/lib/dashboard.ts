@@ -5,7 +5,9 @@ import type { RuntimeState, WorkspaceProfile } from "$lib/types";
 export interface UsagePoint {
   timestamp: number;
   estimatedTokens: number;
+  deltaEstimatedTokens: number;
   requestCount: number;
+  toolCallCount: number;
   averageTokens: number;
 }
 
@@ -18,6 +20,7 @@ export interface UsageTotals {
   estimatedTokens: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
+  estimatedToolCallTokens: number;
   requestCount: number;
   toolCallCount: number;
   errorCount: number;
@@ -94,6 +97,7 @@ export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStat
     estimatedTokens: 0,
     estimatedInputTokens: 0,
     estimatedOutputTokens: 0,
+    estimatedToolCallTokens: 0,
     requestCount: 0,
     toolCallCount: 0,
     errorCount: 0,
@@ -103,6 +107,7 @@ export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStat
       totals.estimatedTokens += item.estimatedTokens;
       totals.estimatedInputTokens += item.estimatedInputTokens;
       totals.estimatedOutputTokens += item.estimatedOutputTokens;
+      totals.estimatedToolCallTokens += item.estimatedToolCallTokens;
       totals.requestCount += item.requestCount;
       totals.toolCallCount += item.toolCallCount;
       totals.errorCount += item.errorCount;
@@ -158,15 +163,30 @@ export function formatMetric(value: number): string {
   return Math.round(value).toLocaleString("zh-CN");
 }
 
-export function buildUsagePoint(statsByWorkspace: Record<string, ServiceUsageStats[]>): UsagePoint {
+export function formatEstimatedTokens(value: number): string {
+  if (value >= 1_000_000) return formatMillions(value);
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return Math.round(value).toLocaleString("zh-CN");
+}
+
+export function buildUsagePoint(
+  statsByWorkspace: Record<string, ServiceUsageStats[]>,
+  previous?: UsagePoint,
+): UsagePoint {
   const stats = Object.values(statsByWorkspace).flat();
   const estimatedTokens = stats.reduce((sum, item) => sum + item.estimatedTokens, 0);
   const requestCount = stats.reduce((sum, item) => sum + item.requestCount, 0);
+  const toolCallCount = stats.reduce((sum, item) => sum + item.toolCallCount, 0);
+  const deltaEstimatedTokens = previous
+    ? Math.max(0, estimatedTokens - previous.estimatedTokens)
+    : 0;
   return {
     timestamp: Date.now(),
     estimatedTokens,
+    deltaEstimatedTokens,
     requestCount,
-    averageTokens: requestCount === 0 ? 0 : estimatedTokens / requestCount,
+    toolCallCount,
+    averageTokens: toolCallCount === 0 ? 0 : estimatedTokens / toolCallCount,
   };
 }
 
@@ -185,7 +205,7 @@ export function buildUsageChart(history: UsagePoint[]): {
     };
   }
 
-  const values = history.map((point) => point.estimatedTokens);
+  const values = history.map((point) => point.deltaEstimatedTokens);
   const max = Math.max(...values, 1);
   const samples = values.length === 1 ? [values[0], values[0]] : values;
   const points = samples.map((value, index) => ({

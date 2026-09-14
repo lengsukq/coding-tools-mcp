@@ -12,6 +12,8 @@ pub(crate) struct ServiceUsage {
     error_count: AtomicU64,
     input_bytes: AtomicU64,
     output_bytes: AtomicU64,
+    tool_call_input_bytes: AtomicU64,
+    tool_call_output_bytes: AtomicU64,
 }
 
 impl ServiceUsage {
@@ -25,6 +27,10 @@ impl ServiceUsage {
         self.request_count.fetch_add(1, Ordering::Relaxed);
         if is_tool_call {
             self.tool_call_count.fetch_add(1, Ordering::Relaxed);
+            self.tool_call_input_bytes
+                .fetch_add(input_bytes as u64, Ordering::Relaxed);
+            self.tool_call_output_bytes
+                .fetch_add(output_bytes as u64, Ordering::Relaxed);
         }
         if is_error {
             self.error_count.fetch_add(1, Ordering::Relaxed);
@@ -38,8 +44,12 @@ impl ServiceUsage {
     pub(crate) fn snapshot(&self, workspace_id: &str, service: &str) -> ServiceUsageStats {
         let input_bytes = self.input_bytes.load(Ordering::Relaxed);
         let output_bytes = self.output_bytes.load(Ordering::Relaxed);
+        let tool_call_input_bytes = self.tool_call_input_bytes.load(Ordering::Relaxed);
+        let tool_call_output_bytes = self.tool_call_output_bytes.load(Ordering::Relaxed);
         let estimated_input_tokens = estimate_tokens(input_bytes);
         let estimated_output_tokens = estimate_tokens(output_bytes);
+        let estimated_tool_call_input_tokens = estimate_tokens(tool_call_input_bytes);
+        let estimated_tool_call_output_tokens = estimate_tokens(tool_call_output_bytes);
 
         ServiceUsageStats {
             workspace_id: workspace_id.to_string(),
@@ -49,9 +59,15 @@ impl ServiceUsage {
             error_count: self.error_count.load(Ordering::Relaxed),
             input_bytes,
             output_bytes,
+            tool_call_input_bytes,
+            tool_call_output_bytes,
             estimated_input_tokens,
             estimated_output_tokens,
             estimated_tokens: estimated_input_tokens.saturating_add(estimated_output_tokens),
+            estimated_tool_call_input_tokens,
+            estimated_tool_call_output_tokens,
+            estimated_tool_call_tokens: estimated_tool_call_input_tokens
+                .saturating_add(estimated_tool_call_output_tokens),
         }
     }
 
@@ -64,9 +80,14 @@ impl ServiceUsage {
             error_count: 0,
             input_bytes: 0,
             output_bytes: 0,
+            tool_call_input_bytes: 0,
+            tool_call_output_bytes: 0,
             estimated_input_tokens: 0,
             estimated_output_tokens: 0,
             estimated_tokens: 0,
+            estimated_tool_call_input_tokens: 0,
+            estimated_tool_call_output_tokens: 0,
+            estimated_tool_call_tokens: 0,
         }
     }
 }
@@ -81,9 +102,14 @@ pub(crate) struct ServiceUsageStats {
     pub error_count: u64,
     pub input_bytes: u64,
     pub output_bytes: u64,
+    pub tool_call_input_bytes: u64,
+    pub tool_call_output_bytes: u64,
     pub estimated_input_tokens: u64,
     pub estimated_output_tokens: u64,
     pub estimated_tokens: u64,
+    pub estimated_tool_call_input_tokens: u64,
+    pub estimated_tool_call_output_tokens: u64,
+    pub estimated_tool_call_tokens: u64,
 }
 
 fn estimate_tokens(bytes: u64) -> u64 {
@@ -106,9 +132,14 @@ mod tests {
         assert_eq!(stats.error_count, 1);
         assert_eq!(stats.input_bytes, 12);
         assert_eq!(stats.output_bytes, 16);
+        assert_eq!(stats.tool_call_input_bytes, 8);
+        assert_eq!(stats.tool_call_output_bytes, 9);
         assert_eq!(stats.estimated_input_tokens, 3);
         assert_eq!(stats.estimated_output_tokens, 4);
         assert_eq!(stats.estimated_tokens, 7);
+        assert_eq!(stats.estimated_tool_call_input_tokens, 2);
+        assert_eq!(stats.estimated_tool_call_output_tokens, 3);
+        assert_eq!(stats.estimated_tool_call_tokens, 5);
     }
 
     #[test]

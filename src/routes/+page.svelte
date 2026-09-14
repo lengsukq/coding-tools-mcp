@@ -29,6 +29,7 @@
     buildUsageChart,
     buildUsagePoint,
     formatCount,
+    formatEstimatedTokens,
     formatMillions,
     formatMetric,
     loadPlanningByWorkspace,
@@ -85,9 +86,9 @@
   const connectionStats = $derived.by(() => summarizeConnections($workspaces));
   const usageTotals = $derived.by(() => summarizeUsage(usageByWorkspace));
   const averageTokens = $derived(
-    usageTotals.requestCount === 0
+    usageTotals.toolCallCount === 0
       ? 0
-      : usageTotals.estimatedTokens / usageTotals.requestCount,
+      : usageTotals.estimatedToolCallTokens / usageTotals.toolCallCount,
   );
   const usageChart = $derived.by(() => buildUsageChart(usageHistory));
 
@@ -129,7 +130,8 @@
     const nextUsage = await loadUsageByWorkspace(items);
     if (generation !== usageGeneration) return;
     usageByWorkspace = nextUsage;
-    usageHistory = [...usageHistory, buildUsagePoint(nextUsage)].slice(-24);
+    const previousPoint = usageHistory[usageHistory.length - 1];
+    usageHistory = [...usageHistory, buildUsagePoint(nextUsage, previousPoint)].slice(-24);
   }
 
   function openWorkspace(id: string) {
@@ -450,9 +452,9 @@
           <small>{planningStats.activeGoals} Goal · {planningStats.activePlans} Plan 活跃</small>
         </div>
         <div class="tx-dashboard-metric-card">
-          <span>Token 估算</span>
+          <span>MCP Token 估算</span>
           <strong>{formatCount(usageTotals.estimatedTokens)}</strong>
-          <small>{formatCount(usageTotals.requestCount)} 次服务请求 · 当前会话</small>
+          <small>{formatCount(usageTotals.toolCallCount)} 次工具调用 · 当前应用会话</small>
         </div>
       </div>
 
@@ -574,24 +576,24 @@
             <div>
               <div class="flex items-center gap-2">
                 <Activity size={16} class="text-[var(--primary)]" />
-                <h3>Token 使用趋势</h3>
+                <h3>MCP Token 估算趋势</h3>
               </div>
-              <p>基于服务内置统计的累计估算，最近 24 个采样点。</p>
+              <p>基于 MCP JSON 请求/响应字节数估算，图表展示最近 24 个采样周期的新增量。</p>
             </div>
-            <span class="tx-dashboard-usage-badge">Token / M</span>
+            <span class="tx-dashboard-usage-badge">估算 Token</span>
           </div>
 
           <div class="tx-dashboard-usage-layout">
             <div class="tx-dashboard-usage-chart">
               <div class="tx-dashboard-usage-chart-meta">
-                <span>累计 Token</span>
-                <strong>{formatMillions(usageTotals.estimatedTokens)}</strong>
+                <span>累计 MCP Token 估算</span>
+                <strong>{formatEstimatedTokens(usageTotals.estimatedTokens)}</strong>
               </div>
               <svg
                 class="tx-dashboard-line-chart"
                 viewBox="0 0 100 40"
                 role="img"
-                aria-label={`Token 使用趋势，当前 ${formatMillions(usageTotals.estimatedTokens)}`}
+                aria-label={`MCP Token 估算趋势，当前累计 ${formatEstimatedTokens(usageTotals.estimatedTokens)}`}
                 preserveAspectRatio="none"
               >
                 <line class="tx-dashboard-chart-gridline" x1="0" y1="7" x2="100" y2="7" />
@@ -605,26 +607,31 @@
                 {/if}
               </svg>
               <div class="tx-dashboard-chart-scale">
-                <span>0M</span>
-                <span>{formatMillions(usageChart.max)}</span>
+                <span>0</span>
+                <span>{formatEstimatedTokens(usageChart.max)} / 采样</span>
               </div>
             </div>
 
             <div class="tx-dashboard-usage-stats">
               <div class="tx-dashboard-usage-stat">
-                <span>请求次数</span>
-                <strong>{formatMetric(usageTotals.requestCount)}</strong>
-                <small>全部服务</small>
+                <span>工具调用</span>
+                <strong>{formatMetric(usageTotals.toolCallCount)}</strong>
+                <small>tools/call</small>
               </div>
               <div class="tx-dashboard-usage-stat">
-                <span>平均 Token / 请求</span>
+                <span>平均估算 Token / 工具调用</span>
                 <strong>{formatMetric(averageTokens)}</strong>
-                <small>输入 + 输出</small>
+                <small>仅统计 tools/call 输入 + 输出</small>
               </div>
               <div class="tx-dashboard-usage-stat">
-                <span>输入 / 输出</span>
-                <strong>{formatMillions(usageTotals.estimatedInputTokens)} / {formatMillions(usageTotals.estimatedOutputTokens)}</strong>
-                <small>估算 Token</small>
+                <span>估算输入 / 输出</span>
+                <strong>{formatEstimatedTokens(usageTotals.estimatedInputTokens)} / {formatEstimatedTokens(usageTotals.estimatedOutputTokens)}</strong>
+                <small>按 JSON UTF-8 字节估算</small>
+              </div>
+              <div class="tx-dashboard-usage-stat">
+                <span>全部 MCP 请求</span>
+                <strong>{formatMetric(usageTotals.requestCount)}</strong>
+                <small>含 initialize / tools/list 等协议请求</small>
               </div>
             </div>
           </div>

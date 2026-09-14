@@ -10,9 +10,14 @@ export interface ServiceUsageStats {
   errorCount: number;
   inputBytes: number;
   outputBytes: number;
+  toolCallInputBytes: number;
+  toolCallOutputBytes: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   estimatedTokens: number;
+  estimatedToolCallInputTokens: number;
+  estimatedToolCallOutputTokens: number;
+  estimatedToolCallTokens: number;
 }
 
 export function getServiceUsageStats(id: string): Promise<ServiceUsageStats[]> {
