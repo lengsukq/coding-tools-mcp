@@ -1,13 +1,13 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import Tabs from "$lib/components/Tabs.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
 
   type ConnectionSection = "gateway" | "frp" | "software";
 
   const items = [
     { value: "gateway", label: "全局网关" },
-    { value: "frp", label: "FRP" },
+    { value: "frp", label: "FRP 隧道" },
     { value: "software", label: "隧道工具" },
   ];
 
@@ -20,10 +20,11 @@
   );
 </script>
 
-<div class="px-6 pt-4">
-  <Tabs
+<div class="px-7 pt-4">
+  <SegmentedControl
     {items}
     value={active}
+    size="sm"
     onchange={(value) => goto(`/settings/${value as ConnectionSection}`)}
   />
 </div>

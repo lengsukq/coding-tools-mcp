@@ -22,6 +22,10 @@
     type AgentSourceDetectionDto,
     type GlobalAgentContextScanDto,
   } from "$lib/api/agent-context";
+  import Button from "$lib/components/ui/Button.svelte";
+  import Toggle from "$lib/components/ui/Toggle.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
 
   let proxy = $state<ProxyConfigDto>({ mode: "none", url: "" });
   let runtime = $state<GlobalRuntimeSettingsDto>({
@@ -218,36 +222,37 @@
         当前版本 v{APP_VERSION}。仓库与新版本安装包都在 GitHub Releases。
       </p>
       <div class="mt-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm"
+        <Button
+          variant="ghost"
+          size="md"
           onclick={() => void openLink(REPO_URL, "无法打开仓库")}
         >
           <ExternalLink size={14} strokeWidth={2} />
-          打开仓库
-        </button>
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm"
+          <span>打开仓库</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="md"
           onclick={() => void openLink(RELEASES_LATEST_URL, "无法打开 Releases")}
         >
           <ExternalLink size={14} strokeWidth={2} />
-          打开 Releases
-        </button>
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          <span>打开 Releases</span>
+        </Button>
+        <Button
+          variant="primary"
+          size="md"
           disabled={checkingUpdate}
+          busy={checkingUpdate}
           onclick={() => void handleCheckUpdate()}
         >
           <RefreshCw size={14} strokeWidth={2} class={checkingUpdate ? "animate-spin" : ""} />
-          {checkingUpdate ? "检查中…" : "检查更新"}
-        </button>
+          <span>{checkingUpdate ? "检查中…" : "检查更新"}</span>
+        </Button>
       </div>
     </div>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">界面内存</h3>
+    <div class="tx-card p-5">
+      <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">界面内存</h3>
       <p class="mt-1 text-xs text-[var(--color-text-muted)]">
         长时间运行后 WebView 可能占用较高内存。释放会重建界面进程，不会停止 MCP 或隧道。
       </p>
@@ -255,74 +260,62 @@
         <p class="mt-2 text-xs text-[var(--color-text-muted)]">{memoryHint}</p>
       {/if}
       <div class="mt-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm"
+        <Button
+          variant="ghost"
+          size="md"
           onclick={() => void refreshMemoryHint()}
         >
-          刷新占用
-        </button>
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          <span>刷新占用</span>
+        </Button>
+        <Button
+          variant="primary"
+          size="md"
           disabled={releasingUi}
+          busy={releasingUi}
           onclick={() => void handleReleaseUiMemory()}
         >
           <RefreshCw size={14} strokeWidth={2} class={releasingUi ? "animate-spin" : ""} />
-          {releasingUi ? "刷新中…" : "释放界面内存"}
-        </button>
+          <span>{releasingUi ? "刷新中…" : "释放界面内存"}</span>
+        </Button>
       </div>
     </div>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">Agent Runtime</h3>
+    <div class="tx-card p-5">
+      <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">Agent Runtime</h3>
       <p class="mt-1 text-xs text-[var(--color-text-muted)]">
         为所有 Workspace 提供默认可执行 PATH 和 AI Instructions；Workspace 配置会在此基础上覆盖或追加。
       </p>
       <form
-        class="mt-4 grid gap-3"
+        class="mt-4 grid gap-3.5"
         onsubmit={(e) => { e.preventDefault(); void saveRuntime(); }}
       >
-        <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
-          <input
-            type="checkbox"
-            class="mt-0.5 h-4 w-4"
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card-bg)]">
+          <Toggle
             bind:checked={runtime.restoreRuntimeStateOnLaunch}
+            label="启动时恢复上次运行状态"
+            description="默认关闭。开启后会记住哪些 Workspace 的 MCP / Actions 正在运行，并在下次启动 Coding Tools 时自动恢复。"
             onchange={handleRuntimeChange}
           />
-          <span class="grid gap-1">
-            <span class="text-sm font-medium">启动时恢复上次运行状态</span>
-            <span class="text-xs text-[var(--color-text-muted)]">
-              默认关闭。开启后会记住哪些 Workspace 的 MCP / Actions 正在运行，并在下次启动 Coding Tools 时自动恢复。
-            </span>
-            {#if runtime.restoreRuntimeStateOnLaunch}
-              <span class="text-xs text-[var(--color-accent)]">
-                首次开启并保存时，会立即记录当前已经运行的服务；之后手动启动或停止都会同步更新恢复状态。
-              </span>
-            {/if}
-          </span>
-        </label>
+          {#if runtime.restoreRuntimeStateOnLaunch}
+            <p class="mt-2 text-xs text-[var(--primary)] pl-0.5">
+              首次开启并保存时，会立即记录当前已经运行的服务；之后手动启动或停止都会同步更新恢复状态。
+            </p>
+          {/if}
+        </div>
 
-        <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
-          <input
-            type="checkbox"
-            class="mt-0.5 h-4 w-4"
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card-bg)]">
+          <Toggle
             bind:checked={runtime.allowLanAccess}
+            label="允许局域网访问"
+            description="默认关闭。开启后 MCP、Actions 和 Global Gateway 会从仅监听 127.0.0.1 改为监听 0.0.0.0，同一局域网内的服务器即可访问本机端口用于内网穿透。"
             onchange={handleRuntimeChange}
           />
-          <span class="grid gap-1">
-            <span class="text-sm font-medium">允许局域网访问</span>
-            <span class="text-xs text-[var(--color-text-muted)]">
-              默认关闭。开启后 MCP、Actions 和 Global Gateway 会从仅监听 127.0.0.1 改为监听 0.0.0.0，
-              同一局域网内的服务器即可访问本机端口用于内网穿透。
-            </span>
-            {#if runtime.allowLanAccess}
-              <span class="text-xs text-amber-500">
-                已开启：服务会暴露到局域网。建议同时启用认证，并确认 macOS 防火墙规则符合预期。
-              </span>
-            {/if}
-          </span>
-        </label>
+          {#if runtime.allowLanAccess}
+            <p class="mt-2 text-xs text-[var(--warning)] pl-0.5">
+              已开启：服务会暴露到局域网。建议同时启用认证，并确认防火墙规则符合预期。
+            </p>
+          {/if}
+        </div>
 
         <label class="grid gap-1">
           <span class="text-xs text-[var(--color-text-muted)]">全局可执行 PATH（每行一个目录，也可粘贴 PATH）</span>
@@ -334,26 +327,34 @@
           ></textarea>
           <span class="text-xs text-[var(--color-text-muted)]">支持绝对路径和 ~；用于查找 aws、docker、kubectl 等系统程序，仍受 Workspace 的 allowed_commands 策略约束。</span>
         </label>
-        <div class="rounded-md border border-[var(--color-border)] p-3">
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-main)] p-4 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p class="text-sm font-medium">全局 Agent Sources</p>
-              <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+              <p class="text-sm font-semibold text-[var(--text-main)]">全局 Agent Sources</p>
+              <p class="mt-1 text-xs text-[var(--color-text-muted)] leading-relaxed">
                 自动扫描本机 IDE 的全局 Instructions / Skills；首次没有配置时会自动勾选检测到的来源，之后仍由用户决定是否保存或调整。
               </p>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="tx-btn-ghost" disabled={scanningGlobalAgents} onclick={() => void scanGlobalSources(false)}>
-                {scanningGlobalAgents ? "扫描中…" : "重新扫描"}
-              </button>
-              <button
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
                 type="button"
-                class="tx-btn-ghost"
+                variant="secondary"
+                size="sm"
+                disabled={scanningGlobalAgents}
+                busy={scanningGlobalAgents}
+                onclick={() => void scanGlobalSources(false)}
+              >
+                {scanningGlobalAgents ? "扫描中…" : "重新扫描"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
                 disabled={!globalAgentScan || globalAgentScan.sources.length === 0}
                 onclick={applyDetectedGlobalSources}
               >
                 应用检测结果
-              </button>
+              </Button>
             </div>
           </div>
           {#if globalAgentScanError}
@@ -460,60 +461,63 @@
           <span class="text-xs text-[var(--color-text-muted)]">通过 MCP initialize.instructions 注入；Workspace Instructions 会追加在全局规则之后。</span>
         </label>
         <div class="flex justify-end pt-1">
-          <button
+          <Button
             type="submit"
-            class="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            variant="primary"
+            size="md"
             disabled={!runtimeChanged || runtimeSaving}
+            busy={runtimeSaving}
           >
             {runtimeSaving ? "保存中…" : "保存 Runtime 设置"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">网络代理</h3>
+    <div class="tx-card p-5">
+      <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">网络代理</h3>
       <form
-        class="mt-4 grid gap-3"
+        class="mt-4 grid gap-3.5"
         onsubmit={(e) => { e.preventDefault(); void save(); }}
       >
-        <label class="grid gap-1">
-          <span class="text-xs text-[var(--color-text-muted)]">代理模式</span>
-          <select
-            class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm"
+        <div>
+          <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1" for="proxy-mode-select">代理模式</label>
+          <Select
+            options={[
+              { value: "none", label: "无代理" },
+              { value: "system", label: "系统代理" },
+              { value: "manual", label: "手动代理地址" },
+            ]}
             bind:value={proxy.mode}
             onchange={handleChange}
-          >
-            <option value="none">无代理</option>
-            <option value="system">系统代理</option>
-            <option value="manual">手动代理地址</option>
-          </select>
-        </label>
+          />
+        </div>
 
         {#if proxy.mode === "manual"}
-          <label class="grid gap-1">
-            <span class="text-xs text-[var(--color-text-muted)]">代理地址</span>
-            <input
-              type="text"
-              class="tx-input tx-mono"
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1" for="proxy-url-input">代理地址</label>
+            <TextInput
+              mono
               placeholder="http://127.0.0.1:7890"
               bind:value={proxy.url}
               oninput={handleChange}
             />
-            <span class="text-xs text-[var(--color-text-muted)]">
+            <span class="block text-[11px] text-[var(--color-text-muted)] mt-1">
               支持 HTTP/HTTPS/SOCKS 代理，如 http://127.0.0.1:7890
             </span>
-          </label>
+          </div>
         {/if}
 
         <div class="flex justify-end pt-1">
-          <button
+          <Button
             type="submit"
-            class="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            variant="primary"
+            size="md"
             disabled={!changed || saving}
+            busy={saving}
           >
             {saving ? "保存中…" : "保存设置"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

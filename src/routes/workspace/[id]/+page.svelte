@@ -18,6 +18,9 @@
   import GptQuickCopy from "$lib/components/GptQuickCopy.svelte";
   import StatusOrb from "$lib/components/StatusOrb.svelte";
   import Tabs from "$lib/components/Tabs.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
   import TunnelConfigForm, {
     type TunnelFormConfig,
     type SaveTunnelOptions,
@@ -37,7 +40,6 @@
     updateWorkspace,
   } from "$lib/api/workspaces";
   import { listFrpProfiles, setLastWorkspace, type FrpProfileDto } from "$lib/api/settings";
-  import { confirm } from "@tauri-apps/plugin-dialog";
   import { restartTunnel, stopTunnel } from "$lib/api/tunnel";
   import { runServiceToggle, notifyStartFailure } from "$lib/runtime/service";
   import { showToast } from "$lib/stores/toast";
@@ -557,28 +559,36 @@
     await promptServiceRestart(actionsStatus === "running", "Actions 服务");
   }
 
-  async function removeWorkspace() {
-    if (!profile || !workspaceId) return;
-    const confirmed = await confirm(`确定删除工作区「${profile.name}」？此操作不可撤销。`, {
-      title: "删除工作区",
-      kind: "warning",
-      okLabel: "删除",
-      cancelLabel: "取消",
-    });
-    if (!confirmed) return;
-    await deleteWorkspace(workspaceId);
-    workspaces.update((items) => items.filter((item) => item.id !== workspaceId));
-    mcpRuntimeStates.update((states) => {
-      const next = { ...states };
-      delete next[workspaceId];
-      return next;
-    });
-    actionsRuntimeStates.update((states) => {
-      const next = { ...states };
-      delete next[workspaceId];
-      return next;
-    });
-    goto("/");
+  let deleteConfirmOpen = $state(false);
+  let deleteBusy = $state(false);
+
+  function requestRemoveWorkspace() {
+    deleteConfirmOpen = true;
+  }
+
+  async function handleConfirmDelete() {
+    if (!profile || !workspaceId || deleteBusy) return;
+    deleteBusy = true;
+    try {
+      await deleteWorkspace(workspaceId);
+      workspaces.update((items) => items.filter((item) => item.id !== workspaceId));
+      mcpRuntimeStates.update((states) => {
+        const next = { ...states };
+        delete next[workspaceId];
+        return next;
+      });
+      actionsRuntimeStates.update((states) => {
+        const next = { ...states };
+        delete next[workspaceId];
+        return next;
+      });
+      deleteConfirmOpen = false;
+      goto("/");
+    } catch (error) {
+      showToast(String(error), { title: "删除工作区失败", kind: "error" });
+    } finally {
+      deleteBusy = false;
+    }
   }
 
   $effect(() => {
@@ -631,13 +641,16 @@
       </header>
 
       <div class="tx-workspace-tabs">
-        <Tabs
-          items={workspaceTabs}
-          value={activeWorkspaceTab}
-          onchange={(value) => {
-            activeWorkspaceTab = value as WorkspaceTab;
-          }}
-        />
+        <div class="py-2.5">
+          <SegmentedControl
+            items={workspaceTabs}
+            value={activeWorkspaceTab}
+            size="md"
+            onchange={(value) => {
+              activeWorkspaceTab = value as WorkspaceTab;
+            }}
+          />
+        </div>
       </div>
 
       <div class="page-body tx-workspace-body">
@@ -709,13 +722,13 @@
               <strong>删除工作区</strong>
               <p>仅删除 Coding Tools 中的工作区配置，不会删除本地项目文件。</p>
             </div>
-            <button
-              type="button"
-              class="tx-btn-ghost text-[var(--danger)]"
-              onclick={() => void removeWorkspace()}
+            <Button
+              variant="danger"
+              size="sm"
+              onclick={requestRemoveWorkspace}
             >
               删除工作区
-            </button>
+            </Button>
           </div>
         </div>
       {:else if activeWorkspaceTab === "planning"}
@@ -731,9 +744,10 @@
       {:else if activeWorkspaceTab === "services"}
         <div class="tx-workspace-section-stack">
           <div class="tx-service-subtabs">
-            <Tabs
+            <SegmentedControl
               items={serviceTabs}
               value={activeService}
+              size="sm"
               onchange={(value) => openService(value as ServiceKind)}
             />
           </div>
@@ -789,9 +803,10 @@
         </div>
 
         <div class="mt-5 tx-service-subtabs">
-          <Tabs
+          <SegmentedControl
             items={subTabs}
             value={serviceSubTab}
+            size="sm"
             onchange={(value) => {
               serviceSubTab = value as SubTab;
             }}
@@ -932,21 +947,16 @@
             <small>{stateLabel(mcpStatus)}</small>
           </span>
         </button>
-        <button
-          type="button"
-          class="tx-btn-primary tx-runtime-action"
-          class:tx-btn-danger={mcpStatus === "running"}
-          disabled={mcpBusy || mcpStatus === "starting" || mcpStatus === "stopping"}
+        <Button
+          variant={mcpStatus === "running" ? "danger" : "primary"}
+          size="md"
+          class="tx-runtime-action font-semibold shadow-sm"
+          busy={mcpBusy}
+          disabled={mcpStatus === "starting" || mcpStatus === "stopping"}
           onclick={toggleMcp}
         >
-          {#if mcpBusy}
-            处理中…
-          {:else if mcpStatus === "running"}
-            停止 MCP
-          {:else}
-            启动 MCP
-          {/if}
-        </button>
+          {mcpStatus === "running" ? "停止 MCP" : "启动 MCP"}
+        </Button>
 
         <div class="tx-runtime-divider"></div>
 
@@ -961,22 +971,32 @@
             <small>{stateLabel(actionsStatus)}</small>
           </span>
         </button>
-        <button
-          type="button"
-          class="tx-btn-primary tx-runtime-action"
-          class:tx-btn-danger={actionsStatus === "running"}
-          disabled={actionsBusy || actionsStatus === "starting" || actionsStatus === "stopping"}
+        <Button
+          variant={actionsStatus === "running" ? "danger" : "primary"}
+          size="md"
+          class="tx-runtime-action font-semibold shadow-sm"
+          busy={actionsBusy}
+          disabled={actionsStatus === "starting" || actionsStatus === "stopping"}
           onclick={toggleActions}
         >
-          {#if actionsBusy}
-            处理中…
-          {:else if actionsStatus === "running"}
-            停止 Actions
-          {:else}
-            启动 Actions
-          {/if}
-        </button>
+          {actionsStatus === "running" ? "停止 Actions" : "启动 Actions"}
+        </Button>
       </div>
     </div>
   </section>
+
+  <ConfirmDialog
+    open={deleteConfirmOpen}
+    title="删除工作区"
+    message={`确定删除工作区「${profile.name}」？此操作仅移除 Coding Tools 中的配置与运行会话，绝不会删除本地磁盘中的源码文件。`}
+    detail={profile.path}
+    confirmText="确认删除"
+    cancelText="取消"
+    severity="danger"
+    busy={deleteBusy}
+    onConfirm={handleConfirmDelete}
+    onCancel={() => {
+      deleteConfirmOpen = false;
+    }}
+  />
 {/if}

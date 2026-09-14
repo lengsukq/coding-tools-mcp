@@ -1,6 +1,11 @@
 <script lang="ts">
   import { message } from "@tauri-apps/plugin-dialog";
   import SecretInput from "$lib/components/SecretInput.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
+  import Toggle from "$lib/components/ui/Toggle.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import {
     getWorkspaceSecret,
     regenerateWorkspaceSecret,
@@ -36,6 +41,7 @@
   let loadedSecrets = $state<Partial<Record<WorkspaceSecretKey, string>>>({});
   let loadedSharedOauthClientId = $state("");
   let regenerating = $state<WorkspaceSecretKey | null>(null);
+  let confirmRegenerateKey = $state<WorkspaceSecretKey | null>(null);
   let secretsLoadSeq = 0;
   let suppressSecretsReload = $state(false);
 
@@ -134,7 +140,10 @@
     }
   }
 
-  async function regenerate(key: WorkspaceSecretKey) {
+  async function handleConfirmRegenerate() {
+    if (!confirmRegenerateKey) return;
+    const key = confirmRegenerateKey;
+    confirmRegenerateKey = null;
     if (regenerating) return;
     regenerating = key;
     try {
@@ -151,7 +160,7 @@
 </script>
 
 <form
-  class="grid gap-3"
+  class="grid gap-3.5"
   onsubmit={(event) => {
     event.preventDefault();
     void save();
@@ -161,81 +170,88 @@
     复制 Client ID / 密钥等请用上方「GPT 配置」卡片；此处可修改认证类型与重新生成密钥。
   </p>
 
-  <label class="grid gap-1">
-    <span class="text-xs text-[var(--color-text-muted)]">认证类型</span>
-    <select
-      class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm"
+  <label class="grid gap-1.5">
+    <span class="text-xs font-medium text-[var(--color-text-muted)]">认证类型</span>
+    <Select
+      options={AUTH_OPTIONS}
       bind:value={draft.type}
-    >
-      {#each AUTH_OPTIONS as option}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
+    />
   </label>
 
-  <label class="flex items-center gap-2">
-    <input
-      type="checkbox"
-      class="h-4 w-4"
+  <div class="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-3">
+    <Toggle
       bind:checked={draft.use_shared_secrets}
+      label="使用全局共享密钥"
+      description="在「设置 → 共享密钥」中统一管理，多个工作区复用相同认证凭据"
     />
-    <span class="text-xs text-[var(--color-text-muted)]">使用全局共享密钥（在「设置 → 共享密钥」中管理）</span>
-  </label>
+  </div>
 
   {#if showOAuth}
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth 客户端 ID</span>
-      <input
-        type="text"
-        class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm"
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth 客户端 ID</span>
+      <TextInput
+        mono
         bind:value={draft.oauth_client_id}
         readonly={draft.use_shared_secrets}
       />
-    </label>
+    </div>
 
-    <div class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth 客户端密钥</span>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth 客户端密钥</span>
       <SecretInput
         value={secrets.oauth_client_secret ?? ""}
         placeholder="加载中…"
         readonly
-        onRegenerate={() => void regenerate("oauth_client_secret")}
+        onRegenerate={() => { confirmRegenerateKey = "oauth_client_secret"; }}
         regenerating={regenerating === "oauth_client_secret"}
       />
     </div>
 
-    <div class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">授权口令</span>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">授权口令</span>
       <SecretInput
         value={secrets.oauth_password ?? ""}
         placeholder="ChatGPT 首次授权时输入这个口令"
         readonly
-        onRegenerate={() => void regenerate("oauth_password")}
+        onRegenerate={() => { confirmRegenerateKey = "oauth_password"; }}
         regenerating={regenerating === "oauth_password"}
       />
     </div>
   {/if}
 
   {#if showBearer}
-    <div class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">Bearer Token</span>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">Bearer Token</span>
       <SecretInput
         value={secrets.bearer_token ?? ""}
         placeholder="加载中…"
         readonly
-        onRegenerate={() => void regenerate("bearer_token")}
+        onRegenerate={() => { confirmRegenerateKey = "bearer_token"; }}
         regenerating={regenerating === "bearer_token"}
       />
     </div>
   {/if}
 
   <div class="flex justify-end pt-1">
-    <button
+    <Button
       type="submit"
-      class="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+      variant="primary"
+      busy={saving}
       disabled={saving || !dirty}
     >
       {saving ? "保存中…" : "保存配置"}
-    </button>
+    </Button>
   </div>
 </form>
+
+<ConfirmDialog
+  open={!!confirmRegenerateKey}
+  title="重新生成密钥确认"
+  confirmText="确认重新生成"
+  severity="warning"
+  busy={!!regenerating}
+  onConfirm={handleConfirmRegenerate}
+  onCancel={() => { confirmRegenerateKey = null; }}
+>
+  <p>重新生成后，之前配置在外部 AI 客户端（如 ChatGPT）中的密钥将立即失效，需重新填入新密钥后方可恢复连接。</p>
+</ConfirmDialog>

@@ -24,6 +24,8 @@
     type PlanningStateDto,
   } from "$lib/api/planning";
   import { showToast } from "$lib/stores/toast";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
 
   interface Props {
     workspaceId: string;
@@ -100,18 +102,20 @@
     }
   }
 
-  async function resetPlanning() {
-    if (busy) return;
-    const confirmed = window.confirm(
-      "确认重置当前工作区的 AI Planning？\n\n这会清空 Goal、Plan、执行记录和当前规划模式，但不会修改项目源码。",
-    );
-    if (!confirmed) return;
+  let resetConfirmOpen = $state(false);
 
+  function requestResetPlanning() {
+    resetConfirmOpen = true;
+  }
+
+  async function handleConfirmReset() {
+    if (busy) return;
     busy = true;
     try {
       planning = await resetPlanningState(workspaceId);
       error = "";
       reviewFeedback = {};
+      resetConfirmOpen = false;
       showToast("规划状态已重置。", { title: "AI Planning", kind: "success" });
     } catch (err) {
       showToast(String(err), { title: "重置规划失败", kind: "error" });
@@ -271,19 +275,25 @@
           {/each}
         </div>
       {/if}
-      <button class="tx-btn-ghost min-h-10 px-3 text-xs" type="button" disabled={loading} onclick={() => void load()}>
+      <Button
+        variant="ghost"
+        size="md"
+        disabled={loading}
+        busy={loading}
+        onclick={() => void load()}
+      >
         <RefreshCw size={13} class={loading ? "animate-spin" : ""} />
-        刷新
-      </button>
-      <button
-        class="tx-btn-primary tx-btn-danger min-h-10 px-3 text-xs"
-        type="button"
+        <span>刷新</span>
+      </Button>
+      <Button
+        variant="danger"
+        size="md"
         disabled={busy}
-        onclick={() => void resetPlanning()}
+        onclick={requestResetPlanning}
       >
         <RotateCcw size={13} />
-        重置规划
-      </button>
+        <span>重置规划</span>
+      </Button>
     </div>
   </div>
 
@@ -362,9 +372,9 @@
                   {/if}
                 </div>
                 <div class="flex shrink-0 flex-wrap gap-2">
-                  <button class="tx-btn-primary min-h-9 px-3 text-xs" type="button" disabled={busy} onclick={() => void acceptGoal(goal)}>
+                  <Button variant="primary" size="sm" disabled={busy} onclick={() => void acceptGoal(goal)}>
                     <Archive size={13} /> 验收并归档
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div class="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row">
@@ -374,9 +384,9 @@
                   value={feedbackFor(goal.id)}
                   oninput={(event) => setFeedback(goal.id, event.currentTarget.value)}
                 />
-                <button class="tx-btn-ghost min-h-9 px-3 text-xs" type="button" disabled={busy} onclick={() => void rejectGoal(goal)}>
+                <Button variant="ghost" size="sm" disabled={busy} onclick={() => void rejectGoal(goal)}>
                   <RotateCcw size={13} /> 打回继续
-                </button>
+                </Button>
               </div>
             </article>
           {/each}
@@ -406,9 +416,9 @@
                     </div>
                   {/if}
                 </div>
-                <button class="tx-btn-primary min-h-9 shrink-0 px-3 text-xs" type="button" disabled={busy} onclick={() => void acceptPlan(plan)}>
+                <Button variant="primary" size="sm" disabled={busy} onclick={() => void acceptPlan(plan)}>
                   <Archive size={13} /> 验收并归档
-                </button>
+                </Button>
               </div>
               <div class="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row">
                 <input
@@ -417,9 +427,9 @@
                   value={feedbackFor(plan.id)}
                   oninput={(event) => setFeedback(plan.id, event.currentTarget.value)}
                 />
-                <button class="tx-btn-ghost min-h-9 px-3 text-xs" type="button" disabled={busy} onclick={() => void rejectPlan(plan)}>
+                <Button variant="ghost" size="sm" disabled={busy} onclick={() => void rejectPlan(plan)}>
                   <RotateCcw size={13} /> 打回继续
-                </button>
+                </Button>
               </div>
             </article>
           {/each}
@@ -489,4 +499,18 @@
       </div>
     </div>
   {/if}
+
+  <ConfirmDialog
+    open={resetConfirmOpen}
+    title="重置 AI Planning 状态"
+    message="确认重置当前工作区的 AI Planning？这将清空当前所有活跃 Goal、Plan、执行步骤记录与执行模式，此操作不可撤销，但绝不会修改项目源码。"
+    confirmText="确认重置"
+    cancelText="取消"
+    severity="danger"
+    busy={busy}
+    onConfirm={handleConfirmReset}
+    onCancel={() => {
+      resetConfirmOpen = false;
+    }}
+  />
 </section>

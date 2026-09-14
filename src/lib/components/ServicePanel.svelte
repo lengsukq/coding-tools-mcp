@@ -1,6 +1,7 @@
 <script lang="ts">
   import CopyButton from "$lib/components/CopyButton.svelte";
   import StatusOrb from "$lib/components/StatusOrb.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
   import type { RuntimeState } from "$lib/types";
 
   interface Props {
@@ -66,36 +67,31 @@
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <StatusOrb state={status} />
-        <h3 class="text-[15px] font-semibold tracking-tight">{title}</h3>
+        <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">{title}</h3>
       </div>
-      <p class="mt-1 text-sm text-[var(--color-text-muted)]">{subtitle}</p>
+      <p class="mt-1 text-xs text-[var(--text-muted)]">{subtitle}</p>
       {#if tunnelEnabled}
-        <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+        <p class="mt-1 text-[11px] text-[var(--text-muted)]">
           {tunnelLabel} 隧道随服务自动连接，停止服务时一并断开
         </p>
       {/if}
     </div>
     {#if showToggle}
-      <button
-        type="button"
-        class="tx-btn-primary shrink-0"
-        class:tx-btn-danger={running}
-        disabled={busy || status === "starting" || status === "stopping"}
+      <Button
+        variant={running ? "danger" : "primary"}
+        size="md"
+        class="shrink-0"
+        {busy}
+        disabled={status === "starting" || status === "stopping"}
         onclick={onToggle}
       >
-        {#if busy}
-          处理中…
-        {:else if running}
-          停止
-        {:else}
-          启动
-        {/if}
-      </button>
+        {running ? "停止" : "启动"}
+      </Button>
     {/if}
   </div>
 
   {#if showError}
-    <div class="tx-alert tx-alert--error mt-4" role="alert">
+    <div class="mt-4 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-xs text-[var(--danger)] leading-relaxed" role="alert">
       {statusMessage}
     </div>
   {/if}
@@ -109,12 +105,12 @@
             type="number"
             min="1024"
             max="65535"
-            class="tx-input tx-input-inline"
+            class="tx-input tx-input-inline font-mono text-xs"
             bind:value={draftPort}
             onchange={commitPort}
           />
         {:else}
-          <span class="tx-mono text-sm">{port}</span>
+          <span class="font-mono text-xs text-[var(--text-main)]">{port}</span>
         {/if}
       </div>
     </div>
@@ -124,7 +120,7 @@
         <span class="tx-info-label">本地地址</span>
         <CopyButton value={localEndpoint} />
       </div>
-      <p class="tx-mono mt-1.5 truncate text-sm">{localEndpoint}</p>
+      <p class="font-mono mt-1.5 truncate text-xs text-[var(--text-main)]">{localEndpoint}</p>
     </div>
 
     {#if publicEndpoint || publicLabel}
@@ -135,8 +131,8 @@
             <CopyButton value={publicEndpoint} />
           {/if}
         </div>
-        <p class="tx-mono mt-1.5 truncate text-sm text-[var(--color-text-secondary)]">
-          {publicEndpoint || "未配置隧道"}
+        <p class="font-mono mt-1.5 truncate text-xs text-[var(--text-secondary)]">
+          {publicEndpoint || "未配置公网隧道"}
         </p>
       </div>
     {/if}

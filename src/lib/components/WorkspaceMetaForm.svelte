@@ -3,6 +3,8 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { openWorkspaceDirectory } from "$lib/api/workspaces";
   import { showToast } from "$lib/stores/toast";
+  import Button from "$lib/components/ui/Button.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
 
   interface Props {
     name: string;
@@ -78,46 +80,63 @@
 </script>
 
 <form
-  class="flex flex-col gap-3 sm:flex-row sm:items-end"
+  class="flex flex-col gap-3.5 sm:flex-row sm:items-end"
   onsubmit={(event) => {
     event.preventDefault();
     void save();
   }}
 >
-  <label class="tx-field min-w-0 flex-1">
-    <span class="tx-label">工作区名称</span>
-    <input type="text" class="tx-input" bind:value={draftName} />
-  </label>
-  <div class="tx-field min-w-0 flex-1">
-    <span class="tx-label">路径</span>
+  <div class="min-w-0 flex-1">
+    <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5" for="workspace-name-input">
+      工作区名称
+    </label>
+    <TextInput
+      bind:value={draftName}
+      placeholder="输入工作区名称"
+    />
+  </div>
+
+  <div class="min-w-0 flex-1">
+    <span class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">物理路径</span>
     <div class="flex min-w-0 items-center gap-2">
       <p
-        class="tx-mono min-w-0 flex-1 truncate rounded-[10px] border border-transparent px-2.5 py-2 text-[var(--color-text-secondary)]"
+        class="font-mono text-xs min-w-0 flex-1 truncate rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] px-2.5 py-1.5 text-[var(--text-secondary)]"
         title={path}
       >
         {path}
       </p>
-      <button
-        type="button"
-        class="tx-btn-ghost shrink-0 px-2.5 py-1.5 text-xs"
+      <Button
+        variant="ghost"
+        size="sm"
         disabled={opening || !path.trim()}
+        busy={opening}
         onclick={() => void openDirectory()}
       >
-        <FolderOpen size={14} class="inline-block" />
-        <span class="ml-1">{opening ? "打开中…" : "打开目录"}</span>
-      </button>
-      <button
-        type="button"
-        class="tx-btn-ghost shrink-0 px-2.5 py-1.5 text-xs"
+        <FolderOpen size={13} strokeWidth={2} />
+        <span>打开</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
         disabled={updatingPath}
+        busy={updatingPath}
         onclick={() => void updateDirectory()}
       >
-        <FolderInput size={14} class="inline-block" />
-        <span class="ml-1">{updatingPath ? "选择中…" : "更新目录"}</span>
-      </button>
+        <FolderInput size={13} strokeWidth={2} />
+        <span>更改目录</span>
+      </Button>
     </div>
   </div>
-  <button type="submit" class="tx-btn-primary shrink-0" disabled={saving || !dirty}>
-    {saving ? "保存中…" : "保存名称"}
-  </button>
+
+  <div class="shrink-0">
+    <Button
+      type="submit"
+      variant="primary"
+      size="md"
+      disabled={saving || !dirty}
+      busy={saving}
+    >
+      保存名称
+    </Button>
+  </div>
 </form>

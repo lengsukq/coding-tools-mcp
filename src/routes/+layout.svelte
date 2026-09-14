@@ -107,6 +107,27 @@
       stopClose();
     };
   });
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
+
+  const settingsNavItems = [
+    { value: "general", label: "通用" },
+    { value: "keys", label: "密钥与认证" },
+    { value: "connection", label: "连接" },
+  ];
+
+  const activeSettingsNav = $derived(
+    $page.url.pathname === "/settings/keys"
+      ? "keys"
+      : ["/settings/gateway", "/settings/frp", "/settings/software"].includes($page.url.pathname)
+        ? "connection"
+        : "general",
+  );
+
+  function handleSettingsNavChange(value: string) {
+    if (value === "keys") openKeysSettings();
+    else if (value === "connection") openConnectionSettings();
+    else openGeneralSettings();
+  }
 </script>
 
 <AppShell
@@ -115,28 +136,12 @@
   settingsActive={$page.url.pathname.startsWith("/settings")}
 >
   {#snippet settingsNav()}
-    <button
-      type="button"
-      class="tx-settings-link {$page.url.pathname === '/settings/general' ? 'active' : ''}"
-      onclick={openGeneralSettings}
-    >
-      通用
-    </button>
-    <button
-      type="button"
-      class="tx-settings-link {$page.url.pathname === '/settings/keys' ? 'active' : ''}"
-      onclick={openKeysSettings}
-    >
-      密钥与认证
-    </button>
-
-    <button
-      type="button"
-      class="tx-settings-link {['/settings/gateway', '/settings/frp', '/settings/software'].includes($page.url.pathname) ? 'active' : ''}"
-      onclick={openConnectionSettings}
-    >
-      连接
-    </button>
+    <SegmentedControl
+      items={settingsNavItems}
+      value={activeSettingsNav}
+      onchange={handleSettingsNavChange}
+      size="md"
+    />
   {/snippet}
   {#snippet sidebar()}
     <div class="space-y-1">

@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { message } from "@tauri-apps/plugin-dialog";
   import SecretInput from "$lib/components/SecretInput.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import {
     getSharedSecret,
     setSharedSecret,
@@ -31,6 +33,8 @@
   let loading = $state(true);
   let saving = $state(false);
   let regenerating = $state<string | null>(null);
+  let regenerateConfirmOpen = $state(false);
+  let pendingKey = $state<SharedSecretKey | null>(null);
 
   const dirty = $derived(ALL_KEYS.some(({ key }) => secrets[key] !== undefined && secrets[key] !== originals[key]));
 
@@ -44,7 +48,6 @@
             value = (await getSharedSecret(key)) ?? "";
           } catch {
             // Individual key load failure — show empty for this key
-            // rather than failing the entire page.
           }
           return [key, value] as const;
         }),
@@ -58,19 +61,24 @@
     }
   }
 
-  async function regenerate(key: SharedSecretKey) {
-    if (regenerating) return;
+  function requestRegenerate(key: SharedSecretKey) {
+    pendingKey = key;
+    regenerateConfirmOpen = true;
+  }
+
+  async function handleConfirmRegenerate() {
+    if (!pendingKey || regenerating) return;
+    const key = pendingKey;
+    regenerateConfirmOpen = false;
     regenerating = key;
     try {
       const value = await regenerateSharedSecret(key);
       secrets[key] = value;
-      // Keep originals stale so the "保存更改" button lights up,
-      // giving the user visible confirmation before we navigate away.
-      // saveAll will write the same value (idempotent) and update originals.
     } catch (e) {
       await message(String(e), { title: "重新生成失败", kind: "error" });
     } finally {
       regenerating = null;
+      pendingKey = null;
     }
   }
 
@@ -97,28 +105,27 @@
   <header class="page-header">
     <p class="page-kicker">全局设置</p>
     <h2 class="page-title">共享密钥</h2>
-    <p class="mt-2 max-w-2xl text-sm text-[var(--color-text-muted)]">
-      在此统一管理所有共享密钥。各工作区可以选择使用共享密钥或自己的密钥，这样 GPT 只需配置一次
-      Bearer/API Key，即可访问所有工作区。重新生成或修改密钥后，正在运行的对应服务将自动重启以生效。
+    <p class="mt-2 max-w-2xl text-xs leading-relaxed text-[var(--color-text-muted)]">
+      在此统一管理所有共享密钥。各工作区可以选择使用共享密钥或专属密钥；GPT 仅需配置一次 Bearer/API Key 即可访问所有工作区。重新生成或修改密钥后，正在运行的对应服务将自动重启以生效。
     </p>
   </header>
 
   <div class="page-body flex flex-col gap-6">
     <div class="flex flex-col gap-6">
       <!-- MCP keys -->
-      <div class="tx-card p-4">
-        <h3 class="text-sm font-semibold">MCP 认证密钥</h3>
+      <div class="tx-card p-5">
+        <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">MCP 认证密钥</h3>
         {#if loading}
-          <p class="mt-4 text-sm text-[var(--color-text-muted)]">加载中…</p>
+          <p class="mt-4 text-xs text-[var(--color-text-muted)]">加载中…</p>
         {:else}
           <div class="mt-4 grid gap-4">
             {#each MCP_KEYS as { key, label }}
-              <div class="grid gap-1">
-                <span class="text-xs text-[var(--color-text-muted)]">{label}</span>
+              <div class="grid gap-1.5">
+                <span class="text-xs font-medium text-[var(--color-text-secondary)]">{label}</span>
                 <SecretInput
                   bind:value={secrets[key]}
                   disabled={loading}
-                  onRegenerate={() => regenerate(key)}
+                  onRegenerate={() => requestRegenerate(key)}
                   regenerating={regenerating === key}
                 />
               </div>
@@ -128,19 +135,19 @@
       </div>
 
       <!-- Actions keys -->
-      <div class="tx-card p-4">
-        <h3 class="text-sm font-semibold">Actions 认证密钥</h3>
+      <div class="tx-card p-5">
+        <h3 class="text-sm font-semibold tracking-tight text-[var(--text-main)]">Actions 认证密钥</h3>
         {#if loading}
-          <p class="mt-4 text-sm text-[var(--color-text-muted)]">加载中…</p>
+          <p class="mt-4 text-xs text-[var(--color-text-muted)]">加载中…</p>
         {:else}
           <div class="mt-4 grid gap-4">
             {#each ACTIONS_KEYS as { key, label }}
-              <div class="grid gap-1">
-                <span class="text-xs text-[var(--color-text-muted)]">{label}</span>
+              <div class="grid gap-1.5">
+                <span class="text-xs font-medium text-[var(--color-text-secondary)]">{label}</span>
                 <SecretInput
                   bind:value={secrets[key]}
                   disabled={loading}
-                  onRegenerate={() => regenerate(key)}
+                  onRegenerate={() => requestRegenerate(key)}
                   regenerating={regenerating === key}
                 />
               </div>
@@ -150,15 +157,31 @@
       </div>
     </div>
 
-    <div class="flex justify-end">
-      <button
-        type="button"
-        class="rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+    <div class="flex justify-end pt-2">
+      <Button
+        variant="primary"
+        size="md"
         disabled={!dirty || saving}
+        busy={saving}
         onclick={() => saveAll()}
       >
         {saving ? "保存中…" : "保存更改"}
-      </button>
+      </Button>
     </div>
   </div>
+
+  <ConfirmDialog
+    open={regenerateConfirmOpen}
+    title="重新生成密钥确认"
+    message="重新生成后，旧密钥将立即作废！所有已配置旧密钥的外部 AI 助手、ChatGPT Actions 或客户端将突发断连，您必须在外部重新填入新密钥。确定重新生成吗？"
+    detail={pendingKey ? `目标密钥字段：${pendingKey}` : undefined}
+    confirmText="确认重新生成"
+    cancelText="取消"
+    severity="warning"
+    onConfirm={handleConfirmRegenerate}
+    onCancel={() => {
+      regenerateConfirmOpen = false;
+      pendingKey = null;
+    }}
+  />
 </section>

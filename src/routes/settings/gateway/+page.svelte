@@ -17,6 +17,18 @@
   import { actionsConfig, type WorkspaceProfile } from "$lib/types";
   import { showToast } from "$lib/stores/toast";
   import ConnectionSettingsNav from "$lib/components/ConnectionSettingsNav.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
+  import Toggle from "$lib/components/ui/Toggle.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
+  import Card from "$lib/components/ui/Card.svelte";
+  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+
+  const TUNNEL_TYPE_OPTIONS = [
+    { value: "none", label: "仅本地 / 外部反向代理" },
+    { value: "frp", label: "FRP" },
+    { value: "cloudflare", label: "Cloudflare Quick Tunnel" },
+  ] as const;
 
   let config = $state<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
   let savedConfig = $state<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
@@ -31,6 +43,14 @@
 
   const running = $derived(status?.state === "running");
   const dirty = $derived(JSON.stringify(config) !== JSON.stringify(savedConfig));
+  const frpProfileOptions = $derived([
+    { value: "", label: "手动填写" },
+    ...frpProfiles.map((profile) => ({
+      value: profile.id,
+      label: `${profile.name} · ${profile.server}:${profile.serverPort}`,
+    })),
+  ]);
+
   const gatewayRoutes = $derived(
     workspaces.flatMap((workspace) => {
       const routes: Array<{ workspace: string; service: string; path: string }> = [];
@@ -170,171 +190,232 @@
   <ConnectionSettingsNav />
 
   <div class="page-body flex flex-col gap-6">
-    <div class="tx-card p-4">
+    <Card class="p-5">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h3 class="text-sm font-semibold">运行状态</h3>
-          <p class="mt-1 text-xs text-[var(--color-text-muted)]">{status?.detail ?? "正在读取状态…"}</p>
+          <h3 class="text-sm font-semibold text-[var(--text-main)]">运行状态</h3>
+          <p class="mt-0.5 text-xs text-[var(--color-text-muted)]">{status?.detail ?? "正在读取状态…"}</p>
         </div>
-        <span class="tx-status-pill" class:active={running}>
-          {running ? "运行中" : "已停止"}
-        </span>
+        <StatusBadge
+          status={running ? "running" : "stopped"}
+          text={running ? "运行中" : "已停止"}
+        />
       </div>
 
       <div class="mt-4 grid gap-3 md:grid-cols-2">
-        <div class="tx-panel p-3">
-          <p class="text-xs text-[var(--color-text-muted)]">本地入口</p>
-          <p class="mt-1 break-all font-mono text-sm">{status?.localUrl ?? `http://127.0.0.1:${config.localPort}`}</p>
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-3.5 shadow-sm">
+          <p class="text-xs font-medium text-[var(--color-text-muted)]">本地入口</p>
+          <p class="mt-1 break-all font-mono text-xs font-medium text-[var(--text-main)]">{status?.localUrl ?? `http://127.0.0.1:${config.localPort}`}</p>
         </div>
-        <div class="tx-panel p-3">
-          <p class="text-xs text-[var(--color-text-muted)]">公网入口</p>
-          <p class="mt-1 break-all font-mono text-sm">{status?.publicUrl || config.publicUrl || "尚未获取"}</p>
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-3.5 shadow-sm">
+          <p class="text-xs font-medium text-[var(--color-text-muted)]">公网入口</p>
+          <p class="mt-1 break-all font-mono text-xs font-medium text-[var(--text-main)]">{status?.publicUrl || config.publicUrl || "尚未获取"}</p>
         </div>
       </div>
 
-      <div class="mt-4 flex flex-wrap gap-2">
-        <button type="button" class="tx-btn-primary" disabled={busy || running || loading} onclick={() => void start()}>
+      <div class="mt-5 flex flex-wrap items-center gap-2.5 pt-3 border-t border-[var(--border)]">
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={busy || running || loading}
+          busy={busy && !running}
+          onclick={() => void start()}
+        >
           {busy && !running ? "启动中…" : "启动 Gateway"}
-        </button>
-        <button type="button" class="tx-btn-ghost" disabled={busy || !running} onclick={() => void stop()}>
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={busy || !running}
+          busy={busy && running}
+          onclick={() => void stop()}
+        >
           停止 Gateway
-        </button>
-        <button type="button" class="tx-btn-ghost" disabled={checking || loading} onclick={() => void runHealthCheck()}>
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={checking || loading}
+          busy={checking}
+          onclick={() => void runHealthCheck()}
+        >
           {checking ? "检查中…" : "运行健康检查"}
-        </button>
-        <button type="button" class="tx-btn-ghost" disabled={loading} onclick={() => void refresh()}>
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={loading}
+          busy={loading}
+          onclick={() => void refresh()}
+        >
           刷新状态
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">Gateway 配置</h3>
-      <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+    <Card class="p-5">
+      <h3 class="text-sm font-semibold text-[var(--text-main)]">Gateway 配置</h3>
+      <p class="mt-0.5 text-xs text-[var(--color-text-muted)]">
         开启后，使用 Global Gateway 的 Workspace 在启动 MCP / Actions 时会自动确保 Gateway 已运行。
       </p>
 
-      <form class="mt-4 grid gap-3" onsubmit={(event) => { event.preventDefault(); void saveConfig(); }}>
-        <label class="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-          <input type="checkbox" class="mt-0.5 h-4 w-4" bind:checked={config.enabled} />
-          <span class="grid gap-0.5">
-            <span class="text-xs font-medium">启用 Global Gateway</span>
-            <span class="text-[11px] text-[var(--color-text-muted)]">关闭后，Workspace 无法通过共享 Gateway 启动公网入口。</span>
-          </span>
-        </label>
+      <form class="mt-4 grid gap-3.5" onsubmit={(event) => { event.preventDefault(); void saveConfig(); }}>
+        <div class="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-3">
+          <Toggle
+            bind:checked={config.enabled}
+            label="启用 Global Gateway"
+            description="关闭后，Workspace 无法通过共享 Gateway 启动公网入口。"
+          />
+        </div>
 
-        <label class="grid gap-1">
-          <span class="text-xs text-[var(--color-text-muted)]">本地监听端口</span>
-          <input type="number" min="1" max="65535" class="tx-input" bind:value={config.localPort} />
-        </label>
+        <div class="grid gap-1.5">
+          <span class="text-xs font-medium text-[var(--color-text-muted)]">本地监听端口</span>
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            class="w-full px-3 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/25 focus:border-[var(--primary)] transition-all"
+            bind:value={config.localPort}
+          />
+        </div>
 
-        <label class="grid gap-1">
-          <span class="text-xs text-[var(--color-text-muted)]">公网方式</span>
-          <select class="tx-input" bind:value={config.tunnelType}>
-            <option value="none">仅本地 / 外部反向代理</option>
-            <option value="frp">FRP</option>
-            <option value="cloudflare">Cloudflare Quick Tunnel</option>
-          </select>
+        <label class="grid gap-1.5">
+          <span class="text-xs font-medium text-[var(--color-text-muted)]">公网方式</span>
+          <Select
+            options={TUNNEL_TYPE_OPTIONS}
+            bind:value={config.tunnelType}
+          />
         </label>
 
         {#if config.tunnelType === "frp"}
-          <label class="grid gap-1">
-            <span class="text-xs text-[var(--color-text-muted)]">FRP 配置</span>
-            <select class="tx-input" bind:value={config.frpProfileId}>
-              <option value="">手动填写</option>
-              {#each frpProfiles as profile (profile.id)}
-                <option value={profile.id}>{profile.name} · {profile.server}:{profile.serverPort}</option>
-              {/each}
-            </select>
+          <label class="grid gap-1.5">
+            <span class="text-xs font-medium text-[var(--color-text-muted)]">FRP 配置</span>
+            <Select
+              options={frpProfileOptions}
+              bind:value={config.frpProfileId}
+            />
           </label>
 
-          <label class="grid gap-1">
-            <span class="text-xs text-[var(--color-text-muted)]">子域名</span>
-            <input class="tx-input tx-mono" placeholder="coding-tools" bind:value={config.frpSubdomain} />
-          </label>
+          <div class="grid gap-1.5">
+            <span class="text-xs font-medium text-[var(--color-text-muted)]">子域名</span>
+            <TextInput
+              mono
+              placeholder="coding-tools"
+              bind:value={config.frpSubdomain}
+            />
+          </div>
 
           {#if !config.frpProfileId}
             <div class="grid gap-3 md:grid-cols-[1fr_140px]">
-              <label class="grid gap-1">
-                <span class="text-xs text-[var(--color-text-muted)]">FRP 服务器</span>
-                <input class="tx-input tx-mono" placeholder="frp.example.com" bind:value={config.frpServer} />
-              </label>
-              <label class="grid gap-1">
-                <span class="text-xs text-[var(--color-text-muted)]">端口</span>
-                <input type="number" min="1" max="65535" class="tx-input" bind:value={config.frpServerPort} />
-              </label>
+              <div class="grid gap-1.5">
+                <span class="text-xs font-medium text-[var(--color-text-muted)]">FRP 服务器</span>
+                <TextInput
+                  mono
+                  placeholder="frp.example.com"
+                  bind:value={config.frpServer}
+                />
+              </div>
+              <div class="grid gap-1.5">
+                <span class="text-xs font-medium text-[var(--color-text-muted)]">端口</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  class="w-full px-3 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/25 focus:border-[var(--primary)] transition-all"
+                  bind:value={config.frpServerPort}
+                />
+              </div>
             </div>
           {/if}
         {/if}
 
         {#if config.tunnelType === "cloudflare"}
-          <div class="tx-panel p-3 text-xs text-[var(--color-text-muted)]">
+          <div class="rounded-lg border border-[var(--border)] bg-[var(--surface-main)] p-3 text-xs text-[var(--color-text-muted)]">
             Global Gateway 当前使用 Cloudflare Quick Tunnel。需要固定域名时建议使用 FRP 或外部反向代理；Workspace 独立 Tunnel 仍保留 Named Cloudflare。
           </div>
         {/if}
 
         {#if config.tunnelType === "none"}
-          <label class="grid gap-1">
-            <span class="text-xs text-[var(--color-text-muted)]">外部公网 URL（可选）</span>
-            <input type="url" class="tx-input tx-mono" placeholder="https://gateway.example.com" bind:value={config.publicUrl} />
-          </label>
+          <div class="grid gap-1.5">
+            <span class="text-xs font-medium text-[var(--color-text-muted)]">外部公网 URL（可选）</span>
+            <TextInput
+              mono
+              type="url"
+              placeholder="https://gateway.example.com"
+              bind:value={config.publicUrl}
+            />
+          </div>
         {/if}
 
         {#if config.tunnelType !== "none"}
-          <label class="flex items-start gap-2">
-            <input type="checkbox" class="mt-0.5 h-4 w-4" bind:checked={config.useProxy} />
-            <span class="text-xs text-[var(--color-text-muted)]">使用「通用」页面中的全局网络代理连接公网 Tunnel。</span>
-          </label>
+          <div class="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-3">
+            <Toggle
+              bind:checked={config.useProxy}
+              label="使用全局代理"
+              description="使用「通用」设置页面中的全局网络代理连接公网 Tunnel。"
+            />
+          </div>
         {/if}
 
-        <div class="flex justify-end">
-          <button type="submit" class="tx-btn-primary" disabled={!dirty || saving}>
+        <div class="flex justify-end pt-1">
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!dirty || saving}
+            busy={saving}
+          >
             {saving ? "保存中…" : "保存 Gateway 配置"}
-          </button>
+          </Button>
         </div>
       </form>
-    </div>
+    </Card>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">Workspace Routes</h3>
-      <p class="mt-1 text-xs text-[var(--color-text-muted)]">
+    <Card class="p-5">
+      <h3 class="text-sm font-semibold text-[var(--text-main)]">Workspace Routes</h3>
+      <p class="mt-0.5 text-xs text-[var(--color-text-muted)]">
         只有在 Workspace 的 MCP 或 Actions 隧道配置中勾选「使用全局共享公网入口」的服务才会出现在这里。
       </p>
 
       {#if gatewayRoutes.length === 0}
-        <p class="mt-4 text-sm text-[var(--color-text-muted)]">当前没有 Workspace 使用 Global Gateway。</p>
+        <p class="mt-4 text-xs text-[var(--color-text-muted)]">当前没有 Workspace 使用 Global Gateway。</p>
       {:else}
         <div class="mt-4 grid gap-2">
           {#each gatewayRoutes as route (`${route.workspace}-${route.service}-${route.path}`)}
-            <div class="tx-panel grid gap-1 p-3 md:grid-cols-[180px_90px_1fr] md:items-center">
-              <span class="text-sm font-medium">{route.workspace}</span>
-              <span class="text-xs text-[var(--color-text-muted)]">{route.service}</span>
-              <code class="break-all text-xs">{fullRoute(route.path)}</code>
+            <div class="grid gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-3 shadow-sm md:grid-cols-[180px_90px_1fr] md:items-center">
+              <span class="text-xs font-semibold text-[var(--text-main)] truncate">{route.workspace}</span>
+              <span class="text-xs font-medium text-[var(--primary)]">{route.service}</span>
+              <code class="break-all font-mono text-[11px] text-[var(--text-secondary)]">{fullRoute(route.path)}</code>
             </div>
           {/each}
         </div>
       {/if}
-    </div>
+    </Card>
 
-    <div class="tx-card p-4">
-      <h3 class="text-sm font-semibold">健康检查</h3>
+    <Card class="p-5">
+      <h3 class="text-sm font-semibold text-[var(--text-main)]">健康检查</h3>
       {#if health.length === 0}
-        <p class="mt-3 text-sm text-[var(--color-text-muted)]">尚未执行健康检查。</p>
+        <p class="mt-3 text-xs text-[var(--color-text-muted)]">尚未执行健康检查。</p>
       {:else}
         <div class="mt-4 grid gap-2">
           {#each health as item (item.label)}
-            <div class="tx-panel flex items-start justify-between gap-3 p-3">
-              <div>
-                <p class="text-sm font-medium">{item.label}</p>
-                <p class="mt-1 break-all text-xs text-[var(--color-text-muted)]">{item.detail}</p>
+            <div class="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-3.5 shadow-sm">
+              <div class="min-w-0 flex-1">
+                <p class="text-xs font-semibold text-[var(--text-main)]">{item.label}</p>
+                <p class="mt-0.5 break-all text-[11px] text-[var(--color-text-muted)] leading-relaxed">{item.detail}</p>
               </div>
-              <span class="shrink-0 text-xs font-medium" class:text-green-500={item.ok} class:text-red-400={!item.ok}>
-                {item.ok ? "正常" : "失败"}
-              </span>
+              <StatusBadge
+                status={item.ok ? "success" : "error"}
+                text={item.ok ? "正常" : "失败"}
+                size="sm"
+              />
             </div>
           {/each}
         </div>
       {/if}
-    </div>
+    </Card>
   </div>
 </section>

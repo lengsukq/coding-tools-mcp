@@ -2,6 +2,11 @@
   import { message } from "@tauri-apps/plugin-dialog";
   import CopyButton from "$lib/components/CopyButton.svelte";
   import SecretInput from "$lib/components/SecretInput.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
+  import Toggle from "$lib/components/ui/Toggle.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import { getSecret, regenerateSecret, getSharedSecret, regenerateSharedSecret } from "$lib/api/secrets";
   import type { ActionsAuthDraft } from "$lib/types";
 
@@ -59,6 +64,7 @@
   let regeneratingOAuthSecret = $state(false);
   let regeneratingOAuthPassword = $state(false);
   let regeneratingOAuthTokenSecret = $state(false);
+  let confirmRegenerateTarget = $state<"api_key" | "oauth_secret" | "oauth_password" | "oauth_token_secret" | null>(null);
   let saving = $state(false);
   let secretsLoadSeq = 0;
   let suppressSecretsReload = $state(false);
@@ -211,10 +217,19 @@
       regeneratingOAuthTokenSecret = false;
     }
   }
+  async function handleConfirmRegenerate() {
+    if (!confirmRegenerateTarget) return;
+    const target = confirmRegenerateTarget;
+    confirmRegenerateTarget = null;
+    if (target === "api_key") await regenerate();
+    else if (target === "oauth_secret") await regenerateOAuthSecret();
+    else if (target === "oauth_password") await regenerateOAuthPassword();
+    else if (target === "oauth_token_secret") await regenerateOAuthTokenSecret();
+  }
 </script>
 
 <form
-  class="grid gap-3"
+  class="grid gap-3.5"
   onsubmit={(event) => {
     event.preventDefault();
     void save();
@@ -224,126 +239,119 @@
     复制 OpenAPI、密钥等请用上方「GPT 配置」卡片；此处仅修改认证方式与密钥。
   </p>
 
-  <label class="grid gap-1">
-    <span class="text-xs text-[var(--color-text-muted)]">认证方式</span>
-    <select
-      class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm"
+  <label class="grid gap-1.5">
+    <span class="text-xs font-medium text-[var(--color-text-muted)]">认证方式</span>
+    <Select
+      options={ACTIONS_AUTH_OPTIONS}
       bind:value={draftAuthType}
-    >
-      {#each ACTIONS_AUTH_OPTIONS as option}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
+    />
   </label>
 
-  <label class="flex items-center gap-2">
-    <input
-      type="checkbox"
-      class="h-4 w-4"
+  <div class="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-3">
+    <Toggle
       bind:checked={draftUseShared}
+      label="使用全局共享密钥"
+      description="在「设置 → 共享密钥」中统一管理，多个工作区复用相同 Actions 凭据"
     />
-    <span class="text-xs text-[var(--color-text-muted)]">使用全局共享密钥（在「设置 → 共享密钥」中管理）</span>
-  </label>
+  </div>
 
   {#if showApiKey}
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">API Key（Bearer）</span>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">API Key（Bearer）</span>
       <SecretInput
         value={loadingKey ? "加载中…" : apiKey}
         readonly
         disabled={loadingKey}
         showCopy={!!apiKey}
-        onRegenerate={() => void regenerate()}
+        onRegenerate={() => { confirmRegenerateTarget = "api_key"; }}
         regenerating={regenerating}
       />
-    </label>
+    </div>
     <p class="text-xs text-[var(--color-text-muted)]">
       在 GPT Actions 认证里选 API Key → Bearer，Key 填这里的值。
     </p>
   {:else if showOAuth}
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth Client ID（填到 GPT）</span>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth Client ID（填到 GPT）</span>
       <div class="flex gap-2">
-        <input
-          type="text"
-          class="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm"
+        <TextInput
+          mono
+          class="flex-1 min-w-0"
           bind:value={draftOauthClientId}
         />
         {#if draftOauthClientId}
           <CopyButton value={draftOauthClientId} label="复制" />
         {/if}
       </div>
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth Client Secret（填到 GPT）</span>
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth Client Secret（填到 GPT）</span>
       <SecretInput
         value={loadingOAuthSecret ? "加载中…" : oauthClientSecret}
         readonly
         disabled={loadingOAuthSecret}
         showCopy={!!oauthClientSecret}
-        onRegenerate={() => void regenerateOAuthSecret()}
+        onRegenerate={() => { confirmRegenerateTarget = "oauth_secret"; }}
         regenerating={regeneratingOAuthSecret}
       />
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth Password（服务端校验）</span>
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth Password（服务端校验）</span>
       <SecretInput
         value={loadingOAuthPassword ? "加载中…" : oauthPassword}
         readonly
         disabled={loadingOAuthPassword}
         showCopy={!!oauthPassword}
-        onRegenerate={() => void regenerateOAuthPassword()}
+        onRegenerate={() => { confirmRegenerateTarget = "oauth_password"; }}
         regenerating={regeneratingOAuthPassword}
       />
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">OAuth Token Secret（JWT 签名）</span>
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">OAuth Token Secret（JWT 签名）</span>
       <SecretInput
         value={loadingOAuthTokenSecret ? "加载中…" : oauthTokenSecret}
         readonly
         disabled={loadingOAuthTokenSecret}
         showCopy={!!oauthTokenSecret}
-        onRegenerate={() => void regenerateOAuthTokenSecret()}
+        onRegenerate={() => { confirmRegenerateTarget = "oauth_token_secret"; }}
         regenerating={regeneratingOAuthTokenSecret}
       />
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">Authorization URL（填到 GPT）</span>
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">Authorization URL（填到 GPT）</span>
       <div class="flex gap-2">
-        <input
-          type="text"
+        <TextInput
           readonly
-          class="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-xs"
+          mono
+          class="flex-1 min-w-0"
           value={oauthAuthorizeUrl}
         />
         {#if oauthAuthorizeUrl}
           <CopyButton value={oauthAuthorizeUrl} label="复制" />
         {/if}
       </div>
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">Token URL（填到 GPT）</span>
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">Token URL（填到 GPT）</span>
       <div class="flex gap-2">
-        <input
-          type="text"
+        <TextInput
           readonly
-          class="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-xs"
+          mono
+          class="flex-1 min-w-0"
           value={oauthTokenUrl}
         />
         {#if oauthTokenUrl}
           <CopyButton value={oauthTokenUrl} label="复制" />
         {/if}
       </div>
-    </label>
-    <label class="grid gap-1">
-      <span class="text-xs text-[var(--color-text-muted)]">Scope（填到 GPT，空格分隔）</span>
-      <input
-        type="text"
-        class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-sm"
+    </div>
+    <div class="grid gap-1.5">
+      <span class="text-xs font-medium text-[var(--color-text-muted)]">Scope（填到 GPT，空格分隔）</span>
+      <TextInput
         placeholder="例如：coding-tools"
         bind:value={draftOauthScopes}
       />
-    </label>
+    </div>
     <p class="text-xs text-[var(--color-text-muted)]">
       GPT 编辑器会生成 Callback URL（<code>https://chatgpt.com/aip/g-…/oauth/callback</code>），无需在本应用配置。Token
       交换方式选默认即可。
@@ -355,12 +363,25 @@
   {/if}
 
   <div class="flex justify-end pt-1">
-    <button
+    <Button
       type="submit"
-      class="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+      variant="primary"
+      busy={saving}
       disabled={saving || !dirty}
     >
       {saving ? "保存中…" : "保存配置"}
-    </button>
+    </Button>
   </div>
 </form>
+
+<ConfirmDialog
+  open={!!confirmRegenerateTarget}
+  title="重新生成 Actions 凭据确认"
+  confirmText="确认重新生成"
+  severity="warning"
+  busy={regenerating || regeneratingOAuthSecret || regeneratingOAuthPassword || regeneratingOAuthTokenSecret}
+  onConfirm={handleConfirmRegenerate}
+  onCancel={() => { confirmRegenerateTarget = null; }}
+>
+  <p>重新生成后，之前配置在外部 GPT Actions 中的密钥将立即失效，需同步更新至 ChatGPT 编辑器后方可恢复调用。</p>
+</ConfirmDialog>

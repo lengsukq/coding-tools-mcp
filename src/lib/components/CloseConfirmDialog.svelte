@@ -1,5 +1,8 @@
 <script lang="ts">
+  import Modal from "$lib/components/ui/Modal.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
   import { hideToTray, quitApp } from "$lib/api/window-chrome";
+  import { AlertCircle } from "@lucide/svelte";
 
   interface Props {
     open?: boolean;
@@ -35,45 +38,45 @@
   }
 </script>
 
-{#if open}
-  <div class="tx-close-overlay" role="presentation">
-    <div
-      class="tx-close-dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="tx-close-title"
-      aria-describedby="tx-close-desc"
-    >
-      <h2 id="tx-close-title" class="tx-close-title">关闭 Coding Tools MCP?</h2>
-      <p id="tx-close-desc" class="tx-close-desc">
-        选择后台运行可隐藏窗口并保持 MCP、Actions 和隧道服务继续运行，之后可通过系统托盘重新打开。
+<Modal {open} onclose={onCancel} showClose={!busy} maxWidth="max-w-md">
+  <div class="flex items-start gap-3.5">
+    <div class="size-10 rounded-xl flex items-center justify-center shrink-0 bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20">
+      <AlertCircle size={20} strokeWidth={2.2} />
+    </div>
+    <div class="min-w-0 flex-1">
+      <h3 class="text-base font-semibold text-[var(--text-main)] tracking-tight">
+        关闭 Coding Tools MCP?
+      </h3>
+      <p class="text-xs text-[var(--text-secondary)] mt-1.5 leading-relaxed">
+        选择后台运行可隐藏窗口，保持正在运行的 MCP、Actions 与公网隧道服务持续可用；后续可通过系统托盘重新呼出。
       </p>
-      <div class="tx-close-actions">
-        <button
-          type="button"
-          class="tx-btn-ghost"
-          disabled={busy}
-          onclick={() => onCancel?.()}
-        >
-          取消
-        </button>
-        <button
-          type="button"
-          class="tx-btn-ghost"
-          disabled={busy}
-          onclick={() => void runBackground()}
-        >
-          后台运行
-        </button>
-        <button
-          type="button"
-          class="tx-btn-primary tx-btn-danger"
-          disabled={busy}
-          onclick={() => void runQuit()}
-        >
-          直接关闭
-        </button>
-      </div>
     </div>
   </div>
-{/if}
+
+  <div class="mt-6 flex items-center justify-end gap-2.5 pt-3 border-t border-[var(--border)]">
+    <Button
+      variant="ghost"
+      size="md"
+      disabled={busy}
+      onclick={() => onCancel?.()}
+    >
+      取消
+    </Button>
+    <Button
+      variant="secondary"
+      size="md"
+      disabled={busy}
+      onclick={() => void runBackground()}
+    >
+      后台运行
+    </Button>
+    <Button
+      variant="danger"
+      size="md"
+      {busy}
+      onclick={() => void runQuit()}
+    >
+      彻底退出
+    </Button>
+  </div>
+</Modal>

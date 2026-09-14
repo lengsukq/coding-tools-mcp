@@ -1,5 +1,6 @@
 <script lang="ts">
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
   import { APP_VERSION } from "$lib/app-version";
   import { REPO_URL } from "$lib/app-links";
   import { openUrl } from "$lib/api/app-info";
@@ -36,11 +37,11 @@
 
 <div class="app-layout">
   <aside class="tx-sidebar">
-    <div class="tx-sidebar-header">
-      <div class="flex items-start justify-between gap-2">
-        <div class="tx-brand-lockup">
+    <div class="tx-sidebar-header" data-tauri-drag-region>
+      <div class="flex items-start justify-between gap-2" data-tauri-drag-region>
+        <div class="tx-brand-lockup cursor-default select-none" data-tauri-drag-region>
           <div class="tx-brand-mark" aria-hidden="true">CT</div>
-          <div class="min-w-0">
+          <div class="min-w-0" data-tauri-drag-region>
             <p class="tx-brand-kicker">Coding Tools</p>
             <h1 class="tx-brand-title">桌面控制台</h1>
           </div>
@@ -48,10 +49,17 @@
         <ThemeToggle />
       </div>
       {#if onAddWorkspace}
-        <button type="button" class="tx-btn-primary tx-btn-sidebar" onclick={onAddWorkspace}>
-          <Plus size={15} strokeWidth={2.2} />
-          添加工作区
-        </button>
+        <div class="mt-3.5">
+          <Button
+            variant="primary"
+            size="md"
+            class="w-full justify-center shadow-sm"
+            onclick={onAddWorkspace}
+          >
+            <Plus size={15} strokeWidth={2.2} />
+            <span>添加工作区</span>
+          </Button>
+        </div>
       {/if}
     </div>
 
@@ -70,7 +78,7 @@
           class:active={settingsActive}
           onclick={onOpenSettings}
         >
-          <Settings size={16} strokeWidth={2} />
+          <Settings size={15} strokeWidth={2} />
           <span>设置</span>
         </button>
       {/if}
@@ -86,7 +94,7 @@
 
   <main class="tx-main">
     {#if settingsActive && settingsNav}
-      <div class="tx-settings-tabs">
+      <div class="tx-settings-tabs" data-tauri-drag-region>
         <div class="tx-settings-tabs-inner">
           {@render settingsNav()}
         </div>

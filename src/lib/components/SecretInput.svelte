@@ -1,5 +1,6 @@
 <script lang="ts">
   import CopyButton from "$lib/components/CopyButton.svelte";
+  import Button from "$lib/components/ui/Button.svelte";
 
   interface Props {
     value?: string;
@@ -73,13 +74,15 @@
     <CopyButton {value} />
   {/if}
   {#if onRegenerate}
-    <button
+    <Button
       type="button"
-      class="shrink-0 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+      variant="secondary"
+      size="sm"
       disabled={regenerating || disabled}
+      busy={regenerating}
       onclick={() => onRegenerate?.()}
     >
       {regenerating ? "生成中…" : "重新生成"}
-    </button>
+    </Button>
   {/if}
 </div>
