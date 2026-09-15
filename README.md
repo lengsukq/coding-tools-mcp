@@ -388,7 +388,11 @@ check_exec_environment
 
 聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；旧工具继续保留给兼容 profile。
 
-长运行命令现在归属于 Workspace Runtime，而不是某一次 MCP transport 连接。`exec_command` 返回稳定 `command_id`，重新连接或从同一 Workspace 的另一运行入口仍可继续 `read_output` / `write_stdin` / `kill_session`；旧 `session_id` 参数继续兼容。stdout/stderr 各自保留固定预算的 Head + Tail，中间被淘汰的内容通过 `evicted_bytes` 明确报告，避免长日志只剩最后几行而丢失最初错误。
+长运行命令现在归属于 Workspace Runtime，而不是某一次 MCP transport 连接。`exec_command` 返回稳定 `command_id`，重新连接或从同一 Workspace 的另一运行入口仍可继续 `read_output` / `write_stdin` / `kill_session`；旧 `session_id` 参数继续兼容。stdout/stderr 在内存中保留固定预算的 Head + Tail 作为低延迟预览，同时完整原始输出会写入应用缓存目录；因此普通同步命令结束并从 SessionStore 回收后，稳定 `output_ref` 仍可分页读取中间内容。`read_output` 还支持 `query` / `regex` / `case_sensitive` 的受限日志搜索，完整日志不直接塞回模型上下文。
+
+`exec_command(action=quality_gate)` 复用同一 Tool Surface 自动发现项目已有的 lint/check/typecheck/test/build/format 检查，支持 `dry_run`、`checks` 过滤和 `stop_on_failure`。每个派生检查都会重新经过现有命令策略，并返回紧凑的 `PASS/WARN/FAIL`、耗时、关键错误/警告计数及独立 `output_ref`；不会自动安装依赖、deploy 或 publish。
+
+`server_info` 的 `runtime` 元数据包含 `runtime_id`、启动时间、应用版本、构建身份以及当前 Tool Profile 的 `tool_schema_version` / `tool_schema_hash`。客户端可以回传 `known_schema_hash`，在工具 Schema 已变化时得到 `schema_changed` / `reconnect_recommended`，避免继续误用旧 Runtime 或旧工具定义。
 
 典型开发过程：
 

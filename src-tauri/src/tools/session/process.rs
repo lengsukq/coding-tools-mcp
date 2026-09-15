@@ -1,4 +1,5 @@
 use super::buffer::RetainedBuffer;
+use super::output_store::CommandOutputStore;
 use super::*;
 
 pub struct ExecSession {
@@ -9,6 +10,7 @@ pub struct ExecSession {
     interactive: bool,
     stdout: Mutex<RetainedBuffer>,
     stderr: Mutex<RetainedBuffer>,
+    output_store: Option<Arc<CommandOutputStore>>,
     pub started_at: Instant,
     created_at: String,
     started_at_wall: String,
@@ -36,6 +38,7 @@ impl ExecSession {
             interactive,
             stdout: Mutex::new(RetainedBuffer::default()),
             stderr: Mutex::new(RetainedBuffer::default()),
+            output_store: None,
             started_at: Instant::now(),
             created_at: unix_timestamp(),
             started_at_wall: unix_timestamp(),
@@ -44,6 +47,12 @@ impl ExecSession {
             exited: AtomicBool::new(false),
             termination_reason: Mutex::new(None),
             reader_tasks: AsyncMutex::new(Vec::new()),
+        }
+    }
+
+    pub(super) fn attach_output_store(&mut self, output_store: Arc<CommandOutputStore>) {
+        if output_store.prepare_command(&self.session_id) {
+            self.output_store = Some(output_store);
         }
     }
 
@@ -83,6 +92,11 @@ impl ExecSession {
     where
         T: tokio::io::AsyncRead + Unpin,
     {
+        let stream_name = if is_stdout { "stdout" } else { "stderr" };
+        let mut full_writer = match &self.output_store {
+            Some(store) => store.open_writer(&self.session_id, stream_name).await,
+            None => None,
+        };
         let mut buf = [0u8; 4096];
         loop {
             match stream.read(&mut buf).await {
@@ -96,9 +110,17 @@ impl ExecSession {
                         let mut data = self.stderr.lock().expect("stderr lock");
                         data.append(chunk);
                     }
+                    if let Some(writer) = full_writer.as_mut() {
+                        if writer.write_all(chunk).await.is_err() {
+                            full_writer = None;
+                        }
+                    }
                 }
                 Err(_) => break,
             }
+        }
+        if let Some(writer) = full_writer.as_mut() {
+            let _ = writer.flush().await;
         }
     }
 
@@ -232,6 +254,7 @@ impl ExecSession {
                 "stdout": format!("command:{}:stdout", self.session_id),
                 "stderr": format!("command:{}:stderr", self.session_id)
             },
+            "raw_output_available": self.output_store.is_some(),
             "legacy_output_refs": {
                 "stdout": format!("session:{}:stdout", self.session_id),
                 "stderr": format!("session:{}:stderr", self.session_id)

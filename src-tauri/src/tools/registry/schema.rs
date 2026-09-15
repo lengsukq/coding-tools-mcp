@@ -97,6 +97,17 @@ fn task_manage_schema() -> Value {
 
 pub fn input_schema(name: &str) -> Value {
     match name {
+        "server_info" => json!({
+            "type": "object",
+            "properties": {
+                "known_schema_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional schema hash remembered by the client. server_info reports schema_changed/reconnect_recommended when it differs."
+                }
+            },
+            "additionalProperties": false
+        }),
         "history_manage" => history_manage_schema(),
         "planning_manage" => planning_manage_schema(),
         "task_manage" => task_manage_schema(),
@@ -427,18 +438,22 @@ pub fn input_schema(name: &str) -> Value {
         "exec_command" => json!({
             "type": "object",
             "properties": {
+                "action": { "type": "string", "enum": ["run", "quality_gate"], "default": "run", "description": "run executes cmd; quality_gate discovers and runs safe project verification checks without adding another public tool." },
+                "preset": { "type": "string", "enum": ["quality_gate"], "description": "Backward-compatible alias for action=quality_gate." },
                 "cmd": { "type": "string", "minLength": 1 },
                 "workdir": { "type": "string", "default": "." },
                 "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000, "default": 30000 },
-                "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 32768 },
+                "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 12288 },
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
                 "tty": { "type": "boolean", "default": false },
                 "stdin": { "type": "string", "default": "" },
+                "checks": { "type": "array", "items": { "type": "string" }, "description": "For quality_gate, filter discovered checks by id (for example package:test) or category (lint/check/typecheck/test/build/format)." },
+                "dry_run": { "type": "boolean", "default": false },
+                "stop_on_failure": { "type": "boolean", "default": true },
                 "confirm": { "type": "boolean", "default": false },
                 "filesystem_scope": { "type": "string", "enum": ["workspace"], "default": "workspace" },
                 "reason": { "type": "string", "default": "" }
             },
-            "required": ["cmd"],
             "additionalProperties": false
         }),
         "write_stdin" => json!({
@@ -469,7 +484,11 @@ pub fn input_schema(name: &str) -> Value {
                 "output_ref": { "type": "string", "minLength": 1 },
                 "stream": { "type": "string", "enum": ["stdout", "stderr"] },
                 "offset": { "type": "integer", "minimum": 0, "default": 0 },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 4096 }
+                "limit": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 4096 },
+                "query": { "type": "string", "minLength": 1 },
+                "regex": { "type": "boolean", "default": false },
+                "case_sensitive": { "type": "boolean", "default": false },
+                "max_matches": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
             },
             "required": ["output_ref"],
             "additionalProperties": false

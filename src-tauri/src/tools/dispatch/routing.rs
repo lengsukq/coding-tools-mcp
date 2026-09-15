@@ -26,7 +26,7 @@ pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> Works
         "update_plan" => planning::update_plan(ctx, args),
         "request_goal_review" => planning::request_goal_review(ctx, args),
         "request_plan_review" => planning::request_plan_review(ctx, args),
-        "server_info" => super::server_info(ctx),
+        "server_info" => super::server_info(ctx, args),
         "check_exec_environment" => super::check_exec_environment(ctx),
         "exec_health_check" => exec::exec_health_check(ctx),
         "get_default_cwd" => super::get_default_cwd(ctx),

@@ -201,6 +201,7 @@ pub fn validate_tool_arguments_for_workspace(
     workspace: Option<&Workspace>,
 ) -> Result<(), PolicyError> {
     match tool_name {
+        "exec_command" if is_quality_gate_request(arguments) => validate_exec_boundary(arguments),
         "exec_command" => validate_command_for_workspace(arguments, policy, workspace),
         "apply_patch" | "patch_check" => validate_patch(arguments, policy),
         _ => Ok(()),
@@ -216,6 +217,7 @@ pub fn validate_command_for_workspace(
     policy: &PolicySettings,
     workspace: Option<&Workspace>,
 ) -> Result<(), PolicyError> {
+    validate_exec_boundary(arguments)?;
     let command = arguments
         .get("cmd")
         .and_then(Value::as_str)
@@ -225,25 +227,6 @@ pub fn validate_command_for_workspace(
     }
     if command.len() > 4_000 {
         return Err(PolicyError("Command is too long".into()));
-    }
-    let filesystem_scope = arguments
-        .get("filesystem_scope")
-        .and_then(Value::as_str)
-        .unwrap_or("workspace");
-    if filesystem_scope != "workspace" {
-        return Err(PolicyError(
-            "EXTERNAL_EXECUTION_NOT_ALLOWED: exec_command 只允许在 Workspace 内执行".into(),
-        ));
-    }
-    for key in ["workdir", "cwd"] {
-        if let Some(workdir) = arguments.get(key).and_then(Value::as_str) {
-            let path = Path::new(workdir);
-            if path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
-                return Err(PolicyError(
-                    "workdir must stay inside the configured workspace".into(),
-                ));
-            }
-        }
     }
     if has_forbidden_shell_syntax(command) {
         return Err(PolicyError(
@@ -322,6 +305,34 @@ pub fn validate_command_for_workspace(
         }
     }
 
+    Ok(())
+}
+
+fn is_quality_gate_request(arguments: &Value) -> bool {
+    arguments.get("action").and_then(Value::as_str) == Some("quality_gate")
+        || arguments.get("preset").and_then(Value::as_str) == Some("quality_gate")
+}
+
+fn validate_exec_boundary(arguments: &Value) -> Result<(), PolicyError> {
+    let filesystem_scope = arguments
+        .get("filesystem_scope")
+        .and_then(Value::as_str)
+        .unwrap_or("workspace");
+    if filesystem_scope != "workspace" {
+        return Err(PolicyError(
+            "EXTERNAL_EXECUTION_NOT_ALLOWED: exec_command 只允许在 Workspace 内执行".into(),
+        ));
+    }
+    for key in ["workdir", "cwd"] {
+        if let Some(workdir) = arguments.get(key).and_then(Value::as_str) {
+            let path = Path::new(workdir);
+            if path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+                return Err(PolicyError(
+                    "workdir must stay inside the configured workspace".into(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

@@ -54,7 +54,7 @@ impl CommandRunOptions {
             max_output: args
                 .get("max_output_bytes")
                 .and_then(Value::as_u64)
-                .unwrap_or(32_768) as usize,
+                .unwrap_or(12_288) as usize,
             tty: args.get("tty").and_then(Value::as_bool).unwrap_or(false),
             stdin_text: args
                 .get("stdin")
@@ -72,7 +72,7 @@ fn required_command(args: &Value) -> Result<String, WorkspaceError> {
         .ok_or_else(|| WorkspaceError::invalid_argument("cmd is required"))
 }
 
-fn resolve_workdir(ctx: &ToolContext, args: &Value) -> Result<PathBuf, WorkspaceError> {
+pub(super) fn resolve_workdir(ctx: &ToolContext, args: &Value) -> Result<PathBuf, WorkspaceError> {
     let raw = args
         .get("workdir")
         .or_else(|| args.get("cwd"))
@@ -87,7 +87,7 @@ fn resolve_workdir(ctx: &ToolContext, args: &Value) -> Result<PathBuf, Workspace
     Ok(resolved.path)
 }
 
-fn filesystem_scope(args: &Value) -> Result<String, WorkspaceError> {
+pub(super) fn filesystem_scope(args: &Value) -> Result<String, WorkspaceError> {
     let scope = args
         .get("filesystem_scope")
         .and_then(Value::as_str)

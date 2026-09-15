@@ -365,7 +365,7 @@ History uses readable Markdown that can be backed up or committed with the proje
 
 ## What an agent can do
 
-The default `core` profile provides a stable, composable development tool set:
+The default `compact` profile provides a stable, composable development tool set; `core` and `advanced` remain available as legacy-compatible profiles:
 
 | Category | Main tools |
 | --- | --- |
@@ -378,7 +378,11 @@ The default `core` profile provides a stable, composable development tool set:
 
 Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while legacy profiles retain the old tool names.
 
-Long-running commands are owned by the Workspace Runtime rather than one MCP transport connection. `exec_command` returns a stable `command_id`, so reconnecting or using another runtime entry point for the same Workspace can continue with `read_output`, `write_stdin`, or `kill_session`; legacy `session_id` arguments remain supported. stdout and stderr each retain a bounded head and tail, while discarded middle bytes are reported through `evicted_bytes` so long logs preserve both the first diagnostic and the latest output.
+Long-running commands are owned by the Workspace Runtime rather than one MCP transport connection. `exec_command` returns a stable `command_id`, so reconnecting or using another runtime entry point for the same Workspace can continue with `read_output`, `write_stdin`, or `kill_session`; legacy `session_id` arguments remain supported. stdout and stderr keep a bounded in-memory head and tail for low-latency previews while the complete raw streams are appended to the application cache. A stable `output_ref` therefore remains pageable after a normal synchronous command has completed and its SessionStore entry has been reclaimed. `read_output` also supports bounded `query` / `regex` / `case_sensitive` searches without injecting the entire raw log into model context.
+
+`exec_command(action=quality_gate)` reuses the same Tool Surface to discover existing lint/check/typecheck/test/build/format checks. It supports `dry_run`, `checks` filtering, and `stop_on_failure`; every derived command is revalidated by the normal command policy and returns compact `PASS/WARN/FAIL` evidence, duration, key error/warning counts, and its own `output_ref`. The gate does not install dependencies, deploy, or publish.
+
+`server_info.runtime` exposes a `runtime_id`, start time, application version, build identity, and the active Tool Profile's `tool_schema_version` / `tool_schema_hash`. A client can send `known_schema_hash` and receive `schema_changed` / `reconnect_recommended` when its cached Tool Schema is stale.
 
 A typical development loop is:
 

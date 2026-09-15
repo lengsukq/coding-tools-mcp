@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 mod api;
 mod buffer;
+mod output_store;
 mod process;
 mod signal;
 mod store;
@@ -41,6 +42,7 @@ static WORKSPACE_SESSION_STORES: OnceLock<Mutex<HashMap<PathBuf, Arc<SessionStor
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<ExecSession>>>,
     evicted: Mutex<HashMap<String, EvictedCommand>>,
+    output_store: Arc<output_store::CommandOutputStore>,
 }
 
 fn unix_timestamp() -> String {
@@ -50,11 +52,14 @@ fn unix_timestamp() -> String {
         .unwrap_or_else(|_| "0".into())
 }
 
-impl Default for SessionStore {
-    fn default() -> Self {
+impl SessionStore {
+    fn for_workspace(workspace_root: &Path) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             evicted: Mutex::new(HashMap::new()),
+            output_store: Arc::new(output_store::CommandOutputStore::for_workspace(
+                workspace_root,
+            )),
         }
     }
 }
@@ -63,6 +68,8 @@ impl Default for SessionStore {
 mod tests {
     use super::buffer::RetainedBuffer;
     use super::*;
+    use tempfile::tempdir;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn retained_buffer_keeps_head_and_tail_of_large_stream() {
@@ -119,5 +126,78 @@ mod tests {
         assert!(preview.truncated);
         assert!(preview.content.contains("PREVIEW_HEAD"));
         assert!(preview.content.contains("PREVIEW_TAIL"));
+    }
+
+    #[test]
+    fn full_output_ref_survives_without_an_active_session_and_searches_middle_content() {
+        let workspace = tempdir().expect("workspace");
+        let store = SessionStore::for_workspace(workspace.path());
+        let command_id = "completed-command";
+        assert!(store.output_store.prepare_command(command_id));
+        let mut writer =
+            tauri::async_runtime::block_on(store.output_store.open_writer(command_id, "stdout"))
+                .expect("full output writer");
+        let mut payload = Vec::new();
+        payload.extend_from_slice(b"FULL_HEAD\n");
+        payload.extend_from_slice(&vec![b'a'; 5_500_000]);
+        let middle_offset = payload.len();
+        payload.extend_from_slice(b"\nFULL_MIDDLE_MARKER\n");
+        payload.extend_from_slice(&vec![b'b'; 5_500_000]);
+        payload.extend_from_slice(b"\nFULL_TAIL\n");
+        tauri::async_runtime::block_on(writer.write_all(&payload)).expect("write full output");
+        tauri::async_runtime::block_on(writer.flush()).expect("flush full output");
+        drop(writer);
+        store.evicted.lock().expect("evicted lock").insert(
+            command_id.to_string(),
+            EvictedCommand {
+                command_id: command_id.to_string(),
+                evicted_at: unix_timestamp(),
+                termination_reason: "exited".into(),
+                exit_code: Some(0),
+            },
+        );
+
+        let page = api::read_output(
+            &store,
+            &json!({
+                "output_ref": format!("command:{command_id}:stdout"),
+                "offset": middle_offset,
+                "limit": 128
+            }),
+        )
+        .expect("read persisted output");
+        assert_eq!(page["source"], "full");
+        assert_eq!(page["raw_available"], true);
+        assert!(page["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("FULL_MIDDLE_MARKER"));
+
+        let search = api::read_output(
+            &store,
+            &json!({
+                "output_ref": format!("command:{command_id}:stdout"),
+                "query": "FULL_MIDDLE_MARKER"
+            }),
+        )
+        .expect("search persisted output");
+        assert_eq!(search["mode"], "search");
+        assert_eq!(search["total_matches"], 1);
+        assert_eq!(search["matches"][0]["offset"], middle_offset as u64 + 1);
+
+        let legacy = api::read_output(
+            &store,
+            &json!({
+                "output_ref": format!("session:{command_id}:stdout"),
+                "offset": middle_offset,
+                "limit": 128
+            }),
+        )
+        .expect("legacy ref remains readable");
+        assert_eq!(legacy["source"], "full");
+        assert!(legacy["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("FULL_MIDDLE_MARKER"));
     }
 }

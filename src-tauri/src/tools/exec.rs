@@ -7,7 +7,9 @@ use crate::tools::context::ToolContext;
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 
 mod diagnostics;
+mod output;
 mod platform;
+mod quality_gate;
 mod request;
 mod resolver;
 mod runner;
@@ -21,6 +23,19 @@ use resolver::{resolve_program, which_on_path};
 use runner::run_command;
 
 pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
+    let action = args
+        .get("action")
+        .and_then(Value::as_str)
+        .or_else(|| args.get("preset").and_then(Value::as_str))
+        .unwrap_or("run");
+    if action == "quality_gate" {
+        return quality_gate::quality_gate(ctx, args);
+    }
+    if action != "run" {
+        return Err(WorkspaceError::invalid_argument(
+            "exec_command action must be run or quality_gate",
+        ));
+    }
     let request = ExecRequest::parse(ctx, args)?;
     if let Some(result) = run_native_diagnostic(ctx, &request.cmd, &request.workdir)? {
         let mut result = result;

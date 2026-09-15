@@ -8,6 +8,7 @@ use crate::tools::context::ToolContext;
 use crate::tools::session::{ExecSession, SessionStore};
 use crate::tools::workspace::WorkspaceError;
 
+use super::output::enrich_exec_result;
 use super::platform::{command_for_program, platform_command_path};
 use super::request::CommandRunOptions;
 use super::resolver::parse_and_resolve;
@@ -254,5 +255,6 @@ fn merge_exec_result(
             }),
         );
     }
+    enrich_exec_result(command, &mut snapshot);
     snapshot
 }

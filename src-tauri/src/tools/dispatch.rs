@@ -643,13 +643,17 @@ fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String
         .collect()
 }
 
-pub fn server_info(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
+pub fn server_info(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
     let tools = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
     let history_context = crate::tools::history::context_snapshot(ctx).ok().flatten();
+    let known_schema_hash = args.get("known_schema_hash").and_then(Value::as_str);
+    let runtime =
+        crate::tools::runtime_info::fingerprint(ctx.tool_profile.as_str(), known_schema_hash);
     Ok(tool_ok(json!({
         "server": "coding-tools-mcp",
         "title": "Coding Tools MCP",
         "version": env!("CARGO_PKG_VERSION"),
+        "runtime": runtime,
         "protocol_version": crate::mcp::LATEST_PROTOCOL_VERSION,
         "supported_protocol_versions": crate::mcp::SUPPORTED_PROTOCOL_VERSIONS,
         "workspace": ctx.workspace.root_display(),

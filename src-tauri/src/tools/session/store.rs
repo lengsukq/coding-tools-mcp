@@ -2,10 +2,26 @@ use super::*;
 
 #[derive(Debug, Clone)]
 pub(super) struct EvictedCommand {
-    command_id: String,
-    evicted_at: String,
-    termination_reason: String,
-    exit_code: Option<i32>,
+    pub(super) command_id: String,
+    pub(super) evicted_at: String,
+    pub(super) termination_reason: String,
+    pub(super) exit_code: Option<i32>,
+}
+
+fn evicted_command_error(session_id: &str, evicted: EvictedCommand) -> WorkspaceError {
+    WorkspaceError::ToolDetails {
+        code: "COMMAND_EVICTED",
+        message: format!("Command output is no longer retained: {session_id}"),
+        category: "runtime",
+        retryable: false,
+        details: json!({
+            "command_id": evicted.command_id,
+            "command_state": "evicted",
+            "evicted_at": evicted.evicted_at,
+            "termination_reason": evicted.termination_reason,
+            "exit_code": evicted.exit_code
+        }),
+    }
 }
 
 pub(super) fn command_id_arg(args: &Value) -> Result<&str, WorkspaceError> {
@@ -21,11 +37,8 @@ pub(super) fn command_id_arg(args: &Value) -> Result<&str, WorkspaceError> {
 }
 
 impl SessionStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&self, session: ExecSession) -> Arc<ExecSession> {
+    pub fn insert(&self, mut session: ExecSession) -> Arc<ExecSession> {
+        session.attach_output_store(self.output_store.clone());
         let arc = Arc::new(session);
         self.sessions
             .lock()
@@ -35,35 +48,11 @@ impl SessionStore {
     }
 
     pub fn get(&self, session_id: &str) -> Result<Arc<ExecSession>, WorkspaceError> {
-        if let Some(session) = self
-            .sessions
-            .lock()
-            .expect("sessions lock")
-            .get(session_id)
-            .cloned()
-        {
+        if let Some(session) = self.active_session(session_id) {
             return Ok(session);
         }
-        if let Some(evicted) = self
-            .evicted
-            .lock()
-            .expect("evicted commands lock")
-            .get(session_id)
-            .cloned()
-        {
-            return Err(WorkspaceError::ToolDetails {
-                code: "COMMAND_EVICTED",
-                message: format!("Command output is no longer retained: {session_id}"),
-                category: "runtime",
-                retryable: false,
-                details: json!({
-                    "command_id": evicted.command_id,
-                    "command_state": "evicted",
-                    "evicted_at": evicted.evicted_at,
-                    "termination_reason": evicted.termination_reason,
-                    "exit_code": evicted.exit_code
-                }),
-            });
+        if let Some(evicted) = self.evicted_command(session_id) {
+            return Err(evicted_command_error(session_id, evicted));
         }
         Err(WorkspaceError::Tool {
             code: "SESSION_NOT_FOUND",
@@ -71,6 +60,43 @@ impl SessionStore {
             category: "not_found",
             retryable: false,
         })
+    }
+
+    pub(super) fn output_read_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<ExecSession>>, WorkspaceError> {
+        if let Some(session) = self.active_session(session_id) {
+            return Ok(Some(session));
+        }
+        if let Some(evicted) = self.evicted_command(session_id) {
+            if evicted.termination_reason == "exited" {
+                return Ok(None);
+            }
+            return Err(evicted_command_error(session_id, evicted));
+        }
+        Err(WorkspaceError::Tool {
+            code: "SESSION_NOT_FOUND",
+            message: format!("Command not found: {session_id}"),
+            category: "not_found",
+            retryable: false,
+        })
+    }
+
+    fn active_session(&self, session_id: &str) -> Option<Arc<ExecSession>> {
+        self.sessions
+            .lock()
+            .expect("sessions lock")
+            .get(session_id)
+            .cloned()
+    }
+
+    fn evicted_command(&self, session_id: &str) -> Option<EvictedCommand> {
+        self.evicted
+            .lock()
+            .expect("evicted commands lock")
+            .get(session_id)
+            .cloned()
     }
 
     pub fn remove(&self, session_id: &str) {
@@ -101,6 +127,37 @@ impl SessionStore {
                 },
             );
         }
+        self.output_store.cleanup_best_effort();
+    }
+
+    pub(super) fn full_output_page(
+        &self,
+        command_id: &str,
+        stream: &str,
+        offset: usize,
+        limit: usize,
+    ) -> std::io::Result<Option<super::output_store::FullOutputPage>> {
+        self.output_store
+            .read_page(command_id, stream, offset, limit)
+    }
+
+    pub(super) fn search_full_output(
+        &self,
+        command_id: &str,
+        stream: &str,
+        query: &str,
+        regex: bool,
+        case_sensitive: bool,
+        max_matches: usize,
+    ) -> std::io::Result<Option<Value>> {
+        self.output_store.search(
+            command_id,
+            stream,
+            query,
+            regex,
+            case_sensitive,
+            max_matches,
+        )
     }
 
     fn session_ids(&self) -> Vec<String> {
@@ -118,7 +175,7 @@ pub fn workspace_session_store(workspace_root: &Path) -> Arc<SessionStore> {
     let mut registry = registry.lock().expect("workspace session registry lock");
     registry
         .entry(workspace_root.to_path_buf())
-        .or_insert_with(|| Arc::new(SessionStore::new()))
+        .or_insert_with(|| Arc::new(SessionStore::for_workspace(workspace_root)))
         .clone()
 }
 
@@ -132,7 +189,7 @@ pub fn kill_workspace_sessions(workspace_root: &Path) -> usize {
                 .get(workspace_root)
                 .cloned()
         })
-        .unwrap_or_else(|| Arc::new(SessionStore::new()));
+        .unwrap_or_else(|| Arc::new(SessionStore::for_workspace(workspace_root)));
 
     store
         .session_ids()

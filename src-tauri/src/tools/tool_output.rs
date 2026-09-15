@@ -12,6 +12,42 @@ pub fn tool_ok(mut value: Value) -> Value {
     value
 }
 
+fn quality_gate_content(structured: &Value) -> String {
+    let status = str_field(structured, "status");
+    let summary = str_field(structured, "summary");
+    let duration = u64_field(structured, "duration_ms");
+    let mut out = format!("Quality Gate {status}: {summary}");
+    if duration > 0 {
+        out.push_str(&format!(" ({duration}ms)"));
+    }
+    if let Some(checks) = structured.get("checks").and_then(Value::as_array) {
+        for check in checks {
+            let id = str_field(check, "id");
+            let step_status = str_field(check, "status");
+            let command = str_field(check, "command");
+            if step_status.is_empty() {
+                out.push_str(&format!("\n- {id}: {command}"));
+                continue;
+            }
+            out.push_str(&format!("\n- {step_status} {id}: {command}"));
+            if let Some(summary) = check.get("summary") {
+                let text = str_field(summary, "summary");
+                if !text.is_empty() {
+                    out.push_str(&format!(" — {text}"));
+                }
+            }
+            if let Some(refs) = check.get("output_refs") {
+                let stdout_ref = str_field(refs, "stdout");
+                let stderr_ref = str_field(refs, "stderr");
+                if !stdout_ref.is_empty() || !stderr_ref.is_empty() {
+                    out.push_str(&format!("\n  refs stdout={stdout_ref} stderr={stderr_ref}"));
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn tool_err(error: WorkspaceError) -> Value {
     json!({
         "ok": false,
@@ -24,7 +60,7 @@ pub fn tool_err(error: WorkspaceError) -> Value {
 /// content 文本总预算（字节）；超出按 UTF-8 安全边界截断，完整结果仍在 structuredContent。
 const CONTENT_TEXT_BUDGET: usize = 32 * 1024;
 /// 执行类结果中 stdout/stderr 各自的 head+tail 预览预算（字节）。
-const EXEC_STREAM_PREVIEW_BYTES: usize = 8 * 1024;
+const EXEC_STREAM_PREVIEW_BYTES: usize = 2 * 1024;
 
 const CONTENT_TRUNCATION_MARKER: &str =
     "\n...[content budget truncated; full result available in structuredContent]";
@@ -217,6 +253,12 @@ fn listing_content(structured: &Value) -> String {
 }
 
 fn exec_content(structured: &Value) -> String {
+    if structured.get("mode").and_then(Value::as_str) == Some("quality_gate") {
+        return quality_gate_content(structured);
+    }
+    if structured.get("mode").and_then(Value::as_str) == Some("search") {
+        return output_search_content(structured);
+    }
     let status = str_field(structured, "status");
     let exit_code = structured
         .get("exit_code")
@@ -236,8 +278,52 @@ fn exec_content(structured: &Value) -> String {
     };
     let mut out =
         format!("exit_code={exit_code} status={status} reason={reason} command={command_id}");
+    if let Some(summary) = structured.get("output_summary") {
+        let kind = str_field(summary, "kind");
+        let text = str_field(summary, "summary");
+        let original = u64_field(summary, "original_bytes");
+        let returned = u64_field(summary, "returned_preview_bytes");
+        let errors = u64_field(summary, "errors");
+        let warnings = u64_field(summary, "warnings");
+        out.push_str(&format!(
+            "\nsummary={text} kind={kind} errors={errors} warnings={warnings} bytes={returned}/{original}"
+        ));
+        if let Some(highlights) = summary.get("highlights").and_then(Value::as_array) {
+            for line in highlights.iter().filter_map(Value::as_str).take(10) {
+                out.push_str(&format!("\n! {line}"));
+            }
+        }
+    }
     append_stream_section(&mut out, "stdout", structured);
     append_stream_section(&mut out, "stderr", structured);
+    if let Some(refs) = structured.get("output_refs") {
+        let stdout_ref = str_field(refs, "stdout");
+        let stderr_ref = str_field(refs, "stderr");
+        if !stdout_ref.is_empty() || !stderr_ref.is_empty() {
+            out.push_str(&format!(
+                "\noutput_refs stdout={stdout_ref} stderr={stderr_ref}"
+            ));
+        }
+    }
+    out
+}
+
+fn output_search_content(structured: &Value) -> String {
+    let query = str_field(structured, "query");
+    let total = u64_field(structured, "total_matches");
+    let stream = str_field(structured, "stream");
+    let mut out = format!("output search \"{query}\" in {stream}: {total} match(es)");
+    if let Some(matches) = structured.get("matches").and_then(Value::as_array) {
+        for matched in matches {
+            let line = u64_field(matched, "line");
+            let offset = u64_field(matched, "offset");
+            let preview = str_field(matched, "preview");
+            out.push_str(&format!("\nline {line} @ {offset}: {preview}"));
+        }
+    }
+    if bool_field(structured, "truncated") {
+        out.push_str("\n[match list truncated; narrow query or raise max_matches within limit]");
+    }
     out
 }
 
