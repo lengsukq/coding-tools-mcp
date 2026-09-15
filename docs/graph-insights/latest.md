@@ -72,7 +72,7 @@ Vue 页面 / Vue Router
 
 ## 验证结果
 
-- `npm run version:check`：通过，项目版本 `0.2.5` 一致。
+- `npm run version:check`：通过，项目版本 `0.2.6` 一致。
 - `npm run check`：通过，0 错误、0 警告。
 - `npm run build`：通过，Vue 3 + Vite 生产构建成功，静态产物输出到 `build/`。
 - `npm run test:release`：通过；Rust library 182/182，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7。

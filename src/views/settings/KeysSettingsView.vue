@@ -55,7 +55,7 @@ onMounted(() => { void load(); });
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1000px] px-8 py-7">
+  <div class="mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="共享密钥" description="集中管理 MCP 共享认证凭据；工作区仍可选择使用自己的专属密钥。" />
     <GlassCard>
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>

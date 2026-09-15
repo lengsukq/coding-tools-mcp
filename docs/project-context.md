@@ -7,7 +7,7 @@
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.2.5` |
+| 版本 | `0.2.6` |
 | 桌面端 | Tauri 2 |
 | 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |

@@ -23,7 +23,7 @@
     "runtime_commands": "src-tauri/src/commands/runtime.rs"
   },
   "verification": {
-    "version_check": "passed_0.2.5",
+    "version_check": "passed_0.2.6",
     "vue_check": "passed_zero_errors",
     "frontend_build": "passed",
     "release_gate": "passed",

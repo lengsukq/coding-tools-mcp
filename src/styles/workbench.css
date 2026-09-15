@@ -230,14 +230,18 @@
 }
 
 .tx-settings-tabs {
+  min-height: 46px;
+  padding: 8px 28px 6px;
   border-bottom-color: transparent;
   background: color-mix(in srgb, var(--page-bg) 76%, transparent);
   box-shadow: none;
 }
 
 .tx-settings-tabs-inner {
-  border-color: transparent;
-  background: var(--wb-surface-subtle);
+  width: fit-content;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
 }
 
 .tx-card,
@@ -729,31 +733,60 @@
 }
 
 .wb-activity-row {
-  grid-template-columns: 52px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 54px minmax(0, 1fr) 18px;
   gap: 10px;
-  padding: 7px 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .wb-activity-time { color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
-.wb-activity-row strong { color: var(--text-main); font-size: 11px; }
-.wb-activity-row p { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 10px; }
+.wb-activity-row > div { min-width: 0; }
+.wb-activity-row > svg { justify-self: end; color: var(--text-muted); }
+.wb-activity-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-main); font-size: 11px; font-weight: 650; }
+.wb-activity-row p { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 10px; line-height: 1.25; }
+.wb-activity-row:first-child { border-radius: 11px 11px 0 0; }
+.wb-activity-row:last-child { border-radius: 0 0 11px 11px; }
+.wb-activity-row:only-child { border-radius: 11px; }
+.wb-activity-row:hover { background: color-mix(in srgb, var(--ios-blue) 5%, transparent); }
 
 .wb-ranking {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   align-content: start;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid color-mix(in srgb, var(--text-main) 5%, transparent);
-  border-radius: var(--wb-inner-radius);
+  border-radius: 16px;
   background:
     linear-gradient(150deg, color-mix(in srgb, var(--ios-purple) 4%, transparent), transparent 54%),
     color-mix(in srgb, var(--text-main) 2.1%, transparent);
 }
-.wb-rank-row { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(120px, 1.6fr) 68px; align-items: center; gap: 10px; }
+.wb-rank-row { display: grid; min-height: 28px; grid-template-columns: minmax(110px, .8fr) minmax(120px, 1.6fr) 68px; align-items: center; gap: 10px; }
 .wb-rank-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 10px; }
-.wb-rank-track { height: 6px; overflow: hidden; border-radius: 99px; background: var(--wb-surface-hover); }
+.wb-rank-track { height: 5px; overflow: hidden; border-radius: 99px; background: var(--wb-surface-hover); }
 .wb-rank-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ios-blue), var(--ios-indigo)); transition: width 380ms var(--wb-ease); }
-.wb-rank-row strong { text-align: right; color: var(--text-main); font-size: 10px; font-variant-numeric: tabular-nums; }
+.wb-rank-row strong { text-align: right; color: var(--text-main); font-size: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.wb-ranking > .wb-health-row {
+  min-height: 36px;
+  padding: 7px 2px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.wb-ranking > .wb-health-row:hover { background: transparent; }
+.wb-ranking > .wb-health-row strong { font-weight: 650; }
+.wb-ranking .wb-rank-row + .wb-health-row {
+  margin-top: 4px;
+  padding-top: 11px;
+  border-top: 1px solid color-mix(in srgb, var(--text-main) 6%, transparent);
+}
 
 .wb-health-row {
   grid-template-columns: minmax(0, 1fr) auto;

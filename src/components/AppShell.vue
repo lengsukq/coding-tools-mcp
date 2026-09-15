@@ -100,7 +100,10 @@ async function openRepo() {
           />
         </div>
       </div>
-      <slot />
+      <div v-if="settingsActive" class="ios-settings-scroll">
+        <slot />
+      </div>
+      <slot v-else />
     </main>
   </div>
 </template>
@@ -220,6 +223,16 @@ async function openRepo() {
   flex-direction: column;
   overflow: hidden;
   background: rgba(246,248,252,.68);
+}
+
+.ios-settings-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-behavior: smooth;
 }
 
 :global(.ios-sidebar-workspaces) { display: grid; gap: 4px; }
