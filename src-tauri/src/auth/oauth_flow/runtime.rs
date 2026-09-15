@@ -1,5 +1,128 @@
 use super::*;
 
+const MAX_REGISTRY_BACKUPS: usize = 3;
+
+fn registry_backup_item_id(item_id: &str, slot: usize) -> String {
+    format!("{item_id}.backup-{slot}")
+}
+
+fn parse_client_registry(raw: &str) -> Result<HashMap<String, RegisteredClient>, String> {
+    serde_json::from_str::<HashMap<String, RegisteredClient>>(raw)
+        .map_err(|error| format!("OAuth client registry is corrupt: {error}"))
+}
+
+fn rotate_registry_backups(raw: &str, existing: &[Option<String>]) -> Vec<Option<String>> {
+    let mut rotated = vec![Some(raw.to_string())];
+    rotated.extend(
+        existing
+            .iter()
+            .take(MAX_REGISTRY_BACKUPS.saturating_sub(1))
+            .cloned(),
+    );
+    rotated
+}
+
+fn persist_registry_backups(
+    item_id: &str,
+    backups: &[Option<String>],
+    mut persist: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    for (index, backup) in backups.iter().enumerate() {
+        if let Some(backup) = backup {
+            persist(&registry_backup_item_id(item_id, index + 1), backup)?;
+        }
+    }
+    Ok(())
+}
+
+fn recover_corrupt_client_registry(
+    item_id: &str,
+    raw: &str,
+    existing_backups: &[Option<String>],
+    mut persist: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<(HashMap<String, RegisteredClient>, String), String> {
+    let parse_error = parse_client_registry(raw)
+        .err()
+        .ok_or_else(|| "OAuth client registry is unexpectedly valid".to_string())?;
+
+    let rotated_backups = rotate_registry_backups(raw, existing_backups);
+    persist_registry_backups(item_id, &rotated_backups, &mut persist)?;
+    for (index, backup) in rotated_backups.iter().enumerate().skip(1) {
+        let Some(backup) = backup else {
+            continue;
+        };
+        if let Ok(clients) = parse_client_registry(backup) {
+            persist(item_id, backup)
+                .map_err(|error| format!("Unable to restore OAuth client registry: {error}"))?;
+            return Ok((
+                clients,
+                format!(
+                    "[oauth] client registry was corrupt and restored from backup slot {}",
+                    index + 1
+                ),
+            ));
+        }
+    }
+
+    persist(item_id, "{}")
+        .map_err(|error| format!("Unable to reset OAuth client registry: {error}"))?;
+    Ok((
+        HashMap::new(),
+        format!(
+            "[oauth] client registry was corrupt and reset to an empty registry; original value preserved in backup slot 1 ({parse_error})"
+        ),
+    ))
+}
+
+fn load_registry_backups(scope: &str, item_id: &str) -> Result<Vec<Option<String>>, String> {
+    (1..=MAX_REGISTRY_BACKUPS)
+        .map(|slot| {
+            SecretStore::get_app(scope, &registry_backup_item_id(item_id, slot))
+                .map_err(|error| format!("Unable to inspect OAuth registry backup: {error}"))
+        })
+        .collect()
+}
+
+fn load_app_client_registry(
+    scope: &str,
+    item_id: &str,
+) -> Result<(HashMap<String, RegisteredClient>, Option<String>), String> {
+    let Some(raw) = SecretStore::get_app(scope, item_id)
+        .map_err(|error| format!("Unable to load OAuth client registry: {error}"))?
+    else {
+        return Ok((HashMap::new(), None));
+    };
+
+    match parse_client_registry(&raw) {
+        Ok(clients) => {
+            let backups = load_registry_backups(scope, item_id)?;
+            let has_valid_backup = backups
+                .iter()
+                .flatten()
+                .any(|backup| parse_client_registry(backup).is_ok());
+            if !has_valid_backup {
+                let seeded_backups = rotate_registry_backups(&raw, &backups);
+                if let Err(error) =
+                    persist_registry_backups(item_id, &seeded_backups, |key, value| {
+                        SecretStore::set_app(scope, key, value).map_err(|error| error.to_string())
+                    })
+                {
+                    eprintln!("Unable to seed OAuth registry backups: {error}");
+                }
+            }
+            Ok((clients, None))
+        }
+        Err(_) => {
+            let backups = load_registry_backups(scope, item_id)?;
+            let (clients, notice) =
+                recover_corrupt_client_registry(item_id, &raw, &backups, |key, value| {
+                    SecretStore::set_app(scope, key, value).map_err(|error| error.to_string())
+                })?;
+            Ok((clients, Some(notice)))
+        }
+    }
+}
+
 impl OAuthRuntime {
     pub fn new(
         _base_url: String,
@@ -16,6 +139,7 @@ impl OAuthRuntime {
             pending: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
             client_registry: None,
+            recovery_notice: None,
         }
     }
 
@@ -31,10 +155,7 @@ impl OAuthRuntime {
     ) -> Result<Self, String> {
         let clients = SecretStore::get(&workspace_id, &secret_key)
             .map_err(|error| format!("Unable to load OAuth client registry: {error}"))?
-            .map(|raw| {
-                serde_json::from_str::<HashMap<String, RegisteredClient>>(&raw)
-                    .map_err(|error| format!("OAuth client registry is corrupt: {error}"))
-            })
+            .map(|raw| parse_client_registry(&raw))
             .transpose()?
             .unwrap_or_default();
         let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
@@ -55,18 +176,16 @@ impl OAuthRuntime {
         scope: String,
         item_id: String,
     ) -> Result<Self, String> {
-        let clients = SecretStore::get_app(&scope, &item_id)
-            .map_err(|error| format!("Unable to load OAuth client registry: {error}"))?
-            .map(|raw| {
-                serde_json::from_str::<HashMap<String, RegisteredClient>>(&raw)
-                    .map_err(|error| format!("OAuth client registry is corrupt: {error}"))
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let (clients, recovery_notice) = load_app_client_registry(&scope, &item_id)?;
         let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
         runtime.clients = Arc::new(Mutex::new(clients));
         runtime.client_registry = Some(ClientRegistryPersistence::App { scope, item_id });
+        runtime.recovery_notice = recovery_notice;
         Ok(runtime)
+    }
+
+    pub fn recovery_notice(&self) -> Option<&str> {
+        self.recovery_notice.as_deref()
     }
 
     pub(super) fn insert_registered_client(
@@ -88,6 +207,24 @@ impl OAuthRuntime {
                 } => SecretStore::set(workspace_id, secret_key, &raw),
                 ClientRegistryPersistence::App { scope, item_id } => {
                     SecretStore::set_app(scope, item_id, &raw)
+                        .map_err(|error| error.to_string())?;
+                    match load_registry_backups(scope, item_id) {
+                        Ok(existing_backups) => {
+                            let rotated_backups = rotate_registry_backups(&raw, &existing_backups);
+                            if let Err(error) =
+                                persist_registry_backups(item_id, &rotated_backups, |key, value| {
+                                    SecretStore::set_app(scope, key, value)
+                                        .map_err(|error| error.to_string())
+                                })
+                            {
+                                eprintln!("Unable to persist OAuth registry backups: {error}");
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("Unable to inspect OAuth registry backups: {error}");
+                        }
+                    }
+                    Ok::<(), crate::error::AppError>(())
                 }
             }
             .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
@@ -153,5 +290,96 @@ impl OAuthRuntime {
             &validation,
         )
         .is_ok_and(|data| data.claims.token_use == "access")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_registry_rotates_backups_and_restores_the_oldest_valid_slot() {
+        let mut persisted = HashMap::new();
+        let backup = "{}";
+        let (clients, notice) = recover_corrupt_client_registry(
+            "oauth_dynamic_clients",
+            "not-json",
+            &[
+                Some("also-not-json".to_string()),
+                Some(backup.to_string()),
+                Some("older-valid-value".to_string()),
+            ],
+            |key, value| {
+                persisted.insert(key.to_string(), value.to_string());
+                Ok(())
+            },
+        )
+        .expect("restore corrupt registry");
+
+        assert!(clients.is_empty());
+        assert!(notice.contains("backup slot 3"));
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients"),
+            Some(&backup.to_string())
+        );
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients.backup-1"),
+            Some(&"not-json".to_string())
+        );
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients.backup-2"),
+            Some(&"also-not-json".to_string())
+        );
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients.backup-3"),
+            Some(&backup.to_string())
+        );
+        assert_eq!(persisted.len(), 4);
+    }
+
+    #[test]
+    fn corrupt_registry_is_backed_up_and_reset_without_valid_backup() {
+        let mut persisted = HashMap::new();
+        let raw = "not-json";
+        let (clients, notice) = recover_corrupt_client_registry(
+            "oauth_dynamic_clients",
+            raw,
+            &[None, None, None],
+            |key, value| {
+                persisted.insert(key.to_string(), value.to_string());
+                Ok(())
+            },
+        )
+        .expect("reset corrupt registry");
+
+        assert!(clients.is_empty());
+        assert!(notice.contains("reset to an empty registry"));
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients"),
+            Some(&"{}".to_string())
+        );
+        assert_eq!(
+            persisted.get("oauth_dynamic_clients.backup-1"),
+            Some(&raw.to_string())
+        );
+        assert_eq!(persisted.len(), 2);
+    }
+
+    #[test]
+    fn registry_backup_rotation_keeps_at_most_three_slots() {
+        let rotated = rotate_registry_backups(
+            "new",
+            &[
+                Some("one".to_string()),
+                Some("two".to_string()),
+                Some("three".to_string()),
+                Some("four".to_string()),
+            ],
+        );
+
+        assert_eq!(
+            rotated,
+            vec![Some("new".into()), Some("one".into()), Some("two".into())]
+        );
     }
 }

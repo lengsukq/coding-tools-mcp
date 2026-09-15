@@ -91,7 +91,7 @@ pub fn spawn_gateway_listener(
     let configured_public_url = public_base_url.trim().to_string();
     let oauth = if auth.oauth_enabled() {
         let oauth_base = external_base_url(&HeaderMap::new(), port, &configured_public_url);
-        Some(Arc::new(OAuthRuntime::new_app_persistent(
+        let oauth_runtime = OAuthRuntime::new_app_persistent(
             oauth_base,
             auth.oauth_client_id.clone(),
             oauth_client_secret.clone(),
@@ -99,7 +99,11 @@ pub fn spawn_gateway_listener(
             oauth_token_secret.unwrap_or_default(),
             "global_mcp".into(),
             "oauth_dynamic_clients".into(),
-        )?))
+        )?;
+        if let Some(notice) = oauth_runtime.recovery_notice() {
+            append_profile_log("global-mcp", "stderr.log", notice);
+        }
+        Some(Arc::new(oauth_runtime))
     } else {
         None
     };

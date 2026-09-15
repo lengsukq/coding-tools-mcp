@@ -163,23 +163,29 @@ mod tests {
     use crate::settings::AppSettings;
 
     #[test]
-    fn stale_store_update_does_not_overwrite_externally_persisted_global_oauth_registry() {
-        let id = uuid::Uuid::new_v4().to_string().replace('-', "");
-        let marker = format!("stale-store-regression-{id}");
-        let mut store = DataStore::load().expect("load");
+    fn settings_update_preserves_newer_global_oauth_registry() {
+        let base = AppData::default();
+        let marker = "{\"client\":\"preserved\"}";
+        let mut latest = base.clone();
+        latest
+            .app_secrets
+            .entry("global_mcp".into())
+            .or_default()
+            .insert("oauth_dynamic_clients".into(), marker.into());
 
-        crate::secret::SecretStore::set_app("global_mcp", "oauth_dynamic_clients", &marker)
-            .expect("persist external secret");
+        let mut settings = AppSettings::from_data(&base);
+        settings.last_workspace_id = "workspace-2".into();
+        apply_settings_update(&base, &mut latest, settings);
 
-        let mut settings = store.settings();
-        settings.last_workspace_id = format!("regression-{id}");
-        store
-            .update_settings(settings)
-            .expect("update unrelated settings");
-
-        let persisted = crate::secret::SecretStore::get_app("global_mcp", "oauth_dynamic_clients")
-            .expect("read external secret");
-        assert_eq!(persisted.as_deref(), Some(marker.as_str()));
+        assert_eq!(latest.last_workspace_id, "workspace-2");
+        assert_eq!(
+            latest
+                .app_secrets
+                .get("global_mcp")
+                .and_then(|items| items.get("oauth_dynamic_clients"))
+                .map(String::as_str),
+            Some(marker)
+        );
     }
 
     #[test]

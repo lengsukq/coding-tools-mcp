@@ -43,6 +43,7 @@ pub struct OAuthRuntime {
     pending: Arc<Mutex<HashMap<String, PendingCode>>>,
     clients: Arc<Mutex<HashMap<String, RegisteredClient>>>,
     client_registry: Option<ClientRegistryPersistence>,
+    recovery_notice: Option<String>,
 }
 
 #[derive(Clone)]
