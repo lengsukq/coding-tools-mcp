@@ -1,5 +1,5 @@
 <!-- mcp-probe:context begin — auto-generated; re-run init_project_context updates this block only -->
-<!-- mcp-probe:context-version: 4.0.0-rc.20 -->
+<!-- mcp-probe:context-version: 4.0.1 -->
 ## MCP（必须先调）
 需已配置 mcp-probe-kit。写代码前先读 Skill：@.agents/skills/mcp-probe-kit/SKILL.md（或 [MCP 调用时机](.agents/skills/mcp-probe-kit/SKILL.md)）（首次 MCP 调用自动创建 Skill 文件）。
 

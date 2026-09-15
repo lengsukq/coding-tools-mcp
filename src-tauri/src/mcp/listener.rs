@@ -20,7 +20,9 @@ use crate::auth::{
 };
 use crate::local_network;
 use crate::mcp::audit::{log_request, record_response, RpcRequestMeta};
-use crate::mcp::gateway::{session_id_from_request, GatewayState, MCP_SESSION_HEADER};
+use crate::mcp::gateway::{
+    session_id_from_metadata, session_id_from_request, GatewayState, MCP_SESSION_HEADER,
+};
 use crate::mcp::server::handle_gateway_request;
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
@@ -212,6 +214,16 @@ async fn mcp_post(
     let meta = RpcRequestMeta::from_body(&body);
 
     let requested_session_id = session_id_from_request(&headers, &body);
+    let host_session_id = if headers.get(MCP_SESSION_HEADER).is_none() {
+        session_id_from_metadata(&body)
+    } else {
+        None
+    };
+    if meta.method != "initialize" {
+        if let Some(session_id) = host_session_id.as_deref() {
+            state.gateway.sessions.ensure_host_session(session_id);
+        }
+    }
     let effective_session_id = if meta.method == "initialize" {
         match requested_session_id.as_deref() {
             Some(session_id) if state.gateway.sessions.contains(session_id) => {
@@ -616,6 +628,56 @@ mod tests {
             "MCP_SESSION_INVALID"
         );
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_host_metadata_session_keeps_workspace_selection_without_transport_header() {
+        let first = tempfile::tempdir().expect("workspace a");
+        let second = tempfile::tempdir().expect("workspace b");
+        fs::write(first.path().join("marker.txt"), "ONLY-A").expect("marker a");
+        let mut first_profile =
+            WorkspaceProfile::new(path_string(first.path()), Some("Workspace A".into()));
+        first_profile.id = "workspace-a".into();
+        let mut second_profile =
+            WorkspaceProfile::new(path_string(second.path()), Some("Workspace B".into()));
+        second_profile.id = "workspace-b".into();
+
+        let app = build_router(listener_state(vec![first_profile, second_profile]));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test HTTP listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test HTTP server");
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/mcp");
+
+        let call = |id: u64, name: &str, arguments: serde_json::Value| {
+            client.post(&url).json(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": arguments,
+                    "_meta": { "openai/session": "chatgpt-conversation-a" }
+                }
+            }))
+        };
+
+        let selected: serde_json::Value = call(
+            1,
+            "workspace_select",
+            json!({ "workspace_id": "workspace-a" }),
+        )
+        .send().await.expect("select request").json().await.expect("select response");
+        assert_eq!(selected["result"]["structuredContent"]["ok"], true);
+
+        let read: serde_json::Value = call(2, "read_file", json!({ "path": "marker.txt" }))
+            .send().await.expect("read request").json().await.expect("read response");
+        assert_eq!(read["result"]["structuredContent"]["content"], "ONLY-A");
         server.abort();
     }
 

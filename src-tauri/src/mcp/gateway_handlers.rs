@@ -20,6 +20,10 @@ pub fn session_id_from_request(headers: &HeaderMap, body: &Value) -> Option<Stri
         return normalize_session_id(value);
     }
 
+    session_id_from_metadata(body)
+}
+
+pub fn session_id_from_metadata(body: &Value) -> Option<String> {
     let params = body.get("params");
     let metadata = params.and_then(|params| params.get("_meta"));
     ["openai/session", "openai/session_id", "session_id"]

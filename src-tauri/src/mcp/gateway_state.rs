@@ -39,6 +39,7 @@ impl From<&WorkspaceProfile> for WorkspaceDescriptor {
             path: profile.path.clone(),
         }
     }
+
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,6 +115,25 @@ impl GatewaySessionStore {
         sessions.retain(|_, scope| {
             scope.last_seen_at == 0 || now.saturating_sub(scope.last_seen_at) <= SESSION_TTL_SECONDS
         });
+    }
+
+    /// Register an opaque host-provided session key (for example ChatGPT's
+    /// request metadata) so state can survive clients that do not preserve
+    /// the MCP transport session header between tool calls.
+    pub fn ensure_host_session(&self, session_id: &str) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = unix_timestamp_seconds();
+        Self::prune_expired(&mut sessions, now);
+        sessions
+            .entry(session_id.to_string())
+            .and_modify(|scope| scope.last_seen_at = now)
+            .or_insert(GatewaySessionScope {
+                active_workspace_id: None,
+                last_seen_at: now,
+            });
     }
 
     /// Issue an opaque server-owned session identifier.

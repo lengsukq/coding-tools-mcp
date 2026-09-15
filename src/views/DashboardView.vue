@@ -146,6 +146,21 @@ const errorServices = computed(() => globalMcpRuntimeState.value === "error" ? 1
 const serviceHealth = computed(() => globalMcpRuntimeState.value === "running" ? 100 : 0);
 const planningStats = computed(() => summarizePlanning(planningByWorkspace.value));
 const usageTotals = computed(() => summarizeUsage(usageByWorkspace.value));
+const executionStats = computed(() => {
+  let running = 0;
+  let blocked = 0;
+  let verified = 0;
+  let changedFiles = 0;
+  for (const planning of Object.values(planningByWorkspace.value)) {
+    if (!planning) continue;
+    const state = planning.execution.state.toLowerCase();
+    if (["running", "in_progress", "executing"].includes(state)) running += 1;
+    if (["blocked", "failed", "error"].includes(state) || planning.execution.last_error) blocked += 1;
+    if (planning.execution.verification.length > 0) verified += 1;
+    changedFiles += planning.execution.changed_files.length;
+  }
+  return { running, blocked, verified, changedFiles };
+});
 const averageTokens = computed(() => usageTotals.value.toolCallCount === 0 ? 0 : usageTotals.value.estimatedToolCallTokens / usageTotals.value.toolCallCount);
 const usageChart = computed(() => buildUsageChart(usageHistory.value));
 const runtimeMix = computed(() => [
@@ -207,6 +222,9 @@ const attentionItems = computed<AttentionItem[]>(() => {
       : 0;
     if (reviews > 0) items.push({ workspace, title: `${reviews} 项 Planning 等待验收`, detail: "完成后需要人工确认才能归档。", level: "warning" });
     if (planning?.execution.last_error) items.push({ workspace, title: "最近执行存在错误", detail: planning.execution.last_error, level: "error" });
+    if (planning && ["blocked", "failed", "error"].includes(planning.execution.state.toLowerCase()) && !planning.execution.last_error) {
+      items.push({ workspace, title: `Execution ${planning.execution.state}`, detail: "执行链路需要恢复或重新验证。", level: "warning" });
+    }
     const errors = usage.reduce((sum, item) => sum + item.errorCount, 0);
     if (errors > 0) items.push({ workspace, title: `${formatCount(errors)} 次工具请求错误`, detail: "MCP 使用统计检测到失败请求。", level: "warning" });
   }
@@ -509,7 +527,7 @@ onUnmounted(() => {
           </div>
           <div>
             <h1 class="wb-dashboard-title">工作台</h1>
-            <p class="wb-dashboard-subtitle">一个 Global MCP 连接管理全部 Workspace；在这里查看项目上下文、Planning、History 与使用情况。</p>
+            <p class="wb-dashboard-subtitle">查看正在执行的 AI 工作、进度、验证结果与需要你处理的风险。</p>
           </div>
         </div>
       </div>
@@ -558,14 +576,14 @@ onUnmounted(() => {
       <template v-else>
         <section v-if="moduleVisible('focus')" class="wb-hero wb-surface">
           <div class="wb-focus">
-            <div class="wb-eyebrow text-[var(--ios-purple)]"><Sparkles :size="13" /> Continue Working</div>
+            <div class="wb-eyebrow text-[var(--ios-purple)]"><Sparkles :size="13" /> 当前执行</div>
             <template v-if="primaryFocus">
               <h2>{{ primaryFocus.title }}</h2>
               <p>{{ primaryFocus.detail }}</p>
               <div class="wb-progress"><span :style="{ width: `${primaryFocus.progress}%` }" /></div>
               <div class="wb-focus-meta">
                 <span>{{ primaryFocus.workspace.name }}</span><span>{{ primaryFocus.mode }}</span>
-                <span>{{ primaryFocus.progressLabel }}</span><span>Global MCP Context</span>
+                <span>{{ primaryFocus.progressLabel }}</span><span>{{ planningByWorkspace[primaryFocus.workspace.id]?.execution.state ?? 'idle' }}</span>
               </div>
               <div class="wb-focus-actions">
                 <button class="wb-primary-button" type="button" @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></button>
@@ -586,22 +604,22 @@ onUnmounted(() => {
               <div class="wb-health-ring-content"><strong>{{ serviceHealth }}%</strong><span>Global MCP</span><small>{{ globalMcpRuntimeState }}</small></div>
             </div>
             <div class="wb-health-summary">
-              <div><span>Runtime</span><strong>{{ globalMcpRuntimeState === 'running' ? 'ON' : 'OFF' }}</strong></div>
-              <div><span>Sessions</span><strong>{{ globalOverview.sessionCount }}</strong></div>
-              <div :class="{ alert: errorServices > 0 }"><span>Errors</span><strong>{{ errorServices }}</strong></div>
+              <div><span>Executing</span><strong>{{ executionStats.running }}</strong></div>
+              <div><span>Verified</span><strong>{{ executionStats.verified }}</strong></div>
+              <div :class="{ alert: executionStats.blocked > 0 }"><span>Blocked</span><strong>{{ executionStats.blocked }}</strong></div>
             </div>
             <div class="wb-health-connections">
-              <span>Port {{ gatewayConfig.localPort }}</span>
-              <span>{{ gatewayConfig.enabled ? gatewayConfig.tunnelType.toUpperCase() : 'LOCAL' }}</span>
+              <span>{{ globalMcpRuntimeState === 'running' ? 'MCP Online' : 'MCP Offline' }}</span>
               <span>{{ globalOverview.sessionCount }} Sessions</span>
+              <span>{{ executionStats.changedFiles }} Changed Files</span>
             </div>
           </div>
         </section>
 
         <div class="wb-stat-strip mt-4">
           <div class="wb-stat wb-surface wb-stat--blue">
-            <div class="wb-stat-head"><span>Workspaces</span><i><Boxes :size="15" /></i></div>
-            <strong>{{ workspaceCount }}</strong><small><b>{{ globalOverview.sessionCount }}</b> 个活跃 MCP Session</small>
+            <div class="wb-stat-head"><span>AI Executions</span><i><Boxes :size="15" /></i></div>
+            <strong>{{ executionStats.running }}</strong><small><b>{{ executionStats.changedFiles }}</b> 个执行变更文件</small>
           </div>
           <div class="wb-stat wb-surface wb-stat--indigo">
             <div class="wb-stat-head"><span>MCP Tokens</span><i><Cpu :size="15" /></i></div>
@@ -612,8 +630,8 @@ onUnmounted(() => {
             <strong>{{ planningStats.activeGoals }}</strong><small><b>{{ planningStats.activePlans }}</b> 个 Plan 进行中</small>
           </div>
           <div class="wb-stat wb-surface" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
-            <div class="wb-stat-head"><span>Need Review</span><i><ShieldCheck :size="15" /></i></div>
-            <strong>{{ planningStats.pendingReview }}</strong><small>{{ errorServices > 0 ? "Global MCP Runtime 异常" : "Global MCP 状态正常" }}</small>
+            <div class="wb-stat-head"><span>Verification</span><i><ShieldCheck :size="15" /></i></div>
+            <strong>{{ executionStats.verified }}</strong><small>{{ executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收` }}</small>
           </div>
         </div>
 

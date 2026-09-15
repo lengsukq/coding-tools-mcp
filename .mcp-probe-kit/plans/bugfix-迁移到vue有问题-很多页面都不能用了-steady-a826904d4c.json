@@ -1,0 +1,350 @@
+{
+  "schemaVersion": "1.0.0",
+  "planId": "bugfix-迁移到vue有问题-很多页面都不能用了-steady-a826904d4c",
+  "plan": {
+    "planId": "bugfix-迁移到vue有问题-很多页面都不能用了-steady-a826904d4c",
+    "mode": "delegated",
+    "contractVersion": "2.0.0",
+    "workflow": "bugfix",
+    "workflowVersion": "4.0.0",
+    "objective": "定位真因并修复 Bug：迁移到vue有问题 很多页面都不能用了",
+    "steps": [
+      {
+        "id": "context",
+        "tool": "init_project_context",
+        "when": "缺少 AGENTS.md 或 docs/graph-insights/latest.md / docs/graph-insights/latest.json",
+        "args": {
+          "docs_dir": "docs",
+          "project_root": "/Users/leo/Documents/code/coding-tools-mcp"
+        },
+        "outputs": [
+          "AGENTS.md",
+          "docs/graph-insights/latest.md",
+          "docs/graph-insights/latest.json"
+        ],
+        "note": "兼容老项目：如果旧项目没有 graph-insights/latest.*，先补齐图谱初始化再进入 bug 收敛",
+        "type": "tool",
+        "expectedOutputs": [
+          "AGENTS.md",
+          "docs/graph-insights/latest.md",
+          "docs/graph-insights/latest.json"
+        ]
+      },
+      {
+        "id": "src8-1",
+        "action": "SRC-1 明确差距（PLAN）：写清理想行为、实际行为、可观察 gap；禁止只有情绪无差距",
+        "outputs": [
+          "BugAnalysis.tbp.phenomenon",
+          "BugAnalysis.summary"
+        ],
+        "note": "写入 structuredContent.bugfixInput.phenomenon；反模式：「坏了/卡了」",
+        "type": "agent_action",
+        "expectedOutputs": [
+          "BugAnalysis.tbp.phenomenon",
+          "BugAnalysis.summary"
+        ]
+      },
+      {
+        "id": "src8-2",
+        "tool": "code_insight",
+        "when": "边界/调用链不清，或需收敛影响面",
+        "args": {
+          "mode": "auto",
+          "query": "迁移到vue有问题 很多页面都不能用了",
+          "project_root": "/Users/leo/Documents/code/coding-tools-mcp"
+        },
+        "outputs": [
+          "BugAnalysis.tbp.boundary",
+          "BugAnalysis.tbp.timeline"
+        ],
+        "dependsOn": [
+          "src8-1"
+        ],
+        "note": "图谱缺失时先执行 init_project_context；再读本步输出收敛边界",
+        "type": "tool",
+        "expectedOutputs": [
+          "BugAnalysis.tbp.boundary",
+          "BugAnalysis.tbp.timeline"
+        ]
+      },
+      {
+        "id": "src8-3",
+        "action": "SRC-3 验收契约（PLAN）：定义 SMART 验收（failing test 变绿 / repro 命令 / 明确手动步骤）",
+        "outputs": [
+          "BugAnalysis.testPlan"
+        ],
+        "dependsOn": [
+          "src8-1"
+        ],
+        "type": "agent_action",
+        "expectedOutputs": [
+          "BugAnalysis.testPlan"
+        ]
+      },
+      {
+        "id": "src8-4",
+        "action": "SRC-4 把握真因（PLAN）：按 rootCauseWorksheet 完成 4a~4e，输出 rootCauseAnalysis 与因果句",
+        "outputs": [
+          "rootCauseAnalysis",
+          "BugAnalysis.rootCause",
+          "BugAnalysis.tbp.rootCauseStatement",
+          "BugAnalysis.tbp.ruledOut"
+        ],
+        "dependsOn": [
+          "src8-1",
+          "src8-2",
+          "src8-3"
+        ],
+        "note": "硬门禁：本步闭合前禁止改代码；见 structuredContent.rootCauseWorksheet",
+        "type": "agent_action",
+        "expectedOutputs": [
+          "rootCauseAnalysis",
+          "BugAnalysis.rootCause",
+          "BugAnalysis.tbp.rootCauseStatement",
+          "BugAnalysis.tbp.ruledOut"
+        ]
+      },
+      {
+        "id": "src8-5",
+        "action": "SRC-5 制定对策（PLAN）：最小 patch，评估有效性/可行性/回归风险",
+        "outputs": [
+          "BugAnalysis.fixPlan",
+          "BugAnalysis.tbp.repair"
+        ],
+        "dependsOn": [
+          "src8-4"
+        ],
+        "type": "agent_action",
+        "expectedOutputs": [
+          "BugAnalysis.fixPlan",
+          "BugAnalysis.tbp.repair"
+        ]
+      },
+      {
+        "id": "src8-6",
+        "action": "SRC-6 贯彻修复（DO）：复现门禁通过后改代码，改动仅限 Bug 范围",
+        "when": "rootCauseWorksheet 已闭合且复现/failing test 已就绪",
+        "outputs": [
+          "BugAnalysis.affectedFiles",
+          "代码补丁"
+        ],
+        "dependsOn": [
+          "src8-5"
+        ],
+        "note": "三次修复仍失败 → 回 src8-2 或 src8-4，不得盲试",
+        "type": "agent_action",
+        "expectedOutputs": [
+          "BugAnalysis.affectedFiles",
+          "代码补丁"
+        ]
+      },
+      {
+        "id": "src8-7",
+        "tool": "gentest",
+        "when": "SRC-6 代码已修改",
+        "args": {
+          "code": "[修复后的代码]",
+          "framework": "[按项目上下文选择 vitest/jest/mocha]",
+          "project_root": "/Users/leo/Documents/code/coding-tools-mcp"
+        },
+        "outputs": [
+          "回归测试代码"
+        ],
+        "dependsOn": [
+          "src8-6"
+        ],
+        "note": "SRC-7 评价双轨（结果轨）：对照 Step 3 验收契约",
+        "type": "tool",
+        "expectedOutputs": [
+          "回归测试代码"
+        ]
+      },
+      {
+        "id": "src8-8",
+        "action": "SRC-8 巩固传播（ACT）：准备成功/失败/证伪/回归记忆候选",
+        "when": "验证通过",
+        "args": {
+          "type": "[bugfix | failed_approach | false_root_cause | regression_case]",
+          "tags": "[bugfix,root-cause 或 negative-memory]",
+          "summary": "[关键词] 迁移到vue有问题 很多页面都不能用了",
+          "content": "【现象】【根因】【修复】【验证】",
+          "evidence": [
+            "[测试、日志、反例或监控证据]"
+          ],
+          "applicability": "[适用条件、边界和不适用场景]"
+        },
+        "outputs": [
+          "待收敛的 MemoryCandidate"
+        ],
+        "dependsOn": [
+          "src8-7"
+        ],
+        "note": "只准备候选并写入 plan_heartbeat 证据；converge passed=true 后再调用 memorize_asset；候选面向跨仓库共享：勿填 source_project/source_path；name/summary 抽象化，路径仅放 content 末尾【来源参考】",
+        "type": "agent_action",
+        "expectedOutputs": [
+          "待收敛的 MemoryCandidate"
+        ]
+      }
+    ],
+    "globalRules": [
+      "首次执行计划时调用 plan_heartbeat 并附完整 plan，建立本地检查点",
+      "每完成、跳过或阻塞一个步骤后调用 plan_heartbeat 更新证据与状态",
+      "会话中断或切换 Agent 后先调用 resume_plan，再继续未完成步骤",
+      "只有 converge 返回 passed=true 后，才能将本次结论正式写入长期记忆",
+      "未完成 SRC-8 真因收敛前不得直接实施猜测性修复",
+      "Agent 必须使用宿主能力完成真实代码修改和测试执行",
+      "首次执行前必须用完整 plan 建立 plan_heartbeat 检查点；每完成、跳过或阻断一步立即累计回写",
+      "修复完成必须包含回归验证与防复发措施",
+      "历史记忆仅作为候选证据，当前项目事实与代码优先"
+    ],
+    "completionCriteria": [
+      "真因能够解释全部关键现象并排除主要竞争假设",
+      "修复方案作用于原因层而不是仅隐藏症状",
+      "回归测试与关联规格闸门通过",
+      "可复用的成功或失败经验已评估是否沉淀",
+      "所有步骤状态与证据已通过 plan_heartbeat 写入检查点"
+    ],
+    "requiredEvidenceKinds": [
+      "requirements",
+      "implementation",
+      "test",
+      "review"
+    ],
+    "qualityGates": [],
+    "declaredScope": {
+      "projectRoot": "/Users/leo/Documents/code/coding-tools-mcp",
+      "docsDir": "docs",
+      "analysisMode": "src8"
+    },
+    "memoryPolicy": {
+      "recallBeforeExecution": false,
+      "extractAfterValidation": false,
+      "writeOnlyReusableKnowledge": true,
+      "allowNegativeMemory": true
+    },
+    "executionStatePolicy": {
+      "heartbeatTool": "plan_heartbeat",
+      "resumeTool": "resume_plan",
+      "convergenceTool": "converge",
+      "heartbeatAfterEachStep": true,
+      "persistPlanOnFirstHeartbeat": true
+    }
+  },
+  "status": "active",
+  "currentStepId": "src8-8",
+  "completedStepIds": [
+    "context",
+    "src8-1",
+    "src8-2",
+    "src8-3",
+    "src8-4",
+    "src8-5",
+    "src8-7"
+  ],
+  "skippedSteps": [
+    {
+      "stepId": "src8-6",
+      "reason": "恢复计划针对的旧 Vue 代码与当前 v0.3.0 源码已偏离；当前任务实际需要的是为现有密钥页补充可用的显示/复制交互，不继续实施计划中不存在的 AuthConfigPanel 等旧目标。"
+    }
+  ],
+  "unresolvedItems": [
+    "更新后的应用窗口当前无法被 Computer Use 自动挂接，需要用户将 Coding Tools MCP 窗口置于前台后继续 OAuth 重试。"
+  ],
+  "evidence": [
+    {
+      "kind": "requirements",
+      "summary": "已确认 docs/project-context.md 与 AGENTS.md 均存在，项目正在从 SvelteKit 迁移至 Vue 3",
+      "stepId": "context",
+      "reference": "docs/project-context.md",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "requirements",
+      "summary": "已完成 SRC-1 差距明确：理想行为（所有页面可正常滚动、路由过渡正常、Planning/Diagnostics具备完整交互与轮询、密钥支持录入与查看、auth类型语义正确）与实际行为（缺少page-scroll导致内容被tx-main的overflow:hidden截断无法滚动操作、Transition包裹多根节点导致路由过渡破损、Planning缺少轮询/打回反馈/重置弹窗、密钥硬编码readonly、auth.type被错误归一化为none）。",
+      "stepId": "src8-1",
+      "reference": "src/views/WorkspaceView.vue,src/views/settings/*,src/components/*",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "已通过 code_insight 与源码分析收敛影响面及调用链：AppShell 与 RouterView 布局层；5 个设置页及工作区详情页容器布局；SecretField 交互模式与 AuthConfigPanel 密钥持久化；PlanningState 轮询与 Review/Reset 控制流；workspace-page.ts 的 profile 归一化函数。",
+      "stepId": "src8-2",
+      "reference": "src/App.vue,src/views/*,src/components/workspace/*,src/lib/workspace-page.ts",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "test",
+      "summary": "已制定 SRC-3 验收契约：1) npm run check (vue-tsc --noEmit) 无编译报错；2) npm run build (vite build) 产物正常打包；3) 各设置页在视口较小时具备独立滚动条，底部保存/操作按钮可正常触达；4) AuthConfigPanel 中 auth.type 默认选择与保存符合 noauth/oauth/bearer 语义，不再生成无效的 none；5) SecretField 支持明文显示切换与一键复制，自定义密钥可录入并保存；6) Planning 面板支持 2s 自动静默轮询、退回意见弹窗与重置确认。",
+      "stepId": "src8-3",
+      "reference": "npm run check, npm run build, e2e/manual checklist",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "requirements",
+      "summary": "已闭合 SRC-4 真因工作表（因果句与排除竞争假说）：【真因因果句】因从 SvelteKit 迁移到 Vue 3 时，各子视图外层丢失了具有 flex: 1; overflow-y: auto 的 .page-scroll 容器，导致内容被上层 .ios-main 的 overflow: hidden 截断无法滚动；同时 SecretField 被硬编码为 readonly 阻塞了凭据自定义输入与查看；Planning/Diagnostics 组件遗漏了 props.workspaceId 响应与定时轮询机制；normalizeWorkspaceProfile 将缺省 auth.type 错误归一化为 'none' 破坏了与后端 'noauth' 的枚举语义一致性。【排除竞争假说】已排除 Rust 后端服务异常（cargo test 全通）和 TypeScript 编译类型故障（vue-tsc 全通）。",
+      "stepId": "src8-4",
+      "reference": "src/app.css,src/lib/workspace-page.ts,src/components/SecretField.vue,src/views/settings/*",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "已完成 SRC-5 对策制定：1) 布局对策：将 5 个设置页与 WorkspaceView 统一规范为单根 .page-scroll 容器（min-h-0 flex-1 overflow-y-auto），解决溢出裁剪与过渡；2) 凭据对策：SecretField 支持双向绑定、只读开关、密码明文切换和复制，KeysSettingsView 与 AuthConfigPanel 接入且支持修改持久化；3) 规划对策：WorkspacePlanning 增加 2s 静默轮询、退回反馈弹窗、重置 ConfirmDialog，响应 workspaceId 切换；4) 诊断对策：WorkspaceDiagnostics 增加 workspaceId 响应；5) 数据契约对策：normalizeWorkspaceProfile 修正缺省 auth.type 为 'noauth'，并纠正历史 'none' 值。",
+      "stepId": "src8-5",
+      "reference": "implementation_plan.md",
+      "verifiedAt": "2026-09-15T01:05:12.657Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "已核对当前源码与 GitNexus 影响面；WorkspaceView 与 AppShell 当前已有 flex/overflow 容器，SecretField 当前无调用方，计划中要求修改的 AuthConfigPanel 不存在，因此没有安全的 SRC-6 补丁可实施。",
+      "stepId": "src8-6",
+      "reference": "src/App.vue,src/components/AppShell.vue,src/views/WorkspaceView.vue,src/components/SecretField.vue,src/components/workspace",
+      "verifiedAt": "2026-09-14T17:20:00.000Z"
+    },
+    {
+      "kind": "test",
+      "summary": "已执行 gentest 对当前 workspace-page.ts 生成回归测试设计；项目 package.json 未配置 Vitest，工具明确仅提供设计指导，未声称测试已运行。",
+      "stepId": "src8-7",
+      "reference": "gentest(src/lib/workspace-page.ts, framework=vitest); package.json",
+      "verifiedAt": "2026-09-14T17:22:00.000Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "为 SecretField 增加双向绑定、只读开关、显示/复制交互，并将 Global MCP 密钥页改用该组件；密码不会写入聊天输出。",
+      "stepId": "src8-8",
+      "reference": "src/components/SecretField.vue,src/views/settings/KeysSettingsView.vue",
+      "verifiedAt": "2026-09-14T17:35:00.000Z"
+    },
+    {
+      "kind": "test",
+      "summary": "前端类型检查、Vite 生产构建、Tauri 0.3.0 app bundle 均完成；未运行不存在于 package.json 的 Vitest。",
+      "stepId": "src8-7",
+      "reference": "npm run check; npm run build; npm exec tauri build -- --bundles app",
+      "verifiedAt": "2026-09-14T17:35:00.000Z"
+    }
+  ],
+  "declaredScope": {
+    "projectRoot": "/Users/leo/Documents/code/coding-tools-mcp",
+    "docsDir": "docs",
+    "analysisMode": "src8"
+  },
+  "artifacts": [],
+  "memoryCandidates": [],
+  "architectureCandidates": [],
+  "acceptanceResults": [],
+  "runtimeEvidence": [
+    {
+      "kind": "local-state",
+      "summary": "已清理本地 OAuth 动态客户端注册表中的残留测试标记；确认 Global MCP 端口配置为 28765。应用重启因 macOS 锁屏返回错误 -600，当前端口尚未监听，公网地址返回 502。",
+      "reference": "profiles.json; lsof TCP:28765; curl https://coding-mcp.lengsu.top/mcp",
+      "verifiedAt": "2026-09-14T17:22:00.000Z"
+    },
+    {
+      "kind": "runtime",
+      "summary": "更新后的应用进程正在运行，Global MCP 127.0.0.1:28765 正在监听，公网 MCP 地址返回 HTTP 200；Computer Use 暂时无法挂接更新后的应用窗口。",
+      "reference": "lsof TCP:28765; curl https://coding-mcp.lengsu.top/mcp; /Applications/Coding Tools MCP.app",
+      "verifiedAt": "2026-09-14T17:35:00.000Z"
+    }
+  ],
+  "createdAt": "2026-09-15T00:52:03.114Z",
+  "updatedAt": "2026-09-15T06:50:55.772Z"
+}

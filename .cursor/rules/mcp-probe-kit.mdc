@@ -1,0 +1,16 @@
+---
+description: mcp-probe-kit native MCP and version-locked CLI fallback
+alwaysApply: true
+---
+
+# mcp-probe-kit
+
+> mcp-probe-kit-harness-adapter-version: 4.0.1
+
+Before coding, read `AGENTS.md` and `.agents/skills/mcp-probe-kit/SKILL.md`.
+
+1. Prefer native mcp-probe-kit tools when they are available in the current Agent session.
+2. If native MCP tools are missing, use `.mcp-probe-kit/bin/probe.* exec <tool> --stdin` through the terminal.
+3. If the wrapper is missing, run `npx --yes mcp-probe-kit@4.0.1 install-agent --project-root .`, then use the wrapper.
+4. Never use `@latest` or `@next`, never install globally, and do not ask the user to install it.
+5. Preserve the normal chain: `workflow` → returned `firstTool` → `plan_heartbeat` → verification → `code_review` → `converge`.

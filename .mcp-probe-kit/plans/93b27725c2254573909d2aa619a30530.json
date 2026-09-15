@@ -1,0 +1,430 @@
+{
+  "schemaVersion": "1.0.0",
+  "planId": "93b27725c2254573909d2aa619a30530",
+  "plan": {
+    "planId": "93b27725c2254573909d2aa619a30530",
+    "mode": "delegated",
+    "contractVersion": "2.0.0",
+    "workflow": "feature",
+    "workflowVersion": "4.0.1",
+    "objective": "将 Coding Tools MCP 从每个 Workspace 一个 MCP Runtime/连接升级为全局唯一 MCP Endpoint 管理全部 Workspace；按 MCP session 选择活动 Workspace，并在每次工具调用开始时冻结不可变 Workspace RequestContext；保持文件、命令、Planning、History、Secrets、Runtime Policy、Usage 与输出日志的 Workspace 隔离；最终完成 0.3.0 发布闸门。",
+    "steps": [
+      {
+        "id": "372312b88c7c456a88e4c555c091b01c",
+        "title": "P0.1 冻结 0.2.x 行为基线并盘点每 Workspace MCP 耦合点，明确 0.3.0 删除项、迁移项和必须保持的数据。",
+        "type": "agent_action",
+        "expectedOutputs": [
+          "baseline",
+          "coupling inventory",
+          "migration boundary"
+        ]
+      },
+      {
+        "id": "97e78adc7a4149219ed287444a895e42",
+        "title": "P0.2 建立唯一 Global MCP Runtime、固定 HTTP Endpoint、WorkspaceRegistry 和 GatewaySessionScope；未选择 Workspace 时 fail-closed。",
+        "type": "agent_action",
+        "dependsOn": [
+          "372312b88c7c456a88e4c555c091b01c"
+        ],
+        "expectedOutputs": [
+          "global listener",
+          "session registry",
+          "WORKSPACE_NOT_SELECTED"
+        ]
+      },
+      {
+        "id": "2e10b30afee14902b7e852b0bc985ac9",
+        "title": "P0.3 在 dispatch 入口冻结不可变 Workspace RequestContext，消除并发 Workspace 切换 race。",
+        "type": "agent_action",
+        "dependsOn": [
+          "97e78adc7a4149219ed287444a895e42"
+        ],
+        "expectedOutputs": [
+          "immutable request context",
+          "concurrency safety"
+        ]
+      },
+      {
+        "id": "f13cddb6820f466a861448c3060df68b",
+        "title": "P0.4 增加 workspace_list、workspace_current、workspace_select、workspace_invoke 最小工具面，并禁止任意绝对 root。",
+        "type": "agent_action",
+        "dependsOn": [
+          "97e78adc7a4149219ed287444a895e42",
+          "2e10b30afee14902b7e852b0bc985ac9"
+        ],
+        "expectedOutputs": [
+          "workspace tools",
+          "schemas",
+          "session header handling"
+        ]
+      },
+      {
+        "id": "d835f036347a4ec4a485b06d4b54ff8b",
+        "title": "P0.5 完成文件、命令、输出、Planning、History、Secrets、Policy、Usage 和 Agent Context 的 Workspace 隔离，并补专项安全测试。",
+        "type": "agent_action",
+        "dependsOn": [
+          "97e78adc7a4149219ed287444a895e42",
+          "2e10b30afee14902b7e852b0bc985ac9",
+          "f13cddb6820f466a861448c3060df68b"
+        ],
+        "expectedOutputs": [
+          "isolation guards",
+          "cross-workspace tests",
+          "concurrency tests"
+        ]
+      },
+      {
+        "id": "aec6080f62134dafb268b6ab69a26f66",
+        "title": "P0.6 将 OAuth/Bearer、LAN bind、Global Gateway/FRP/Cloudflare 和公网 URL 收口到全局 Endpoint，删除 Workspace 级连接语义和 UI。",
+        "type": "agent_action",
+        "dependsOn": [
+          "d835f036347a4ec4a485b06d4b54ff8b"
+        ],
+        "expectedOutputs": [
+          "global auth",
+          "global tunnel",
+          "legacy cleanup"
+        ]
+      },
+      {
+        "id": "ca69a2d32cd44a32a40c7c5c43325135",
+        "title": "P0.7 删除旧单 Workspace Runtime 模式，RuntimeSupervisor 收口为唯一 GlobalMcpRuntime；新增/删除 Workspace 不创建/销毁 MCP 连接。",
+        "type": "agent_action",
+        "dependsOn": [
+          "aec6080f62134dafb268b6ab69a26f66"
+        ],
+        "expectedOutputs": [
+          "single runtime lifecycle",
+          "no per-workspace listener"
+        ]
+      },
+      {
+        "id": "2fbf3c4aa2a64329905c92a2bfea3eb3",
+        "title": "P1.1 完成 0.2.x 到 0.3.0 数据迁移，保留 Workspace/Planning/History/Secrets/Policy/Agent Context，冲突安全提示。",
+        "type": "agent_action",
+        "dependsOn": [
+          "ca69a2d32cd44a32a40c7c5c43325135"
+        ],
+        "expectedOutputs": [
+          "migration",
+          "conflict notice",
+          "migration tests"
+        ]
+      },
+      {
+        "id": "5effc8d334924f0dbacfb23828244ba4",
+        "title": "P1.2 重做桌面 UI 信息架构：Workspace 代表项目上下文，Dashboard/Settings 管理 Global MCP，Workspace 删除连接和隧道 Tab。",
+        "type": "agent_action",
+        "dependsOn": [
+          "aec6080f62134dafb268b6ab69a26f66",
+          "ca69a2d32cd44a32a40c7c5c43325135"
+        ],
+        "expectedOutputs": [
+          "global dashboard",
+          "global settings",
+          "workspace project UI"
+        ]
+      },
+      {
+        "id": "0a3021f595d34c40a168d271775d2f93",
+        "title": "P1.3 完成 session_id、active Workspace、registry revision、session/workspace 日志和 Usage 的可观测性。",
+        "type": "agent_action",
+        "dependsOn": [
+          "d835f036347a4ec4a485b06d4b54ff8b",
+          "5effc8d334924f0dbacfb23828244ba4"
+        ],
+        "expectedOutputs": [
+          "server_info observability",
+          "dashboard sessions",
+          "scoped audit"
+        ]
+      },
+      {
+        "id": "015bc2df919a4c1482a9a6ec1b33b365",
+        "title": "P1.4 完成 MCP 协议、首次连接、动态 Workspace 发现、多 Session 并发、workspace_invoke 和旧 Endpoint 失败回归。",
+        "type": "agent_action",
+        "dependsOn": [
+          "2fbf3c4aa2a64329905c92a2bfea3eb3",
+          "5effc8d334924f0dbacfb23828244ba4",
+          "0a3021f595d34c40a168d271775d2f93"
+        ],
+        "expectedOutputs": [
+          "HTTP integration tests",
+          "multi-session E2E",
+          "compatibility regression"
+        ]
+      },
+      {
+        "id": "523bcfb89b644a3182dc5b16f7cebe67",
+        "title": "P2.1 将 GatewaySessionStore、WorkspaceRegistry、Router、RequestContext、GlobalMcpRuntime、IsolationGuard 分模块，并同步 README、架构图、project-context 和迁移说明。",
+        "type": "agent_action",
+        "dependsOn": [
+          "015bc2df919a4c1482a9a6ec1b33b365"
+        ],
+        "expectedOutputs": [
+          "modular gateway",
+          "updated docs"
+        ]
+      },
+      {
+        "id": "b4f19d1190f04764b150da0e8b88b8ae",
+        "title": "P2.2 通过完整 Release Gate，统一版本为 0.3.0，构建 macOS/Windows Release 并创建 v0.3.0 Tag。",
+        "type": "agent_action",
+        "dependsOn": [
+          "523bcfb89b644a3182dc5b16f7cebe67"
+        ],
+        "expectedOutputs": [
+          "check",
+          "build",
+          "fmt",
+          "clippy",
+          "tests",
+          "release artifacts",
+          "v0.3.0 tag"
+        ]
+      }
+    ],
+    "globalRules": [
+      "首次执行计划时调用 plan_heartbeat 并附完整 plan，建立本地检查点",
+      "每完成、跳过或阻塞一个步骤后调用 plan_heartbeat 更新证据与状态",
+      "会话中断或切换 Agent 后先调用 resume_plan，再继续未完成步骤",
+      "只有 converge 返回 passed=true 后，才能将本次结论正式写入长期记忆",
+      "每完成、跳过或阻断一步立即记录 heartbeat；未完成证据不得标记完成。",
+      "不覆盖工作树已有改动；版本升级放在所有功能和 Release Gate 通过之后。",
+      "强制保持 Workspace root、policy、history、planning、secrets、usage、output 的双重隔离。"
+    ],
+    "completionCriteria": [
+      "Global MCP 单一 Endpoint 在真实 HTTP transport 下可用。",
+      "多个 Chat session 可独立选择 Workspace，且并发请求不会串数据。",
+      "旧 Workspace 连接语义完成安全迁移或删除，文档与 UI 与代码一致。",
+      "所有 Release Gate 通过并发布 0.3.0。"
+    ],
+    "requiredEvidenceKinds": [
+      "requirements",
+      "implementation",
+      "test",
+      "review"
+    ],
+    "qualityGates": [
+      "npm run check",
+      "npm run build",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+      "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+      "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
+      "git diff --check"
+    ],
+    "memoryPolicy": {
+      "recallBeforeExecution": true,
+      "extractAfterValidation": true,
+      "writeOnlyReusableKnowledge": true,
+      "allowNegativeMemory": true
+    },
+    "executionStatePolicy": {
+      "heartbeatTool": "plan_heartbeat",
+      "resumeTool": "resume_plan",
+      "convergenceTool": "converge",
+      "heartbeatAfterEachStep": true,
+      "persistPlanOnFirstHeartbeat": true
+    }
+  },
+  "status": "converged",
+  "completedStepIds": [
+    "372312b88c7c456a88e4c555c091b01c",
+    "97e78adc7a4149219ed287444a895e42",
+    "2e10b30afee14902b7e852b0bc985ac9",
+    "f13cddb6820f466a861448c3060df68b",
+    "d835f036347a4ec4a485b06d4b54ff8b",
+    "aec6080f62134dafb268b6ab69a26f66",
+    "ca69a2d32cd44a32a40c7c5c43325135",
+    "2fbf3c4aa2a64329905c92a2bfea3eb3",
+    "5effc8d334924f0dbacfb23828244ba4",
+    "0a3021f595d34c40a168d271775d2f93",
+    "015bc2df919a4c1482a9a6ec1b33b365",
+    "523bcfb89b644a3182dc5b16f7cebe67",
+    "b4f19d1190f04764b150da0e8b88b8ae"
+  ],
+  "skippedSteps": [],
+  "unresolvedItems": [],
+  "evidence": [
+    {
+      "kind": "requirements",
+      "summary": "原有 0.3.0 计划要求单一 Global MCP Endpoint、按 MCP session 选择 Workspace、请求级不可变 Context、强隔离和最终 Release Gate。",
+      "stepId": "372312b88c7c456a88e4c555c091b01c",
+      "reference": ".coding-tools/planning/state.json:1914-1993",
+      "verifiedAt": "2026-09-15T04:59:20.017Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "当前工作树已有 GlobalMcpRuntime、GatewayState、WorkspaceRegistry、GatewaySessionStore、workspace 工具路由和固定 /mcp listener。",
+      "stepId": "97e78adc7a4149219ed287444a895e42",
+      "reference": "src-tauri/src/mcp/gateway.rs:47-398; src-tauri/src/mcp/listener.rs:69-249",
+      "verifiedAt": "2026-09-15T04:59:20.017Z"
+    },
+    {
+      "kind": "test",
+      "summary": "当前 Rust all-targets 测试已通过 183 library、22 contract、24 security、4 harness、11 harness contract、20 history、7 workspace E2E；尚缺真实 HTTP 多 session E2E。",
+      "stepId": "d835f036347a4ec4a485b06d4b54ff8b",
+      "reference": "src-tauri/src/mcp/gateway.rs:571-789",
+      "verifiedAt": "2026-09-15T04:59:20.017Z"
+    },
+    {
+      "kind": "requirements",
+      "summary": "原计划要求单一 Global MCP Endpoint、按 MCP session 选择 Workspace、请求级不可变 Context、强隔离和最终 0.3.0 Release Gate。",
+      "stepId": "372312b88c7c456a88e4c555c091b01c",
+      "reference": ".coding-tools/planning/state.json",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "kind": "implementation",
+      "summary": "已完成 Global Runtime、固定 /mcp、WorkspaceRegistry、服务端 session、workspace 网关工具、请求上下文隔离、全局认证/隧道、数据迁移、前端设置和文档。",
+      "stepId": "b4f19d1190f04764b150da0e8b88b8ae",
+      "reference": "57349e3; src-tauri/src/mcp; src-tauri/src/runtime; src-tauri/src/global_gateway.rs",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "kind": "test",
+      "summary": "Release 回归通过：Rust library 182、contract 22、security 24、harness 4、harness contract 11、history 20、workspace E2E 7，共 270 项。",
+      "stepId": "b4f19d1190f04764b150da0e8b88b8ae",
+      "reference": "npm run test:release",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "kind": "review",
+      "summary": "GitNexus 已刷新并完成 staged 变更范围分析；Critical 反映此次跨运行时、协议、隧道和 UI 的完整升级范围，且已核对并仅提交产品相关 80 个文件。",
+      "stepId": "b4f19d1190f04764b150da0e8b88b8ae",
+      "reference": "node .gitnexus/run.cjs analyze; node .gitnexus/run.cjs detect-changes --scope staged; git show --stat --oneline 57349e3",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    }
+  ],
+  "declaredScope": {
+    "projectRoot": "/Users/leo/Documents/code/coding-tools-mcp",
+    "docsDir": "docs",
+    "versionTarget": "0.3.0"
+  },
+  "artifacts": [],
+  "memoryCandidates": [],
+  "architectureCandidates": [],
+  "acceptanceResults": [
+    {
+      "gateId": "version-consistency",
+      "passed": true,
+      "summary": "项目版本统一为 0.3.0。",
+      "reference": "npm run version:check",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "frontend-check-build",
+      "passed": true,
+      "summary": "前端类型检查与生产构建通过。",
+      "reference": "npm run test:release",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "rust-all-targets",
+      "passed": true,
+      "summary": "Rust 全目标测试共 270 项通过。",
+      "reference": "npm run test:release",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "rust-release-build",
+      "passed": true,
+      "summary": "本机 arm64 macOS release 构建成功，使用离线锁定依赖。",
+      "reference": "env CARGO_NET_OFFLINE=true cargo build --manifest-path src-tauri/Cargo.toml --release --locked",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "rust-quality",
+      "passed": true,
+      "summary": "Clippy、格式检查和 diff 检查通过。",
+      "reference": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings; cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check; git diff --check",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "release-tag",
+      "passed": true,
+      "summary": "升级提交已创建并打上 v0.3.0 标签。",
+      "reference": "git show --oneline --decorate 57349e3",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "gateId": "npm run check",
+      "passed": true,
+      "summary": "前端类型检查通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    },
+    {
+      "gateId": "npm run build",
+      "passed": true,
+      "summary": "前端生产构建通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    },
+    {
+      "gateId": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+      "passed": true,
+      "summary": "Rust 格式检查通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    },
+    {
+      "gateId": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+      "passed": true,
+      "summary": "Clippy 严格检查通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    },
+    {
+      "gateId": "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
+      "passed": true,
+      "summary": "Rust 全目标测试 270 项通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    },
+    {
+      "gateId": "git diff --check",
+      "passed": true,
+      "summary": "Git diff 检查通过。",
+      "reference": "2026-09-15 release gate",
+      "verifiedAt": "2026-09-15T05:37:50.803Z"
+    }
+  ],
+  "runtimeEvidence": [
+    {
+      "kind": "mcp-http",
+      "summary": "真实 HTTP transport 验证服务端签发 session、未知 session 拒绝和 session 头处理。",
+      "reference": "cargo test --manifest-path src-tauri/Cargo.toml --lib mcp::listener --locked",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    },
+    {
+      "kind": "multi-session-isolation",
+      "summary": "真实 HTTP 两 session 分别选择不同 Workspace 后读取不同临时标记，隔离验证通过。",
+      "reference": "cargo test --manifest-path src-tauri/Cargo.toml --lib mcp::listener --locked",
+      "verifiedAt": "2026-09-15T05:37:23.432Z"
+    }
+  ],
+  "lastVerifiedRevision": "57349e3 (tag: v0.3.0)",
+  "lastConvergence": {
+    "checkedAt": "2026-09-15T05:37:58.174Z",
+    "passed": true,
+    "blockers": [],
+    "requiredEvidenceKinds": [
+      "requirements",
+      "implementation",
+      "test",
+      "review"
+    ],
+    "requiredQualityGates": [
+      "npm run check",
+      "npm run build",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+      "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+      "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
+      "git diff --check"
+    ],
+    "missingQualityGates": []
+  },
+  "createdAt": "2026-09-15T04:59:20.017Z",
+  "updatedAt": "2026-09-15T05:37:58.174Z"
+}

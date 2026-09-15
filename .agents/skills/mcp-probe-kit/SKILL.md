@@ -2,7 +2,7 @@
 name: mcp-probe-kit
 description: >-
   在已配置 mcp-probe-kit 的项目中，于新功能、Bug、UI、重构或提交前读取；区分独立能力与完整交付编排，汇总当前对话构造完整参数，并在不确定首工具时提供 workflow 兜底。完整新功能由 start_feature 选择 flat 或 parent-child Spec；Skill 不承担中央意图识别，start_* 只组合当前场景实际需要的能力。
-mcp-probe-kit-version: "4.0.0-rc.20"
+mcp-probe-kit-version: "4.0.1"
 ---
 
 # MCP 调用时机 — mcp-probe-kit
@@ -42,6 +42,8 @@ macOS / Linux：
 
 CLI 返回 JSON；读取 `structuredContent`、`content` 和 `isError`，继续执行与原生 MCP 相同的工具链。
 
+CLI 降级通道不会继承 IDE `mcp.json` 里的 `env`。若需 Memory 等能力，在项目根复制 `.mcp-probe-kit/local.env.example` 为 `.mcp-probe-kit/local.env` 并填写 `MEMORY_*`；已有 shell 环境变量优先。
+
 ### 启动器缺失时自修复
 
 如果 `.mcp-probe-kit/bin/probe.*` 不存在，由 Agent 自行执行：
@@ -49,16 +51,16 @@ CLI 返回 JSON；读取 `structuredContent`、`content` 和 `isError`，继续�
 Windows：
 
 ```powershell
-npx.cmd --yes mcp-probe-kit@4.0.0-rc.20 install-agent --project-root .
+npx.cmd --yes mcp-probe-kit@4.0.1 install-agent --project-root .
 ```
 
 macOS / Linux：
 
 ```bash
-npx --yes mcp-probe-kit@4.0.0-rc.20 install-agent --project-root .
+npx --yes mcp-probe-kit@4.0.1 install-agent --project-root .
 ```
 
-安装后立即改用项目内启动器。不得使用 `@latest` 或 `@next`，不得全局安装，也不得修改用户项目的 `package.json`。Skill、CLI 启动器和 MCP 必须保持同一精确版本 `4.0.0-rc.20`。
+安装后立即改用项目内启动器。不得使用 `@latest` 或 `@next`，不得全局安装，也不得修改用户项目的 `package.json`。Skill、CLI 启动器和 MCP 必须保持同一精确版本 `4.0.1`。
 
 ### GitNexus 托管运行时
 
@@ -184,7 +186,7 @@ macOS / Linux：
 |-----|----------|
 | `search_memory` | 主动查**历史经验**；默认只返回 active，审计失效记录时显式 `include_inactive=true`，并结合 ranking 解释核对证据与适用边界 |
 | `read_memory_asset` | `search_memory` 命中后需要**读全文** |
-| `memorize_asset` | 托管交付流程在 **converge passed=true** 后沉淀 MemoryCandidate；用户明确进行独立记忆管理时也可直接调用。默认拒绝同身份冲突，确认替代时用 `conflict_policy=supersede`，确需并行结论时显式 `allow_parallel` |
+| `memorize_asset` | 托管交付流程在 **converge passed=true** 后沉淀 MemoryCandidate；用户明确进行独立记忆管理时也可直接调用。沉淀跨项目知识：**禁止** source_project / source_path / file_path；summary 写关键词+结论，content 抽象化。默认拒绝同身份冲突，确认替代时用 `conflict_policy=supersede`，确需并行结论时显式 `allow_parallel` |
 | `update_memory_asset` | 修正已有记忆、撤回错误结论或建立 supersede 关系；历史关系不可清除，retracted/负面结论必须保留 evidence |
 | `delete_memory_asset` | 硬删除未关联的错误/重复/无价值资产（需 `confirm: true`）；参与 supersede 链的资产只能用 update_memory_asset 撤回 |
 | `scan_and_extract_patterns` | 从代码库**批量提取**可复用模式并建议沉淀 |
@@ -240,5 +242,5 @@ macOS / Linux：
 
 ---
 
-*mcp-probe-kit 按版本自动同步（当前 `4.0.0-rc.20`）。路径：`.agents/skills/mcp-probe-kit/SKILL.md`*
+*mcp-probe-kit 按版本自动同步（当前 `4.0.1`）。路径：`.agents/skills/mcp-probe-kit/SKILL.md`*
 
