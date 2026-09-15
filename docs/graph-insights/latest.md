@@ -77,7 +77,8 @@ Vue 页面 / Vue Router
 - `npm run version:check`：通过，项目版本 `0.3.0` 一致。
 - `npm run check`：通过，0 错误、0 警告。
 - `npm run build`：通过，Vue 3 + Vite 生产构建成功，静态产物输出到 `build/`。
-- `npm run test:release`：通过；Rust library 182/182，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7，共 270 项。
+- `npm run test:release`：通过；Rust library 184/184，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7，共 272 项。
+- Global MCP 额外覆盖 request-scoped `workspace_id`：即使宿主在连续工具调用间更换 transport session，也能显式保持 Workspace 路由；绝对路径仍不能逃逸所选 Workspace。
 - `cargo clippy --all-targets --locked -- -D warnings`：通过。
 - `cargo fmt --all -- --check`：通过。
 - `git diff --check`：通过。

@@ -110,7 +110,7 @@ MCP 使用统一 OAuth runtime：
 
 ## Runtime 与网络
 
-应用只运行一个 Global MCP listener，固定提供 `/mcp`。每个 MCP session 先通过 `workspace_list` / `workspace_select` 选择 Workspace，再在请求开始时绑定不可变的 WorkspaceRequestContext；不同 session 的选择互不影响。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
+应用只运行一个 Global MCP listener，固定提供 `/mcp`。`workspace_list` 返回注册 Workspace；普通工具 schema 统一接受可选 `workspace_id`，推荐客户端在每次 project-scoped 调用中显式携带该 id，因此即使宿主不保持同一个 transport session，也能稳定路由到同一 Workspace。支持持久 MCP session 的客户端仍可通过 `workspace_select` 绑定 active Workspace 并省略后续 `workspace_id`。只有一个 Workspace 时允许安全自动选择。无论采用哪种方式，每个请求都会在执行开始前冻结不可变 `WorkspaceRequestContext`，文件、命令、Planning、History、输出缓存和策略继续受 Workspace root 隔离；不同请求和 session 不会通过桌面 UI 当前选中项隐式串线。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
 
 ## 安全边界
 
@@ -120,6 +120,7 @@ MCP 使用统一 OAuth runtime：
 - Patch 预检后事务化应用；
 - Dangerous operation 需要显式 `confirm=true`；
 - MCP session 由服务端签发，未知或伪造的 session ID fail-closed；
+- `workspace_id` 只能引用 Registry 中的 Workspace id，不能由客户端提交 root 路径；进入 Tool Runtime 前会从参数中剥离，避免下层工具改变路由；
 - Windows 当前仍是 `policy_only` 边界，不宣称拥有完整 OS Sandbox。
 
 ---

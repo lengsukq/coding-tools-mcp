@@ -15,6 +15,92 @@ pub struct GatewayResponse {
     pub workspace: Option<WorkspaceRequestContext>,
 }
 
+fn gateway_scoped_tool_catalog() -> Vec<Value> {
+    list_tools_for_profile("compact")
+        .into_iter()
+        .map(add_workspace_scope_to_tool)
+        .collect()
+}
+
+fn add_workspace_scope_to_tool(mut tool: Value) -> Value {
+    let Some(schema) = tool.get_mut("inputSchema").and_then(Value::as_object_mut) else {
+        return tool;
+    };
+    let properties = schema.entry("properties").or_insert_with(|| json!({}));
+    let Some(properties) = properties.as_object_mut() else {
+        return tool;
+    };
+    properties.insert(
+        "workspace_id".into(),
+        json!({
+            "type": "string",
+            "description": "Registered Workspace id from workspace_list. Pass this on each ordinary tool call when the MCP client does not preserve transport sessions."
+        }),
+    );
+    tool
+}
+
+fn resolve_tool_workspace(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    args: &mut Value,
+) -> Result<WorkspaceRequestContext, Value> {
+    if let Some(workspace_id) = remove_workspace_scope(args)? {
+        return state
+            .workspace_by_id(session_id.unwrap_or("request-scoped"), &workspace_id)
+            .map_err(|error| error.to_rpc_error());
+    }
+
+    if let Some(session_id) = session_id {
+        match state.active_workspace(session_id) {
+            Ok(request) => return Ok(request),
+            Err(error) if error.code != "WORKSPACE_NOT_SELECTED" => {
+                return Err(error.to_rpc_error())
+            }
+            Err(_) => {}
+        }
+    }
+
+    let workspaces = state.registry.list().map_err(|message| {
+        GatewayError::internal("WORKSPACE_REGISTRY_UNAVAILABLE", message).to_rpc_error()
+    })?;
+    if let [profile] = workspaces.as_slice() {
+        return state
+            .workspace_by_id(session_id.unwrap_or("single-workspace"), &profile.id)
+            .map_err(|error| error.to_rpc_error());
+    }
+
+    Err(GatewayError::invalid(
+        "WORKSPACE_NOT_SELECTED",
+        "当前请求没有明确 Workspace。请先调用 workspace_list，并在普通工具调用中传 workspace_id；支持持久 MCP session 的客户端也可先调用 workspace_select。",
+    )
+    .to_rpc_error())
+}
+
+fn remove_workspace_scope(args: &mut Value) -> Result<Option<String>, Value> {
+    let Some(object) = args.as_object_mut() else {
+        return Ok(None);
+    };
+    let Some(value) = object.remove("workspace_id") else {
+        return Ok(None);
+    };
+    let Value::String(value) = value else {
+        return Err(GatewayError::invalid(
+            "INVALID_WORKSPACE_SCOPE",
+            "workspace_id 必须是 workspace_list 返回的字符串 id。",
+        )
+        .to_rpc_error());
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(
+            GatewayError::invalid("INVALID_WORKSPACE_SCOPE", "workspace_id 不能为空。")
+                .to_rpc_error(),
+        );
+    }
+    Ok(Some(value.to_string()))
+}
+
 fn attach_gateway_server_info(
     result: &mut Value,
     state: &GatewayState,
@@ -90,7 +176,7 @@ pub fn handle_gateway_request(
         }
         "ping" => Ok(json!({})),
         "tools/list" => {
-            let mut tools = list_tools_for_profile("compact");
+            let mut tools = gateway_scoped_tool_catalog();
             tools.extend(gateway_tool_definitions());
             Ok(json!({ "tools": tools }))
         }
@@ -116,7 +202,7 @@ pub fn handle_gateway_request(
 
 fn gateway_initialize_result(state: &GatewayState, protocol_version: &str) -> Value {
     let registry_revision = state.registry.revision().unwrap_or_default();
-    let instructions = "Coding Tools MCP exposes one global MCP connection for all registered workspaces. Workspace data is isolated. Before using project-scoped coding tools, call workspace_list and then workspace_select for this Chat session. Never assume the desktop UI's selected workspace. Different Chat sessions keep independent active workspaces. Use workspace_invoke only for an explicit one-off operation in another registered workspace; it does not change the active workspace. Ordinary tools such as read_file, exec_command, apply_patch, planning_manage, and history_manage always run against the immutable Workspace context captured at the start of that request. If a project-scoped tool reports WORKSPACE_NOT_SELECTED, select a workspace instead of retrying against an implicit default.";
+    let instructions = "Coding Tools MCP exposes one global MCP connection for all registered workspaces. Workspace data is isolated. Call workspace_list to discover registered Workspace ids. For maximum client compatibility, pass workspace_id on ordinary project-scoped tools such as read_file, exec_command, apply_patch, planning_manage, and history_manage; this request-scoped Workspace id is authoritative and does not mutate any other request or Chat session. Stateful MCP clients may alternatively use workspace_select and then omit workspace_id on later calls that preserve the same MCP session. When exactly one Workspace is registered, ordinary tools may use it automatically. Never infer a filesystem root or use the desktop UI selection as routing authority. workspace_invoke remains available for an explicit one-off operation in another registered Workspace.";
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
@@ -145,16 +231,13 @@ fn handle_gateway_tools_call(
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| json!({ "code": -32602, "message": "Missing tool name" }))?;
-    let args = tool_arguments(name, params);
+    let mut args = tool_arguments(name, params);
 
     if is_gateway_tool(name) {
         return handle_workspace_tool(state, session_id, name, &args);
     }
 
-    let session_id = require_gateway_session(session_id)?;
-    let request = state
-        .active_workspace(session_id)
-        .map_err(|error| error.to_rpc_error())?;
+    let request = resolve_tool_workspace(state, session_id, &mut args)?;
     let canonical_name = crate::tools::registry::canonical_tool_name(name);
     ensure_gateway_tool_allowed(&request, canonical_name)?;
     let structured = call_tool(request.tools.as_ref(), canonical_name, &args);
@@ -241,11 +324,14 @@ fn handle_workspace_tool(
                 .map_err(|error| error.to_rpc_error())?;
             let canonical_name = crate::tools::registry::canonical_tool_name(nested_name);
             ensure_gateway_tool_allowed(&request, canonical_name)?;
-            let nested_args = args
+            let mut nested_args = args
                 .get("arguments")
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            // The outer workspace_id is the authoritative scope for workspace_invoke.
+            // Ignore a nested scope field so it can never redirect the request.
+            remove_workspace_scope(&mut nested_args)?;
             let structured = call_tool(request.tools.as_ref(), canonical_name, &nested_args);
             let mut result = wrap_mcp_tool_result(canonical_name, &nested_args, structured);
             if let Some(object) = result

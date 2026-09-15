@@ -194,6 +194,52 @@ mod tests {
     }
 
     #[test]
+    fn request_scoped_workspace_id_survives_transport_session_churn() {
+        let (_a, _b, state) = gateway_fixture();
+        let first = rpc_tool(
+            &state,
+            "transport-a",
+            "read_file",
+            json!({ "workspace_id": "workspace-a", "path": "marker.txt" }),
+        );
+        let second = rpc_tool(
+            &state,
+            "transport-b",
+            "read_file",
+            json!({ "workspace_id": "workspace-a", "path": "marker.txt" }),
+        );
+
+        assert_eq!(structured(&first)["content"], "ONLY-A");
+        assert_eq!(structured(&second)["content"], "ONLY-A");
+        assert!(state
+            .sessions
+            .current("transport-a")
+            .active_workspace_id
+            .is_none());
+        assert!(state
+            .sessions
+            .current("transport-b")
+            .active_workspace_id
+            .is_none());
+    }
+
+    #[test]
+    fn request_scoped_workspace_id_cannot_be_redirected_by_absolute_path() {
+        let (_a, b, state) = gateway_fixture();
+        let response = rpc_tool(
+            &state,
+            "transport-a",
+            "read_file",
+            json!({
+                "workspace_id": "workspace-a",
+                "path": b.path().join("marker.txt").display().to_string()
+            }),
+        );
+
+        assert_eq!(structured(&response)["ok"], false);
+    }
+
+    #[test]
     fn invalid_session_ids_are_rejected_instead_of_persisted() {
         let headers = HeaderMap::new();
         let too_long = "s".repeat(MAX_SESSION_ID_BYTES + 1);

@@ -7,7 +7,7 @@
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.2.6` |
+| 版本 | `0.3.0` |
 | 桌面端 | Tauri 2 |
 | 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
@@ -16,7 +16,8 @@
 
 ## 当前核心能力
 
-- 多 Workspace 配置与运行时管理；
+- 单一 Global MCP 连接管理多个隔离 Workspace；
+- request-scoped `workspace_id` 路由，并兼容持久 MCP session 的 `workspace_select`；
 - MCP Streamable HTTP；
 - Bearer / OAuth、PKCE S256、Dynamic Client Registration、Refresh Token；
 - 文件、Patch、命令、Git、图片与 Skill 工具；

@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { RefreshCw, Save } from "@lucide/vue";
 import BaseButton from "../../components/ui/BaseButton.vue";
 import GlassCard from "../../components/ui/GlassCard.vue";
-import TextField from "../../components/ui/TextField.vue";
+import SecretField from "../../components/SecretField.vue";
 import SettingsPageHeader from "../../components/settings/SettingsPageHeader.vue";
 import { getSharedSecret, regenerateSharedSecret, setSharedSecret, type SharedSecretKey } from "$lib/api/secrets";
 import { showToast } from "$lib/stores/toast";
@@ -60,7 +60,14 @@ onMounted(() => { void load(); });
     <GlassCard>
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
       <div v-else class="grid gap-4">
-        <div v-for="item in keys" :key="item.key" class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"><TextField v-model="secrets[item.key]" :label="item.label" type="password" :hint="item.hint" /><BaseButton variant="secondary" :busy="regenerating === item.key" @click="regenerate(item.key)"><RefreshCw :size="13" />重新生成</BaseButton></div>
+        <div v-for="item in keys" :key="item.key" class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+          <label class="block min-w-0">
+            <span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">{{ item.label }}</span>
+            <SecretField v-model="secrets[item.key]" />
+            <span class="mt-1.5 block text-[11px] leading-4 text-[var(--text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
+          </label>
+          <BaseButton variant="secondary" :busy="regenerating === item.key" @click="regenerate(item.key)"><RefreshCw :size="13" />重新生成</BaseButton>
+        </div>
         <div class="flex justify-end border-t border-black/[.05] pt-4 dark:border-white/[.06]"><BaseButton :busy="saving" @click="save"><Save :size="14" />保存更改</BaseButton></div>
       </div>
     </GlassCard>
