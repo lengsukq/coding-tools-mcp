@@ -81,28 +81,21 @@ impl Workspace {
         self.resolve_existing_at(&self.root, raw_path)
     }
 
-    /// 解析只读路径。显式的绝对路径和 `..` 路径允许指向 Workspace 外部，
-    /// 但不会被任何写入工具复用。
+    /// Resolve a read-only path inside the active Workspace.
+    ///
+    /// 0.3 routes multiple projects through one MCP connection, so even
+    /// read-only access must remain workspace-scoped. Absolute paths and `..`
+    /// traversal are rejected instead of acting as an escape hatch.
     pub fn resolve_read_path(&self, raw_path: &str) -> WorkspaceResult<ResolvedPath> {
         let raw = if raw_path.is_empty() { "." } else { raw_path };
-        self.validate_read_text(raw)?;
-        let input = Path::new(raw);
-        let candidate = if input.is_absolute() {
-            input.to_path_buf()
-        } else {
-            self.root
-                .join(raw.replace('/', std::path::MAIN_SEPARATOR_STR))
-        };
+        self.reject_unsafe_text(raw)?;
+        let candidate = self
+            .root
+            .join(raw.replace('/', std::path::MAIN_SEPARATOR_STR));
         let resolved = candidate
             .canonicalize()
             .map_err(|_| WorkspaceError::not_found(format!("Path not found: {raw}")))?;
-        let explicit_external = input.is_absolute()
-            || input
-                .components()
-                .any(|part| matches!(part, Component::ParentDir));
-        if !explicit_external && candidate.starts_with(&self.root) {
-            self.ensure_inside_workspace(&candidate, &resolved)?;
-        }
+        self.ensure_inside_workspace(&candidate, &resolved)?;
         Ok(ResolvedPath {
             display: relative_display(&self.root, &resolved),
             path: resolved,
@@ -233,13 +226,6 @@ impl Workspace {
                 category: "security",
                 retryable: false,
             });
-        }
-        Ok(())
-    }
-
-    fn validate_read_text(&self, raw_path: &str) -> WorkspaceResult<()> {
-        if raw_path.contains('\0') {
-            return Err(WorkspaceError::invalid_argument("Path contains a NUL byte"));
         }
         Ok(())
     }

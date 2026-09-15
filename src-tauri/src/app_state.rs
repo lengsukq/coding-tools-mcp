@@ -1,13 +1,16 @@
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::data::DataStore;
 use crate::error::AppResult;
+use crate::mcp::gateway::GatewayState;
 use crate::runtime::RuntimeSupervisor;
 
 pub struct AppState {
     pub data: Mutex<DataStore>,
     pub runtime: Mutex<RuntimeSupervisor>,
+    pub gateway: Arc<GatewayState>,
     pub startup_restore_attempted: AtomicBool,
 }
 
@@ -15,9 +18,11 @@ impl AppState {
     pub fn new() -> AppResult<Self> {
         let mut store = DataStore::load()?;
         store.init_shared_secrets()?;
+        let gateway = Arc::new(GatewayState::default());
         Ok(Self {
             data: Mutex::new(store),
-            runtime: Mutex::new(RuntimeSupervisor::default()),
+            runtime: Mutex::new(RuntimeSupervisor::new(gateway.clone())),
+            gateway,
             startup_restore_attempted: AtomicBool::new(false),
         })
     }
@@ -57,10 +62,6 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new().expect("failed to initialize app state")
     }
-}
-
-pub fn bootstrap_workspace(store: &mut DataStore, profile_id: &str) -> AppResult<()> {
-    store.init_workspace_secrets(profile_id)
 }
 
 pub fn teardown_workspace(store: &mut DataStore, profile_id: &str) -> AppResult<()> {

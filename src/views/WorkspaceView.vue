@@ -11,48 +11,27 @@ import WorkspacePlanning from "../components/workspace/WorkspacePlanning.vue";
 import WorkspaceServices from "../components/workspace/WorkspaceServices.vue";
 import WorkspaceSettings from "../components/workspace/WorkspaceSettings.vue";
 import { setLastWorkspace } from "$lib/api/settings";
-import { restartTunnel, stopTunnel } from "$lib/api/tunnel";
 import {
   deleteWorkspace,
   openWorkspaceDirectory,
-  restartRuntime,
-  startRuntime,
-  stopRuntime,
   updateWorkspace,
 } from "$lib/api/workspaces";
-import { notifyStartFailure, runServiceToggle } from "$lib/runtime/service";
-import { promptServiceRestart } from "$lib/runtime/restart-hint";
-import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
+import { workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import {
   WORKSPACE_TABS,
   loadWorkspaceSnapshot,
   refreshWorkspaceSnapshot,
-  tunnelConfigured,
-  withAuth,
   withHistoryContext,
   withRuntimePolicy,
-  withTunnelConfig,
   type RuntimePolicyDraft,
-  type SaveTunnelOptions,
-  type TunnelFormConfig,
   type WorkspaceTab,
 } from "$lib/workspace-page";
-import {
-  mcpLocalEndpoint,
-  type AuthConfig,
-  type RuntimeState,
-  type RuntimeStatus,
-  type WorkspaceProfile,
-} from "$lib/types";
+import type { WorkspaceProfile } from "$lib/types";
 
 const route = useRoute();
 const router = useRouter();
 const profile = ref<WorkspaceProfile | null>(null);
-const mcpStatus = ref<RuntimeState>("stopped");
-const mcpBusy = ref(false);
-const mcpLocal = ref("");
-const mcpPublic = ref("");
 const activeTab = ref<WorkspaceTab>("services");
 const pathCopied = ref(false);
 const deleteConfirmOpen = ref(false);
@@ -62,15 +41,6 @@ const renderError = ref("");
 let loadGeneration = 0;
 
 const workspaceId = computed(() => String(route.params.id ?? ""));
-const defaultLocalEndpoint = computed(() => profile.value ? mcpLocalEndpoint(profile.value.runtime.local_port) : "");
-
-function applyRuntime(runtime: RuntimeStatus, id = workspaceId.value) {
-  if (!id || id !== workspaceId.value) return;
-  mcpStatus.value = runtime.state;
-  mcpLocal.value = runtime.localEndpoint;
-  mcpPublic.value = runtime.publicEndpoint;
-  mcpRuntimeStates.value = { ...mcpRuntimeStates.value, [id]: runtime.state };
-}
 
 async function load(id = workspaceId.value) {
   if (!id) return;
@@ -86,7 +56,6 @@ async function load(id = workspaceId.value) {
       await router.replace("/");
       return;
     }
-    if (snapshot.runtime) applyRuntime(snapshot.runtime, id);
     void setLastWorkspace(profile.value.id).catch(() => undefined);
   } catch (error) {
     if (generation !== loadGeneration || id !== workspaceId.value) return;
@@ -104,54 +73,6 @@ async function refreshProfile(id = workspaceId.value): Promise<WorkspaceProfile 
   return profile.value;
 }
 
-async function afterStart(runtime: { state: RuntimeState; publicEndpoint: string }, id: string) {
-  const nextProfile = await refreshProfile(id);
-  if (id !== workspaceId.value) return;
-  if (runtime.state === "running" && tunnelConfigured(nextProfile?.tunnel.type) && !runtime.publicEndpoint) {
-    showToast("服务已启动，但公网地址尚未就绪。Cloudflare Quick Tunnel 可能需要短暂初始化。", {
-      title: "隧道连接中",
-      kind: "warning",
-      duration: 6000,
-    });
-  }
-}
-
-async function toggleRuntime() {
-  const id = workspaceId.value;
-  if (!profile.value || !id || mcpBusy.value) return;
-  const wasRunning = mcpStatus.value === "running";
-  mcpBusy.value = true;
-  try {
-    const runtime = await runServiceToggle(
-      wasRunning,
-      () => startRuntime(id),
-      () => stopRuntime(id),
-      "MCP",
-    );
-    if (!runtime || id !== workspaceId.value) return;
-    applyRuntime(runtime, id);
-    if (!wasRunning) {
-      if (runtime.state === "running") await afterStart(runtime, id);
-      else notifyStartFailure("MCP", runtime);
-    }
-  } finally {
-    if (id === workspaceId.value) mcpBusy.value = false;
-  }
-}
-
-async function restartService() {
-  if (!workspaceId.value || mcpBusy.value) return;
-  mcpBusy.value = true;
-  try {
-    applyRuntime(await restartRuntime(workspaceId.value));
-    showToast("MCP 服务已重启", { kind: "success" });
-  } catch (error) {
-    showToast(String(error), { title: "重启失败", kind: "error" });
-  } finally {
-    mcpBusy.value = false;
-  }
-}
-
 async function revealDirectory() {
   if (!profile.value?.path) return;
   try { await openWorkspaceDirectory(profile.value.path); }
@@ -165,30 +86,12 @@ function copyPath() {
   setTimeout(() => { pathCopied.value = false; }, 1600);
 }
 
-async function saveTunnel(config: TunnelFormConfig, options?: SaveTunnelOptions) {
-  if (!profile.value || !workspaceId.value) return;
-  const next = withTunnelConfig(profile.value, config);
-  await updateWorkspace(next);
-  profile.value = next;
-  if (mcpStatus.value === "running" && !options?.skipTunnelRestart) {
-    try {
-      if (config.type === "none") await stopTunnel(workspaceId.value);
-      else await restartTunnel(workspaceId.value);
-    } catch (error) {
-      showToast(String(error), { title: "隧道重启失败", kind: "error", duration: 8000 });
-    }
-  }
-  if (!options?.skipServicePrompt) {
-    await promptServiceRestart(mcpStatus.value === "running", "MCP 服务");
-  }
-}
-
 async function savePolicy(draft: RuntimePolicyDraft) {
   if (!profile.value) return;
   profile.value = withRuntimePolicy(profile.value, draft);
   await updateWorkspace(profile.value);
   await load();
-  await promptServiceRestart(mcpStatus.value === "running", "MCP 服务");
+  showToast("Workspace 执行策略已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
 }
 
 async function saveHistory(recording: boolean, sessions: number[]) {
@@ -196,17 +99,7 @@ async function saveHistory(recording: boolean, sessions: number[]) {
   profile.value = withHistoryContext(profile.value, recording, sessions);
   await updateWorkspace(profile.value);
   await load();
-  await promptServiceRestart(mcpStatus.value === "running", "MCP 服务");
-}
-
-async function saveAuth(auth: AuthConfig) {
-  if (!profile.value || !workspaceId.value) return;
-  profile.value = withAuth(profile.value, auth);
-  await updateWorkspace(profile.value);
-  if (mcpStatus.value === "running") {
-    try { applyRuntime(await restartRuntime(workspaceId.value)); }
-    catch (error) { showToast(String(error), { title: "服务重启失败", kind: "error", duration: 8000 }); }
-  }
+  showToast("History 设置已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
 }
 
 async function saveName(name: string) {
@@ -221,8 +114,7 @@ async function savePath(path: string) {
   if (!profile.value || !path || profile.value.path === path) return;
   profile.value = { ...profile.value, path };
   await updateWorkspace(profile.value);
-  showToast("工作区目录已更新", { kind: "success" });
-  await promptServiceRestart(mcpStatus.value === "running", "MCP 服务");
+  showToast("工作区目录已更新，新的请求会使用新目录。", { kind: "success" });
 }
 
 async function confirmDelete() {
@@ -232,9 +124,6 @@ async function confirmDelete() {
   try {
     await deleteWorkspace(id);
     workspaces.value = workspaces.value.filter((item) => item.id !== id);
-    const next = { ...mcpRuntimeStates.value };
-    delete next[id];
-    mcpRuntimeStates.value = next;
     deleteConfirmOpen.value = false;
     await router.replace("/");
   } catch (error) {
@@ -272,12 +161,9 @@ onBeforeUnmount(() => { loadGeneration += 1; });
   <section v-else class="min-h-0 flex-1 overflow-y-auto pb-14">
     <WorkspaceHeader
       :profile="profile"
-      :runtime-state="mcpStatus"
-      :runtime-busy="mcpBusy"
       :path-copied="pathCopied"
       @reveal-directory="revealDirectory"
       @copy-path="copyPath"
-      @toggle-runtime="toggleRuntime"
     />
     <div class="sticky top-0 z-20 mt-3 border-y border-white/35 bg-white/38 px-7 py-2.5 backdrop-blur-2xl dark:border-white/6 dark:bg-black/15 sm:px-8">
       <SegmentedControl :items="WORKSPACE_TABS" :model-value="activeTab" @update:model-value="activeTab = $event as WorkspaceTab" />
@@ -287,15 +173,6 @@ onBeforeUnmount(() => { loadGeneration += 1; });
           v-if="activeTab === 'services'"
           :workspace-id="workspaceId"
           :profile="profile"
-          :state="mcpStatus"
-          :busy="mcpBusy"
-          :local-endpoint="mcpLocal"
-          :public-endpoint="mcpPublic"
-          :default-local-endpoint="defaultLocalEndpoint"
-          @toggle="toggleRuntime"
-          @restart="restartService"
-          @save-tunnel="saveTunnel"
-          @save-auth="saveAuth"
           @save-policy="savePolicy"
           @save-history="saveHistory"
         />

@@ -13,6 +13,10 @@ pub struct FrpProfile {
     pub server_port: u16,
 }
 
+pub(crate) fn default_global_mcp_auth_type() -> String {
+    "oauth".to_string()
+}
+
 /// Download settings for fetching frpc / cloudflared binaries.
 ///
 /// GitHub is slow/unreliable from some networks, so downloads try a mirror
@@ -121,6 +125,9 @@ pub struct AppSettings {
     /// Global executable search paths inherited by every workspace runtime.
     #[serde(default)]
     pub global_executable_paths: String,
+    /// Authentication used by the single 0.3 Global MCP endpoint.
+    #[serde(default = "default_global_mcp_auth_type")]
+    pub global_mcp_auth_type: String,
     /// Global execution permission mode inherited by workspaces that opt in.
     #[serde(default = "default_global_permission_mode")]
     pub global_permission_mode: String,
@@ -145,7 +152,13 @@ pub struct AppSettings {
     /// Restore the MCP services that were running in the previous app session.
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
+    /// Whether the single Global MCP runtime was running when its state was last persisted.
     #[serde(default)]
+    pub global_mcp_was_running: bool,
+    /// One-time notice generated when legacy per-workspace auth/tunnels could not be merged losslessly.
+    #[serde(default)]
+    pub global_mcp_migration_notice: String,
+    #[serde(default, skip_serializing)]
     pub restore_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
@@ -187,6 +200,7 @@ fn default_global_gateway_use_proxy() -> bool {
 }
 
 pub(crate) const GLOBAL_RUNTIME_DEFAULTS_VERSION: u32 = 1;
+pub(crate) const GLOBAL_MCP_MIGRATION_VERSION: u32 = 1;
 
 pub(crate) fn default_global_permission_mode() -> String {
     "trusted".to_string()
@@ -194,17 +208,83 @@ pub(crate) fn default_global_permission_mode() -> String {
 
 pub(crate) fn default_global_allowed_commands() -> String {
     [
-        "pytest", "python", "python3", "py", "pip", "pip3", "pipx", "uv", "poetry",
-        "npm", "npx", "node", "pnpm", "yarn", "bun", "deno",
-        "make", "cmake", "ninja", "mvn", "mvnw", "gradle", "gradlew",
-        "cargo", "rustc", "rustup", "go", "ruff", "mypy", "eslint", "tsc",
-        "java", "javac", "ruby", "gem", "php", "composer",
-        "clang", "clang++", "gcc", "g++", "swift", "swiftc", "xcodebuild",
-        "msbuild", "dotnet", "git", "gh", "docker", "docker-compose",
-        "kubectl", "helm", "terraform", "ansible", "aws", "az", "gcloud",
-        "curl", "wget", "brew", "code", "corepack", "pnpx", "xcrun", "pod",
-        "fastlane", "winget", "choco", "scoop", "cmd", "powershell", "pwsh", "wsl",
-        "bash", "sh", "zsh", "where",
+        "pytest",
+        "python",
+        "python3",
+        "py",
+        "pip",
+        "pip3",
+        "pipx",
+        "uv",
+        "poetry",
+        "npm",
+        "npx",
+        "node",
+        "pnpm",
+        "yarn",
+        "bun",
+        "deno",
+        "make",
+        "cmake",
+        "ninja",
+        "mvn",
+        "mvnw",
+        "gradle",
+        "gradlew",
+        "cargo",
+        "rustc",
+        "rustup",
+        "go",
+        "ruff",
+        "mypy",
+        "eslint",
+        "tsc",
+        "java",
+        "javac",
+        "ruby",
+        "gem",
+        "php",
+        "composer",
+        "clang",
+        "clang++",
+        "gcc",
+        "g++",
+        "swift",
+        "swiftc",
+        "xcodebuild",
+        "msbuild",
+        "dotnet",
+        "git",
+        "gh",
+        "docker",
+        "docker-compose",
+        "kubectl",
+        "helm",
+        "terraform",
+        "ansible",
+        "aws",
+        "az",
+        "gcloud",
+        "curl",
+        "wget",
+        "brew",
+        "code",
+        "corepack",
+        "pnpx",
+        "xcrun",
+        "pod",
+        "fastlane",
+        "winget",
+        "choco",
+        "scoop",
+        "cmd",
+        "powershell",
+        "pwsh",
+        "wsl",
+        "bash",
+        "sh",
+        "zsh",
+        "where",
     ]
     .join(",")
 }
@@ -284,6 +364,11 @@ impl AppSettings {
             download: data.download.clone(),
             proxy: data.proxy.clone(),
             global_executable_paths: data.global_executable_paths.clone(),
+            global_mcp_auth_type: if data.global_mcp_auth_type.trim().is_empty() {
+                default_global_mcp_auth_type()
+            } else {
+                data.global_mcp_auth_type.clone()
+            },
             global_permission_mode: data.global_permission_mode.clone(),
             global_allowed_commands: data.global_allowed_commands.clone(),
             global_ai_instructions: data.global_ai_instructions.clone(),
@@ -293,6 +378,8 @@ impl AppSettings {
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
             allow_lan_access: data.allow_lan_access,
             restore_runtime_state_on_launch: data.restore_runtime_state_on_launch,
+            global_mcp_was_running: data.global_mcp_was_running,
+            global_mcp_migration_notice: data.global_mcp_migration_notice.clone(),
             restore_mcp_workspace_ids: data.restore_mcp_workspace_ids.clone(),
             global_gateway: data.global_gateway.clone(),
             shared_secrets: data.shared_secrets.clone(),
@@ -307,6 +394,7 @@ impl AppSettings {
         data.download = self.download.clone();
         data.proxy = self.proxy.clone();
         data.global_executable_paths = self.global_executable_paths.clone();
+        data.global_mcp_auth_type = self.global_mcp_auth_type.clone();
         data.global_permission_mode = self.global_permission_mode.clone();
         data.global_allowed_commands = self.global_allowed_commands.clone();
         data.global_ai_instructions = self.global_ai_instructions.clone();
@@ -316,16 +404,20 @@ impl AppSettings {
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
         data.allow_lan_access = self.allow_lan_access;
         data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;
+        data.global_mcp_was_running = self.global_mcp_was_running;
+        data.global_mcp_migration_notice = self.global_mcp_migration_notice.clone();
         data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();
         data.global_gateway = self.global_gateway.clone();
     }
 
     pub fn load_or_default() -> Self {
-        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data))).unwrap_or_else(|_| Self {
-            global_executable_paths: default_global_executable_paths(),
-            global_permission_mode: default_global_permission_mode(),
-            global_allowed_commands: default_global_allowed_commands(),
-            ..Self::default()
+        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data))).unwrap_or_else(|_| {
+            Self {
+                global_executable_paths: default_global_executable_paths(),
+                global_permission_mode: default_global_permission_mode(),
+                global_allowed_commands: default_global_allowed_commands(),
+                ..Self::default()
+            }
         })
     }
 

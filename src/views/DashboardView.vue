@@ -41,12 +41,8 @@ import {
   formatCount,
   loadPlanningByWorkspace,
   loadUsageByWorkspace,
-  stateClass,
-  stateLabel,
-  summarizeConnections,
   summarizePlanning,
   summarizeUsage,
-  tunnelLabel,
   type UsagePoint,
 } from "$lib/dashboard";
 import {
@@ -59,10 +55,18 @@ import {
   updateDashboardPreferences,
   type DashboardModuleId,
 } from "$lib/dashboard-preferences";
-import { openWorkspaceDirectory, startRuntime, stopRuntime } from "$lib/api/workspaces";
+import {
+  getGlobalMcpOverview,
+  getRuntimeStatus,
+  openWorkspaceDirectory,
+  startRuntime,
+  stopRuntime,
+  type GlobalMcpOverviewDto,
+} from "$lib/api/workspaces";
+import { DEFAULT_GLOBAL_GATEWAY, getGlobalGatewayConfig, type GlobalGatewayConfigDto } from "$lib/api/global-gateway";
 import { runServiceToggle } from "$lib/runtime/service";
 import { showToast } from "$lib/stores/toast";
-import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
+import { globalMcpRuntimeState, workspaces } from "$lib/stores/app";
 import type { WorkspaceProfile } from "$lib/types";
 
 interface FocusItem {
@@ -72,6 +76,16 @@ interface FocusItem {
   progress: number;
   progressLabel: string;
   mode: string;
+}
+
+async function loadGlobalOverview() {
+  try {
+    const overview = await getGlobalMcpOverview();
+    globalOverview.value = overview;
+    globalMcpRuntimeState.value = overview.state;
+  } catch {
+    // Keep the last known state; App-level refresh still handles hard failures.
+  }
 }
 
 function requestAddWorkspace() {
@@ -99,7 +113,17 @@ const usageByWorkspace = ref<Record<string, ServiceUsageStats[]>>({});
 const historyByWorkspace = ref<Record<string, HistorySessionSummary[]>>({});
 const usageHistory = ref<UsagePoint[]>([]);
 const usageWorkspaceKey = ref("");
-const busyMap = reactive<Record<string, boolean>>({});
+const globalRuntimeBusy = ref(false);
+const gatewayConfig = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
+const globalOverview = ref<GlobalMcpOverviewDto>({
+  state: "stopped",
+  localEndpoint: "",
+  publicEndpoint: "",
+  workspaceCount: 0,
+  sessionCount: 0,
+  registryRevision: 0,
+  sessions: [],
+});
 const copiedPathId = ref<string | null>(null);
 const commandOpen = ref(false);
 const commandQuery = ref("");
@@ -117,24 +141,22 @@ const orderedWorkspaces = computed(() => {
   const byId = new Map(workspaces.value.map((item) => [item.id, item]));
   return ids.map((id) => byId.get(id)).filter((item): item is WorkspaceProfile => Boolean(item));
 });
-const mcpRunning = computed(() => workspaces.value.filter((item) => mcpRuntimeStates.value[item.id] === "running").length);
-const errorServices = computed(() => workspaces.value.filter((item) => mcpRuntimeStates.value[item.id] === "error").length);
-const serviceHealth = computed(() => workspaceCount.value === 0 ? 0 : Math.round((mcpRunning.value / workspaceCount.value) * 100));
+const mcpRunning = computed(() => globalMcpRuntimeState.value === "running" ? 1 : 0);
+const errorServices = computed(() => globalMcpRuntimeState.value === "error" ? 1 : 0);
+const serviceHealth = computed(() => globalMcpRuntimeState.value === "running" ? 100 : 0);
 const planningStats = computed(() => summarizePlanning(planningByWorkspace.value));
-const connectionStats = computed(() => summarizeConnections(workspaces.value));
 const usageTotals = computed(() => summarizeUsage(usageByWorkspace.value));
 const averageTokens = computed(() => usageTotals.value.toolCallCount === 0 ? 0 : usageTotals.value.estimatedToolCallTokens / usageTotals.value.toolCallCount);
 const usageChart = computed(() => buildUsageChart(usageHistory.value));
 const runtimeMix = computed(() => [
   { key: "running", label: "Running", value: mcpRunning.value },
-  { key: "offline", label: "Offline", value: Math.max(0, workspaceCount.value - mcpRunning.value - errorServices.value) },
+  { key: "offline", label: "Offline", value: globalMcpRuntimeState.value === "stopped" ? 1 : 0 },
   { key: "error", label: "Error", value: errorServices.value },
 ]);
 const connectionMix = computed(() => [
-  { key: "gateway", label: "Gateway", value: connectionStats.value.gateway },
-  { key: "frp", label: "FRP", value: connectionStats.value.frp },
-  { key: "cloudflare", label: "Cloudflare", value: connectionStats.value.cloudflare },
-  { key: "local", label: "Local", value: connectionStats.value.local },
+  { key: "gateway", label: "FRP", value: gatewayConfig.tunnelType === "frp" ? 1 : 0 },
+  { key: "cloudflare", label: "Cloudflare", value: gatewayConfig.tunnelType === "cloudflare" ? 1 : 0 },
+  { key: "local", label: "Local", value: !gatewayConfig.enabled || gatewayConfig.tunnelType === "none" ? 1 : 0 },
 ]);
 const planningModeMix = computed(() => [
   { key: "direct", label: "Direct", value: planningStats.value.modes.direct },
@@ -177,10 +199,8 @@ const primaryFocus = computed(() => focusItems.value.find((item) => item.workspa
 const attentionItems = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = [];
   for (const workspace of orderedWorkspaces.value) {
-    const runtimeState = mcpRuntimeStates.value[workspace.id];
     const planning = planningByWorkspace.value[workspace.id];
     const usage = usageByWorkspace.value[workspace.id] ?? [];
-    if (runtimeState === "error") items.push({ workspace, title: "MCP Runtime 异常", detail: "进入工作区查看诊断和日志。", level: "error" });
     const reviews = planning
       ? planning.goals.filter((goal) => goal.status === "awaiting_acceptance").length
         + planning.plans.filter((plan) => plan.status === "awaiting_acceptance").length
@@ -224,8 +244,8 @@ const commandEntries = computed(() => {
   const entries = [
     { label: "添加工作区", hint: "Workspace", run: () => window.dispatchEvent(new CustomEvent("coding-tools:add-workspace")) },
     { label: "打开通用设置", hint: "Settings", run: () => router.push("/settings/general") },
-    { label: "启动全部 MCP", hint: "Runtime", run: () => void setAllRuntime(true) },
-    { label: "停止全部 MCP", hint: "Runtime", run: () => void setAllRuntime(false) },
+    { label: "启动 Global MCP", hint: "Runtime", run: () => void setGlobalRuntime(true) },
+    { label: "停止 Global MCP", hint: "Runtime", run: () => void setGlobalRuntime(false) },
     ...orderedWorkspaces.value.map((workspace) => ({ label: `打开 ${workspace.name}`, hint: "Workspace", run: () => openWorkspace(workspace.id) })),
   ];
   return query ? entries.filter((entry) => `${entry.label} ${entry.hint}`.toLowerCase().includes(query)) : entries;
@@ -311,24 +331,22 @@ function openWorkspace(id: string) {
   void router.push(`/workspace/${id}`);
 }
 
-async function toggleWorkspaceMcp(id: string) {
-  if (busyMap[id]) return;
-  const wasRunning = mcpRuntimeStates.value[id] === "running";
-  busyMap[id] = true;
+async function toggleGlobalMcp() {
+  if (globalRuntimeBusy.value) return;
+  const wasRunning = globalMcpRuntimeState.value === "running";
+  globalRuntimeBusy.value = true;
   try {
-    const status = await runServiceToggle(wasRunning, () => startRuntime(id), () => stopRuntime(id), "MCP");
-    if (status) mcpRuntimeStates.value = { ...mcpRuntimeStates.value, [id]: status.state };
+    const status = await runServiceToggle(wasRunning, () => startRuntime(), () => stopRuntime(), "Global MCP");
+    if (status) globalMcpRuntimeState.value = status.state;
   } finally {
-    busyMap[id] = false;
+    globalRuntimeBusy.value = false;
   }
 }
 
-async function setAllRuntime(start: boolean) {
+async function setGlobalRuntime(start: boolean) {
   commandOpen.value = false;
-  for (const workspace of orderedWorkspaces.value) {
-    const running = mcpRuntimeStates.value[workspace.id] === "running";
-    if (start !== running) await toggleWorkspaceMcp(workspace.id);
-  }
+  const running = globalMcpRuntimeState.value === "running";
+  if (start !== running) await toggleGlobalMcp();
 }
 
 async function copyWorkspacePath(id: string, path: string) {
@@ -387,13 +405,23 @@ watch(commandOpen, async (open) => {
 
 onMounted(() => {
   loadDashboardPreferences();
-  usageTimer = window.setInterval(() => void loadUsage(workspaces.value), 5000);
+  usageTimer = window.setInterval(() => {
+    void loadUsage(workspaces.value);
+    void loadGlobalOverview();
+  }, 5000);
   historyTimer = window.setInterval(() => void loadHistory(workspaces.value), 30_000);
   void getLastWorkspaceId().then((id) => {
     lastWorkspaceId.value = id ?? "";
   }).catch(() => {
     lastWorkspaceId.value = "";
   });
+  void getRuntimeStatus().then((status) => {
+    globalMcpRuntimeState.value = status.state;
+  }).catch(() => {
+    globalMcpRuntimeState.value = "stopped";
+  });
+  void getGlobalGatewayConfig().then((config) => Object.assign(gatewayConfig, config)).catch(() => undefined);
+  void loadGlobalOverview();
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -414,7 +442,7 @@ onUnmounted(() => {
           </div>
           <div>
             <h1 class="wb-dashboard-title">工作台</h1>
-            <p class="wb-dashboard-subtitle">继续上一次 Coding 工作、处理需要关注的状态，并快速控制所有 Workspace Runtime。</p>
+            <p class="wb-dashboard-subtitle">一个 Global MCP 连接管理全部 Workspace；在这里查看项目上下文、Planning、History 与使用情况。</p>
           </div>
         </div>
       </div>
@@ -456,7 +484,7 @@ onUnmounted(() => {
           <GitBranch :size="28" />
         </div>
         <h2 class="mt-5 text-lg font-semibold">还没有工作区</h2>
-        <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">添加一个本地项目后，可以在这里管理 MCP Runtime、Planning、History 和使用情况。</p>
+        <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">添加本地项目后，ChatGPT 可通过同一个 Global MCP 连接选择并操作不同 Workspace。</p>
         <button class="wb-primary-button mt-5" type="button" @click="requestAddWorkspace">添加工作区</button>
       </div>
 
@@ -470,14 +498,14 @@ onUnmounted(() => {
               <div class="wb-progress"><span :style="{ width: `${primaryFocus.progress}%` }" /></div>
               <div class="wb-focus-meta">
                 <span>{{ primaryFocus.workspace.name }}</span><span>{{ primaryFocus.mode }}</span>
-                <span>{{ primaryFocus.progressLabel }}</span><span>{{ tunnelLabel(primaryFocus.workspace) }}</span>
+                <span>{{ primaryFocus.progressLabel }}</span><span>Global MCP Context</span>
               </div>
               <div class="wb-focus-actions">
                 <button class="wb-primary-button" type="button" @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></button>
-                <button class="wb-soft-button" type="button" @click="toggleWorkspaceMcp(primaryFocus.workspace.id)">
-                  <RotateCw v-if="busyMap[primaryFocus.workspace.id]" :size="12" class="animate-spin" />
-                  <template v-else-if="mcpRuntimeStates[primaryFocus.workspace.id] === 'running'"><Square :size="11" /> 停止 MCP</template>
-                  <template v-else><Play :size="11" /> 启动 MCP</template>
+                <button class="wb-soft-button" type="button" @click="toggleGlobalMcp">
+                  <RotateCw v-if="globalRuntimeBusy" :size="12" class="animate-spin" />
+                  <template v-else-if="globalMcpRuntimeState === 'running'"><Square :size="11" /> 停止 Global MCP</template>
+                  <template v-else><Play :size="11" /> 启动 Global MCP</template>
                 </button>
               </div>
             </template>
@@ -488,18 +516,17 @@ onUnmounted(() => {
           </div>
           <div class="wb-health-panel">
             <div class="wb-health-ring" :style="{ '--health-angle': `${serviceHealth * 3.6}deg` }">
-              <div class="wb-health-ring-content"><strong>{{ serviceHealth }}%</strong><span>Runtime</span><small>Online</small></div>
+              <div class="wb-health-ring-content"><strong>{{ serviceHealth }}%</strong><span>Global MCP</span><small>{{ globalMcpRuntimeState }}</small></div>
             </div>
             <div class="wb-health-summary">
-              <div><span>Running</span><strong>{{ mcpRunning }}</strong></div>
-              <div><span>Offline</span><strong>{{ Math.max(0, workspaceCount - mcpRunning) }}</strong></div>
+              <div><span>Runtime</span><strong>{{ globalMcpRuntimeState === 'running' ? 'ON' : 'OFF' }}</strong></div>
+              <div><span>Sessions</span><strong>{{ globalOverview.sessionCount }}</strong></div>
               <div :class="{ alert: errorServices > 0 }"><span>Errors</span><strong>{{ errorServices }}</strong></div>
             </div>
             <div class="wb-health-connections">
-              <span>Gateway {{ connectionStats.gateway }}</span>
-              <span>FRP {{ connectionStats.frp }}</span>
-              <span>CF {{ connectionStats.cloudflare }}</span>
-              <span>Local {{ connectionStats.local }}</span>
+              <span>Port {{ gatewayConfig.localPort }}</span>
+              <span>{{ gatewayConfig.enabled ? gatewayConfig.tunnelType.toUpperCase() : 'LOCAL' }}</span>
+              <span>{{ globalOverview.sessionCount }} Sessions</span>
             </div>
           </div>
         </section>
@@ -507,7 +534,7 @@ onUnmounted(() => {
         <div class="wb-stat-strip mt-4">
           <div class="wb-stat wb-surface wb-stat--blue">
             <div class="wb-stat-head"><span>Workspaces</span><i><Boxes :size="15" /></i></div>
-            <strong>{{ workspaceCount }}</strong><small><b>{{ mcpRunning }}</b> 个 Runtime 在线</small>
+            <strong>{{ workspaceCount }}</strong><small><b>{{ globalOverview.sessionCount }}</b> 个活跃 MCP Session</small>
           </div>
           <div class="wb-stat wb-surface wb-stat--indigo">
             <div class="wb-stat-head"><span>MCP Tokens</span><i><Cpu :size="15" /></i></div>
@@ -519,7 +546,7 @@ onUnmounted(() => {
           </div>
           <div class="wb-stat wb-surface" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
             <div class="wb-stat-head"><span>Need Review</span><i><ShieldCheck :size="15" /></i></div>
-            <strong>{{ planningStats.pendingReview }}</strong><small>{{ errorServices > 0 ? `${errorServices} 个 Runtime 异常` : "运行状态正常" }}</small>
+            <strong>{{ planningStats.pendingReview }}</strong><small>{{ errorServices > 0 ? "Global MCP Runtime 异常" : "Global MCP 状态正常" }}</small>
           </div>
         </div>
 
@@ -534,12 +561,12 @@ onUnmounted(() => {
         </section>
 
         <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface">
-          <div class="wb-section-heading"><div><h3>工作区</h3><p>运行状态、Planning 和 MCP 用量保持在同一视图。</p></div><span class="text-[10px] text-[var(--text-muted)]">{{ workspaceCount }} Workspaces</span></div>
+          <div class="wb-section-heading"><div><h3>工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)]">{{ workspaceCount }} Workspaces</span></div>
           <div class="wb-workspace-list">
-            <div class="wb-workspace-header"><span>Workspace</span><span>Runtime</span><span>Planning</span><span>Tokens</span><span /></div>
+            <div class="wb-workspace-header"><span>Workspace</span><span>Context</span><span>Planning</span><span>Tokens</span><span /></div>
             <div v-for="workspace in orderedWorkspaces" :key="workspace.id" class="wb-workspace-row" :class="{ 'is-pinned': dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id) }">
               <div class="wb-workspace-name"><button type="button" class="truncate" @click="openWorkspace(workspace.id)">{{ workspace.name }}</button><small :title="workspace.path">{{ workspace.path }}</small></div>
-              <div class="wb-runtime-pill"><span class="wb-runtime-dot" :class="stateClass(mcpRuntimeStates[workspace.id])" /><span>{{ stateLabel(mcpRuntimeStates[workspace.id]) }}</span><span class="font-mono text-[9px]">:{{ workspace.runtime.local_port }}</span></div>
+              <div class="wb-runtime-pill"><span class="wb-runtime-dot is-running" /><span>{{ workspace.runtime.tool_profile }}</span><span class="font-mono text-[9px]">isolated</span></div>
               <div class="wb-mode-pill min-w-0"><GitBranch :size="11" /><span class="truncate" :title="planningSummary(workspace.id)">{{ planningSummary(workspace.id) }}</span></div>
               <div class="wb-workspace-token">{{ formatCount(workspaceUsageTokens(workspace.id)) }}</div>
               <div class="wb-workspace-actions">
@@ -548,7 +575,6 @@ onUnmounted(() => {
                 <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="11" /></button>
                 <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="revealDirectory(workspace.path)"><FolderOpen :size="11" /></button>
                 <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="11" class="text-[var(--success)]" /><Copy v-else :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="toggleWorkspaceMcp(workspace.id)"><RotateCw v-if="busyMap[workspace.id]" :size="11" class="animate-spin" /><Square v-else-if="mcpRuntimeStates[workspace.id] === 'running'" :size="10" /><Play v-else :size="10" /></button>
                 <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="11" /></button>
               </div>
             </div>
@@ -567,17 +593,17 @@ onUnmounted(() => {
           </section>
 
           <section v-if="moduleVisible('health')" class="wb-section wb-surface">
-            <div class="wb-section-heading"><div><h3>系统健康</h3><p>Runtime、连接和 Planning 状态压缩成可扫描信息。</p></div><Gauge :size="14" /></div>
+            <div class="wb-section-heading"><div><h3>系统健康</h3><p>Global MCP、唯一公网入口和 Planning 状态压缩成可扫描信息。</p></div><Gauge :size="14" /></div>
             <div class="wb-health-overview">
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>Runtime 分布</span><strong>{{ mcpRunning }}/{{ workspaceCount }} Online</strong></div>
+                <div class="wb-mix-head"><span>Global MCP</span><strong>{{ globalMcpRuntimeState }}</strong></div>
                 <div class="wb-mix-track">
                   <i v-for="item in runtimeMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
                 </div>
                 <div class="wb-mix-legend"><span v-for="item in runtimeMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
               </div>
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>连接方式</span><strong>{{ workspaceCount }} Workspaces</strong></div>
+                <div class="wb-mix-head"><span>唯一连接方式</span><strong>1 Endpoint</strong></div>
                 <div class="wb-mix-track">
                   <i v-for="item in connectionMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
                 </div>
@@ -593,6 +619,16 @@ onUnmounted(() => {
               <div class="wb-health-signal" :class="errorServices === 0 && usageTotals.errorCount === 0 ? 'healthy' : 'warning'">
                 <div><span>Quality Signal</span><strong>{{ errorServices === 0 && usageTotals.errorCount === 0 ? "Passed" : "Needs Attention" }}</strong></div>
                 <small>{{ formatCount(usageTotals.errorCount) }} Tool Errors · {{ planningStats.pendingReview }} Waiting Review</small>
+              </div>
+              <div class="wb-mix-chart">
+                <div class="wb-mix-head"><span>Chat Sessions</span><strong>{{ globalOverview.sessionCount }}</strong></div>
+                <div v-if="globalOverview.sessions.length" class="mt-2 space-y-1.5">
+                  <div v-for="session in globalOverview.sessions.slice(0, 4)" :key="session.sessionId" class="flex items-center justify-between gap-3 text-[10px]">
+                    <span class="min-w-0 truncate text-[var(--text-secondary)]">{{ session.workspaceName }}</span>
+                    <code class="shrink-0 text-[9px] text-[var(--text-muted)]">{{ session.sessionId.slice(0, 8) }}</code>
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-[10px] text-[var(--text-muted)]">尚无活跃 Chat Session</div>
               </div>
             </div>
           </section>

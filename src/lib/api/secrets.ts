@@ -1,49 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type WorkspaceSecretKey =
-  | "oauth_client_secret"
-  | "oauth_password"
-  | "oauth_token_secret"
-  | "bearer_token"
-  | "cloudflare_token"
-  | "frp_token";
-
-export async function getWorkspaceSecret(
-  id: string,
-  key: WorkspaceSecretKey,
-): Promise<string | null> {
-  return invoke<string | null>("get_workspace_secret", { id, key });
-}
-
-export async function setWorkspaceSecret(
-  id: string,
-  key: WorkspaceSecretKey,
-  value: string,
-): Promise<void> {
-  return invoke("set_workspace_secret", { id, key, value });
-}
-
-export async function regenerateWorkspaceSecret(
-  id: string,
-  key: WorkspaceSecretKey,
-): Promise<string> {
-  return invoke<string>("regenerate_workspace_secret", { id, key });
-}
-
-/** @deprecated use WorkspaceSecretKey */
-export type SecretKey = WorkspaceSecretKey;
-
-/** @deprecated use getWorkspaceSecret */
-export const getSecret = getWorkspaceSecret;
-
-/** @deprecated use setWorkspaceSecret */
-export const setSecret = setWorkspaceSecret;
-
-/** @deprecated use regenerateWorkspaceSecret */
-export const regenerateSecret = regenerateWorkspaceSecret;
-
-// ── Shared secrets ───────────────────────────────────────────────────────
-
 export type SharedSecretKey =
   | "oauth_client_id"
   | "bearer_token"
@@ -61,9 +17,4 @@ export async function setSharedSecret(key: SharedSecretKey, value: string): Prom
 
 export async function regenerateSharedSecret(key: SharedSecretKey): Promise<string> {
   return invoke<string>("regenerate_shared_secret", { key });
-}
-
-export async function secretIsSet(id: string, key: WorkspaceSecretKey): Promise<boolean> {
-  const value = await getWorkspaceSecret(id, key);
-  return Boolean(value);
 }

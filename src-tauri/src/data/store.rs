@@ -163,26 +163,12 @@ mod tests {
     use crate::settings::AppSettings;
 
     #[test]
-    fn workspace_secret_roundtrip() {
-        let id = uuid::Uuid::new_v4().to_string().replace('-', "");
-        let mut store = DataStore::load().expect("load");
-        store
-            .set_workspace_secret(&id, "oauth_client_secret", "roundtrip-secret")
-            .expect("set");
-        let loaded = store
-            .get_workspace_secret(&id, "oauth_client_secret")
-            .expect("get");
-        assert_eq!(loaded.as_deref(), Some("roundtrip-secret"));
-        store.remove_workspace_secrets(&id).expect("remove");
-    }
-
-    #[test]
-    fn stale_store_update_does_not_overwrite_externally_persisted_workspace_secret() {
+    fn stale_store_update_does_not_overwrite_externally_persisted_global_oauth_registry() {
         let id = uuid::Uuid::new_v4().to_string().replace('-', "");
         let marker = format!("stale-store-regression-{id}");
         let mut store = DataStore::load().expect("load");
 
-        crate::secret::SecretStore::set(&id, "oauth_dynamic_clients", &marker)
+        crate::secret::SecretStore::set_app("global_mcp", "oauth_dynamic_clients", &marker)
             .expect("persist external secret");
 
         let mut settings = store.settings();
@@ -191,11 +177,9 @@ mod tests {
             .update_settings(settings)
             .expect("update unrelated settings");
 
-        let persisted = crate::secret::SecretStore::get(&id, "oauth_dynamic_clients")
+        let persisted = crate::secret::SecretStore::get_app("global_mcp", "oauth_dynamic_clients")
             .expect("read external secret");
         assert_eq!(persisted.as_deref(), Some(marker.as_str()));
-
-        let _ = crate::secret::SecretStore::remove_workspace_secrets(&id);
     }
 
     #[test]

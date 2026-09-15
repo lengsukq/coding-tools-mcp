@@ -37,13 +37,16 @@ impl RpcRequestMeta {
     }
 }
 
-pub(super) fn log_request(profile_id: &str, meta: &RpcRequestMeta) {
+pub(super) fn log_request(profile_id: &str, session_id: Option<&str>, meta: &RpcRequestMeta) {
     append_profile_log(
         profile_id,
         "mcp-requests.log",
         &format!(
-            "[rpc] request id={} method={} tool={}",
-            meta.request_id, meta.method, meta.tool_name
+            "[rpc] request session={} id={} method={} tool={}",
+            session_id.unwrap_or("none"),
+            meta.request_id,
+            meta.method,
+            meta.tool_name
         ),
     );
 }
@@ -51,6 +54,7 @@ pub(super) fn log_request(profile_id: &str, meta: &RpcRequestMeta) {
 pub(super) fn record_response(
     state: &SharedState,
     profile_id: &str,
+    session_id: Option<&str>,
     meta: &RpcRequestMeta,
     response: &Value,
 ) {
@@ -68,31 +72,8 @@ pub(super) fn record_response(
         meta.is_tool_call(),
         is_error,
     );
-    log_rpc_completion(state, profile_id, meta, response_bytes);
-    log_exec_result(profile_id, meta, response);
-}
-
-pub(super) fn record_worker_failure(
-    state: &SharedState,
-    profile_id: &str,
-    meta: &RpcRequestMeta,
-    response: &Value,
-    error: &impl std::fmt::Display,
-) {
-    state.usage().record(
-        meta.request_bytes,
-        serialized_len(response),
-        meta.is_tool_call(),
-        true,
-    );
-    append_profile_log(
-        profile_id,
-        "mcp-requests.log",
-        &format!(
-            "[rpc] worker_failed id={} method={} tool={} error={error}",
-            meta.request_id, meta.method, meta.tool_name
-        ),
-    );
+    log_rpc_completion(state, profile_id, session_id, meta, response_bytes);
+    log_exec_result(profile_id, session_id, meta, response);
 }
 
 fn serialized_len(value: &Value) -> usize {
@@ -104,6 +85,7 @@ fn serialized_len(value: &Value) -> usize {
 fn log_rpc_completion(
     state: &SharedState,
     profile_id: &str,
+    session_id: Option<&str>,
     meta: &RpcRequestMeta,
     response_bytes: usize,
 ) {
@@ -116,8 +98,8 @@ fn log_rpc_completion(
         profile_id,
         "mcp-requests.log",
         &format!(
-            "[rpc] completed id={} method={} tool={} response_bytes={} repeated_bytes={}",
-            meta.request_id, meta.method, meta.tool_name, response_bytes, repeated_bytes
+            "[rpc] completed session={} id={} method={} tool={} response_bytes={} repeated_bytes={}",
+            session_id.unwrap_or("none"), meta.request_id, meta.method, meta.tool_name, response_bytes, repeated_bytes
         ),
     );
 
@@ -142,7 +124,12 @@ fn log_rpc_completion(
     }
 }
 
-fn log_exec_result(profile_id: &str, meta: &RpcRequestMeta, response: &Value) {
+fn log_exec_result(
+    profile_id: &str,
+    session_id: Option<&str>,
+    meta: &RpcRequestMeta,
+    response: &Value,
+) {
     if !matches!(
         meta.tool_name.as_str(),
         "exec_command" | "exec_health_check"
@@ -173,8 +160,8 @@ fn log_exec_result(profile_id: &str, meta: &RpcRequestMeta, response: &Value) {
         profile_id,
         "mcp-requests.log",
         &format!(
-            "[exec] id={} tool={} is_error={} status={} termination_reason={} exit_code={}",
-            meta.request_id, meta.tool_name, is_error, status, termination_reason, exit_code
+            "[exec] session={} id={} tool={} is_error={} status={} termination_reason={} exit_code={}",
+            session_id.unwrap_or("none"), meta.request_id, meta.tool_name, is_error, status, termination_reason, exit_code
         ),
     );
 }

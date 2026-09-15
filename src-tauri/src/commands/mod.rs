@@ -10,7 +10,6 @@ pub(crate) mod runtime;
 mod runtime_settings;
 mod secrets;
 mod software;
-mod tunnel;
 pub(crate) mod ui_memory;
 mod usage;
 pub(crate) mod window_chrome;
@@ -34,17 +33,14 @@ pub use planning::{
     reject_plan_review, reset_planning_state, set_planning_mode,
 };
 pub use runtime::{
-    get_runtime_status, restart_runtime, restore_runtime_state, start_runtime, stop_runtime,
+    get_global_mcp_overview, get_runtime_status, restart_runtime, restore_runtime_state,
+    start_runtime, stop_runtime,
 };
 pub use runtime_settings::{get_global_runtime_settings, set_global_runtime_settings};
-pub use secrets::{
-    get_shared_secret, get_workspace_secret, regenerate_shared_secret, regenerate_workspace_secret,
-    set_shared_secret, set_workspace_secret,
-};
+pub use secrets::{get_shared_secret, regenerate_shared_secret, set_shared_secret};
 pub use software::{
     get_download_config, install_software, list_software, set_download_config, uninstall_software,
 };
-pub use tunnel::{restart_tunnel, stop_tunnel, test_tunnel};
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
 pub use window_chrome::{hide_to_tray, quit_app, show_main_window};

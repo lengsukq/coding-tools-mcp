@@ -9,13 +9,11 @@ use tokio::time::{sleep, Duration};
 
 use crate::error::{AppError, AppResult};
 use crate::platform::platform;
+use crate::settings::{AppSettings, GlobalGatewayConfig};
 use crate::tunnel::cloudflare::stop_child;
-use crate::tunnel::supervisor::log_dir_for_profile;
-use crate::workspace::WorkspaceProfile;
+use crate::tunnel::log_dir_for_profile;
 
-use super::{
-    build_frpc_toml_for_routes, frp_server_config, FrpServerConfig, VERSION as FRP_VERSION,
-};
+use super::{build_frpc_toml, global_frp_server_config, FrpServerConfig, VERSION as FRP_VERSION};
 
 mod health;
 mod install;
@@ -26,21 +24,17 @@ mod runtime;
 use health::classify_public_mcp_body;
 #[cfg(test)]
 use health::successful_proxy_names;
-pub(crate) use health::{
-    frpc_log_name, frpc_reconnect_loop_detected, probe_local_mcp_ok, probe_public_mcp_endpoint,
-    read_frpc_log_tail, PublicMcpProbe,
-};
+#[cfg(test)]
+pub(crate) use health::{frpc_reconnect_loop_detected, PublicMcpProbe};
 pub(crate) use install::{cached_frpc_path, download_frpc_to_cache};
 pub use install::{ensure_frpc, resolve_frpc};
 #[cfg(test)]
 use managed::managed_frpc_pid_path;
 pub(crate) use managed::{
-    acquire_frpc_operation_lock, clear_managed_frpc_pid, managed_frpc_config_matches,
-    managed_frpc_config_path, stop_recorded_frpc_instance,
+    acquire_frpc_operation_lock, clear_managed_frpc_pid, managed_frpc_config_path,
+    stop_recorded_frpc_instance,
 };
-#[cfg(test)]
-use runtime::aggregate_uses_proxy;
-pub use runtime::spawn_frpc;
+pub use runtime::spawn_global_frpc;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(8);
 const FRPC_RESTART_GRACE: Duration = Duration::from_millis(600);
@@ -55,10 +49,9 @@ pub struct FrpcHandle {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_uses_proxy, classify_public_mcp_body, frpc_reconnect_loop_detected,
-        managed_frpc_config_path, managed_frpc_pid_path, successful_proxy_names, PublicMcpProbe,
+        classify_public_mcp_body, frpc_reconnect_loop_detected, managed_frpc_config_path,
+        managed_frpc_pid_path, successful_proxy_names, PublicMcpProbe,
     };
-    use crate::workspace::WorkspaceProfile;
 
     #[test]
     fn login_success_alone_is_not_a_ready_proxy() {
@@ -77,18 +70,6 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert!(names.contains("first-mcp"));
         assert!(names.contains("second-mcp"));
-    }
-
-    #[test]
-    fn aggregate_proxy_is_enabled_when_any_route_requests_it() {
-        let mut direct = WorkspaceProfile::new("C:/workspace/direct".into(), None);
-        direct.tunnel.use_proxy = false;
-        let mut proxied = WorkspaceProfile::new("C:/workspace/proxied".into(), None);
-        proxied.tunnel.use_proxy = true;
-
-        assert!(aggregate_uses_proxy(&[&direct, &proxied]));
-        assert!(aggregate_uses_proxy(&[&proxied, &direct]));
-        assert!(!aggregate_uses_proxy(&[&direct]));
     }
 
     #[test]

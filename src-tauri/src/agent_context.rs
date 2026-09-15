@@ -10,8 +10,10 @@ mod discovery;
 mod presentation;
 
 use discovery::*;
+pub use presentation::render_instruction_documents;
+#[cfg(test)]
+pub use presentation::render_skill_catalog;
 use presentation::{cursor_rule_is_always_apply, parse_skill};
-pub use presentation::{render_instruction_documents, render_skill_catalog};
 
 pub const AUTO_SOURCE: &str = "auto";
 const DISABLED_SOURCE: &str = "disabled";

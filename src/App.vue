@@ -12,11 +12,10 @@ import {
   listWorkspaces,
   restoreRuntimeState,
 } from "$lib/api/workspaces";
-import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
+import { globalMcpRuntimeState, workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import { startUiMemoryGuard } from "$lib/ui-memory-guard";
 import { startCloseGuard } from "$lib/close-guard";
-import type { RuntimeState } from "$lib/types";
 import {
   dashboardPreferences,
   loadDashboardPreferences,
@@ -49,17 +48,11 @@ const activeSettingsNav = computed(() => {
 async function refreshWorkspaces() {
   const items = await listWorkspaces();
   workspaces.value = items;
-  const states: Record<string, RuntimeState> = {};
-  await Promise.all(
-    items.map(async (item) => {
-      try {
-        states[item.id] = (await getRuntimeStatus(item.id)).state;
-      } catch {
-        states[item.id] = "stopped";
-      }
-    }),
-  );
-  mcpRuntimeStates.value = states;
+  try {
+    globalMcpRuntimeState.value = (await getRuntimeStatus()).state;
+  } catch {
+    globalMcpRuntimeState.value = "stopped";
+  }
 }
 
 async function addWorkspace() {
@@ -144,7 +137,6 @@ onUnmounted(() => {
           :key="workspace!.id"
           :workspace="workspace!"
           :active="route.path === `/workspace/${workspace!.id}`"
-          :mcp-state="mcpRuntimeStates[workspace!.id] ?? 'stopped'"
           @click="openWorkspace(workspace!.id)"
         />
       </div>

@@ -215,8 +215,8 @@ mod tests {
     #[test]
     fn protected_resource_metadata_url_inserts_well_known_before_path() {
         assert_eq!(
-            protected_resource_metadata_url("https://example.com/w/workspace"),
-            "https://example.com/.well-known/oauth-protected-resource/w/workspace/mcp"
+            protected_resource_metadata_url("https://example.com"),
+            "https://example.com/.well-known/oauth-protected-resource/mcp"
         );
     }
 

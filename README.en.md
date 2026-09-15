@@ -56,12 +56,12 @@ The Dashboard also refreshes estimated token usage for the current application s
 
 ### 1. Workspace management: turn a project into durable, identifiable context
 
-A workspace is the basic unit of Coding Tools MCP. It binds a local project directory and owns its service state, ports, authentication, public entry point, and conversation history. The desktop app can store multiple projects while always showing the active workspace name and path.
+A workspace is the basic project context of Coding Tools MCP. It binds a local project directory and owns project policy, planning, and conversation history. The desktop app can store multiple projects while always showing the selected workspace name and path; the MCP listener and authentication are application-global.
 
 **Characteristics**
 
 - The project directory is the source of truth; the workspace name is maintained separately from service configuration.
-- MCP, planning state, and conversation history are organized around the active workspace.
+- MCP requests select a workspace inside the global session; planning state and conversation history remain organized around that workspace.
 - The sidebar switches projects quickly, while the overview page exposes service status at a glance.
 
 **Advantages**
@@ -88,13 +88,13 @@ The Rust tool runtime provides file reading, search, patches, command execution,
 
 ### 3. Connectivity and public entry points: move from local debugging to remote development
 
-Every service keeps a local endpoint for development and health checks. When a remote AI client needs access, use a dedicated tunnel or route multiple workspaces through Global Gateway under `/w/<workspace-id>`.
+The application exposes one Global MCP endpoint at `/mcp`. A client establishes a session, calls `workspace_list` and `workspace_select`, and then uses the selected project context; FRP or Cloudflare only provides public transport for that single endpoint.
 
 **Characteristics**
 
 - FRP and Cloudflare Tunnel are supported, with tunnel processes supervised by the desktop app.
-- Global Gateway can reuse one public entry point and route to different projects by workspace ID.
-- Stopping a service also disconnects its associated tunnel, reducing orphaned public processes.
+- Each Chat session keeps an isolated workspace selection, and every request captures its workspace context before tool dispatch.
+- Stopping Global MCP also disconnects its associated tunnel, reducing orphaned public processes.
 
 **Advantages**
 
@@ -104,7 +104,7 @@ Every service keeps a local endpoint for development and health checks. When a r
 
 ![Global Gateway shared public entry point](docs/images/global-gateway.png)
 
-*Global Gateway provides a shared entry point for multiple workspaces through `/w/<workspace-id>`, while FRP and Cloudflare remain available for independent tunnels.*
+*Global MCP provides one `/mcp` entry point for multiple workspaces; session-scoped selection supplies the project boundary, while FRP and Cloudflare provide public transport.*
 
 ### 4. OAuth and authentication: modern security with client compatibility
 
@@ -215,29 +215,28 @@ The macOS build is currently unsigned. If macOS blocks the first launch, allow i
 
 1. Click **Add workspace** in the sidebar.
 2. Select the project root directory.
-3. Configure the workspace name, MCP port, and authentication mode.
-4. Save it. The workspace remains available in the sidebar across conversations and restarts.
+3. Configure the workspace name and save it. The workspace remains available in the sidebar across conversations and restarts.
 
 ### 3. Configure a public tunnel
 
 When the AI client is not running on the same machine, expose MCP through HTTPS:
 
-- **Zero-setup default: Cloudflare Quick Tunnel.** Select the Cloudflare quick mode in the workspace tunnel settings to generate a `https://<random>.trycloudflare.com` public URL without any account — ideal for first-time setup and temporary demos. For long-term use, prefer FRP with a fixed subdomain or a named Cloudflare tunnel.
+- Open **Settings → Global MCP Connection** and configure the single local endpoint and public transport.
+- **Zero-setup default: Cloudflare Quick Tunnel.** Select Cloudflare Quick Tunnel in the Global MCP connection settings to generate a `https://<random>.trycloudflare.com` public URL without an account — ideal for first-time setup and temporary demos. For long-term use, prefer FRP with a fixed subdomain or an external reverse proxy.
 - Install or detect `frpc` / `cloudflared` from **Software management**.
-- Save the server, port, and token under **FRP settings**, or select Cloudflare in the workspace.
-- Give each workspace a distinct subdomain. The app manages the FRP process and aggregates multiple proxy routes.
+- Save the server, port, and token under **FRP settings**, then select that profile and one subdomain in **Global MCP Connection**.
 
 ![FRP configuration](docs/images/frp-configuration.png)
 
-*FRP server profiles are stored centrally; each workspace only selects a profile and supplies its own subdomain.*
+*FRP server profiles are stored centrally; the single Global MCP connection selects one profile and supplies one public subdomain.*
 
 If you do not have an FRPS server yet, follow this [FRPS server installation guide (Chinese, WeChat)](https://mp.weixin.qq.com/s/kmpQhHsvmHlaLfj4rw3A0Q). After deployment, enter the server address, port, and token under **FRP settings** in the desktop client.
 
 ### 4. Start MCP
 
-Open the workspace and click **Start** in the MCP panel. The desktop client shows:
+Open Dashboard or **Settings → Global MCP Connection** and click **Start Global MCP**. The desktop client shows:
 
-- a local MCP URL such as `http://127.0.0.1:28766/mcp`;
+- the single local MCP URL such as `http://127.0.0.1:28765/mcp`;
 - the public HTTPS MCP URL;
 - authentication details for ChatGPT;
 - live logs and health-check results.
@@ -279,11 +278,11 @@ This gives the agent explicit project and capability state instead of guessing f
 
 Before configuring ChatGPT, make sure that:
 
-1. The workspace MCP service and public tunnel are both running.
+1. Global MCP and the public tunnel are both running.
 2. The public MCP endpoint passes the desktop health check. If OAuth is enabled, also verify the protected-resource document and authorization metadata.
 3. You have copied the **Public MCP URL** from the desktop **GPT configuration** card. OAuth needs the authorization password; static Client ID / Secret values are only needed when the client does not support dynamic registration.
 
-> ChatGPT must use the public HTTPS `/mcp` URL. A local address such as `http://127.0.0.1:28766/mcp` is not reachable from ChatGPT. Menu names may vary slightly by ChatGPT version and language.
+> ChatGPT must use the public HTTPS `/mcp` URL. A local address such as `http://127.0.0.1:28765/mcp` is not reachable from ChatGPT. After connecting, call `workspace_list` and `workspace_select` to choose the project context. Menu names may vary slightly by ChatGPT version and language.
 
 #### 1. Enable ChatGPT developer mode
 

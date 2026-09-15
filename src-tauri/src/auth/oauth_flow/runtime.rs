@@ -19,6 +19,7 @@ impl OAuthRuntime {
         }
     }
 
+    #[cfg(test)]
     pub fn new_persistent(
         base_url: String,
         client_id: String,
@@ -38,10 +39,33 @@ impl OAuthRuntime {
             .unwrap_or_default();
         let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
         runtime.clients = Arc::new(Mutex::new(clients));
-        runtime.client_registry = Some(ClientRegistryPersistence {
+        runtime.client_registry = Some(ClientRegistryPersistence::Workspace {
             workspace_id,
             secret_key,
         });
+        Ok(runtime)
+    }
+
+    pub fn new_app_persistent(
+        base_url: String,
+        client_id: String,
+        client_secret: Option<String>,
+        password: String,
+        token_secret: String,
+        scope: String,
+        item_id: String,
+    ) -> Result<Self, String> {
+        let clients = SecretStore::get_app(&scope, &item_id)
+            .map_err(|error| format!("Unable to load OAuth client registry: {error}"))?
+            .map(|raw| {
+                serde_json::from_str::<HashMap<String, RegisteredClient>>(&raw)
+                    .map_err(|error| format!("OAuth client registry is corrupt: {error}"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
+        runtime.clients = Arc::new(Mutex::new(clients));
+        runtime.client_registry = Some(ClientRegistryPersistence::App { scope, item_id });
         Ok(runtime)
     }
 
@@ -56,8 +80,17 @@ impl OAuthRuntime {
         if let Some(registry) = &self.client_registry {
             let raw = serde_json::to_string(&next)
                 .map_err(|error| format!("Unable to serialize OAuth client registry: {error}"))?;
-            SecretStore::set(&registry.workspace_id, &registry.secret_key, &raw)
-                .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
+            match registry {
+                #[cfg(test)]
+                ClientRegistryPersistence::Workspace {
+                    workspace_id,
+                    secret_key,
+                } => SecretStore::set(workspace_id, secret_key, &raw),
+                ClientRegistryPersistence::App { scope, item_id } => {
+                    SecretStore::set_app(scope, item_id, &raw)
+                }
+            }
+            .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
         }
         *clients = next;
         Ok(())

@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use crate::settings::AppSettings;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceProfile {
     pub id: String,
     pub name: String,
     pub path: String,
+    /// 0.2 legacy transport config. Read only for 0.3 migration and never persisted again.
+    #[serde(default, skip_serializing)]
     pub tunnel: TunnelConfig,
+    /// 0.2 legacy per-workspace auth. Read only for 0.3 migration and never persisted again.
+    #[serde(default, skip_serializing)]
     pub auth: AuthConfig,
     pub runtime: RuntimeConfig,
 }
@@ -112,7 +114,9 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
+    /// 0.2 legacy per-workspace listener port. Global MCP owns the only port in 0.3.
     #[serde(default = "default_mcp_port")]
+    #[serde(skip_serializing)]
     pub local_port: u16,
     #[serde(default = "default_tool_profile")]
     pub tool_profile: String,
@@ -291,64 +295,6 @@ impl WorkspaceProfile {
             runtime: RuntimeConfig::default(),
         }
     }
-
-    pub fn local_endpoint(&self) -> String {
-        format!("http://127.0.0.1:{}/mcp", self.runtime.local_port)
-    }
-
-    pub fn effective_public_url(&self) -> String {
-        self.effective_public_url_with(&AppSettings::load_or_default())
-    }
-
-    pub fn effective_public_url_with(&self, settings: &AppSettings) -> String {
-        if self.tunnel.use_global_gateway && settings.global_gateway.enabled {
-            return gateway_workspace_base(&settings.global_gateway.public_url, &self.id);
-        }
-        computed_public_url(
-            self.tunnel.tunnel_type.as_str(),
-            &self.tunnel.frp_server,
-            &self.tunnel.frp_subdomain,
-            &self.tunnel.public_url,
-            &self.tunnel.frp_profile_id,
-            settings,
-        )
-    }
-
-    pub fn public_endpoint(&self) -> String {
-        let base = self.effective_public_url();
-        if base.is_empty() {
-            return String::new();
-        }
-        format!("{}/mcp", base.trim_end_matches('/'))
-    }
-}
-
-fn gateway_workspace_base(public_url: &str, workspace_id: &str) -> String {
-    let base = public_url.trim_end_matches('/');
-    if base.is_empty() {
-        return String::new();
-    }
-    format!("{base}/w/{workspace_id}")
-}
-
-fn computed_public_url(
-    tunnel_type: &str,
-    frp_server: &str,
-    frp_subdomain: &str,
-    public_url: &str,
-    frp_profile_id: &str,
-    settings: &AppSettings,
-) -> String {
-    if tunnel_type == "frp" {
-        let server = settings
-            .find_frp_profile(frp_profile_id)
-            .map(|profile| profile.server.as_str())
-            .unwrap_or(frp_server);
-        if !server.is_empty() && !frp_subdomain.is_empty() {
-            return format!("https://{frp_subdomain}.{server}");
-        }
-    }
-    public_url.trim_end_matches('/').to_string()
 }
 
 #[cfg(test)]

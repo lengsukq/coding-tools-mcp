@@ -39,20 +39,6 @@ fn sanitize_workspace_id(workspace_id: &str) -> String {
     }
 }
 
-pub(crate) fn managed_frpc_config_matches(workspace_id: &str, expected: &str) -> AppResult<bool> {
-    let path = managed_frpc_config_path(workspace_id)?;
-    let actual = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(AppError::Message(format!(
-                "读取共享 frpc 配置失败：{error}"
-            )))
-        }
-    };
-    Ok(actual == expected)
-}
-
 /// 跨应用实例串行化 frpc 的停止与启动。
 ///
 /// 同一个进程内由 `TunnelSupervisor` 的 Tokio mutex 保证串行；但用户

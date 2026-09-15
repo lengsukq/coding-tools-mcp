@@ -4,28 +4,10 @@ pub(crate) fn frpc_log_name() -> &'static str {
     "frpc-mcp.log"
 }
 
-const FRPC_LOG_TAIL_BYTES: u64 = 12_288;
-
-/// Read the trailing bytes of an frpc log for health checks.
-pub(crate) fn read_frpc_log_tail(path: &Path) -> String {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return String::new();
-    };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let start = len.saturating_sub(FRPC_LOG_TAIL_BYTES);
-    if file.seek(SeekFrom::Start(start)).is_err() {
-        return String::new();
-    }
-    let mut bytes = Vec::new();
-    if file.read_to_end(&mut bytes).is_err() {
-        return String::new();
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
 /// Detect a stuck reconnect loop: recent log ends with repeated connect failures
 /// and no newer login/proxy success. This is the state that leaves local MCP up
 /// while the public FRP vhost returns frp's own 404 page.
+#[cfg(test)]
 pub(crate) fn frpc_reconnect_loop_detected(content: &str) -> bool {
     let cleaned = strip_ansi(content);
     let lines: Vec<&str> = cleaned
@@ -57,10 +39,12 @@ pub(crate) fn frpc_reconnect_loop_detected(content: &str) -> bool {
     trailing_errors >= 3
 }
 
+#[cfg(test)]
 fn is_frpc_reconnect_noise_line(lower: &str) -> bool {
     lower.contains("try to connect to server")
 }
 
+#[cfg(test)]
 fn is_frpc_reconnect_error_line(lower: &str) -> bool {
     lower.contains("connect to server error")
         || lower.contains("i/o deadline reached")
@@ -68,21 +52,23 @@ fn is_frpc_reconnect_error_line(lower: &str) -> bool {
         || (lower.contains("login to the server failed") && lower.contains("timeout"))
 }
 
+#[cfg(test)]
 fn is_frpc_healthy_line(lower: &str) -> bool {
     lower.contains("login to server success")
         || lower.contains("start proxy success")
         || lower.contains("proxy start success")
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PublicMcpProbe {
     Healthy,
     /// frps answered with its own Not Found HTML — proxy not registered.
     FrpNotRouted,
-    Unreachable,
     Unexpected,
 }
 
+#[cfg(test)]
 pub(crate) fn classify_public_mcp_body(status: u16, body: &str) -> PublicMcpProbe {
     let lower = body.to_ascii_lowercase();
     if is_frp_not_found_page(&lower) {
@@ -102,47 +88,11 @@ pub(crate) fn classify_public_mcp_body(status: u16, body: &str) -> PublicMcpProb
     PublicMcpProbe::Unexpected
 }
 
+#[cfg(test)]
 pub(crate) fn is_frp_not_found_page(lower_body: &str) -> bool {
     (lower_body.contains("powered by") && lower_body.contains("frp"))
         || (lower_body.contains("the page you requested was not found")
             && lower_body.contains("frp"))
-}
-
-pub(crate) async fn probe_public_mcp_endpoint(url: &str) -> PublicMcpProbe {
-    if url.trim().is_empty() {
-        return PublicMcpProbe::Unreachable;
-    }
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => return PublicMcpProbe::Unreachable,
-    };
-    match client.get(url).send().await {
-        Ok(response) => {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            classify_public_mcp_body(status, &body)
-        }
-        Err(_) => PublicMcpProbe::Unreachable,
-    }
-}
-
-pub(crate) async fn probe_local_mcp_ok(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{port}/mcp");
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => return false,
-    };
-    match client.get(&url).send().await {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
-    }
 }
 
 pub(super) async fn wait_for_frpc_ready(

@@ -28,8 +28,13 @@ import { reloadUiOnly } from "$lib/ui-memory-guard";
 
 const proxy = reactive<ProxyConfigDto>({ mode: "none", url: "" });
 const runtime = reactive<GlobalRuntimeSettingsDto>({
-  executablePaths: "", permissionMode: "trusted", allowedCommands: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, restoreRuntimeStateOnLaunch: false,
+  authType: "oauth", executablePaths: "", permissionMode: "trusted", allowedCommands: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, restoreRuntimeStateOnLaunch: false, migrationNotice: "",
 });
+const authOptions = [
+  { value: "oauth", label: "OAuth（推荐）" },
+  { value: "bearer", label: "Bearer Token" },
+  { value: "noauth", label: "无认证（仅可信本机环境）" },
+];
 const permissionOptions = [
   { value: "trusted", label: "受信任（推荐）" },
   { value: "safe", label: "安全受限" },
@@ -134,6 +139,15 @@ onMounted(() => { void refresh(); });
       <GlassCard>
         <div class="mb-5 flex items-center justify-between"><div><h2 class="text-sm font-semibold">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
         <div class="grid gap-4">
+          <div v-if="runtime.migrationNotice" class="rounded-2xl border border-[#ff9f0a]/25 bg-[#ff9f0a]/8 px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+            <strong class="text-[#c56b00] dark:text-[#ffb340]">0.3.0 迁移需要复核</strong>
+            <p class="mt-1 whitespace-pre-line">{{ runtime.migrationNotice }}</p>
+            <p class="mt-1 text-[11px] text-[var(--text-muted)]">确认下面的 Global MCP 认证与连接设置后保存，本提示将自动清除。</p>
+          </div>
+          <div class="ios-glass ios-inset-surface p-4">
+            <div class="mb-4"><h3 class="text-xs font-semibold">Global MCP 连接</h3><p class="mt-1 text-[11px] leading-4 text-[var(--text-muted)]">整个应用只暴露一个 MCP Endpoint。所有 Chat 会话通过 Workspace 选择在同一连接内切换项目。</p></div>
+            <SelectField v-model="runtime.authType" label="全局认证模式" :options="authOptions" hint="认证属于唯一 Global MCP，不再按 Workspace 单独配置。" />
+          </div>
           <div class="ios-glass ios-inset-surface p-4">
             <div class="mb-4"><h3 class="text-xs font-semibold">全局执行权限</h3><p class="mt-1 text-[11px] leading-4 text-[var(--text-muted)]">新建 Workspace 默认继承这里的权限模式与命令白名单。受信任模式允许常规开发和网络命令，但破坏性操作仍保留安全保护。</p></div>
             <div class="grid gap-3">
@@ -148,7 +162,7 @@ onMounted(() => { void refresh(); });
             <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Instruction 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`i-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#0a84ff]" :checked="runtime.instructionSources.includes(item.value)" @change="runtime.instructionSources = toggleSource(runtime.instructionSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
             <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Skill 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`s-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#bf5af2]" :checked="runtime.skillSources.includes(item.value)" @change="runtime.skillSources = toggleSource(runtime.skillSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
           </div>
-          <div class="grid grid-cols-2 gap-3"><ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许本机 Runtime 监听可被 LAN 访问的地址。" /><ToggleSwitch v-model="runtime.restoreRuntimeStateOnLaunch" label="启动时恢复服务" description="应用下次启动时恢复上次运行中的 Workspace。" /></div>
+          <div class="grid grid-cols-2 gap-3"><ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许唯一 Global MCP Endpoint 被局域网设备访问。" /><ToggleSwitch v-model="runtime.restoreRuntimeStateOnLaunch" label="启动时恢复 Global MCP" description="应用下次启动时恢复唯一 MCP 服务，不再逐 Workspace 启停。" /></div>
           <div class="flex justify-end"><BaseButton :busy="runtimeSaving" @click="saveRuntime"><Save :size="14" />保存 Runtime</BaseButton></div>
         </div>
       </GlassCard>

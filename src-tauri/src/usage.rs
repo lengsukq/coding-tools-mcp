@@ -70,26 +70,6 @@ impl ServiceUsage {
                 .saturating_add(estimated_tool_call_output_tokens),
         }
     }
-
-    pub(crate) fn empty(workspace_id: &str, service: &str) -> ServiceUsageStats {
-        ServiceUsageStats {
-            workspace_id: workspace_id.to_string(),
-            service: service.to_string(),
-            request_count: 0,
-            tool_call_count: 0,
-            error_count: 0,
-            input_bytes: 0,
-            output_bytes: 0,
-            tool_call_input_bytes: 0,
-            tool_call_output_bytes: 0,
-            estimated_input_tokens: 0,
-            estimated_output_tokens: 0,
-            estimated_tokens: 0,
-            estimated_tool_call_input_tokens: 0,
-            estimated_tool_call_output_tokens: 0,
-            estimated_tool_call_tokens: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]

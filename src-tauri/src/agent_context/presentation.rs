@@ -14,6 +14,7 @@ pub fn render_instruction_documents(documents: &[InstructionDocument]) -> String
     out.trim().to_string()
 }
 
+#[cfg(test)]
 pub fn render_skill_catalog(skills: &[SkillEntry]) -> String {
     if skills.is_empty() {
         return String::new();

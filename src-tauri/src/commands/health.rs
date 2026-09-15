@@ -19,5 +19,10 @@ pub async fn run_health_checks(
     id: String,
 ) -> AppResult<Vec<HealthItem>> {
     let profile = profile_by_id(&state, &id)?;
-    Ok(execute_health_checks(&profile).await)
+    let runtime = state.with_runtime(|runtime| {
+        runtime.refresh_mcp();
+        Ok(runtime.mcp_status())
+    })?;
+    let gateway = crate::global_gateway::health().await;
+    Ok(execute_health_checks(&profile, &runtime, gateway))
 }

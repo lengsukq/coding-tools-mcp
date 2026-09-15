@@ -50,15 +50,13 @@ fn unknown_tool_is_validation_error() {
 }
 
 #[test]
-fn read_file_explicit_parent_path_is_read_only() {
+fn read_file_explicit_parent_path_is_rejected_by_workspace_isolation() {
     let fx = malicious_fixture();
     let ctx = ctx_for(&fx.root);
     let out = invoke(&ctx, "read_file", json!({"path": "../outside-secret.txt"}));
-    let result = assert_ok(&out);
-    assert!(result["content"]
-        .as_str()
-        .unwrap_or("")
-        .contains("TOP_SECRET"));
+    let result = assert_err(&out);
+    assert_eq!(result["error"]["code"], "PATH_OUTSIDE_WORKSPACE");
+    assert_eq!(result["error"]["category"], "security");
 }
 
 #[test]

@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,15 +5,19 @@ use tauri::async_runtime::JoinHandle;
 
 use crate::error::AppResult;
 use crate::mcp;
+use crate::mcp::gateway::GatewayState;
 use crate::platform::platform;
 use crate::runtime::port::{
     is_own_process, port_busy_message, try_reclaim_previous_macos_app_port,
     wait_for_port_free_blocking,
 };
 use crate::secret::SecretStore;
-use crate::tunnel::{append_profile_log, cleanup_orphan_for_runtime};
-use crate::usage::{ServiceUsage, ServiceUsageStats};
-use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
+use crate::settings::AppSettings;
+use crate::tunnel::append_profile_log;
+use crate::usage::ServiceUsageStats;
+use crate::workspace::{AuthConfig, RuntimeStatusDto};
+
+const GLOBAL_RUNTIME_LOG_SCOPE: &str = "global-mcp";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RuntimePhase {
@@ -35,110 +37,101 @@ struct RuntimeEntry {
     missing_port_checks: u8,
 }
 
-#[derive(Default)]
+/// 0.3 runtime supervisor: exactly one MCP listener for the whole application.
+///
+/// Workspace lifecycle no longer owns network listeners. Workspaces are routed
+/// inside `GatewayState`; deleting one only invalidates session selections that
+/// referenced it.
 pub struct RuntimeSupervisor {
-    entries: HashMap<String, RuntimeEntry>,
-    usage: HashMap<String, Arc<ServiceUsage>>,
+    entry: Option<RuntimeEntry>,
+    gateway: Arc<GatewayState>,
+}
+
+impl Default for RuntimeSupervisor {
+    fn default() -> Self {
+        Self::new(Arc::new(GatewayState::default()))
+    }
 }
 
 impl RuntimeSupervisor {
-    pub fn mcp_status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
-        self.status(profile)
+    pub fn new(gateway: Arc<GatewayState>) -> Self {
+        Self {
+            entry: None,
+            gateway,
+        }
     }
 
-    pub fn running_workspace_ids(&self) -> Vec<String> {
-        let mut ids = self
-            .entries
-            .iter()
-            .filter(|&(_workspace_id, entry)| {
-                matches!(entry.phase, RuntimePhase::Running | RuntimePhase::Starting)
-            })
-            .map(|(workspace_id, _entry)| workspace_id.clone())
-            .collect::<Vec<_>>();
-        ids.sort();
-        ids.dedup();
-        ids
+    pub fn mcp_status(&self) -> RuntimeStatusDto {
+        self.status()
     }
 
     pub fn usage_stats(&self, workspace_id: &str) -> ServiceUsageStats {
-        self.usage
-            .get(workspace_id)
-            .map(|usage| usage.snapshot(workspace_id, "mcp"))
-            .unwrap_or_else(|| ServiceUsage::empty(workspace_id, "mcp"))
+        self.gateway
+            .usage_for(workspace_id)
+            .snapshot(workspace_id, "mcp")
     }
 
-    pub fn start_mcp(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        self.start(profile)
+    pub fn start_mcp(&mut self) -> AppResult<RuntimeStatusDto> {
+        self.start()
     }
 
-    /// True when the service for this workspace is currently running.
-    pub fn is_running(&self, workspace_id: &str) -> bool {
+    pub fn is_running(&self) -> bool {
         matches!(
-            self.entries.get(workspace_id).map(|entry| &entry.phase),
+            self.entry.as_ref().map(|entry| &entry.phase),
             Some(RuntimePhase::Running)
         )
     }
 
-    pub fn refresh_mcp(&mut self, profile: &WorkspaceProfile) {
-        self.refresh(profile);
+    pub fn refresh_mcp(&mut self) {
+        self.refresh();
     }
 
-    pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
-        self.sync_stop_and_wait(profile);
+    pub fn drop_workspace(&mut self, workspace_id: &str) {
+        self.gateway.sessions.clear_workspace(workspace_id);
     }
 
-    pub fn active_tunnel_workspace_ids(&self) -> HashSet<String> {
-        self.entries
-            .iter()
-            .filter_map(|(workspace_id, entry)| match entry.phase {
-                RuntimePhase::Running | RuntimePhase::Starting => Some(workspace_id.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn begin_stop(&mut self, workspace_id: &str) -> Option<JoinHandle<()>> {
-        let entry = self.entries.get_mut(workspace_id)?;
-
+    pub fn begin_stop(&mut self) -> Option<JoinHandle<()>> {
+        let entry = self.entry.as_mut()?;
         entry.phase = RuntimePhase::Stopping;
-        let shutdown = entry.shutdown.take();
-        let handle = entry.handle.take();
-        if let Some(shutdown) = shutdown {
+        if let Some(shutdown) = entry.shutdown.take() {
             let _ = shutdown.send(());
         }
-        handle
+        entry.handle.take()
     }
 
-    pub fn finish_stop(&mut self, workspace_id: &str) {
-        self.entries.remove(workspace_id);
+    pub fn finish_stop(&mut self) {
+        self.entry = None;
     }
 
-    fn status(&self, profile: &WorkspaceProfile) -> RuntimeStatusDto {
-        let key = profile.id.as_str();
+    fn status(&self) -> RuntimeStatusDto {
+        let settings = AppSettings::load_or_default();
+        let port = settings.global_gateway.local_port;
+        let local_endpoint = format!("http://127.0.0.1:{port}/mcp");
+        let public_base = settings.global_gateway.public_url.trim_end_matches('/');
+        let public_endpoint = if public_base.is_empty() {
+            String::new()
+        } else {
+            format!("{public_base}/mcp")
+        };
         let phase = self
-            .entries
-            .get(key)
+            .entry
+            .as_ref()
             .map(|entry| entry.phase.clone())
             .unwrap_or(RuntimePhase::Stopped);
-
-        let local_endpoint = profile.local_endpoint();
-        let public_endpoint = profile.public_endpoint();
-        let port = profile.runtime.local_port;
-        let service_label = "本地 MCP ";
 
         match phase {
             RuntimePhase::Running => RuntimeStatusDto {
                 state: "running".into(),
                 pid: None,
-                local_message: format!("{service_label}正在监听 127.0.0.1:{port}"),
-                public_message: profile.effective_public_url(),
+                local_message: format!("Global MCP 正在监听 127.0.0.1:{port}"),
+                public_message: settings.global_gateway.public_url,
                 local_endpoint,
                 public_endpoint,
             },
             RuntimePhase::Starting => RuntimeStatusDto {
                 state: "starting".into(),
                 pid: None,
-                local_message: format!("正在启动{service_label}端口 {port}"),
+                local_message: format!("正在启动 Global MCP 端口 {port}"),
                 public_message: "等待服务就绪".into(),
                 local_endpoint,
                 public_endpoint,
@@ -146,17 +139,17 @@ impl RuntimeSupervisor {
             RuntimePhase::Stopping => RuntimeStatusDto {
                 state: "stopping".into(),
                 pid: None,
-                local_message: "正在停止".into(),
+                local_message: "正在停止 Global MCP".into(),
                 public_message: "正在停止".into(),
                 local_endpoint,
                 public_endpoint,
             },
             RuntimePhase::Error => {
                 let message = self
-                    .entries
-                    .get(key)
+                    .entry
+                    .as_ref()
                     .and_then(|entry| entry.error_message.clone())
-                    .unwrap_or_else(|| "运行失败".into());
+                    .unwrap_or_else(|| "Global MCP 运行失败".into());
                 RuntimeStatusDto {
                     state: "error".into(),
                     pid: None,
@@ -169,7 +162,7 @@ impl RuntimeSupervisor {
             RuntimePhase::Stopped => RuntimeStatusDto {
                 state: "stopped".into(),
                 pid: None,
-                local_message: "未启动".into(),
+                local_message: "Global MCP 未启动".into(),
                 public_message: "未知".into(),
                 local_endpoint,
                 public_endpoint,
@@ -177,226 +170,139 @@ impl RuntimeSupervisor {
         }
     }
 
-    fn start(&mut self, profile: &WorkspaceProfile) -> AppResult<RuntimeStatusDto> {
-        let key = profile.id.clone();
+    fn start(&mut self) -> AppResult<RuntimeStatusDto> {
         if matches!(
-            self.entries.get(&key).map(|e| &e.phase),
-            Some(RuntimePhase::Running) | Some(RuntimePhase::Starting)
+            self.entry.as_ref().map(|entry| &entry.phase),
+            Some(RuntimePhase::Running | RuntimePhase::Starting)
         ) {
-            return Ok(self.status(profile));
+            return Ok(self.status());
         }
         if matches!(
-            self.entries.get(&key).map(|e| &e.phase),
+            self.entry.as_ref().map(|entry| &entry.phase),
             Some(RuntimePhase::Stopping)
         ) {
-            return Err(crate::error::AppError::Message(format!(
-                "{}正在停止，请稍后再试",
-                "本地 MCP"
-            )));
+            return Err(crate::error::AppError::Message(
+                "Global MCP 正在停止，请稍后再试".into(),
+            ));
         }
 
-        let usage = self
-            .usage
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(ServiceUsage::default()))
-            .clone();
+        let settings = AppSettings::load_or_default();
+        let port = settings.global_gateway.local_port;
+        self.entry = Some(RuntimeEntry {
+            phase: RuntimePhase::Starting,
+            shutdown: None,
+            handle: None,
+            error_message: None,
+            started_at: Some(std::time::Instant::now()),
+            missing_port_checks: 0,
+        });
 
-        self.entries.insert(
-            key.clone(),
-            RuntimeEntry {
-                phase: RuntimePhase::Starting,
-                shutdown: None,
-                handle: None,
-                error_message: None,
-                started_at: Some(std::time::Instant::now()),
-                missing_port_checks: 0,
-            },
-        );
-
-        let port = profile.runtime.local_port;
         if let Some(pid) = platform().find_pid_listening_on_port(port)? {
             if is_own_process(pid) {
                 wait_for_port_free_blocking(port, Duration::from_secs(3));
             }
             if try_reclaim_previous_macos_app_port(port) {
-                // A previous source-built or installed instance of this macOS
-                // app released the port; continue with the current listener.
+                // Previous app instance released the port.
             }
             if let Some(pid) = platform().find_pid_listening_on_port(port)? {
-                self.entries.remove(&key);
-                let message = port_busy_message(port, "本地 MCP", pid);
-                append_profile_log(&profile.id, "stderr.log", &format!("[start] {message}"));
+                self.entry = None;
+                let message = port_busy_message(port, "Global MCP", pid);
+                append_profile_log(
+                    GLOBAL_RUNTIME_LOG_SCOPE,
+                    "stderr.log",
+                    &format!("[start] {message}"),
+                );
                 return Err(crate::error::AppError::Message(message));
             }
         }
 
-        let use_shared = profile.auth.use_shared_secrets;
-        let mut auth = profile.auth.clone();
-        if use_shared {
-            if let Some(client_id) = SecretStore::get_shared("oauth_client_id")? {
-                auth.oauth_client_id = client_id;
-            }
-        }
-        // MCP OAuth matches legacy Python: client_secret is optional.
-        // ChatGPT connectors use PKCE only and do not send client_secret.
-        let oauth_client_secret = None;
-        let oauth_password = if profile.auth.oauth_enabled() {
-            resolve_secret(&profile.id, "oauth_password", use_shared)?
-        } else {
-            None
+        let oauth_client_id = SecretStore::get_shared("oauth_client_id")?.unwrap_or_else(|| {
+            format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12])
+        });
+        let auth = AuthConfig {
+            auth_type: settings.global_mcp_auth_type.as_str().into(),
+            oauth_client_id,
+            use_shared_secrets: true,
         };
-        let oauth_token_secret = if profile.auth.oauth_enabled() {
-            resolve_secret(&profile.id, "oauth_token_secret", use_shared)?
-        } else {
-            None
+        let secrets = mcp::ListenerSecrets {
+            oauth_client_secret: SecretStore::get_shared("oauth_client_secret")?,
+            oauth_password: SecretStore::get_shared("oauth_password")?,
+            oauth_token_secret: SecretStore::get_shared("oauth_token_secret")?,
         };
-        let spawn_result = mcp::spawn_listener(
-            mcp::ListenerConfig {
+        let spawn_result = mcp::spawn_gateway_listener(
+            mcp::GatewayListenerConfig {
                 port,
-                workspace_path: PathBuf::from(&profile.path),
-                workspace_id: profile.id.clone(),
                 auth,
-                public_base_url: profile.effective_public_url(),
-                runtime: profile.runtime.clone(),
+                public_base_url: settings.global_gateway.public_url,
             },
-            mcp::ListenerSecrets {
-                oauth_client_secret,
-                oauth_password,
-                oauth_token_secret,
-            },
-            usage.clone(),
+            secrets,
+            self.gateway.clone(),
         );
 
         match spawn_result {
             Ok((shutdown, handle)) => {
-                let started_at = self
-                    .entries
-                    .get(&key)
-                    .and_then(|entry| entry.started_at)
-                    .or_else(|| Some(std::time::Instant::now()));
-                self.entries.insert(
-                    key,
-                    RuntimeEntry {
-                        phase: RuntimePhase::Running,
-                        shutdown: Some(shutdown),
-                        handle: Some(handle),
-                        error_message: None,
-                        started_at,
-                        missing_port_checks: 0,
-                    },
-                );
+                self.entry = Some(RuntimeEntry {
+                    phase: RuntimePhase::Running,
+                    shutdown: Some(shutdown),
+                    handle: Some(handle),
+                    error_message: None,
+                    started_at: Some(std::time::Instant::now()),
+                    missing_port_checks: 0,
+                });
             }
-            Err(err) => {
-                // spawn_listener can fail synchronously before the server task is
-                // ever created (e.g. missing API key / OAuth secret). In that case
-                // serve() never runs, so nothing writes to the stderr log and the
-                // failure was previously invisible in the log viewer. Record it here.
+            Err(error) => {
                 append_profile_log(
-                    &profile.id,
+                    GLOBAL_RUNTIME_LOG_SCOPE,
                     "stderr.log",
-                    &format!("[start] 本地 MCP 启动失败：{err}"),
+                    &format!("[start] Global MCP 启动失败：{error}"),
                 );
-                self.entries.insert(
-                    key,
-                    RuntimeEntry {
-                        phase: RuntimePhase::Error,
-                        shutdown: None,
-                        handle: None,
-                        error_message: Some(err.to_string()),
-                        started_at: None,
-                        missing_port_checks: 0,
-                    },
-                );
+                self.entry = Some(RuntimeEntry {
+                    phase: RuntimePhase::Error,
+                    shutdown: None,
+                    handle: None,
+                    error_message: Some(error),
+                    started_at: None,
+                    missing_port_checks: 0,
+                });
             }
         }
-
-        Ok(self.status(profile))
+        Ok(self.status())
     }
 
-    fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile) {
-        let port = profile.runtime.local_port;
-        let handle = self.begin_stop(&profile.id);
-        if handle.is_some() {
-            crate::runtime::port::await_listener_shutdown_blocking(handle, port);
-        } else if platform()
-            .find_pid_listening_on_port(port)
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            wait_for_port_free_blocking(port, Duration::from_secs(3));
-        }
-        self.finish_stop(&profile.id);
-    }
-
-    fn refresh(&mut self, profile: &WorkspaceProfile) {
-        let key = profile.id.clone();
-        let port = profile.runtime.local_port;
-        let mut should_cleanup_tunnel = false;
-        if let Some(entry) = self.entries.get_mut(&key) {
-            if entry.phase == RuntimePhase::Running {
-                let listening = match platform().find_pid_listening_on_port(port) {
-                    Ok(pid) => pid.is_some(),
-                    Err(error) => {
-                        append_profile_log(
-                            &profile.id,
-                            "stderr.log",
-                            &format!("[refresh] 检查端口 {port} 失败，保留当前线路：{error}"),
-                        );
-                        return;
-                    }
-                };
-                if should_mark_runtime_error(entry, listening) {
-                    if let Some(handle) = entry.handle.take() {
-                        handle.abort();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = handle.await;
-                        });
-                    }
-                    entry.shutdown.take();
-                    let occupied_by_self = platform()
-                        .find_pid_listening_on_port(port)
-                        .ok()
-                        .flatten()
-                        .map(is_own_process)
-                        .unwrap_or(false);
-                    let message = if occupied_by_self {
-                        format!(
-                            "{}端口 {} 未能成功启动，可能仍被本应用上一次服务占用，请先停止后再试",
-                            "本地 MCP", port
-                        )
-                    } else {
-                        format!(
-                            "{}端口 {} 未能成功启动，可能已被其他程序占用",
-                            "本地 MCP", port
-                        )
-                    };
-                    entry.phase = RuntimePhase::Error;
-                    entry.error_message = Some(message);
-                    entry.started_at = None;
-                    should_cleanup_tunnel = true;
-                }
-            }
-        }
-
-        // 状态查询本身不能改变其他工作区的隧道集合。只有本次刷新确认了
-        // 一个原本 Running 的 runtime 已经进入 Error，才清理它对应的孤儿线路。
-        // 之前无条件调用 cleanup_orphan 会把启动时的瞬时端口检测失败误认为
-        // 孤儿 runtime，删除 route 后重启唯一的 frpc，导致其他工作区公网线路消失。
-        if !should_cleanup_tunnel {
+    fn refresh(&mut self) {
+        let settings = AppSettings::load_or_default();
+        let port = settings.global_gateway.local_port;
+        let Some(entry) = self.entry.as_mut() else {
+            return;
+        };
+        if entry.phase != RuntimePhase::Running {
             return;
         }
-
-        let profile = profile.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = cleanup_orphan_for_runtime(&profile, false).await {
+        let listening = match platform().find_pid_listening_on_port(port) {
+            Ok(pid) => pid.is_some(),
+            Err(error) => {
                 append_profile_log(
-                    &profile.id,
+                    GLOBAL_RUNTIME_LOG_SCOPE,
                     "stderr.log",
-                    &format!("[refresh] 清理失效隧道失败：{error}"),
+                    &format!("[refresh] 检查 Global MCP 端口 {port} 失败：{error}"),
                 );
+                return;
             }
-        });
+        };
+        if should_mark_runtime_error(entry, listening) {
+            if let Some(handle) = entry.handle.take() {
+                handle.abort();
+                tauri::async_runtime::spawn(async move {
+                    let _ = handle.await;
+                });
+            }
+            entry.shutdown.take();
+            entry.phase = RuntimePhase::Error;
+            entry.error_message = Some(format!(
+                "Global MCP 端口 {port} 未能成功监听，请检查端口占用后重试"
+            ));
+            entry.started_at = None;
+        }
     }
 }
 
@@ -408,22 +314,12 @@ fn should_mark_runtime_error(entry: &mut RuntimeEntry, listening: bool) -> bool 
         entry.missing_port_checks = 0;
         return false;
     }
-
     entry.missing_port_checks = entry.missing_port_checks.saturating_add(1);
     entry.missing_port_checks >= 3
         && entry
             .started_at
             .map(|started| started.elapsed() > Duration::from_millis(200))
             .unwrap_or(true)
-}
-
-/// Resolve a secret from the shared pool or per-workspace keyring.
-fn resolve_secret(profile_id: &str, key: &str, use_shared: bool) -> AppResult<Option<String>> {
-    if use_shared {
-        SecretStore::get_shared(key)
-    } else {
-        SecretStore::get(profile_id, key)
-    }
 }
 
 #[cfg(test)]
@@ -442,19 +338,19 @@ mod tests {
     }
 
     #[test]
-    fn refresh_does_not_cleanup_a_running_runtime_that_is_listening() {
+    fn refresh_keeps_a_listening_global_runtime() {
         let mut runtime = entry(RuntimePhase::Running, Some(std::time::Instant::now()));
         assert!(!should_mark_runtime_error(&mut runtime, true));
     }
 
     #[test]
-    fn refresh_does_not_cleanup_a_starting_runtime() {
+    fn refresh_ignores_starting_global_runtime() {
         let mut runtime = entry(RuntimePhase::Starting, None);
         assert!(!should_mark_runtime_error(&mut runtime, false));
     }
 
     #[test]
-    fn refresh_cleans_up_only_after_running_runtime_is_confirmed_missing() {
+    fn refresh_marks_global_runtime_only_after_repeated_missing_port_checks() {
         let mut runtime = entry(
             RuntimePhase::Running,
             Some(std::time::Instant::now() - Duration::from_secs(1)),
@@ -462,16 +358,5 @@ mod tests {
         assert!(!should_mark_runtime_error(&mut runtime, false));
         assert!(!should_mark_runtime_error(&mut runtime, false));
         assert!(should_mark_runtime_error(&mut runtime, false));
-    }
-
-    #[test]
-    fn a_recovered_port_clears_missing_port_checks() {
-        let mut runtime = entry(
-            RuntimePhase::Running,
-            Some(std::time::Instant::now() - Duration::from_secs(1)),
-        );
-        assert!(!should_mark_runtime_error(&mut runtime, false));
-        assert!(!should_mark_runtime_error(&mut runtime, true));
-        assert!(!should_mark_runtime_error(&mut runtime, false));
     }
 }

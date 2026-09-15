@@ -26,19 +26,17 @@ use app_state::AppState;
 use commands::{
     accept_goal_review, accept_plan_review, check_app_update, check_global_gateway_health,
     create_workspace, delete_frp_profile, delete_workspace, get_app_settings, get_download_config,
-    get_global_gateway_config, get_global_gateway_status, get_global_runtime_settings,
-    get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
-    get_service_usage_stats, get_shared_secret, get_webview_memory_sample, get_workspace_secret,
+    get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
+    get_global_runtime_settings, get_last_workspace_id, get_planning_state, get_proxy,
+    get_runtime_status, get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
     hide_to_tray, install_software, list_frp_profiles, list_history_sessions, list_software,
     list_workspaces, open_url, open_workspace_directory, quit_app, read_workspace_logs,
-    recreate_ui_webview, regenerate_shared_secret, regenerate_workspace_secret, reject_goal_review,
-    reject_plan_review, reset_planning_state, restart_runtime, restart_tunnel,
-    restore_runtime_state, run_health_checks, save_frp_profile, scan_agent_context,
-    scan_global_agent_context, set_download_config, set_global_gateway_config,
-    set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
-    set_shared_secret, set_workspace_secret, show_main_window, start_global_gateway, start_runtime,
-    stop_global_gateway, stop_runtime, stop_tunnel, test_tunnel, uninstall_software,
-    update_workspace,
+    recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
+    reset_planning_state, restart_runtime, restore_runtime_state, run_health_checks,
+    save_frp_profile, scan_agent_context, scan_global_agent_context, set_download_config,
+    set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode,
+    set_proxy, set_shared_secret, show_main_window, start_global_gateway, start_runtime,
+    stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -167,9 +165,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(AppState::new().expect("failed to load app state"));
-            // Recover FRP clients that stay alive while the public proxy dies
-            // (common after install/restart network blips).
-            tunnel::ensure_frp_health_loop();
             setup_tray(app)?;
             #[cfg(target_os = "windows")]
             {
@@ -199,14 +194,10 @@ pub fn run() {
             start_runtime,
             stop_runtime,
             get_runtime_status,
+            get_global_mcp_overview,
             restart_runtime,
             restore_runtime_state,
-            stop_tunnel,
-            test_tunnel,
             run_health_checks,
-            get_workspace_secret,
-            set_workspace_secret,
-            regenerate_workspace_secret,
             get_shared_secret,
             set_shared_secret,
             regenerate_shared_secret,
@@ -215,7 +206,6 @@ pub fn run() {
             save_frp_profile,
             delete_frp_profile,
             get_app_settings,
-            restart_tunnel,
             set_last_workspace,
             get_last_workspace_id,
             list_software,

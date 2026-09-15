@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { Folder } from "@lucide/vue";
-import type { RuntimeState, WorkspaceProfile } from "$lib/types";
+import type { WorkspaceProfile } from "$lib/types";
 
 defineProps<{
   workspace: WorkspaceProfile;
   active?: boolean;
-  mcpState: RuntimeState;
 }>();
 
 defineEmits<{ click: [] }>();
@@ -22,9 +21,9 @@ defineEmits<{ click: [] }>();
     <span class="ios-workspace-nav__icon"><Folder :size="15" :stroke-width="2" /></span>
     <span class="ios-workspace-nav__content">
       <span class="ios-workspace-nav__name">{{ workspace.name }}</span>
-      <span class="ios-workspace-nav__meta">MCP · :{{ workspace.runtime.local_port }}</span>
+      <span class="ios-workspace-nav__meta">Workspace Context</span>
     </span>
-    <span class="ios-workspace-nav__status" :class="`is-${mcpState}`" :title="mcpState" />
+    <span class="ios-workspace-nav__status" :class="{ 'is-active': active }" />
   </button>
 </template>
 
@@ -113,14 +112,10 @@ defineEmits<{ click: [] }>();
   background: rgba(100, 116, 139, .38);
 }
 
-.ios-workspace-nav__status.is-running {
-  background: #30d158;
-  box-shadow: 0 0 0 3px rgba(48, 209, 88, .11);
+.ios-workspace-nav__status.is-active {
+  background: #0a84ff;
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, .11);
 }
-
-.ios-workspace-nav__status.is-starting,
-.ios-workspace-nav__status.is-stopping { background: #ff9f0a; }
-.ios-workspace-nav__status.is-error { background: #ff453a; }
 
 :global(.dark) .ios-workspace-nav:hover {
   background: rgba(255,255,255,.055);

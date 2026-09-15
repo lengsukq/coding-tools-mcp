@@ -7,6 +7,8 @@ use crate::error::AppResult;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalRuntimeSettingsDto {
+    #[serde(default = "crate::settings::default_global_mcp_auth_type")]
+    pub auth_type: String,
     #[serde(default)]
     pub executable_paths: String,
     #[serde(default = "crate::settings::default_global_permission_mode")]
@@ -27,6 +29,8 @@ pub struct GlobalRuntimeSettingsDto {
     pub allow_lan_access: bool,
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
+    #[serde(default)]
+    pub migration_notice: String,
 }
 
 #[tauri::command]
@@ -36,6 +40,7 @@ pub fn get_global_runtime_settings(
     state.with_settings(|store| {
         let settings = store.settings();
         Ok(GlobalRuntimeSettingsDto {
+            auth_type: settings.global_mcp_auth_type,
             executable_paths: settings.global_executable_paths,
             permission_mode: settings.global_permission_mode,
             allowed_commands: settings.global_allowed_commands,
@@ -46,6 +51,7 @@ pub fn get_global_runtime_settings(
             custom_skill_paths: settings.global_custom_skill_paths,
             allow_lan_access: settings.allow_lan_access,
             restore_runtime_state_on_launch: settings.restore_runtime_state_on_launch,
+            migration_notice: settings.global_mcp_migration_notice,
         })
     })
 }
@@ -60,13 +66,14 @@ pub fn set_global_runtime_settings(
             && !store.settings().restore_runtime_state_on_launch)
     })?;
     let running_snapshot = if should_capture_running {
-        Some(state.with_runtime(|supervisor| Ok(supervisor.running_workspace_ids()))?)
+        Some(state.with_runtime(|supervisor| Ok(supervisor.is_running()))?)
     } else {
         None
     };
 
     state.with_settings(|store| {
         let mut settings = store.settings();
+        settings.global_mcp_auth_type = runtime.auth_type.trim().to_string();
         settings.global_executable_paths = runtime.executable_paths.trim().to_string();
         settings.global_permission_mode = runtime.permission_mode.trim().to_string();
         settings.global_allowed_commands = runtime.allowed_commands.trim().to_string();
@@ -78,8 +85,10 @@ pub fn set_global_runtime_settings(
         settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
         settings.allow_lan_access = runtime.allow_lan_access;
         settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;
-        if let Some(mcp_ids) = &running_snapshot {
-            settings.restore_mcp_workspace_ids = mcp_ids.clone();
+        settings.global_mcp_migration_notice.clear();
+        if let Some(running) = running_snapshot {
+            settings.global_mcp_was_running = running;
+            settings.restore_mcp_workspace_ids.clear();
         }
         store.update_settings(settings)
     })

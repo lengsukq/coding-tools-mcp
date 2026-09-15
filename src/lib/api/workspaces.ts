@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { RuntimeStatus, WorkspaceProfile } from "$lib/types";
+import type { RuntimeState, RuntimeStatus, WorkspaceProfile } from "$lib/types";
 
 export async function listWorkspaces(): Promise<WorkspaceProfile[]> {
   return invoke<WorkspaceProfile[]>("list_workspaces");
@@ -24,20 +24,41 @@ export async function deleteWorkspace(id: string): Promise<void> {
   return invoke("delete_workspace", { id });
 }
 
-export async function startRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("start_runtime", { id });
+export async function startRuntime(): Promise<RuntimeStatus> {
+  return invoke<RuntimeStatus>("start_runtime");
 }
 
-export async function stopRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("stop_runtime", { id });
+export async function stopRuntime(): Promise<RuntimeStatus> {
+  return invoke<RuntimeStatus>("stop_runtime");
 }
 
-export async function getRuntimeStatus(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("get_runtime_status", { id });
+export async function getRuntimeStatus(): Promise<RuntimeStatus> {
+  return invoke<RuntimeStatus>("get_runtime_status");
 }
 
-export async function restartRuntime(id: string): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("restart_runtime", { id });
+export interface GlobalMcpSessionDto {
+  sessionId: string;
+  workspaceId: string;
+  workspaceName: string;
+  lastSeenAt: number;
+}
+
+export interface GlobalMcpOverviewDto {
+  state: RuntimeState;
+  localEndpoint: string;
+  publicEndpoint: string;
+  workspaceCount: number;
+  sessionCount: number;
+  registryRevision: number;
+  sessions: GlobalMcpSessionDto[];
+}
+
+export async function getGlobalMcpOverview(): Promise<GlobalMcpOverviewDto> {
+  return invoke<GlobalMcpOverviewDto>("get_global_mcp_overview");
+}
+
+export async function restartRuntime(): Promise<RuntimeStatus> {
+  return invoke<RuntimeStatus>("restart_runtime");
 }
 
 export async function restoreRuntimeState(): Promise<void> {

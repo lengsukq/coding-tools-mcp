@@ -2,13 +2,9 @@ use std::path::PathBuf;
 
 use tauri::State;
 
-use crate::app_state::{bootstrap_workspace, teardown_workspace, AppState};
+use crate::app_state::{teardown_workspace, AppState};
 use crate::error::{AppError, AppResult};
 use crate::platform::open_path_in_file_manager;
-use crate::tunnel::drop_workspace as drop_tunnel_workspace;
-use crate::workspace::resources::{
-    assign_free_workspace_ports, validate_workspace_resources_update,
-};
 use crate::workspace::WorkspaceProfile;
 
 #[tauri::command]
@@ -23,11 +19,7 @@ pub fn create_workspace(
     name: Option<String>,
 ) -> AppResult<WorkspaceProfile> {
     state.with_workspaces(|store| {
-        let mut profile = WorkspaceProfile::new(path, name);
-        // Create should not fail just because default ports are already claimed.
-        // Pick free ports now; start/update still enforce conflict checks.
-        assign_free_workspace_ports(store.list(), &mut profile)?;
-        bootstrap_workspace(store, &profile.id)?;
+        let profile = WorkspaceProfile::new(path, name);
         store.add(profile.clone())?;
         Ok(profile)
     })
@@ -36,11 +28,12 @@ pub fn create_workspace(
 #[tauri::command]
 pub fn update_workspace(state: State<'_, AppState>, profile: WorkspaceProfile) -> AppResult<()> {
     state.with_workspaces(|store| {
-        let current = store
-            .get(&profile.id)
-            .cloned()
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {}", profile.id)))?;
-        validate_workspace_resources_update(store.list(), &current, &profile)?;
+        if store.get(&profile.id).is_none() {
+            return Err(AppError::Message(format!(
+                "workspace not found: {}",
+                profile.id
+            )));
+        }
         store.update(profile)
     })
 }
@@ -59,9 +52,8 @@ pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()>
             .cloned()
             .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
     })?;
-    tauri::async_runtime::block_on(drop_tunnel_workspace(&id))?;
     state.with_runtime(|runtime| {
-        runtime.drop_workspace(&profile);
+        runtime.drop_workspace(&profile.id);
         Ok(())
     })?;
     state.with_workspaces(|store| {
@@ -69,9 +61,7 @@ pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()>
             teardown_workspace(store, &id)?;
         }
         let mut settings = store.settings();
-        settings
-            .restore_mcp_workspace_ids
-            .retain(|workspace_id| workspace_id != &id);
+        settings.restore_mcp_workspace_ids.clear();
         store.update_settings(settings)?;
         Ok(())
     })

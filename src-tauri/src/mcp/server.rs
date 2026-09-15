@@ -1,17 +1,331 @@
-use std::sync::Arc;
-
 use serde_json::{json, Value};
 
-use crate::agent_context::{render_skill_catalog, AgentContextRuntimeConfig};
-use crate::usage::ServiceUsage;
-
-use crate::tools::{
-    call_tool, list_tools_for_profile, wrap_mcp_tool_result, SharedToolContext, ToolContext,
-    Workspace,
+#[cfg(test)]
+use crate::agent_context::render_skill_catalog;
+use crate::mcp::gateway::{
+    gateway_tool_definitions, is_gateway_tool, GatewayError, GatewayState, WorkspaceRequestContext,
 };
-use crate::workspace::AuthConfig;
+use crate::tools::{call_tool, list_tools_for_profile, wrap_mcp_tool_result, SharedToolContext};
 
 pub type SharedState = SharedToolContext;
+
+#[derive(Clone)]
+pub struct GatewayResponse {
+    pub body: Value,
+    pub workspace: Option<WorkspaceRequestContext>,
+}
+
+fn attach_gateway_server_info(
+    result: &mut Value,
+    state: &GatewayState,
+    request: &WorkspaceRequestContext,
+) {
+    let Some(structured) = result
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    structured.insert(
+        "gateway".into(),
+        json!({
+            "mode": "global-multi-workspace",
+            "session_id": request.session_id,
+            "active_workspace": {
+                "id": request.profile.id,
+                "name": request.profile.name,
+                "path": request.profile.path,
+            },
+            "workspace_registry_revision": state.registry.revision().unwrap_or_default(),
+            "active_session_count": state.sessions.active_session_count(),
+        }),
+    );
+}
+
+/// Handle one request for the 0.3 global MCP endpoint.
+///
+/// Workspace resolution happens before ordinary tool dispatch and returns an
+/// immutable request-scoped ToolContext. A concurrent workspace_select call can
+/// therefore only affect the *next* request from that MCP session.
+pub fn handle_gateway_request(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    body: &Value,
+) -> GatewayResponse {
+    if let Some(session_id) = session_id {
+        if !state.sessions.touch_existing(session_id) {
+            return GatewayResponse {
+                body: json!({
+                    "jsonrpc": "2.0",
+                    "id": body.get("id").cloned().unwrap_or(Value::Null),
+                    "error": GatewayError::invalid(
+                        "MCP_SESSION_INVALID",
+                        "MCP session 不存在或已过期。请重新建立 MCP 连接并使用服务端返回的 session 标识。",
+                    )
+                    .to_rpc_error()
+                }),
+                workspace: None,
+            };
+        }
+    }
+    let method = body.get("method").and_then(Value::as_str).unwrap_or("");
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let params = body.get("params").cloned().unwrap_or(Value::Null);
+
+    if id.is_null() && method.starts_with("notifications/") {
+        return GatewayResponse {
+            body: Value::Null,
+            workspace: None,
+        };
+    }
+
+    let mut workspace = None;
+    let result = match method {
+        "initialize" => {
+            let requested = params.get("protocolVersion").and_then(Value::as_str);
+            Ok(gateway_initialize_result(
+                state,
+                negotiate_protocol_version(requested),
+            ))
+        }
+        "ping" => Ok(json!({})),
+        "tools/list" => {
+            let mut tools = list_tools_for_profile("compact");
+            tools.extend(gateway_tool_definitions());
+            Ok(json!({ "tools": tools }))
+        }
+        "tools/call" => match handle_gateway_tools_call(state, session_id, &params) {
+            Ok((result, request_workspace)) => {
+                workspace = request_workspace;
+                Ok(result)
+            }
+            Err(error) => Err(error),
+        },
+        _ => Err(json!({
+            "code": -32601,
+            "message": format!("Method not found: {method}")
+        })),
+    };
+
+    let body = match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }),
+    };
+    GatewayResponse { body, workspace }
+}
+
+fn gateway_initialize_result(state: &GatewayState, protocol_version: &str) -> Value {
+    let registry_revision = state.registry.revision().unwrap_or_default();
+    let instructions = "Coding Tools MCP exposes one global MCP connection for all registered workspaces. Workspace data is isolated. Before using project-scoped coding tools, call workspace_list and then workspace_select for this Chat session. Never assume the desktop UI's selected workspace. Different Chat sessions keep independent active workspaces. Use workspace_invoke only for an explicit one-off operation in another registered workspace; it does not change the active workspace. Ordinary tools such as read_file, exec_command, apply_patch, planning_manage, and history_manage always run against the immutable Workspace context captured at the start of that request. If a project-scoped tool reports WORKSPACE_NOT_SELECTED, select a workspace instead of retrying against an implicit default.";
+    json!({
+        "protocolVersion": protocol_version,
+        "capabilities": {
+            "tools": { "listChanged": false },
+            "logging": {}
+        },
+        "serverInfo": {
+            "name": "coding-tools-mcp",
+            "title": "Coding Tools MCP",
+            "version": env!("CARGO_PKG_VERSION")
+        },
+        "instructions": instructions,
+        "_meta": {
+            "workspaceRegistryRevision": registry_revision,
+            "gatewayMode": "multi-workspace"
+        }
+    })
+}
+
+fn handle_gateway_tools_call(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    params: &Value,
+) -> Result<(Value, Option<WorkspaceRequestContext>), Value> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| json!({ "code": -32602, "message": "Missing tool name" }))?;
+    let args = tool_arguments(name, params);
+
+    if is_gateway_tool(name) {
+        return handle_workspace_tool(state, session_id, name, &args);
+    }
+
+    let session_id = require_gateway_session(session_id)?;
+    let request = state
+        .active_workspace(session_id)
+        .map_err(|error| error.to_rpc_error())?;
+    let canonical_name = crate::tools::registry::canonical_tool_name(name);
+    ensure_gateway_tool_allowed(&request, canonical_name)?;
+    let structured = call_tool(request.tools.as_ref(), canonical_name, &args);
+    let mut result = wrap_mcp_tool_result(canonical_name, &args, structured);
+    if canonical_name == "server_info" {
+        attach_gateway_server_info(&mut result, state, &request);
+    }
+    request.tools.record_context_block("tool_return", &result);
+    Ok((result, Some(request)))
+}
+
+fn handle_workspace_tool(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    name: &str,
+    args: &Value,
+) -> Result<(Value, Option<WorkspaceRequestContext>), Value> {
+    use crate::tools::workspace::tool_ok;
+
+    match name {
+        "workspace_list" => {
+            let workspaces = state.registry.descriptors().map_err(|message| {
+                GatewayError::internal("WORKSPACE_REGISTRY_UNAVAILABLE", message).to_rpc_error()
+            })?;
+            let revision = state.registry.revision().unwrap_or_default();
+            let structured = tool_ok(json!({
+                "workspaces": workspaces,
+                "count": workspaces.len(),
+                "registry_revision": revision
+            }));
+            Ok((wrap_mcp_tool_result(name, args, structured), None))
+        }
+        "workspace_current" => {
+            let session_id = require_gateway_session(session_id)?;
+            let scope = state.sessions.current(session_id);
+            let workspace = match scope.active_workspace_id {
+                Some(id) => match state.registry.resolve(&id) {
+                    Ok(profile) => Some(crate::mcp::gateway::WorkspaceDescriptor::from(&profile)),
+                    Err(_) => {
+                        state.sessions.clear(session_id);
+                        None
+                    }
+                },
+                None => None,
+            };
+            let structured = tool_ok(json!({
+                "session_id": session_id,
+                "workspace": workspace,
+                "selected": workspace.is_some()
+            }));
+            Ok((wrap_mcp_tool_result(name, args, structured), None))
+        }
+        "workspace_select" => {
+            let session_id = require_gateway_session(session_id)?;
+            let workspace_id = required_string(args, "workspace_id")?;
+            let request = state
+                .select_workspace(session_id, workspace_id)
+                .map_err(|error| error.to_rpc_error())?;
+            let instructions = truncate_utf8(&request.tools.current_ai_instructions(), 16 * 1024);
+            let structured = tool_ok(json!({
+                "session_id": session_id,
+                "workspace": crate::mcp::gateway::WorkspaceDescriptor::from(&request.profile),
+                "tool_profile": request.tools.tool_profile.as_str(),
+                "permission_mode": request.tools.policy.permission_mode.as_str(),
+                "history_recording": request.tools.history_recording,
+                "agent_instructions": instructions,
+                "message": "Workspace 已绑定到当前 MCP session；后续普通工具调用将使用该 Workspace。"
+            }));
+            Ok((wrap_mcp_tool_result(name, args, structured), Some(request)))
+        }
+        "workspace_invoke" => {
+            let session_id = require_gateway_session(session_id)?;
+            let workspace_id = required_string(args, "workspace_id")?;
+            let nested_name = required_string(args, "tool")?;
+            if is_gateway_tool(nested_name) {
+                return Err(GatewayError::invalid(
+                    "NESTED_GATEWAY_TOOL_NOT_ALLOWED",
+                    "workspace_invoke 只能调用普通 Workspace 工具，不能递归调用 workspace_* 工具。",
+                )
+                .to_rpc_error());
+            }
+            let request = state
+                .workspace_by_id(session_id, workspace_id)
+                .map_err(|error| error.to_rpc_error())?;
+            let canonical_name = crate::tools::registry::canonical_tool_name(nested_name);
+            ensure_gateway_tool_allowed(&request, canonical_name)?;
+            let nested_args = args
+                .get("arguments")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            let structured = call_tool(request.tools.as_ref(), canonical_name, &nested_args);
+            let mut result = wrap_mcp_tool_result(canonical_name, &nested_args, structured);
+            if let Some(object) = result
+                .get_mut("structuredContent")
+                .and_then(Value::as_object_mut)
+            {
+                object.insert(
+                    "gateway_workspace".into(),
+                    json!({
+                        "id": request.profile.id,
+                        "name": request.profile.name,
+                        "active_workspace_changed": false
+                    }),
+                );
+            }
+            request.tools.record_context_block("tool_return", &result);
+            Ok((result, Some(request)))
+        }
+        _ => Err(GatewayError::invalid(
+            "UNKNOWN_GATEWAY_TOOL",
+            format!("Unknown gateway tool: {name}"),
+        )
+        .to_rpc_error()),
+    }
+}
+
+fn ensure_gateway_tool_allowed(request: &WorkspaceRequestContext, name: &str) -> Result<(), Value> {
+    let gateway_surface = crate::tools::registry::exposed_tool_names("compact");
+    let workspace_surface =
+        crate::tools::registry::exposed_tool_names(request.tools.tool_profile.as_str());
+    if gateway_surface.contains(&name) && workspace_surface.contains(&name) {
+        return Ok(());
+    }
+    Err(GatewayError::invalid(
+        "TOOL_NOT_AVAILABLE_IN_WORKSPACE",
+        format!(
+            "工具 {name} 不在当前 Workspace 的可用工具档位 {} 中。",
+            request.tools.tool_profile.as_str()
+        ),
+    )
+    .to_rpc_error())
+}
+
+fn require_gateway_session(session_id: Option<&str>) -> Result<&str, Value> {
+    session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            GatewayError::invalid(
+                "MCP_SESSION_REQUIRED",
+                "当前请求缺少 MCP session 标识，无法安全维护 Workspace 选择。请刷新 MCP 连接后重试。",
+            )
+            .to_rpc_error()
+        })
+}
+
+fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, Value> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            GatewayError::invalid(
+                "INVALID_ARGUMENT",
+                format!("Missing or empty argument: {key}"),
+            )
+            .to_rpc_error()
+        })
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n…[truncated]", &value[..end])
+}
 
 /// 中转层支持协商的 legacy-era MCP 协议版本，按版本升序排列。
 ///
@@ -39,6 +353,7 @@ pub fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
         .unwrap_or(LATEST_PROTOCOL_VERSION)
 }
 
+#[cfg(test)]
 pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     let method = body.get("method").and_then(Value::as_str).unwrap_or("");
     let id = body.get("id").cloned().unwrap_or(Value::Null);
@@ -75,6 +390,7 @@ pub fn handle_request(state: &SharedState, body: &Value) -> Value {
     }
 }
 
+#[cfg(test)]
 fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     let base_instructions = "Use these tools only for local coding operations inside the configured workspace. Planning mode is controlled exclusively by the desktop app: every tool response may contain planning_context with the authoritative current mode, revision, focused Goal, and focused Plan. Never assume or attempt to change the mode from chat. Goal and Plan records are AI-driven conversation artifacts: when a user request benefits from durable tracking, create_goal and create_plan may be called directly from the conversation without asking the user to fill desktop forms or approve a proposal first. Keep their criteria and steps updated as work progresses. When the work is ready for acceptance, call request_goal_review and/or request_plan_review with a concise verification summary. Never archive or claim final acceptance yourself; only the human desktop review action can accept and archive. If a review is rejected, continue from the reactivated Goal/Plan and incorporate the human feedback. In Plan mode, Goal/Plan metadata operations remain writable: create/update Goal or Plan records and request their review as needed. Plan mode blocks project/source file mutations, command execution, and task mutations; do not interpret it as blocking the planning tools themselves. In Goal mode, project mutations require an active focused Goal and must respect any focused Plan relationship/status. If the client reports missing tools while server authorization is still valid, treat it as a capability discovery mismatch rather than a permission loss: refresh the MCP session/tool list before requesting permissions. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence. If an operation returns DANGEROUS_OPERATION_REQUIRES_CONFIRMATION, do not request a separate permission grant. Only retry the same tool with confirm=true when the user's request already clearly authorizes that dangerous operation; otherwise ask the user for confirmation.";
     let base_instructions = if state.tool_profile.is_compact() {
@@ -143,6 +459,7 @@ fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     })
 }
 
+#[cfg(test)]
 fn handle_tools_call(state: &SharedState, params: &Value) -> Result<Value, Value> {
     let name = params
         .get("name")
@@ -186,42 +503,6 @@ fn tool_arguments(name: &str, params: &Value) -> Value {
         }
     }
     args
-}
-
-#[derive(Debug, Clone)]
-pub struct McpStateConfig {
-    pub auth: AuthConfig,
-    pub policy: crate::tools::policy::PolicySettings,
-    pub tool_profile: String,
-    pub executable_paths: Vec<std::path::PathBuf>,
-    pub ai_instructions: String,
-    pub agent_context: AgentContextRuntimeConfig,
-    pub history_recording: bool,
-    pub history_context_sessions: Vec<u64>,
-}
-
-pub fn new_state(
-    workspace: Workspace,
-    config: McpStateConfig,
-    usage: Arc<ServiceUsage>,
-) -> SharedState {
-    let McpStateConfig {
-        auth,
-        policy,
-        tool_profile,
-        executable_paths,
-        ai_instructions,
-        agent_context,
-        history_recording,
-        history_context_sessions,
-    } = config;
-    Arc::new(
-        ToolContext::from_workspace(workspace, auth, policy, tool_profile)
-            .with_agent_runtime(executable_paths, ai_instructions)
-            .with_agent_context(agent_context)
-            .with_history_config(history_recording, history_context_sessions)
-            .with_usage(usage),
-    )
 }
 
 #[cfg(test)]

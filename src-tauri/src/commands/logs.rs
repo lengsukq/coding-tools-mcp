@@ -8,7 +8,6 @@ use tauri::State;
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
 use crate::tunnel::log_dir_for_profile;
-use crate::workspace::WorkspaceProfile;
 
 const MAX_LOG_BYTES: usize = 8192;
 const MAX_LOG_CHARS: usize = 4000;
@@ -20,27 +19,19 @@ pub struct LogChunk {
     pub content: String,
 }
 
-fn profile_by_id(state: &AppState, id: &str) -> AppResult<WorkspaceProfile> {
+fn ensure_workspace_exists(state: &AppState, id: &str) -> AppResult<()> {
     state.with_workspaces(|store| {
-        store
-            .get(id)
-            .cloned()
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
+        if store.get(id).is_some() {
+            Ok(())
+        } else {
+            Err(AppError::Message(format!("workspace not found: {id}")))
+        }
     })
 }
 
-fn log_file_names(profile: &WorkspaceProfile, service: &str) -> AppResult<Vec<&'static str>> {
+fn log_file_names(service: &str) -> AppResult<Vec<&'static str>> {
     match service {
-        "mcp" => {
-            let mut names = vec!["mcp-requests.log", "stderr.log", "stdout.log"];
-            if profile.tunnel.tunnel_type.is_cloudflare() {
-                names.insert(0, "cloudflared.log");
-            }
-            if profile.tunnel.tunnel_type.is_frp() {
-                names.insert(0, "frpc-mcp.log");
-            }
-            Ok(names)
-        }
+        "mcp" => Ok(vec!["mcp-requests.log", "stderr.log", "stdout.log"]),
         other => Err(AppError::Message(format!("unknown log service: {other}"))),
     }
 }
@@ -72,9 +63,9 @@ pub async fn read_workspace_logs(
     id: String,
     service: String,
 ) -> AppResult<Vec<LogChunk>> {
-    let profile = profile_by_id(&state, &id)?;
-    let log_dir = log_dir_for_profile(&profile.id);
-    let names = log_file_names(&profile, &service)?;
+    ensure_workspace_exists(&state, &id)?;
+    let log_dir = log_dir_for_profile(&id);
+    let names = log_file_names(&service)?;
 
     let mut chunks = Vec::new();
     for name in names {

@@ -19,6 +19,8 @@ pub struct AppData {
     #[serde(default)]
     pub global_executable_paths: String,
     #[serde(default)]
+    pub global_mcp_auth_type: String,
+    #[serde(default)]
     pub global_permission_mode: String,
     #[serde(default)]
     pub global_allowed_commands: String,
@@ -39,6 +41,12 @@ pub struct AppData {
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
     #[serde(default)]
+    pub global_mcp_was_running: bool,
+    #[serde(default)]
+    pub global_mcp_migration_version: u32,
+    #[serde(default)]
+    pub global_mcp_migration_notice: String,
+    #[serde(default, skip_serializing)]
     pub restore_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,

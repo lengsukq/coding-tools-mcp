@@ -1,9 +1,9 @@
-use tauri::State;
-
 use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use serde::Serialize;
+use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::app_state::AppState;
@@ -14,64 +14,89 @@ use crate::runtime::{
     await_listener_shutdown, port_busy_message, try_reclaim_previous_macos_app_port,
     wait_for_port_free,
 };
-use crate::tunnel::{maybe_start_for_runtime, stop_for_runtime, sync_managed_runtime_routes};
-use crate::workspace::resources::validate_service_start;
 use crate::workspace::RuntimeStatusDto;
 
-/// Serialize MCP restarts so secret-save and form-save cannot tear down
-/// the same listener concurrently (that race could abort the process on Windows).
+/// Serialize Global MCP restarts so settings/secret saves cannot race teardown.
 static RESTART_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
-fn remember_runtime_state(state: &AppState, id: &str, running: bool) -> AppResult<()> {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalMcpSessionDto {
+    pub session_id: String,
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub last_seen_at: u64,
+}
+
+#[tauri::command]
+pub fn get_global_mcp_overview(state: State<'_, AppState>) -> AppResult<GlobalMcpOverviewDto> {
+    let runtime = state.with_runtime(|runtime| {
+        runtime.refresh_mcp();
+        Ok(runtime.mcp_status())
+    })?;
+    let workspaces = state
+        .gateway
+        .registry
+        .descriptors()
+        .map_err(AppError::Message)?;
+    let names = workspaces
+        .iter()
+        .map(|workspace| (workspace.id.clone(), workspace.name.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let sessions = state
+        .gateway
+        .sessions
+        .snapshots()
+        .into_iter()
+        .map(|(session_id, scope)| {
+            let workspace_id = scope.active_workspace_id.unwrap_or_default();
+            let workspace_name = if workspace_id.is_empty() {
+                "未选择 Workspace".into()
+            } else {
+                names
+                    .get(&workspace_id)
+                    .cloned()
+                    .unwrap_or_else(|| "已删除 Workspace".into())
+            };
+            GlobalMcpSessionDto {
+                session_id,
+                workspace_name,
+                workspace_id,
+                last_seen_at: scope.last_seen_at,
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(GlobalMcpOverviewDto {
+        state: runtime.state,
+        local_endpoint: runtime.local_endpoint,
+        public_endpoint: runtime.public_endpoint,
+        workspace_count: workspaces.len(),
+        session_count: state.gateway.sessions.active_session_count(),
+        registry_revision: state.gateway.registry.revision().unwrap_or_default(),
+        sessions,
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalMcpOverviewDto {
+    pub state: String,
+    pub local_endpoint: String,
+    pub public_endpoint: String,
+    pub workspace_count: usize,
+    pub session_count: usize,
+    pub registry_revision: u64,
+    pub sessions: Vec<GlobalMcpSessionDto>,
+}
+
+fn remember_runtime_state(state: &AppState, running: bool) -> AppResult<()> {
     state.with_settings(|store| {
         let mut settings = store.settings();
-        let ids = &mut settings.restore_mcp_workspace_ids;
-
-        if running {
-            if !ids.iter().any(|workspace_id| workspace_id == id) {
-                ids.push(id.to_string());
-                ids.sort();
-            }
-        } else {
-            ids.retain(|workspace_id| workspace_id != id);
-        }
+        settings.global_mcp_was_running = running;
+        // 0.2 restore ids are intentionally no longer authoritative in 0.3.
+        settings.restore_mcp_workspace_ids.clear();
         store.update_settings(settings)
     })
-}
-
-fn profile_by_id(state: &AppState, id: &str) -> AppResult<crate::workspace::WorkspaceProfile> {
-    state.with_workspaces(|store| {
-        store
-            .get(id)
-            .cloned()
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
-    })
-}
-
-fn validate_start_resources(state: &AppState, id: &str) -> AppResult<()> {
-    state.with_workspaces(|store| validate_service_start(store.list(), id))
-}
-
-fn persist_tunnel_url(state: &AppState, id: &str, url: &str) -> AppResult<()> {
-    if url.is_empty() {
-        return Ok(());
-    }
-
-    state.with_workspaces(|store| {
-        let Some(mut profile) = store.get(id).cloned() else {
-            return Ok(());
-        };
-
-        profile.tunnel.public_url = url.to_string();
-
-        store.update(profile)?;
-        Ok(())
-    })
-}
-
-async fn sync_tunnel_routes_from_runtime(state: &AppState) -> AppResult<()> {
-    let active_keys = state.with_runtime(|runtime| Ok(runtime.active_tunnel_workspace_ids()))?;
-    sync_managed_runtime_routes(active_keys).await
 }
 
 async fn ensure_port_available(port: u16, service_label: &str) -> AppResult<()> {
@@ -99,90 +124,75 @@ async fn ensure_port_available(port: u16, service_label: &str) -> AppResult<()> 
     Ok(())
 }
 
-async fn stop_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
-    let profile = profile_by_id(state, id)?;
-    let port = profile.runtime.local_port;
-    let handle = state.with_runtime(|runtime| Ok(runtime.begin_stop(id)))?;
+async fn stop_mcp_service(state: &AppState) -> AppResult<RuntimeStatusDto> {
+    // Stop the public transport first so it cannot forward traffic while the
+    // local endpoint is shutting down.
+    global_gateway::stop().await?;
+    let port = state.with_settings(|store| Ok(store.settings().global_gateway.local_port))?;
+    let handle = state.with_runtime(|runtime| Ok(runtime.begin_stop()))?;
     await_listener_shutdown(handle, port).await;
     state.with_runtime(|runtime| {
-        runtime.finish_stop(id);
-        Ok(runtime.mcp_status(&profile))
-    })?;
-    stop_for_runtime(&profile).await?;
-    sync_tunnel_routes_from_runtime(state).await?;
-    state.with_runtime(|runtime| Ok(runtime.mcp_status(&profile)))
+        runtime.finish_stop();
+        Ok(runtime.mcp_status())
+    })
 }
 
-async fn start_mcp_service(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
-    validate_start_resources(state, id)?;
-    let profile = profile_by_id(state, id)?;
-    ensure_port_available(profile.runtime.local_port, "本地 MCP").await?;
-    if profile.tunnel.use_global_gateway {
-        global_gateway::ensure_started().await?;
-    }
-    let profile = profile_by_id(state, id)?;
-    state.with_runtime(|runtime| runtime.start_mcp(&profile))?;
-    sync_tunnel_routes_from_runtime(state).await?;
+async fn start_mcp_service(state: &AppState) -> AppResult<RuntimeStatusDto> {
+    let settings = state.with_settings(|store| Ok(store.settings()))?;
+    ensure_port_available(settings.global_gateway.local_port, "Global MCP").await?;
+    state.with_runtime(|runtime| runtime.start_mcp())?;
 
-    match maybe_start_for_runtime(&profile).await {
-        Ok(Some(url)) => {
-            persist_tunnel_url(state, id, &url)?;
-        }
-        Ok(None) => {}
-        Err(error) => {
-            eprintln!("mcp tunnel auto-start failed for {id}: {error}");
+    // A public tunnel is optional. Local MCP stays running even if the tunnel
+    // cannot be established, matching the previous best-effort tunnel behavior.
+    if settings.global_gateway.enabled {
+        if let Err(error) = global_gateway::ensure_started().await {
+            eprintln!("Global MCP tunnel auto-start failed: {error}");
         }
     }
 
-    let profile = profile_by_id(state, id)?;
     tokio::time::sleep(Duration::from_millis(250)).await;
     state.with_runtime(|runtime| {
-        runtime.refresh_mcp(&profile);
-        Ok(runtime.mcp_status(&profile))
+        runtime.refresh_mcp();
+        Ok(runtime.mcp_status())
     })
 }
 
-/// Async stop→start for MCP. Used by the Tauri command and secret-change hooks.
-pub(crate) async fn restart_mcp_by_id(state: &AppState, id: &str) -> AppResult<RuntimeStatusDto> {
+pub(crate) async fn restart_global_mcp(state: &AppState) -> AppResult<RuntimeStatusDto> {
     let _guard = RESTART_GATE.lock().await;
-    let was_running = state.with_runtime(|runtime| Ok(runtime.is_running(id)))?;
+    let was_running = state.with_runtime(|runtime| Ok(runtime.is_running()))?;
     if was_running {
-        let _ = stop_mcp_service(state, id).await?;
+        let _ = stop_mcp_service(state).await?;
     }
-    start_mcp_service(state, id).await
+    start_mcp_service(state).await
 }
 
 #[tauri::command]
-pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    let status = start_mcp_service(&state, &id).await?;
-    if status.state == "running" || status.state == "starting" {
-        remember_runtime_state(&state, &id, true)?;
+pub async fn start_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStatusDto> {
+    let status = start_mcp_service(&state).await?;
+    if matches!(status.state.as_str(), "running" | "starting") {
+        remember_runtime_state(&state, true)?;
     }
     Ok(status)
 }
 
 #[tauri::command]
-pub async fn stop_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    let status = stop_mcp_service(&state, &id).await?;
-    remember_runtime_state(&state, &id, false)?;
+pub async fn stop_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStatusDto> {
+    let status = stop_mcp_service(&state).await?;
+    remember_runtime_state(&state, false)?;
     Ok(status)
 }
 
 #[tauri::command]
-pub fn get_runtime_status(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    let profile = profile_by_id(&state, &id)?;
+pub fn get_runtime_status(state: State<'_, AppState>) -> AppResult<RuntimeStatusDto> {
     state.with_runtime(|runtime| {
-        runtime.refresh_mcp(&profile);
-        Ok(runtime.mcp_status(&profile))
+        runtime.refresh_mcp();
+        Ok(runtime.mcp_status())
     })
 }
 
 #[tauri::command]
-pub async fn restart_runtime(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<RuntimeStatusDto> {
-    restart_mcp_by_id(&state, &id).await
+pub async fn restart_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStatusDto> {
+    restart_global_mcp(&state).await
 }
 
 #[tauri::command]
@@ -192,18 +202,12 @@ pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> 
     }
 
     let settings = state.with_settings(|store| Ok(store.settings()))?;
-    if !settings.restore_runtime_state_on_launch {
+    if !settings.restore_runtime_state_on_launch || !settings.global_mcp_was_running {
         return Ok(());
     }
 
-    for id in settings.restore_mcp_workspace_ids {
-        if profile_by_id(&state, &id).is_err() {
-            continue;
-        }
-        if let Err(error) = start_mcp_service(&state, &id).await {
-            eprintln!("failed to restore MCP runtime for {id}: {error}");
-        }
+    if let Err(error) = start_mcp_service(&state).await {
+        eprintln!("failed to restore Global MCP runtime: {error}");
     }
-
     Ok(())
 }

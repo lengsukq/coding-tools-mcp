@@ -31,7 +31,7 @@ Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspa
 
 | 功能 | 主要特点 | 带来的优势 |
 | --- | --- | --- |
-| 工作区管理 | 每个项目有独立目录、名称、端口、认证和隧道配置 | 多项目切换更清晰，降低把命令或凭据发到错误项目的风险 |
+| 工作区管理 | 每个项目有独立目录、名称、执行策略、Planning 与 History | 多项目切换更清晰，降低把命令执行到错误项目的风险 |
 | MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | 单一协议入口减少重复状态机和兼容分支，策略、错误和权限更容易保持一致 |
 | 连接与公网入口 | 支持本地地址、Global Gateway、FRP 和 Cloudflare Tunnel | 本机开发和远程 ChatGPT 接入可以使用同一工作区，部署方式更灵活 |
 | 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer 和静态 Client | 既能提供现代 OAuth 安全流程，也能兼容旧客户端和简单部署 |
@@ -56,12 +56,12 @@ Dashboard 还会持续刷新当前应用会话的 Token 估算，并提供连接
 
 ### 1. 工作区管理：把项目变成长期可识别的开发上下文
 
-工作区是 Coding Tools MCP 的基本单位。它绑定一个本地项目目录，同时维护自己的服务状态、端口、认证方式、公网入口和历史上下文。桌面端可以保存多个项目，但每次操作都会明确显示当前工作区名称和路径。
+工作区是 Coding Tools MCP 的项目上下文单位。它绑定一个本地项目目录，同时维护自己的执行策略、Planning 与 History。MCP Listener 和认证属于应用级 Global MCP；桌面端可以保存多个项目，但每次操作都会明确显示当前工作区名称和路径。
 
 **特点**
 
-- 项目目录是事实来源，工作区名称和服务配置分离维护。
-- MCP、规划状态和历史会话都围绕当前工作区组织。
+- 项目目录是事实来源，工作区名称和项目配置分离维护。
+- MCP session 在全局连接内选择 Workspace，规划状态和历史会话仍围绕所选工作区组织。
 - 支持从侧边栏快速切换项目，并在概览页查看服务是否运行。
 
 **优势**
@@ -88,13 +88,13 @@ Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git�
 
 ### 3. 连接与公网入口：从本机调试平滑走向远程开发
 
-每个服务都保留本地端点，便于开发和健康检查；需要让远程 AI 客户端访问时，可以使用独立隧道，也可以通过 Global Gateway 以 `/w/<workspace-id>` 前缀统一转发多个工作区。
+整个应用只保留一个 Global MCP Endpoint（`/mcp`）。本地或远程 AI 客户端先建立 MCP session，再用 `workspace_list` / `workspace_select` 选择项目；需要远程访问时，FRP 或 Cloudflare 只暴露这一个入口。
 
 **特点**
 
 - 支持 FRP 和 Cloudflare Tunnel，隧道进程由桌面端统一监督。
-- Global Gateway 可以复用一个公网入口，按工作区 ID 路由到不同项目。
-- 服务停止时，关联的隧道也会一起断开，减少遗留公网进程。
+- 每个 Chat session 的 Workspace 选择彼此隔离，请求开始时会固定项目上下文。
+- 服务停止时，关联的公网 Tunnel 也会一起断开，减少遗留公网进程。
 
 **优势**
 
@@ -104,7 +104,7 @@ Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git�
 
 ![Global Gateway 共享公网入口](docs/images/global-gateway.png)
 
-*Global Gateway 通过 `/w/<workspace-id>` 为多个 Workspace 提供共享入口，同时保留 FRP 和 Cloudflare 等独立隧道方式。*
+*Global MCP 通过一个 `/mcp` 入口承载多个 Workspace；session 内选择项目，FRP 和 Cloudflare 只负责公网传输。*
 
 ### 4. OAuth 与认证：兼顾安全流程和客户端兼容
 
@@ -215,29 +215,28 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 1. 点击左侧的“添加工作区”。
 2. 选择项目根目录。
-3. 设置工作区名称、MCP 端口和认证方式。
-4. 保存后，工作区会长期保留在左侧列表中。
+3. 设置工作区名称并保存；工作区会长期保留在左侧列表中。
 
 ### 3. 配置公网隧道
 
 如果 AI 客户端不在本机，需要把本地 MCP 暴露为 HTTPS 地址：
 
-- **零门槛推荐：Cloudflare Quick Tunnel**。在工作区隧道配置中选择 Cloudflare 快速模式，无需任何账号即可生成 `https://<随机>.trycloudflare.com` 公网地址，适合首次接入和临时演示；长期使用建议 FRP 固定子域名或 Cloudflare 命名隧道。
+- 打开“设置 → Global MCP 连接”，确认唯一 MCP 本地端口和公网方式。
+- **零门槛推荐：Cloudflare Quick Tunnel**。选择 Cloudflare 快速模式，无需账号即可生成 `https://<随机>.trycloudflare.com` 公网地址，适合首次接入和临时演示；长期使用建议 FRP 固定子域名或外部反向代理。
 - 在“软件管理”中安装或识别 `frpc` / `cloudflared`。
-- 在“FRP 配置”中保存服务器、端口和 Token，或在工作区选择 Cloudflare。
-- 每个工作区填写独立子域名。应用会统一管理 FRP 进程和多条代理线路。
+- 在“FRP 配置”中保存服务器、端口和 Token，再回到 Global MCP 连接选择 FRP 并填写唯一子域名。
 
 ![FRP 配置页面](docs/images/frp-configuration.png)
 
-*FRP 服务器配置集中保存，各工作区只需选择配置并填写自己的子域名。*
+*FRP 服务器配置集中保存，Global MCP 连接只需选择配置并填写公网子域名。*
 
 如果还没有可用的 FRPS 服务端，可以参考：[FRPS 服务端安装教程（微信公众号）](https://mp.weixin.qq.com/s/kmpQhHsvmHlaLfj4rw3A0Q)。安装完成后，把服务端地址、端口和 Token 填入客户端的“FRP 配置”即可。
 
 ### 4. 启动 MCP
 
-进入工作区并点击 MCP 的“启动”。客户端会显示：
+在 Dashboard 或“设置 → Global MCP 连接”点击“启动 Global MCP”。客户端会显示：
 
-- 本地 MCP 地址，例如 `http://127.0.0.1:28766/mcp`；
+- 唯一本地 MCP 地址，例如 `http://127.0.0.1:28765/mcp`；
 - 公网 HTTPS MCP 地址；
 - ChatGPT 连接所需的认证信息；
 - 实时日志和健康检查结果。
@@ -279,7 +278,7 @@ check_exec_environment
 
 配置前请先确认：
 
-1. 工作区的 MCP 服务和公网隧道均处于运行状态。
+1. Global MCP 服务和公网隧道均处于运行状态。
 2. “健康检查”中的公网 MCP 检查通过；如果使用 OAuth，再确认 OAuth 受保护资源和授权元数据检查通过。
 3. 从桌面端“GPT 配置”卡片复制“公网 MCP 地址”。使用 OAuth 时需要授权口令；只有客户端不支持动态注册时才需要额外填写静态 Client ID / Secret。
 

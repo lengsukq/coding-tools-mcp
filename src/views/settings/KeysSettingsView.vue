@@ -56,7 +56,7 @@ onMounted(() => { void load(); });
 
 <template>
   <div class="mx-auto max-w-[1180px] px-8 py-7">
-    <SettingsPageHeader title="共享密钥" description="集中管理 MCP 共享认证凭据；工作区仍可选择使用自己的专属密钥。" />
+    <SettingsPageHeader title="Global MCP 密钥" description="唯一 MCP Endpoint 的认证凭据。所有 Workspace 共用这一组连接认证，项目数据与执行策略仍彼此隔离。" />
     <GlassCard>
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
       <div v-else class="grid gap-4">

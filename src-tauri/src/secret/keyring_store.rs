@@ -12,6 +12,7 @@ impl SecretStore {
         })
     }
 
+    #[cfg(test)]
     pub fn set(profile_id: &str, key: &str, value: &str) -> AppResult<()> {
         DataStore::update_file(|data| {
             workspace_secret_map(data, profile_id).insert(key.to_string(), value.to_string());
@@ -19,6 +20,7 @@ impl SecretStore {
         })
     }
 
+    #[cfg(test)]
     pub fn get(profile_id: &str, key: &str) -> AppResult<Option<String>> {
         DataStore::read_file(|data| {
             Ok(data
@@ -45,7 +47,6 @@ impl SecretStore {
         })
     }
 
-    #[cfg(test)]
     pub fn set_app(scope: &str, item_id: &str, value: &str) -> AppResult<()> {
         DataStore::update_file(|data| {
             data.app_secrets
@@ -57,6 +58,7 @@ impl SecretStore {
     }
 }
 
+#[cfg(test)]
 fn workspace_secret_map<'a>(
     data: &'a mut crate::data::AppData,
     profile_id: &str,

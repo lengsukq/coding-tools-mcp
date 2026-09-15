@@ -32,68 +32,43 @@ fn apply_patch_rejects_traversal_target() {
 }
 
 #[test]
-fn read_file_allows_explicit_external_read_only_path() {
+fn read_file_rejects_explicit_external_path() {
     let fx = malicious_fixture();
     let out = invoke(
         &ctx_for(&fx.root),
         "read_file",
         json!({"path": fx.outside_secret.to_string_lossy()}),
     );
-    let result = assert_ok(&out);
-    assert!(result["content"]
-        .as_str()
-        .unwrap_or("")
-        .contains("TOP_SECRET"));
+    assert_security_or_policy_err(&out);
 }
 
 #[test]
-fn external_read_tools_allow_directory_listing_and_search() {
+fn external_read_tools_reject_directory_listing_and_search() {
     let fx = malicious_fixture();
     let ctx = ctx_for(&fx.root);
     let parent = fx.outside_secret.parent().expect("外部目录");
     let parent_text = parent.to_string_lossy().to_string();
 
     let listed_result = invoke(&ctx, "list_dir", json!({"path": parent_text}));
-    let listed = assert_ok(&listed_result);
-    assert!(listed["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|entry| entry["name"] == "outside-secret.txt"));
+    assert_security_or_policy_err(&listed_result);
 
     let files_result = invoke(
         &ctx,
         "list_files",
         json!({"path": parent.to_string_lossy(), "patterns": ["**/*"]}),
     );
-    let files = assert_ok(&files_result);
-    assert!(files["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|file| file["path"]
-            .as_str()
-            .unwrap_or("")
-            .ends_with("outside-secret.txt")));
+    assert_security_or_policy_err(&files_result);
 
     let matches_result = invoke(
         &ctx,
         "search_text",
         json!({"path": parent.to_string_lossy(), "query": "TOP_SECRET"}),
     );
-    let matches = assert_ok(&matches_result);
-    assert!(matches["matches"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|item| item["path"]
-            .as_str()
-            .unwrap_or("")
-            .ends_with("outside-secret.txt")));
+    assert_security_or_policy_err(&matches_result);
 }
 
 #[test]
-fn view_image_allows_explicit_external_read_only_path() {
+fn view_image_rejects_explicit_external_path() {
     let fx = malicious_fixture();
     let image_path = fx
         .outside_secret
@@ -111,16 +86,7 @@ fn view_image_allows_explicit_external_read_only_path() {
         "view_image",
         json!({"path": image_path.to_string_lossy(), "output": "data_url"}),
     );
-    let payload = assert_ok(&result);
-    let canonical_image_path = fs::canonicalize(&image_path).expect("规范化测试图片路径");
-    assert_eq!(
-        payload["path"],
-        canonical_image_path
-            .to_string_lossy()
-            .replace('\\', "/")
-            .trim_start_matches("//?/")
-    );
-    assert!(payload["base64"].as_str().is_some());
+    assert_security_or_policy_err(&result);
 }
 
 #[test]

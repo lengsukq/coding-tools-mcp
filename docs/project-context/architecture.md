@@ -37,7 +37,7 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | `src-tauri/src/harness/` | Durable Task、operation/event log、基线与恢复信息 |
 | `src-tauri/src/runtime/` | MCP 生命周期与进程监督 |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 下载、配置与进程监督 |
-| `src-tauri/src/global_gateway.rs` | 多 Workspace 共享公网入口 `/w/<workspace-id>` |
+| `src-tauri/src/global_gateway.rs` | 唯一 Global MCP Endpoint 的公网 Tunnel |
 | `src-tauri/src/workspace/` | Workspace 配置、持久化与兼容迁移 |
 | `src/` | Vue 3 桌面 UI、Vue Router、Tauri API 封装与状态展示 |
 | `docs/history-session/` | 项目内、可审计、无损 Markdown 会话档案 |
@@ -110,7 +110,7 @@ MCP 使用统一 OAuth runtime：
 
 ## Runtime 与网络
 
-每个 Workspace 可以独立运行 MCP。Global Gateway 提供统一公网入口并按 `/w/<workspace-id>` 路由到对应工作区。FRP 与 Cloudflare Tunnel 由 Rust supervisor 管理，不要求外部 Python Runtime。
+应用只运行一个 Global MCP listener，固定提供 `/mcp`。每个 MCP session 先通过 `workspace_list` / `workspace_select` 选择 Workspace，再在请求开始时绑定不可变的 WorkspaceRequestContext；不同 session 的选择互不影响。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
 
 ## 安全边界
 
@@ -119,6 +119,7 @@ MCP 使用统一 OAuth runtime：
 - `.git` / `.github` 等仓库资产受额外保护；
 - Patch 预检后事务化应用；
 - Dangerous operation 需要显式 `confirm=true`；
+- MCP session 由服务端签发，未知或伪造的 session ID fail-closed；
 - Windows 当前仍是 `policy_only` 边界，不宣称拥有完整 OS Sandbox。
 
 ---

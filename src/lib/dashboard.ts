@@ -55,13 +55,6 @@ export function stateClass(state: RuntimeState | undefined): string {
   return state ?? "stopped";
 }
 
-export function tunnelLabel(workspace: WorkspaceProfile): string {
-  if (workspace.tunnel.use_global_gateway) return "Global Gateway";
-  if (workspace.tunnel.type === "frp") return "FRP";
-  if (workspace.tunnel.type === "cloudflare") return "Cloudflare";
-  return "Local";
-}
-
 export function planningLabel(
   planningByWorkspace: Record<string, PlanningStateDto | null>,
   workspaceId: string,
@@ -89,17 +82,6 @@ export function summarizePlanning(planningByWorkspace: Record<string, PlanningSt
   }
 
   return { activeGoals, activePlans, pendingReview, modes };
-}
-
-export function summarizeConnections(workspaces: WorkspaceProfile[]) {
-  const stats = { gateway: 0, frp: 0, cloudflare: 0, local: 0 };
-  for (const workspace of workspaces) {
-    if (workspace.tunnel.use_global_gateway) stats.gateway += 1;
-    else if (workspace.tunnel.type === "frp") stats.frp += 1;
-    else if (workspace.tunnel.type === "cloudflare") stats.cloudflare += 1;
-    else stats.local += 1;
-  }
-  return stats;
 }
 
 export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStats[]>): UsageTotals {

@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Form, Query, State};
@@ -13,7 +12,6 @@ use serde_json::{json, Value};
 use tokio::sync::oneshot;
 use tower_http::cors::CorsLayer;
 
-use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, external_base_url,
     protected_resource_metadata, protected_resource_metadata_url, register_client, token_exchange,
@@ -21,27 +19,21 @@ use crate::auth::{
     ClientRegistrationRequest, OAuthRuntime, TokenForm,
 };
 use crate::local_network;
-use crate::mcp::audit::{log_request, record_response, record_worker_failure, RpcRequestMeta};
-use crate::mcp::server::{handle_request, new_state, McpStateConfig, SharedState};
+use crate::mcp::audit::{log_request, record_response, RpcRequestMeta};
+use crate::mcp::gateway::{session_id_from_request, GatewayState, MCP_SESSION_HEADER};
+use crate::mcp::server::handle_gateway_request;
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
-use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
-use crate::tools::policy::PolicySettings;
-use crate::tools::Workspace;
 use crate::tunnel::append_profile_log;
-use crate::usage::ServiceUsage;
-use crate::workspace::{AuthConfig, RuntimeConfig};
+use crate::workspace::AuthConfig;
 
 pub type ShutdownSender = oneshot::Sender<()>;
 
 #[derive(Debug, Clone)]
-pub struct ListenerConfig {
+pub struct GatewayListenerConfig {
     pub port: u16,
-    pub workspace_path: PathBuf,
-    pub workspace_id: String,
     pub auth: AuthConfig,
     pub public_base_url: String,
-    pub runtime: RuntimeConfig,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,14 +41,6 @@ pub struct ListenerSecrets {
     pub oauth_client_secret: Option<String>,
     pub oauth_password: Option<String>,
     pub oauth_token_secret: Option<String>,
-}
-
-fn merge_config_text(global: &str, workspace: &str) -> String {
-    [global.trim(), workspace.trim()]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 async fn oauth_register_post(
@@ -71,10 +55,10 @@ async fn oauth_register_post(
 
 #[derive(Clone)]
 struct ListenerState {
-    mcp: SharedState,
+    gateway: Arc<GatewayState>,
     auth: AuthConfig,
-    workspace_id: String,
-    workspace_path: String,
+    scope_id: String,
+    scope_label: String,
     bind_port: u16,
     configured_public_url: String,
     bearer_token: Option<String>,
@@ -82,119 +66,58 @@ struct ListenerState {
     oauth_client_secret: Option<String>,
 }
 
-pub fn spawn_listener(
-    config: ListenerConfig,
+pub fn spawn_gateway_listener(
+    config: GatewayListenerConfig,
     secrets: ListenerSecrets,
-    usage: Arc<ServiceUsage>,
+    gateway: Arc<GatewayState>,
 ) -> Result<(ShutdownSender, tauri::async_runtime::JoinHandle<()>), String> {
-    let ListenerConfig {
+    let GatewayListenerConfig {
         port,
-        workspace_path,
-        workspace_id,
         auth,
         public_base_url,
-        runtime,
     } = config;
     let ListenerSecrets {
         oauth_client_secret,
         oauth_password,
         oauth_token_secret,
     } = secrets;
-    let workspace_display = workspace_path.display().to_string();
-    let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
-    let global = AppSettings::load_or_default();
-    let policy = PolicySettings::from_runtime_and_global(&runtime, &global);
-    let executable_paths =
-        merge_executable_paths(&runtime.executable_paths, &global.global_executable_paths);
-    let instruction_sources = merge_source_lists(
-        &global.global_instruction_sources,
-        &runtime.instruction_sources,
-    );
-    let skill_sources = merge_source_lists(&global.global_skill_sources, &runtime.skill_sources);
-    let instruction_paths = merge_config_text(
-        &global.global_custom_instruction_paths,
-        &runtime.custom_instruction_paths,
-    );
-    let skill_paths = merge_config_text(
-        &global.global_custom_skill_paths,
-        &runtime.custom_skill_paths,
-    );
-    let manual_instructions =
-        merge_ai_instructions(&global.global_ai_instructions, &runtime.ai_instructions);
-    let agent_context = AgentContextRuntimeConfig {
-        instruction_sources,
-        skill_sources,
-        custom_instruction_paths: instruction_paths,
-        custom_skill_paths: skill_paths,
-    };
-    let mcp = new_state(
-        workspace,
-        McpStateConfig {
-            auth: auth.clone(),
-            policy,
-            tool_profile: runtime.tool_profile.clone(),
-            executable_paths,
-            ai_instructions: manual_instructions,
-            agent_context,
-            history_recording: runtime.history_recording,
-            history_context_sessions: runtime.history_context_sessions,
-        },
-        usage,
-    );
     let bearer_token = if auth.bearer_enabled() {
-        let key = "bearer_token";
-        if auth.use_shared_secrets {
-            SecretStore::get_shared(key).map_err(|e| e.to_string())?
-        } else {
-            SecretStore::get(&workspace_id, key).map_err(|e| e.to_string())?
-        }
+        SecretStore::get_shared("bearer_token").map_err(|error| error.to_string())?
     } else {
         None
     };
     let configured_public_url = public_base_url.trim().to_string();
     let oauth = if auth.oauth_enabled() {
-        let password = oauth_password.unwrap_or_default();
-        let token_secret = oauth_token_secret.unwrap_or_default();
         let oauth_base = external_base_url(&HeaderMap::new(), port, &configured_public_url);
-        Some(Arc::new(OAuthRuntime::new_persistent(
+        Some(Arc::new(OAuthRuntime::new_app_persistent(
             oauth_base,
             auth.oauth_client_id.clone(),
             oauth_client_secret.clone(),
-            password,
-            token_secret,
-            workspace_id.clone(),
+            oauth_password.unwrap_or_default(),
+            oauth_token_secret.unwrap_or_default(),
+            "global_mcp".into(),
             "oauth_dynamic_clients".into(),
         )?))
     } else {
         None
     };
     let state = ListenerState {
-        mcp,
+        gateway,
         auth,
-        workspace_id,
-        workspace_path: workspace_display,
+        scope_id: "global-mcp".into(),
+        scope_label: "Global MCP Gateway".into(),
         bind_port: port,
         configured_public_url,
         bearer_token,
         oauth,
         oauth_client_secret,
     };
-    // 在返回 Running 之前完成 bind，避免后台任务里的端口冲突被伪装成启动成功。
     let allow_lan_access = AppSettings::load_or_default().allow_lan_access;
     let listener = bind_listener(port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let profile_id = state.workspace_id.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        let result = serve(listener, port, allow_lan_access, state, shutdown_rx).await;
-        if let Err(err) = &result {
-            append_profile_log(
-                &profile_id,
-                "stderr.log",
-                &format!("[mcp] listener stopped: {err}"),
-            );
-            eprintln!("mcp listener stopped: {err}");
-        } else {
-            append_profile_log(&profile_id, "stderr.log", "[mcp] listener stopped");
+        if let Err(error) = serve(listener, port, allow_lan_access, state, shutdown_rx).await {
+            eprintln!("global mcp listener stopped: {error}");
         }
     });
     Ok((shutdown_tx, handle))
@@ -207,8 +130,27 @@ async fn serve(
     state: ListenerState,
     shutdown: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let profile_id = state.workspace_id.clone();
-    let app = Router::new()
+    let profile_id = state.scope_id.clone();
+    let app = build_router(state).layer(CorsLayer::permissive());
+
+    append_profile_log(
+        &profile_id,
+        "stdout.log",
+        &format!(
+            "[mcp] listening on http://{}:{port}/mcp",
+            local_network::bind_host(allow_lan_access)
+        ),
+    );
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+        })
+        .await?;
+    Ok(())
+}
+
+fn build_router(state: ListenerState) -> Router {
+    Router::new()
         .route("/mcp", get(mcp_discovery).post(mcp_post))
         .route(
             "/.well-known/oauth-authorization-server",
@@ -229,22 +171,6 @@ async fn serve(
         )
         .route("/oauth/token", post(oauth_token_post))
         .with_state(state)
-        .layer(CorsLayer::permissive());
-
-    append_profile_log(
-        &profile_id,
-        "stdout.log",
-        &format!(
-            "[mcp] listening on http://{}:{port}/mcp",
-            local_network::bind_host(allow_lan_access)
-        ),
-    );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = shutdown.await;
-        })
-        .await?;
-    Ok(())
 }
 
 fn bind_listener(port: u16, allow_lan_access: bool) -> Result<tokio::net::TcpListener, String> {
@@ -284,15 +210,56 @@ async fn mcp_post(
         return response;
     }
     let meta = RpcRequestMeta::from_body(&body);
-    log_request(&state.workspace_id, &meta);
 
-    let mcp = state.mcp.clone();
-    let profile_id = state.workspace_id.clone();
-    let result = tokio::task::spawn_blocking(move || handle_request(&mcp, &body)).await;
+    let requested_session_id = session_id_from_request(&headers, &body);
+    let effective_session_id = if meta.method == "initialize" {
+        match requested_session_id.as_deref() {
+            Some(session_id) if state.gateway.sessions.contains(session_id) => {
+                Some(session_id.to_string())
+            }
+            _ => Some(state.gateway.sessions.issue()),
+        }
+    } else {
+        requested_session_id
+    };
+    let response_session_id = effective_session_id
+        .as_deref()
+        .filter(|session_id| state.gateway.sessions.contains(session_id))
+        .map(str::to_string);
+    log_request(&state.scope_id, effective_session_id.as_deref(), &meta);
+
+    let gateway = state.gateway.clone();
+    let body_for_worker = body.clone();
+    let session_for_worker = effective_session_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        handle_gateway_request(
+            gateway.as_ref(),
+            session_for_worker.as_deref(),
+            &body_for_worker,
+        )
+    })
+    .await;
     match result {
-        Ok(response) => {
-            record_response(&state.mcp, &profile_id, &meta, &response);
-            Json(response).into_response()
+        Ok(gateway_response) => {
+            let response = gateway_response.body;
+            if let Some(workspace) = gateway_response.workspace.as_ref() {
+                record_response(
+                    &workspace.tools,
+                    &workspace.workspace_id,
+                    effective_session_id.as_deref(),
+                    &meta,
+                    &response,
+                );
+            }
+            let mut http_response = Json(response).into_response();
+            if let Some(session_id) = response_session_id {
+                if let Ok(value) = session_id.parse() {
+                    http_response
+                        .headers_mut()
+                        .insert(MCP_SESSION_HEADER, value);
+                }
+            }
+            http_response
         }
         Err(error) => {
             let error_response = json!({
@@ -309,7 +276,14 @@ async fn mcp_post(
                     }
                 }
             });
-            record_worker_failure(&state.mcp, &profile_id, &meta, &error_response, &error);
+            append_profile_log(
+                &state.scope_id,
+                "mcp-requests.log",
+                &format!(
+                    "[rpc] worker_failed id={} method={} tool={} error={error}",
+                    meta.request_id, meta.method, meta.tool_name
+                ),
+            );
             Json(error_response).into_response()
         }
     }
@@ -378,7 +352,7 @@ async fn oauth_authorize_get(
     authorize_get(
         oauth,
         params,
-        Some(state.workspace_path.as_str()),
+        Some(state.scope_label.as_str()),
         &resolve_oauth_base(&state, &headers),
     )
 }
@@ -419,10 +393,18 @@ fn oauth_not_configured() -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::{fs, path::Path};
+
     use axum::http::header::CACHE_CONTROL;
     use axum::response::IntoResponse;
+    use serde_json::json;
 
-    use super::{bind_listener, mcp_discovery, mcp_discovery_payload};
+    use crate::mcp::gateway::GatewayState;
+    use crate::settings::AppSettings;
+    use crate::workspace::{AuthConfig, WorkspaceProfile};
+
+    use super::{bind_listener, build_router, mcp_discovery, mcp_discovery_payload, ListenerState};
 
     #[test]
     fn bind_listener_reports_port_conflict_synchronously() {
@@ -444,5 +426,255 @@ mod tests {
         let response = mcp_discovery().await.into_response();
 
         assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+    }
+
+    fn listener_state(profiles: Vec<WorkspaceProfile>) -> ListenerState {
+        ListenerState {
+            gateway: Arc::new(GatewayState::for_test_profiles(
+                profiles,
+                AppSettings::default(),
+            )),
+            auth: AuthConfig::default(),
+            scope_id: "global-mcp".into(),
+            scope_label: "Global MCP Gateway".into(),
+            bind_port: 0,
+            configured_public_url: String::new(),
+            bearer_token: None,
+            oauth: None,
+            oauth_client_secret: None,
+        }
+    }
+
+    fn test_listener_state() -> ListenerState {
+        let mut profile = WorkspaceProfile::new(
+            std::env::temp_dir().display().to_string(),
+            Some("HTTP Test Workspace".into()),
+        );
+        profile.id = "http-test-workspace".into();
+        listener_state(vec![profile])
+    }
+
+    async fn initialize_session(client: &reqwest::Client, url: &str) -> String {
+        let response = client
+            .post(url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": { "protocolVersion": "2025-11-25" }
+            }))
+            .send()
+            .await
+            .expect("initialize request");
+        assert!(response.status().is_success());
+        response
+            .headers()
+            .get(super::MCP_SESSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("server-issued session header")
+            .to_string()
+    }
+
+    async fn call_tool(
+        client: &reqwest::Client,
+        url: &str,
+        session_id: &str,
+        id: u64,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> serde_json::Value {
+        client
+            .post(url)
+            .header(super::MCP_SESSION_HEADER, session_id)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }))
+            .send()
+            .await
+            .expect("tool request")
+            .json()
+            .await
+            .expect("tool response")
+    }
+
+    #[tokio::test]
+    async fn http_transport_issues_and_requires_server_owned_sessions() {
+        let app = build_router(test_listener_state());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test HTTP listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test HTTP server");
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/mcp");
+
+        let initialize = client
+            .post(&url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": { "protocolVersion": "2025-11-25" }
+            }))
+            .send()
+            .await
+            .expect("initialize request");
+        assert!(initialize.status().is_success());
+        let session_id = initialize
+            .headers()
+            .get(super::MCP_SESSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("server-issued session header")
+            .to_string();
+        assert!(!session_id.is_empty());
+
+        let current = client
+            .post(&url)
+            .header(super::MCP_SESSION_HEADER, &session_id)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "workspace_current", "arguments": {} }
+            }))
+            .send()
+            .await
+            .expect("workspace_current request");
+        let current_body: serde_json::Value = current.json().await.expect("current response");
+        assert_eq!(
+            current_body["result"]["structuredContent"]["selected"],
+            false
+        );
+
+        let forged = client
+            .post(&url)
+            .header(super::MCP_SESSION_HEADER, "client-chosen-session")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": { "name": "workspace_current", "arguments": {} }
+            }))
+            .send()
+            .await
+            .expect("forged session request");
+        assert!(forged.headers().get(super::MCP_SESSION_HEADER).is_none());
+        let forged_body: serde_json::Value = forged.json().await.expect("forged response");
+        assert_eq!(
+            forged_body["error"]["data"]["reason"],
+            "MCP_SESSION_INVALID"
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn initialize_replaces_client_supplied_session_id() {
+        let app = build_router(test_listener_state());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test HTTP listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test HTTP server");
+        });
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}/mcp"))
+            .header(super::MCP_SESSION_HEADER, "client-chosen-session")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {}
+            }))
+            .send()
+            .await
+            .expect("initialize request");
+        let session_id = response
+            .headers()
+            .get(super::MCP_SESSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("server-issued session header");
+        assert_ne!(session_id, "client-chosen-session");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_sessions_keep_workspace_selection_isolated() {
+        let first = tempfile::tempdir().expect("workspace a");
+        let second = tempfile::tempdir().expect("workspace b");
+        fs::write(first.path().join("marker.txt"), "ONLY-A").expect("marker a");
+        fs::write(second.path().join("marker.txt"), "ONLY-B").expect("marker b");
+        let mut first_profile =
+            WorkspaceProfile::new(path_string(first.path()), Some("Workspace A".into()));
+        first_profile.id = "workspace-a".into();
+        let mut second_profile =
+            WorkspaceProfile::new(path_string(second.path()), Some("Workspace B".into()));
+        second_profile.id = "workspace-b".into();
+
+        let app = build_router(listener_state(vec![first_profile, second_profile]));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test HTTP listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test HTTP server");
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/mcp");
+        let session_a = initialize_session(&client, &url).await;
+        let session_b = initialize_session(&client, &url).await;
+
+        let selected_a = call_tool(
+            &client,
+            &url,
+            &session_a,
+            2,
+            "workspace_select",
+            json!({ "workspace_id": "workspace-a" }),
+        )
+        .await;
+        let selected_b = call_tool(
+            &client,
+            &url,
+            &session_b,
+            3,
+            "workspace_select",
+            json!({ "workspace_id": "workspace-b" }),
+        )
+        .await;
+        assert_eq!(selected_a["result"]["structuredContent"]["ok"], true);
+        assert_eq!(selected_b["result"]["structuredContent"]["ok"], true);
+
+        let read_a = call_tool(
+            &client,
+            &url,
+            &session_a,
+            4,
+            "read_file",
+            json!({ "path": "marker.txt" }),
+        )
+        .await;
+        let read_b = call_tool(
+            &client,
+            &url,
+            &session_b,
+            5,
+            "read_file",
+            json!({ "path": "marker.txt" }),
+        )
+        .await;
+        assert_eq!(read_a["result"]["structuredContent"]["content"], "ONLY-A");
+        assert_eq!(read_b["result"]["structuredContent"]["content"], "ONLY-B");
+        server.abort();
+    }
+
+    fn path_string(path: &Path) -> String {
+        path.display().to_string()
     }
 }

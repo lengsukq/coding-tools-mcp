@@ -46,9 +46,16 @@ pub struct OAuthRuntime {
 }
 
 #[derive(Clone)]
-struct ClientRegistryPersistence {
-    workspace_id: String,
-    secret_key: String,
+enum ClientRegistryPersistence {
+    #[cfg(test)]
+    Workspace {
+        workspace_id: String,
+        secret_key: String,
+    },
+    App {
+        scope: String,
+        item_id: String,
+    },
 }
 
 fn registration_error(error: &str, description: &str) -> Response {
@@ -305,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn login_page_posts_back_to_workspace_oauth_path() {
+    fn login_page_posts_back_to_global_oauth_path() {
         let html = login_page(LoginPage {
             client_id: "client",
             redirect_uri: "https://chatgpt.com/callback",
@@ -314,8 +321,8 @@ mod tests {
             state: "state",
             error: "",
             workspace_path: Some("/workspace"),
-            server_url: "https://mcp.example.com/w/workspace-id",
+            server_url: "https://mcp.example.com",
         });
-        assert!(html.contains("action='https://mcp.example.com/w/workspace-id/oauth/authorize'"));
+        assert!(html.contains("action='https://mcp.example.com/oauth/authorize'"));
     }
 }

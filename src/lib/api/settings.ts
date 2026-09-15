@@ -52,6 +52,7 @@ export async function setProxy(proxy: ProxyConfigDto): Promise<void> {
 }
 
 export interface GlobalRuntimeSettingsDto {
+  authType: string;
   executablePaths: string;
   permissionMode: string;
   allowedCommands: string;
@@ -62,6 +63,7 @@ export interface GlobalRuntimeSettingsDto {
   customSkillPaths: string;
   allowLanAccess: boolean;
   restoreRuntimeStateOnLaunch: boolean;
+  migrationNotice: string;
 }
 
 export async function getGlobalRuntimeSettings(): Promise<GlobalRuntimeSettingsDto> {
