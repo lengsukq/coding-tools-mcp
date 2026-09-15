@@ -53,6 +53,8 @@ export async function setProxy(proxy: ProxyConfigDto): Promise<void> {
 
 export interface GlobalRuntimeSettingsDto {
   executablePaths: string;
+  permissionMode: string;
+  allowedCommands: string;
   aiInstructions: string;
   instructionSources: string[];
   skillSources: string[];

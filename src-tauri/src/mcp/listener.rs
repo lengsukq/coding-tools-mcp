@@ -102,8 +102,8 @@ pub fn spawn_listener(
     } = secrets;
     let workspace_display = workspace_path.display().to_string();
     let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
-    let policy = PolicySettings::from_runtime(&runtime);
     let global = AppSettings::load_or_default();
+    let policy = PolicySettings::from_runtime_and_global(&runtime, &global);
     let executable_paths =
         merge_executable_paths(&runtime.executable_paths, &global.global_executable_paths);
     let instruction_sources = merge_source_lists(

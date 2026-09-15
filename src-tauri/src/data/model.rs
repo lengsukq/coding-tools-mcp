@@ -19,6 +19,12 @@ pub struct AppData {
     #[serde(default)]
     pub global_executable_paths: String,
     #[serde(default)]
+    pub global_permission_mode: String,
+    #[serde(default)]
+    pub global_allowed_commands: String,
+    #[serde(default)]
+    pub global_runtime_defaults_version: u32,
+    #[serde(default)]
     pub global_ai_instructions: String,
     #[serde(default)]
     pub global_instruction_sources: Vec<String>,

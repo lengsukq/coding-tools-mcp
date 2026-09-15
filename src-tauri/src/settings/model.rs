@@ -121,6 +121,12 @@ pub struct AppSettings {
     /// Global executable search paths inherited by every workspace runtime.
     #[serde(default)]
     pub global_executable_paths: String,
+    /// Global execution permission mode inherited by workspaces that opt in.
+    #[serde(default = "default_global_permission_mode")]
+    pub global_permission_mode: String,
+    /// Global command allowlist inherited by workspaces that opt in.
+    #[serde(default = "default_global_allowed_commands")]
+    pub global_allowed_commands: String,
     /// Global agent instructions prepended to workspace-specific instructions.
     #[serde(default)]
     pub global_ai_instructions: String,
@@ -180,6 +186,96 @@ fn default_global_gateway_use_proxy() -> bool {
     true
 }
 
+pub(crate) const GLOBAL_RUNTIME_DEFAULTS_VERSION: u32 = 1;
+
+pub(crate) fn default_global_permission_mode() -> String {
+    "trusted".to_string()
+}
+
+pub(crate) fn default_global_allowed_commands() -> String {
+    [
+        "pytest", "python", "python3", "py", "pip", "pip3", "pipx", "uv", "poetry",
+        "npm", "npx", "node", "pnpm", "yarn", "bun", "deno",
+        "make", "cmake", "ninja", "mvn", "mvnw", "gradle", "gradlew",
+        "cargo", "rustc", "rustup", "go", "ruff", "mypy", "eslint", "tsc",
+        "java", "javac", "ruby", "gem", "php", "composer",
+        "clang", "clang++", "gcc", "g++", "swift", "swiftc", "xcodebuild",
+        "msbuild", "dotnet", "git", "gh", "docker", "docker-compose",
+        "kubectl", "helm", "terraform", "ansible", "aws", "az", "gcloud",
+        "curl", "wget", "brew", "code", "corepack", "pnpx", "xcrun", "pod",
+        "fastlane", "winget", "choco", "scoop", "cmd", "powershell", "pwsh", "wsl",
+        "bash", "sh", "zsh", "where",
+    ]
+    .join(",")
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn default_global_executable_paths() -> String {
+    [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/Library/Apple/usr/bin",
+        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin",
+        "~/.cargo/bin",
+        "~/.local/bin",
+        "~/.bun/bin",
+        "~/.deno/bin",
+        "~/.volta/bin",
+        "~/.npm-global/bin",
+        "~/.local/share/pnpm",
+        "~/.pyenv/shims",
+        "~/.rye/shims",
+        "~/go/bin",
+        "~/Library/pnpm",
+    ]
+    .join("\n")
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn default_global_executable_paths() -> String {
+    [
+        r"C:\Windows\System32",
+        r"C:\Windows",
+        r"C:\Windows\System32\WindowsPowerShell\v1.0",
+        r"C:\Program Files\PowerShell\7",
+        r"C:\Program Files\Git\cmd",
+        r"C:\Program Files\nodejs",
+        r"C:\ProgramData\chocolatey\bin",
+        r"~\.cargo\bin",
+        r"~\.volta\bin",
+        r"~\scoop\shims",
+        r"~\AppData\Roaming\npm",
+        r"~\AppData\Local\pnpm",
+        r"~\go\bin",
+        r"~\AppData\Local\Programs\Microsoft VS Code\bin",
+        r"~\AppData\Local\Microsoft\WindowsApps",
+    ]
+    .join("\n")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn default_global_executable_paths() -> String {
+    [
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "~/.cargo/bin",
+        "~/.local/bin",
+        "~/.bun/bin",
+        "~/.deno/bin",
+    ]
+    .join("\n")
+}
+
 impl AppSettings {
     pub fn from_data(data: &AppData) -> Self {
         Self {
@@ -188,6 +284,8 @@ impl AppSettings {
             download: data.download.clone(),
             proxy: data.proxy.clone(),
             global_executable_paths: data.global_executable_paths.clone(),
+            global_permission_mode: data.global_permission_mode.clone(),
+            global_allowed_commands: data.global_allowed_commands.clone(),
             global_ai_instructions: data.global_ai_instructions.clone(),
             global_instruction_sources: data.global_instruction_sources.clone(),
             global_skill_sources: data.global_skill_sources.clone(),
@@ -209,6 +307,8 @@ impl AppSettings {
         data.download = self.download.clone();
         data.proxy = self.proxy.clone();
         data.global_executable_paths = self.global_executable_paths.clone();
+        data.global_permission_mode = self.global_permission_mode.clone();
+        data.global_allowed_commands = self.global_allowed_commands.clone();
         data.global_ai_instructions = self.global_ai_instructions.clone();
         data.global_instruction_sources = self.global_instruction_sources.clone();
         data.global_skill_sources = self.global_skill_sources.clone();
@@ -221,7 +321,12 @@ impl AppSettings {
     }
 
     pub fn load_or_default() -> Self {
-        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data))).unwrap_or_default()
+        crate::data::DataStore::read_file(|data| Ok(Self::from_data(data))).unwrap_or_else(|_| Self {
+            global_executable_paths: default_global_executable_paths(),
+            global_permission_mode: default_global_permission_mode(),
+            global_allowed_commands: default_global_allowed_commands(),
+            ..Self::default()
+        })
     }
 
     pub fn find_frp_profile(&self, id: &str) -> Option<&FrpProfile> {

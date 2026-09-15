@@ -4,6 +4,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { ExternalLink, MemoryStick, RefreshCw, Save, ScanSearch } from "@lucide/vue";
 import BaseButton from "../../components/ui/BaseButton.vue";
 import GlassCard from "../../components/ui/GlassCard.vue";
+import SelectField from "../../components/ui/SelectField.vue";
+import TextAreaField from "../../components/ui/TextAreaField.vue";
 import TextField from "../../components/ui/TextField.vue";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.vue";
 import SettingsPageHeader from "../../components/settings/SettingsPageHeader.vue";
@@ -26,8 +28,13 @@ import { reloadUiOnly } from "$lib/ui-memory-guard";
 
 const proxy = reactive<ProxyConfigDto>({ mode: "none", url: "" });
 const runtime = reactive<GlobalRuntimeSettingsDto>({
-  executablePaths: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, restoreRuntimeStateOnLaunch: false,
+  executablePaths: "", permissionMode: "trusted", allowedCommands: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, restoreRuntimeStateOnLaunch: false,
 });
+const permissionOptions = [
+  { value: "trusted", label: "受信任（推荐）" },
+  { value: "safe", label: "安全受限" },
+  { value: "dangerous", label: "完全放开" },
+];
 const loading = ref(true);
 const proxySaving = ref(false);
 const runtimeSaving = ref(false);
@@ -127,8 +134,15 @@ onMounted(() => { void refresh(); });
       <GlassCard>
         <div class="mb-5 flex items-center justify-between"><div><h2 class="text-sm font-semibold">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
         <div class="grid gap-4">
-          <div class="grid grid-cols-2 gap-3"><TextField v-model="runtime.executablePaths" label="额外可执行路径" /><TextField v-model="runtime.customInstructionPaths" label="自定义 Instructions 路径" /></div>
-          <TextField v-model="runtime.customSkillPaths" label="自定义 Skills 路径" />
+          <div class="ios-glass ios-inset-surface p-4">
+            <div class="mb-4"><h3 class="text-xs font-semibold">全局执行权限</h3><p class="mt-1 text-[11px] leading-4 text-[var(--text-muted)]">新建 Workspace 默认继承这里的权限模式与命令白名单。受信任模式允许常规开发和网络命令，但破坏性操作仍保留安全保护。</p></div>
+            <div class="grid gap-3">
+              <SelectField v-model="runtime.permissionMode" label="默认权限模式" :options="permissionOptions" />
+              <TextAreaField v-model="runtime.allowedCommands" label="默认系统命令（逗号分隔）" :rows="4" mono hint="预置常见开发命令；可以继续追加 gh、aws、docker、kubectl 等本机工具。" />
+              <TextAreaField v-model="runtime.executablePaths" label="默认可执行 PATH" :rows="6" mono hint="已按当前平台预置常见工具目录。Workspace 额外 PATH 会排在全局 PATH 之前。" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3"><TextField v-model="runtime.customInstructionPaths" label="自定义 Instructions 路径" /><TextField v-model="runtime.customSkillPaths" label="自定义 Skills 路径" /></div>
           <label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">全局 AI Instructions</span><textarea v-model="runtime.aiInstructions" rows="4" class="w-full resize-y rounded-xl border border-white/70 bg-white/60 p-3 text-sm outline-none focus:border-[#0a84ff]/50 dark:border-white/10 dark:bg-white/6" /></label>
           <div class="grid grid-cols-2 gap-3">
             <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Instruction 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`i-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#0a84ff]" :checked="runtime.instructionSources.includes(item.value)" @change="runtime.instructionSources = toggleSource(runtime.instructionSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>

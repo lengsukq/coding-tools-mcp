@@ -93,11 +93,18 @@ async function scan() {
 
 <template>
   <form class="grid gap-4" @submit.prevent="save">
+    <div class="ios-glass ios-inset-surface p-3">
+      <ToggleSwitch
+        v-model="draft.inheritGlobalExecutionPolicy"
+        label="继承全局执行权限"
+        description="使用 设置 → 通用 中的全局权限模式和命令白名单；关闭后可为当前 Workspace 单独覆盖。"
+      />
+    </div>
     <div class="grid gap-3 md:grid-cols-2">
       <SelectField v-model="draft.toolProfile" label="工具档位" :options="toolOptions" />
-      <SelectField v-model="draft.permissionMode" label="权限模式" :options="permissionOptions" />
+      <SelectField v-model="draft.permissionMode" label="权限模式" :options="permissionOptions" :disabled="draft.inheritGlobalExecutionPolicy" :hint="draft.inheritGlobalExecutionPolicy ? '当前由全局执行权限控制。' : undefined" />
     </div>
-    <TextField v-model="draft.allowedCommands" label="系统命令（逗号分隔）" placeholder="python,git,gh,aws,cargo,..." />
+    <TextField v-model="draft.allowedCommands" label="系统命令（逗号分隔）" placeholder="python,git,gh,aws,cargo,..." :disabled="draft.inheritGlobalExecutionPolicy" :hint="draft.inheritGlobalExecutionPolicy ? '当前继承全局命令白名单。' : undefined" />
     <TextAreaField v-model="draft.executablePaths" label="额外可执行 PATH" mono placeholder="/opt/homebrew/bin\n/usr/local/bin\n~/.cargo/bin" hint="Workspace PATH 优先于 Global PATH，再回退 System PATH；命令仍需加入白名单。" />
 
     <div class="ios-glass ios-card-surface p-4">

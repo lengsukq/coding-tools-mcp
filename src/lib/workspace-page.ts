@@ -4,6 +4,7 @@ import type { AuthConfig, RuntimeState, RuntimeStatus, WorkspaceProfile } from "
 export interface RuntimePolicyDraft {
   toolProfile: string;
   permissionMode: string;
+  inheritGlobalExecutionPolicy: boolean;
   allowedCommands: string;
   executablePaths: string;
   aiInstructions: string;
@@ -83,6 +84,7 @@ export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceP
       local_port: runtime.local_port ?? 0,
       tool_profile: runtime.tool_profile ?? "core",
       permission_mode: runtime.permission_mode ?? "safe",
+      inherit_global_execution_policy: runtime.inherit_global_execution_policy ?? false,
     },
   };
 }
@@ -172,6 +174,7 @@ export function withRuntimePolicy(
       ...profile.runtime,
       tool_profile: draft.toolProfile,
       permission_mode: draft.permissionMode,
+      inherit_global_execution_policy: draft.inheritGlobalExecutionPolicy,
       allowed_commands: draft.allowedCommands,
       executable_paths: draft.executablePaths,
       ai_instructions: draft.aiInstructions,

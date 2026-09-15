@@ -53,6 +53,7 @@ const tunnelConfig = computed<TunnelFormConfig>(() => ({
 const policyModel = computed<RuntimePolicyDraft>(() => ({
   toolProfile: props.profile.runtime.tool_profile,
   permissionMode: props.profile.runtime.permission_mode,
+  inheritGlobalExecutionPolicy: props.profile.runtime.inherit_global_execution_policy ?? false,
   allowedCommands: props.profile.runtime.allowed_commands ?? "",
   executablePaths: props.profile.runtime.executable_paths ?? "",
   aiInstructions: props.profile.runtime.ai_instructions ?? "",

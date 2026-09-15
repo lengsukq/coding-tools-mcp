@@ -117,6 +117,25 @@ impl PolicySettings {
         }
     }
 
+    pub fn from_runtime_and_global(
+        runtime: &crate::workspace::RuntimeConfig,
+        global: &crate::settings::AppSettings,
+    ) -> Self {
+        if !runtime.inherit_global_execution_policy {
+            return Self::from_runtime(runtime);
+        }
+
+        Self {
+            allowed_commands: merge_default_allowed_commands(&global.global_allowed_commands),
+            workspace_local_entries: runtime.workspace_local_entries,
+            workspace_script_extensions: parse_workspace_script_extensions(
+                &runtime.workspace_script_extensions,
+            ),
+            max_patch_bytes: 200_000,
+            permission_mode: global.global_permission_mode.clone().into(),
+        }
+    }
+
     pub fn network_allowed(&self) -> bool {
         self.permission_mode.network_allowed()
     }
@@ -583,6 +602,46 @@ mod tests {
         let policy = PolicySettings::from_runtime(&runtime);
         assert!(validate_command(&json!({"cmd": "pwd"}), &policy).is_ok());
         assert!(validate_command(&json!({"cmd": "pytest"}), &policy).is_ok());
+    }
+
+    #[test]
+    fn inherited_execution_policy_uses_global_mode_and_commands() {
+        let runtime = crate::workspace::RuntimeConfig {
+            inherit_global_execution_policy: true,
+            permission_mode: "safe".into(),
+            allowed_commands: "workspace-only".into(),
+            ..crate::workspace::RuntimeConfig::default()
+        };
+        let global = crate::settings::AppSettings {
+            global_permission_mode: "trusted".into(),
+            global_allowed_commands: "global-tool".into(),
+            ..crate::settings::AppSettings::default()
+        };
+
+        let policy = PolicySettings::from_runtime_and_global(&runtime, &global);
+        assert_eq!(policy.permission_mode.as_str(), "trusted");
+        assert!(policy.allowed_commands.contains("global-tool"));
+        assert!(!policy.allowed_commands.contains("workspace-only"));
+    }
+
+    #[test]
+    fn legacy_workspace_keeps_explicit_execution_policy() {
+        let runtime = crate::workspace::RuntimeConfig {
+            inherit_global_execution_policy: false,
+            permission_mode: "safe".into(),
+            allowed_commands: "workspace-only".into(),
+            ..crate::workspace::RuntimeConfig::default()
+        };
+        let global = crate::settings::AppSettings {
+            global_permission_mode: "dangerous".into(),
+            global_allowed_commands: "global-tool".into(),
+            ..crate::settings::AppSettings::default()
+        };
+
+        let policy = PolicySettings::from_runtime_and_global(&runtime, &global);
+        assert_eq!(policy.permission_mode.as_str(), "safe");
+        assert!(policy.allowed_commands.contains("workspace-only"));
+        assert!(!policy.allowed_commands.contains("global-tool"));
     }
 
     #[test]

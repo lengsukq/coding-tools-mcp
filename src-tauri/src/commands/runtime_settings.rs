@@ -9,6 +9,10 @@ use crate::error::AppResult;
 pub struct GlobalRuntimeSettingsDto {
     #[serde(default)]
     pub executable_paths: String,
+    #[serde(default = "crate::settings::default_global_permission_mode")]
+    pub permission_mode: String,
+    #[serde(default = "crate::settings::default_global_allowed_commands")]
+    pub allowed_commands: String,
     #[serde(default)]
     pub ai_instructions: String,
     #[serde(default)]
@@ -33,6 +37,8 @@ pub fn get_global_runtime_settings(
         let settings = store.settings();
         Ok(GlobalRuntimeSettingsDto {
             executable_paths: settings.global_executable_paths,
+            permission_mode: settings.global_permission_mode,
+            allowed_commands: settings.global_allowed_commands,
             ai_instructions: settings.global_ai_instructions,
             instruction_sources: settings.global_instruction_sources,
             skill_sources: settings.global_skill_sources,
@@ -62,6 +68,8 @@ pub fn set_global_runtime_settings(
     state.with_settings(|store| {
         let mut settings = store.settings();
         settings.global_executable_paths = runtime.executable_paths.trim().to_string();
+        settings.global_permission_mode = runtime.permission_mode.trim().to_string();
+        settings.global_allowed_commands = runtime.allowed_commands.trim().to_string();
         settings.global_ai_instructions = runtime.ai_instructions.trim().to_string();
         settings.global_instruction_sources = runtime.instruction_sources;
         settings.global_skill_sources = runtime.skill_sources;

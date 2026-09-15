@@ -24,6 +24,7 @@ export interface RuntimeConfig {
   history_recording?: boolean;
   history_context_sessions?: number[];
   permission_mode: string;
+  inherit_global_execution_policy?: boolean;
   allowed_commands?: string;
   executable_paths?: string;
   ai_instructions?: string;
