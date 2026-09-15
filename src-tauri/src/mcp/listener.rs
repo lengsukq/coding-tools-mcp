@@ -672,11 +672,21 @@ mod tests {
             "workspace_select",
             json!({ "workspace_id": "workspace-a" }),
         )
-        .send().await.expect("select request").json().await.expect("select response");
+        .send()
+        .await
+        .expect("select request")
+        .json()
+        .await
+        .expect("select response");
         assert_eq!(selected["result"]["structuredContent"]["ok"], true);
 
         let read: serde_json::Value = call(2, "read_file", json!({ "path": "marker.txt" }))
-            .send().await.expect("read request").json().await.expect("read response");
+            .send()
+            .await
+            .expect("read request")
+            .json()
+            .await
+            .expect("read response");
         assert_eq!(read["result"]["structuredContent"]["content"], "ONLY-A");
         server.abort();
     }

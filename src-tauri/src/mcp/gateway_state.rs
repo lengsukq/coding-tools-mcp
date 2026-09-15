@@ -39,7 +39,6 @@ impl From<&WorkspaceProfile> for WorkspaceDescriptor {
             path: profile.path.clone(),
         }
     }
-
 }
 
 #[derive(Debug, Clone, Default)]
