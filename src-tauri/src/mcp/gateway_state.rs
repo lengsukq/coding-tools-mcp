@@ -185,11 +185,15 @@ impl GatewaySessionStore {
         true
     }
 
-    pub fn clear(&self, session_id: &str) {
-        self.sessions
+    pub fn clear_selection(&self, session_id: &str) {
+        let mut sessions = self
+            .sessions
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(session_id);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(scope) = sessions.get_mut(session_id) {
+            scope.active_workspace_id = None;
+            scope.last_seen_at = unix_timestamp_seconds();
+        }
     }
 
     pub fn clear_workspace(&self, workspace_id: &str) {
@@ -371,7 +375,7 @@ impl GatewayState {
         match self.registry.resolve(&workspace_id) {
             Ok(profile) => self.build_request_context(session_id, profile),
             Err(error) => {
-                self.sessions.clear(session_id);
+                self.sessions.clear_selection(session_id);
                 Err(error)
             }
         }

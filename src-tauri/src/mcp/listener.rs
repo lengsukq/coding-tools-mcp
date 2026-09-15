@@ -291,7 +291,19 @@ async fn mcp_post(
 
 fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Response> {
     if state.auth.bearer_enabled() {
-        let expected = state.bearer_token.as_deref().unwrap_or("");
+        let Some(expected) = state
+            .bearer_token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Some(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Bearer authentication is enabled but no token is configured",
+                )
+                    .into_response(),
+            );
+        };
         return verify_bearer_header(headers, expected);
     }
     if state.auth.oauth_enabled() {
@@ -309,6 +321,15 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
                 return Some(response);
             }
         }
+    }
+    if state.auth.auth_enabled() {
+        return Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unsupported or incomplete MCP authentication configuration",
+            )
+                .into_response(),
+        );
     }
     None
 }
@@ -397,6 +418,7 @@ mod tests {
     use std::{fs, path::Path};
 
     use axum::http::header::CACHE_CONTROL;
+    use axum::http::{HeaderMap, StatusCode};
     use axum::response::IntoResponse;
     use serde_json::json;
 
@@ -404,7 +426,10 @@ mod tests {
     use crate::settings::AppSettings;
     use crate::workspace::{AuthConfig, WorkspaceProfile};
 
-    use super::{bind_listener, build_router, mcp_discovery, mcp_discovery_payload, ListenerState};
+    use super::{
+        bind_listener, build_router, mcp_discovery, mcp_discovery_payload, require_mcp_auth,
+        ListenerState,
+    };
 
     #[test]
     fn bind_listener_reports_port_conflict_synchronously() {
@@ -428,13 +453,34 @@ mod tests {
         assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
     }
 
+    #[test]
+    fn mcp_auth_fails_closed_for_missing_bearer_and_unknown_mode() {
+        let mut state = test_listener_state();
+        state.auth.auth_type = "bearer".into();
+        let missing_bearer =
+            require_mcp_auth(&state, &HeaderMap::new()).expect("missing bearer must fail");
+        assert_eq!(missing_bearer.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        state.auth.auth_type = "unexpected".into();
+        let invalid_mode =
+            require_mcp_auth(&state, &HeaderMap::new()).expect("unknown auth must fail closed");
+        assert_eq!(invalid_mode.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        state.auth.auth_type = "noauth".into();
+        assert!(require_mcp_auth(&state, &HeaderMap::new()).is_none());
+    }
+
     fn listener_state(profiles: Vec<WorkspaceProfile>) -> ListenerState {
+        let auth = AuthConfig {
+            auth_type: "noauth".into(),
+            ..AuthConfig::default()
+        };
         ListenerState {
             gateway: Arc::new(GatewayState::for_test_profiles(
                 profiles,
                 AppSettings::default(),
             )),
-            auth: AuthConfig::default(),
+            auth,
             scope_id: "global-mcp".into(),
             scope_label: "Global MCP Gateway".into(),
             bind_port: 0,
@@ -671,6 +717,83 @@ mod tests {
         .await;
         assert_eq!(read_a["result"]["structuredContent"]["content"], "ONLY-A");
         assert_eq!(read_b["result"]["structuredContent"]["content"], "ONLY-B");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_request_scoped_workspace_id_survives_transport_session_churn() {
+        let first = tempfile::tempdir().expect("workspace a");
+        let second = tempfile::tempdir().expect("workspace b");
+        fs::write(first.path().join("marker.txt"), "ONLY-A").expect("marker a");
+        fs::write(second.path().join("marker.txt"), "ONLY-B").expect("marker b");
+        let mut first_profile =
+            WorkspaceProfile::new(path_string(first.path()), Some("Workspace A".into()));
+        first_profile.id = "workspace-a".into();
+        let mut second_profile =
+            WorkspaceProfile::new(path_string(second.path()), Some("Workspace B".into()));
+        second_profile.id = "workspace-b".into();
+
+        let app = build_router(listener_state(vec![first_profile, second_profile]));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test HTTP listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test HTTP server");
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/mcp");
+        let session_a = initialize_session(&client, &url).await;
+        let session_b = initialize_session(&client, &url).await;
+
+        let tools: serde_json::Value = client
+            .post(&url)
+            .header(super::MCP_SESSION_HEADER, &session_a)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .send()
+            .await
+            .expect("tools/list request")
+            .json()
+            .await
+            .expect("tools/list response");
+        let read_file = tools["result"]["tools"]
+            .as_array()
+            .expect("tool catalog")
+            .iter()
+            .find(|tool| tool["name"] == "read_file")
+            .expect("read_file tool");
+        assert!(read_file["inputSchema"]["properties"]
+            .get("workspace_id")
+            .is_some());
+
+        let read_a = call_tool(
+            &client,
+            &url,
+            &session_a,
+            3,
+            "read_file",
+            json!({ "workspace_id": "workspace-a", "path": "marker.txt" }),
+        )
+        .await;
+        let read_after_churn = call_tool(
+            &client,
+            &url,
+            &session_b,
+            4,
+            "read_file",
+            json!({ "workspace_id": "workspace-a", "path": "marker.txt" }),
+        )
+        .await;
+        assert_eq!(read_a["result"]["structuredContent"]["content"], "ONLY-A");
+        assert_eq!(
+            read_after_churn["result"]["structuredContent"]["content"],
+            "ONLY-A"
+        );
         server.abort();
     }
 

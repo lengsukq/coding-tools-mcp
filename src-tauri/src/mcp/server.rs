@@ -277,7 +277,7 @@ fn handle_workspace_tool(
                 Some(id) => match state.registry.resolve(&id) {
                     Ok(profile) => Some(crate::mcp::gateway::WorkspaceDescriptor::from(&profile)),
                     Err(_) => {
-                        state.sessions.clear(session_id);
+                        state.sessions.clear_selection(session_id);
                         None
                     }
                 },

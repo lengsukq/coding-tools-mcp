@@ -77,8 +77,13 @@ Vue 页面 / Vue Router
 - `npm run version:check`：通过，项目版本 `0.3.0` 一致。
 - `npm run check`：通过，0 错误、0 警告。
 - `npm run build`：通过，Vue 3 + Vite 生产构建成功，静态产物输出到 `build/`。
-- `npm run test:release`：通过；Rust library 184/184，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7，共 272 项。
+- `npm run test:release`：通过；Rust library 189/189，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7，共 277 项。
 - Global MCP 额外覆盖 request-scoped `workspace_id`：即使宿主在连续工具调用间更换 transport session，也能显式保持 Workspace 路由；绝对路径仍不能逃逸所选 Workspace。
+- Global MCP 认证配置改为 fail-closed：未知认证模式、Bearer 模式缺少 Token 时不会降级成无认证；启动与请求入口均有保护。
+- Global MCP 密钥“重新生成”只生成前端草稿，批量保存后才生效，并且一次保存最多触发一次 Runtime 重启。
+- Workspace 删除前会终止其运行命令；已删除 Workspace 只清除 MCP session 的 Workspace 选择，不再让整个 session 失效。
+- `profiles.json` 改为同目录临时文件写入、sync 后原子替换，避免进程异常时留下半截 JSON。
+- HTTP 集成测试覆盖 `tools/list` 中的 `workspace_id` schema，以及 transport session churn 下 request-scoped Workspace 路由。
 - `cargo clippy --all-targets --locked -- -D warnings`：通过。
 - `cargo fmt --all -- --check`：通过。
 - `git diff --check`：通过。

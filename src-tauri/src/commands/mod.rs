@@ -37,7 +37,9 @@ pub use runtime::{
     start_runtime, stop_runtime,
 };
 pub use runtime_settings::{get_global_runtime_settings, set_global_runtime_settings};
-pub use secrets::{get_shared_secret, regenerate_shared_secret, set_shared_secret};
+pub use secrets::{
+    get_shared_secret, regenerate_shared_secret, set_shared_secret, set_shared_secrets,
+};
 pub use software::{
     get_download_config, install_software, list_software, set_download_config, uninstall_software,
 };

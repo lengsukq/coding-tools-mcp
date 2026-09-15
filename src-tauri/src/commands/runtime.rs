@@ -14,6 +14,7 @@ use crate::runtime::{
     await_listener_shutdown, port_busy_message, try_reclaim_previous_macos_app_port,
     wait_for_port_free,
 };
+use crate::secret::SecretStore;
 use crate::workspace::RuntimeStatusDto;
 
 /// Serialize Global MCP restarts so settings/secret saves cannot race teardown.
@@ -75,6 +76,19 @@ pub fn get_global_mcp_overview(state: State<'_, AppState>) -> AppResult<GlobalMc
         registry_revision: state.gateway.registry.revision().unwrap_or_default(),
         sessions,
     })
+}
+
+fn validate_global_auth(auth_type: &str, bearer_token: Option<&str>) -> AppResult<()> {
+    match auth_type.trim() {
+        "oauth" | "noauth" => Ok(()),
+        "bearer" if bearer_token.is_some_and(|token| !token.trim().is_empty()) => Ok(()),
+        "bearer" => Err(AppError::Message(
+            "Global MCP 已启用 Bearer 认证，但 Bearer Token 为空。".into(),
+        )),
+        other => Err(AppError::Message(format!(
+            "不支持的 Global MCP 认证模式: {other}"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,6 +153,12 @@ async fn stop_mcp_service(state: &AppState) -> AppResult<RuntimeStatusDto> {
 
 async fn start_mcp_service(state: &AppState) -> AppResult<RuntimeStatusDto> {
     let settings = state.with_settings(|store| Ok(store.settings()))?;
+    let bearer_token = if settings.global_mcp_auth_type.trim() == "bearer" {
+        SecretStore::get_shared("bearer_token")?
+    } else {
+        None
+    };
+    validate_global_auth(&settings.global_mcp_auth_type, bearer_token.as_deref())?;
     ensure_port_available(settings.global_gateway.local_port, "Global MCP").await?;
     state.with_runtime(|runtime| runtime.start_mcp())?;
 
@@ -210,4 +230,19 @@ pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> 
         eprintln!("failed to restore Global MCP runtime: {error}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_global_auth;
+
+    #[test]
+    fn global_auth_validation_fails_closed() {
+        assert!(validate_global_auth("oauth", None).is_ok());
+        assert!(validate_global_auth("noauth", None).is_ok());
+        assert!(validate_global_auth("bearer", Some("token")).is_ok());
+        assert!(validate_global_auth("bearer", None).is_err());
+        assert!(validate_global_auth("bearer", Some("   ")).is_err());
+        assert!(validate_global_auth("unexpected", Some("token")).is_err());
+    }
 }

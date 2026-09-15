@@ -35,8 +35,8 @@ use commands::{
     reset_planning_state, restart_runtime, restore_runtime_state, run_health_checks,
     save_frp_profile, scan_agent_context, scan_global_agent_context, set_download_config,
     set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode,
-    set_proxy, set_shared_secret, show_main_window, start_global_gateway, start_runtime,
-    stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
+    set_proxy, set_shared_secret, set_shared_secrets, show_main_window, start_global_gateway,
+    start_runtime, stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -200,6 +200,7 @@ pub fn run() {
             run_health_checks,
             get_shared_secret,
             set_shared_secret,
+            set_shared_secrets,
             regenerate_shared_secret,
             read_workspace_logs,
             list_frp_profiles,

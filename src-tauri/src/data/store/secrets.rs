@@ -33,10 +33,17 @@ impl DataStore {
         })
     }
 
-    pub fn regenerate_shared_secret(&mut self, key: &str) -> AppResult<String> {
-        let value = random_secret();
-        self.set_shared_secret(key, &value)?;
-        Ok(value)
+    pub fn set_shared_secrets(&mut self, values: &[(String, String)]) -> AppResult<()> {
+        self.update_latest(|data| {
+            for (key, value) in values {
+                data.shared_secrets.insert(key.clone(), value.clone());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn generate_shared_secret_value(key: &str) -> String {
+        shared_value_for_key(key)
     }
 
     pub fn get_app_secret(&self, scope: &str, item_id: &str) -> Option<String> {

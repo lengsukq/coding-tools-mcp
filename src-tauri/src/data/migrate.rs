@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
@@ -225,11 +226,17 @@ pub fn save(data: &AppData) -> AppResult<()> {
 }
 
 fn write_data(path: &Path, data: &AppData) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let parent = path.parent().ok_or_else(|| {
+        crate::error::AppError::Message("data file path has no parent directory".into())
+    })?;
+    fs::create_dir_all(parent)?;
     let text = serde_json::to_string_pretty(data)?;
-    fs::write(path, format!("{text}\n"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(format!("{text}\n").as_bytes())?;
+    temp.as_file_mut().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -278,6 +285,30 @@ fn merge_settings(data: &mut AppData, settings: AppSettings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_data_replaces_existing_file_without_leaving_temp_files() {
+        let dir = tempfile::tempdir().expect("temp data dir");
+        let path = dir.path().join("profiles.json");
+        fs::write(&path, "{ broken old content\n").expect("legacy partial file");
+
+        let data = AppData {
+            global_mcp_auth_type: "oauth".into(),
+            ..AppData::default()
+        };
+        write_data(&path, &data).expect("atomic write");
+
+        let persisted: AppData = serde_json::from_str(
+            &fs::read_to_string(&path).expect("persisted data should be readable"),
+        )
+        .expect("persisted data should be valid json");
+        assert_eq!(persisted.global_mcp_auth_type, "oauth");
+        assert_eq!(
+            fs::read_dir(dir.path()).expect("list temp dir").count(),
+            1,
+            "temporary file should be removed after persist"
+        );
+    }
 
     #[test]
     fn global_runtime_defaults_are_applied_once() {

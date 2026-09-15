@@ -52,6 +52,10 @@ pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()>
             .cloned()
             .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
     })?;
+    let workspace_path = PathBuf::from(&profile.path)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&profile.path));
+    crate::tools::session::kill_workspace_sessions(&workspace_path);
     state.with_runtime(|runtime| {
         runtime.drop_workspace(&profile.id);
         Ok(())

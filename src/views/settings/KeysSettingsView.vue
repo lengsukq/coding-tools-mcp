@@ -5,7 +5,7 @@ import BaseButton from "../../components/ui/BaseButton.vue";
 import GlassCard from "../../components/ui/GlassCard.vue";
 import SecretField from "../../components/SecretField.vue";
 import SettingsPageHeader from "../../components/settings/SettingsPageHeader.vue";
-import { getSharedSecret, regenerateSharedSecret, setSharedSecret, type SharedSecretKey } from "$lib/api/secrets";
+import { getSharedSecret, regenerateSharedSecret, setSharedSecrets, type SharedSecretKey } from "$lib/api/secrets";
 import { showToast } from "$lib/stores/toast";
 
 const keys: Array<{ key: SharedSecretKey; label: string; hint: string }> = [
@@ -34,18 +34,19 @@ async function load() {
 }
 async function regenerate(key: SharedSecretKey) {
   regenerating.value = key;
-  try { secrets[key] = await regenerateSharedSecret(key); showToast("已生成新密钥，保存后旧密钥将失效。", { kind: "warning", duration: 7000 }); }
+  try { secrets[key] = await regenerateSharedSecret(key); showToast("已生成新密钥草稿；点击保存后旧密钥才会失效。", { kind: "warning", duration: 7000 }); }
   catch (error) { showToast(String(error), { title: "重新生成失败", kind: "error" }); }
   finally { regenerating.value = null; }
 }
 async function save() {
   saving.value = true;
   try {
-    for (const item of keys) {
-      if (secrets[item.key] !== originals[item.key]) {
-        await setSharedSecret(item.key, secrets[item.key] ?? "");
-        originals[item.key] = secrets[item.key] ?? "";
-      }
+    const updates = keys
+      .filter((item) => secrets[item.key] !== originals[item.key])
+      .map((item) => ({ key: item.key, value: secrets[item.key] ?? "" }));
+    if (updates.length > 0) {
+      await setSharedSecrets(updates);
+      for (const update of updates) originals[update.key] = update.value;
     }
     showToast("共享密钥已保存", { kind: "success" });
   } catch (error) { showToast(String(error), { title: "保存失败", kind: "error" }); }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +61,13 @@ pub fn set_global_runtime_settings(
     state: State<'_, AppState>,
     runtime: GlobalRuntimeSettingsDto,
 ) -> AppResult<()> {
+    let auth_type = runtime.auth_type.trim();
+    if !matches!(auth_type, "oauth" | "bearer" | "noauth") {
+        return Err(AppError::Message(format!(
+            "不支持的 Global MCP 认证模式: {auth_type}"
+        )));
+    }
+
     let should_capture_running = state.with_settings(|store| {
         Ok(runtime.restore_runtime_state_on_launch
             && !store.settings().restore_runtime_state_on_launch)
@@ -73,7 +80,7 @@ pub fn set_global_runtime_settings(
 
     state.with_settings(|store| {
         let mut settings = store.settings();
-        settings.global_mcp_auth_type = runtime.auth_type.trim().to_string();
+        settings.global_mcp_auth_type = auth_type.to_string();
         settings.global_executable_paths = runtime.executable_paths.trim().to_string();
         settings.global_permission_mode = runtime.permission_mode.trim().to_string();
         settings.global_allowed_commands = runtime.allowed_commands.trim().to_string();

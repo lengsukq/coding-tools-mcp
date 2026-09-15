@@ -224,6 +224,73 @@ const usageRanking = computed(() => {
   return rows.map((row) => ({ ...row, percentage: Math.round((row.tokens / max) * 100) }));
 });
 
+const requestSuccessRate = computed(() => {
+  if (usageTotals.value.requestCount === 0) return 100;
+  const successful = Math.max(0, usageTotals.value.requestCount - usageTotals.value.errorCount);
+  return Math.max(0, Math.min(100, (successful / usageTotals.value.requestCount) * 100));
+});
+
+const sessionRouting = computed(() => {
+  const total = globalOverview.value.sessionCount;
+  const bound = globalOverview.value.sessions.filter((session) => Boolean(session.workspaceId)).length;
+  const counts = new Map<string, { id: string; label: string; value: number }>();
+  for (const session of globalOverview.value.sessions) {
+    const id = session.workspaceId || "unbound";
+    const label = session.workspaceId ? session.workspaceName : "未选择 Workspace";
+    const current = counts.get(id) ?? { id, label, value: 0 };
+    current.value += 1;
+    counts.set(id, current);
+  }
+  const rows = [...counts.values()]
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 4)
+    .map((row) => ({
+      ...row,
+      percentage: total > 0 ? Math.round((row.value / total) * 100) : 0,
+    }));
+  return {
+    total,
+    bound,
+    unbound: Math.max(0, total - bound),
+    boundRate: total > 0 ? Math.round((bound / total) * 100) : 0,
+    rows,
+  };
+});
+
+const planningCompletion = computed(() => {
+  let completed = 0;
+  let total = 0;
+  for (const workspace of orderedWorkspaces.value) {
+    const planning = planningByWorkspace.value[workspace.id];
+    if (!planning) continue;
+    const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
+    if (plan) {
+      total += plan.steps.length;
+      completed += plan.steps.filter((step) => ["completed", "skipped"].includes(step.status)).length;
+      continue;
+    }
+    const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
+    if (!goal) continue;
+    total += goal.success_criteria.length;
+    completed += goal.success_criteria.filter((criterion) => criterion.completed).length;
+  }
+  return {
+    completed,
+    total,
+    percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+  };
+});
+
+const planningModeRows = computed(() => {
+  const rows = [
+    { key: "direct", label: "Direct", value: planningStats.value.modes.direct },
+    { key: "plan", label: "Plan", value: planningStats.value.modes.plan },
+    { key: "goal", label: "Goal", value: planningStats.value.modes.goal },
+  ];
+  const total = Math.max(rows.reduce((sum, row) => sum + row.value, 0), 1);
+  return rows.map((row) => ({ ...row, percentage: Math.round((row.value / total) * 100) }));
+});
+
 const recentActivities = computed<ActivityItem[]>(() => {
   const items: ActivityItem[] = [];
   for (const workspace of orderedWorkspaces.value) {
@@ -549,6 +616,122 @@ onUnmounted(() => {
             <strong>{{ planningStats.pendingReview }}</strong><small>{{ errorServices > 0 ? "Global MCP Runtime 异常" : "Global MCP 状态正常" }}</small>
           </div>
         </div>
+
+        <section class="wb-visual-overview">
+          <article class="wb-overview-card wb-overview-card--flow wb-surface">
+            <div class="wb-overview-head">
+              <div>
+                <span class="wb-overview-kicker"><Activity :size="12" /> 实时流量</span>
+                <h3>Token Flow</h3>
+              </div>
+              <span class="wb-overview-live" :class="{ active: usageChart.latest > 0 }">
+                <i />{{ usageChart.latest > 0 ? 'LIVE' : 'IDLE' }}
+              </span>
+            </div>
+            <div class="wb-overview-flow-meta">
+              <div><strong>+{{ formatCount(usageChart.latest) }}</strong><span>最近 5 秒采样</span></div>
+              <div><strong>{{ usageTotals.requestCount > 0 ? `${requestSuccessRate.toFixed(requestSuccessRate >= 99 ? 1 : 0)}%` : '—' }}</strong><span>请求成功率</span></div>
+            </div>
+            <div class="wb-overview-spark-shell">
+              <svg v-if="usageChart.points.length > 1" viewBox="0 0 100 40" preserveAspectRatio="none" class="wb-overview-spark">
+                <defs>
+                  <linearGradient id="dashboardOverviewArea" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0" stop-color="var(--ios-blue)" stop-opacity=".30" />
+                    <stop offset="1" stop-color="var(--ios-blue)" stop-opacity="0" />
+                  </linearGradient>
+                  <linearGradient id="dashboardOverviewLine" x1="0" x2="1" y1="0" y2="0">
+                    <stop offset="0" stop-color="var(--ios-cyan)" />
+                    <stop offset=".55" stop-color="var(--ios-blue)" />
+                    <stop offset="1" stop-color="var(--ios-indigo)" />
+                  </linearGradient>
+                </defs>
+                <line x1="0" x2="100" y1="27" y2="27" class="wb-overview-gridline" />
+                <line x1="0" x2="100" y1="16" y2="16" class="wb-overview-gridline" />
+                <path :d="usageChart.areaPath" fill="url(#dashboardOverviewArea)" />
+                <path :d="usageChart.path" fill="none" stroke="url(#dashboardOverviewLine)" class="wb-overview-spark-line" />
+              </svg>
+              <div v-else class="wb-overview-empty">等待更多实时采样…</div>
+            </div>
+            <div class="wb-overview-foot">
+              <span><b>{{ formatCount(usageTotals.estimatedTokens) }}</b> 总 Tokens</span>
+              <span><b>{{ formatCount(usageTotals.toolCallCount) }}</b> Tool Calls</span>
+              <span><b>{{ formatCount(usageTotals.errorCount) }}</b> Errors</span>
+            </div>
+          </article>
+
+          <article class="wb-overview-card wb-surface">
+            <div class="wb-overview-head">
+              <div>
+                <span class="wb-overview-kicker"><GitBranch :size="12" /> Session 路由</span>
+                <h3>Chat → Workspace</h3>
+              </div>
+              <strong class="wb-overview-head-value">{{ sessionRouting.total }}</strong>
+            </div>
+            <div class="wb-ring-layout">
+              <div class="wb-mini-ring" :style="{ '--ring-angle': `${sessionRouting.boundRate * 3.6}deg` }">
+                <div><strong>{{ sessionRouting.boundRate }}%</strong><span>已绑定</span></div>
+              </div>
+              <div class="wb-overview-bars">
+                <div v-if="sessionRouting.rows.length === 0" class="wb-overview-empty">尚无活跃 Session</div>
+                <div v-for="row in sessionRouting.rows" v-else :key="row.id" class="wb-overview-bar-row">
+                  <div><span :title="row.label">{{ row.label }}</span><strong>{{ row.value }}</strong></div>
+                  <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
+                </div>
+              </div>
+            </div>
+            <div class="wb-overview-foot">
+              <span><b>{{ sessionRouting.bound }}</b> 已选 Workspace</span>
+              <span :class="{ warning: sessionRouting.unbound > 0 }"><b>{{ sessionRouting.unbound }}</b> 未选择</span>
+            </div>
+          </article>
+
+          <article class="wb-overview-card wb-surface">
+            <div class="wb-overview-head">
+              <div>
+                <span class="wb-overview-kicker"><ListChecks :size="12" /> Planning</span>
+                <h3>Focus 完成度</h3>
+              </div>
+              <strong class="wb-overview-head-value">{{ planningCompletion.completed }}/{{ planningCompletion.total }}</strong>
+            </div>
+            <div class="wb-ring-layout">
+              <div class="wb-mini-ring wb-mini-ring--purple" :style="{ '--ring-angle': `${planningCompletion.percentage * 3.6}deg` }">
+                <div><strong>{{ planningCompletion.percentage }}%</strong><span>Completed</span></div>
+              </div>
+              <div class="wb-overview-bars">
+                <div v-for="row in planningModeRows" :key="row.key" class="wb-overview-bar-row" :class="`is-${row.key}`">
+                  <div><span>{{ row.label }}</span><strong>{{ row.value }}</strong></div>
+                  <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
+                </div>
+              </div>
+            </div>
+            <div class="wb-overview-foot">
+              <span><b>{{ planningStats.activeGoals }}</b> Active Goals</span>
+              <span><b>{{ planningStats.activePlans }}</b> Active Plans</span>
+              <span :class="{ warning: planningStats.pendingReview > 0 }"><b>{{ planningStats.pendingReview }}</b> Review</span>
+            </div>
+          </article>
+
+          <article class="wb-overview-card wb-surface">
+            <div class="wb-overview-head">
+              <div>
+                <span class="wb-overview-kicker"><Boxes :size="12" /> Workspace 负载</span>
+                <h3>Token Distribution</h3>
+              </div>
+              <strong class="wb-overview-head-value">{{ workspaceCount }}</strong>
+            </div>
+            <div class="wb-overview-workspace-bars">
+              <div v-if="usageRanking.length === 0" class="wb-overview-empty">暂无 Workspace 用量</div>
+              <div v-for="row in usageRanking.slice(0, 4)" v-else :key="row.workspace.id" class="wb-overview-workspace-row">
+                <div><span :title="row.workspace.name">{{ row.workspace.name }}</span><strong>{{ formatCount(row.tokens) }}</strong></div>
+                <div class="wb-overview-workspace-track"><i :style="{ width: `${row.percentage}%` }" /></div>
+              </div>
+            </div>
+            <div class="wb-overview-foot">
+              <span><b>{{ usageRanking[0]?.workspace.name ?? '—' }}</b> Top Workspace</span>
+              <span><b>{{ formatCount(usageRanking[0]?.tokens ?? 0) }}</b> Tokens</span>
+            </div>
+          </article>
+        </section>
 
         <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface">
           <div class="wb-section-heading"><div><h3>需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>

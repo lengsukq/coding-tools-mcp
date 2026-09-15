@@ -1,6 +1,8 @@
+use serde::Deserialize;
 use tauri::{Manager, State};
 
 use crate::app_state::AppState;
+use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
 
 const SHARED_KEYS: &[&str] = &[
@@ -10,6 +12,13 @@ const SHARED_KEYS: &[&str] = &[
     "oauth_password",
     "oauth_token_secret",
 ];
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedSecretUpdate {
+    pub key: String,
+    pub value: String,
+}
 
 #[tauri::command]
 pub fn get_shared_secret(state: State<'_, AppState>, key: String) -> AppResult<Option<String>> {
@@ -46,19 +55,51 @@ pub fn set_shared_secret(
 }
 
 #[tauri::command]
-pub fn regenerate_shared_secret(
+pub fn set_shared_secrets(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    updates: Vec<SharedSecretUpdate>,
+) -> AppResult<()> {
+    let mut normalized = Vec::with_capacity(updates.len());
+    for update in updates {
+        let key = update.key.trim().to_string();
+        if !SHARED_KEYS.contains(&key.as_str()) {
+            return Err(AppError::Message(format!("invalid shared key: {key}")));
+        }
+        if update.value.is_empty() {
+            return Err(AppError::Message(format!("密钥 {key} 不能为空。")));
+        }
+        normalized.push((key, update.value));
+    }
+
+    let first_changed_key = state.with_data(|store| {
+        let changed = normalized
+            .iter()
+            .filter(|(key, value)| store.get_shared_secret(key).as_deref() != Some(value.as_str()))
+            .map(|(key, _)| key.clone())
+            .next();
+        if changed.is_some() {
+            store.set_shared_secrets(&normalized)?;
+        }
+        Ok(changed)
+    })?;
+
+    if let Some(key) = first_changed_key {
+        schedule_global_runtime_restart(app, key);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn regenerate_shared_secret(
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
     key: String,
 ) -> AppResult<String> {
     if !SHARED_KEYS.contains(&key.as_str()) {
         return Err(AppError::Message(format!("invalid shared key: {key}")));
     }
-    let value = state.with_data(|store| store.regenerate_shared_secret(&key))?;
-
-    schedule_global_runtime_restart(app, key);
-
-    Ok(value)
+    Ok(DataStore::generate_shared_secret_value(&key))
 }
 
 fn schedule_global_runtime_restart(app: tauri::AppHandle, key: String) {

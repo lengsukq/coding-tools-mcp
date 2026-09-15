@@ -194,6 +194,29 @@ mod tests {
     }
 
     #[test]
+    fn stale_workspace_selection_is_cleared_without_invalidating_session() {
+        let (_a, _b, state) = gateway_fixture();
+        state.sessions.register_for_test("chat-a");
+        assert!(state.sessions.select("chat-a", "deleted-workspace".into()));
+
+        let error = match state.active_workspace("chat-a") {
+            Ok(_) => panic!("missing workspace must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "WORKSPACE_NOT_FOUND");
+        assert!(state.sessions.contains("chat-a"));
+        assert!(state
+            .sessions
+            .current("chat-a")
+            .active_workspace_id
+            .is_none());
+
+        let current = rpc_tool(&state, "chat-a", "workspace_current", json!({}));
+        assert_eq!(structured(&current)["selected"], false);
+        assert!(state.sessions.contains("chat-a"));
+    }
+
+    #[test]
     fn request_scoped_workspace_id_survives_transport_session_churn() {
         let (_a, _b, state) = gateway_fixture();
         let first = rpc_tool(

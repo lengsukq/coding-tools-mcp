@@ -26,7 +26,7 @@
 - Planning / Harness Task / History 通过 Execution Ledger 收口执行状态；
 - 项目内 `docs/history-session/` 无损历史；
 - FRP / Cloudflare 与 Global Gateway；
-- 系统 Keyring 密钥存储、运行日志、健康检查与 usage 统计。
+- 应用级共享密钥存储、运行日志、健康检查与 usage 统计；系统 Keychain / Credential Manager 迁移尚未完成。
 
 ## 文档导航
 
