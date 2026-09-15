@@ -1,6 +1,5 @@
 <script lang="ts">
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-  import Button from "$lib/components/ui/Button.svelte";
   import { APP_VERSION } from "$lib/app-version";
   import { REPO_URL } from "$lib/app-links";
   import { openUrl } from "$lib/api/app-info";
@@ -11,8 +10,10 @@
   interface Props {
     children: Snippet;
     sidebar: Snippet;
+    onOpenDashboard?: () => void | Promise<void>;
     onAddWorkspace?: () => void | Promise<void>;
     onOpenSettings?: () => void | Promise<void>;
+    dashboardActive?: boolean;
     settingsActive?: boolean;
     settingsNav?: Snippet;
   }
@@ -20,8 +21,10 @@
   let {
     children,
     sidebar,
+    onOpenDashboard,
     onAddWorkspace,
     onOpenSettings,
+    dashboardActive = false,
     settingsActive = false,
     settingsNav,
   }: Props = $props();
@@ -39,33 +42,31 @@
   <aside class="tx-sidebar">
     <div class="tx-sidebar-header" data-tauri-drag-region>
       <div class="flex items-start justify-between gap-2" data-tauri-drag-region>
-        <div class="tx-brand-lockup cursor-default select-none" data-tauri-drag-region>
+        <button
+          type="button"
+          class="wb-brand-card"
+          class:active={dashboardActive}
+          onclick={onOpenDashboard}
+          title="返回工作台"
+        >
           <div class="tx-brand-mark" aria-hidden="true">CT</div>
-          <div class="min-w-0" data-tauri-drag-region>
+          <div class="min-w-0 text-left">
             <p class="tx-brand-kicker">Coding Tools</p>
             <h1 class="tx-brand-title">桌面控制台</h1>
           </div>
-        </div>
+        </button>
         <ThemeToggle />
       </div>
-      {#if onAddWorkspace}
-        <div class="mt-3.5">
-          <Button
-            variant="primary"
-            size="md"
-            class="w-full justify-center shadow-sm"
-            onclick={onAddWorkspace}
-          >
-            <Plus size={15} strokeWidth={2.2} />
-            <span>添加工作区</span>
-          </Button>
-        </div>
-      {/if}
     </div>
 
     <div class="tx-sidebar-body">
       {#if onAddWorkspace}
-        <p class="tx-sidebar-section-label">工作区</p>
+        <div class="wb-sidebar-section-head">
+          <p class="tx-sidebar-section-label">工作区</p>
+          <button type="button" class="wb-sidebar-add" onclick={onAddWorkspace} title="添加工作区">
+            <Plus size={13} strokeWidth={2.2} />
+          </button>
+        </div>
       {/if}
       {@render sidebar()}
     </div>

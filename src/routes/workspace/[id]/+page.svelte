@@ -277,7 +277,7 @@
     </div>
   </div>
 {:else}
-  <section class="page-scroll">
+  <section class="page-scroll wb-workspace-page">
     <WorkspaceHeader
       {profile}
       runtimeState={mcpStatus}
@@ -288,7 +288,7 @@
       onToggleRuntime={toggleMcp}
     />
 
-    <div class="sticky top-0 z-10 bg-[var(--page-bg)]/85 px-7 pt-4 pb-2.5 backdrop-blur-md sm:px-8">
+    <div class="wb-workspace-tabs sticky top-0 z-10 px-7 pt-3 pb-2 sm:px-8">
       <div class="max-w-xl">
         <SegmentedControl
           items={workspaceTabs}

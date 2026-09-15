@@ -2,542 +2,520 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import {
-    Activity,
-    ArrowUpRight,
-    Boxes,
-    Check,
-    CircleAlert,
-    CircleCheck,
-    Copy,
-    FolderKanban,
-    FolderOpen,
-    Gauge,
-    GitBranch,
-    LayoutDashboard,
-    ListChecks,
-    Network,
-    Play,
-    Radio,
-    RotateCw,
-    Square,
+    Activity, AlertTriangle, ArrowUpRight, Check, ChevronDown, ChevronUp,
+    Command, Copy, FolderOpen, Gauge, GitBranch, LayoutDashboard, Pin, PinOff,
+    Play, RotateCw, Search, Settings2, SlidersHorizontal, Sparkles, Square, X, Zap,
   } from "@lucide/svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
-  import DashboardQuickNav from "$lib/components/dashboard/DashboardQuickNav.svelte";
   import DashboardUsagePanel from "$lib/components/dashboard/DashboardUsagePanel.svelte";
-  import DashboardWorkspaceCard from "$lib/components/dashboard/DashboardWorkspaceCard.svelte";
+  import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
   import type { PlanningStateDto } from "$lib/api/planning";
   import { getLastWorkspaceId } from "$lib/api/settings";
   import type { ServiceUsageStats } from "$lib/api/usage";
   import {
-    buildUsageChart,
-    buildUsagePoint,
-    formatCount,
-    loadPlanningByWorkspace,
-    loadUsageByWorkspace,
-    planningLabel as getPlanningLabel,
-    stateClass,
-    stateLabel,
-    summarizeConnections,
-    summarizePlanning,
-    summarizeUsage,
-    tunnelLabel,
-    type UsagePoint,
+    buildUsageChart, buildUsagePoint, formatCount, loadPlanningByWorkspace,
+    loadUsageByWorkspace, stateClass, stateLabel, summarizeConnections,
+    summarizePlanning, summarizeUsage, tunnelLabel, type UsagePoint,
   } from "$lib/dashboard";
   import {
-    openWorkspaceDirectory,
-    startRuntime,
-    stopRuntime,
-  } from "$lib/api/workspaces";
+    dashboardPreferences, loadDashboardPreferences, moveWorkspace, sortWorkspaceIds,
+    toggleDashboardModule, togglePinnedWorkspace, updateDashboardPreferences,
+    type DashboardModuleId,
+  } from "$lib/dashboard-preferences";
+  import { openWorkspaceDirectory, startRuntime, stopRuntime } from "$lib/api/workspaces";
   import { runServiceToggle } from "$lib/runtime/service";
   import { showToast } from "$lib/stores/toast";
   import { mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import type { WorkspaceProfile } from "$lib/types";
 
+  interface FocusItem {
+    workspace: WorkspaceProfile;
+    title: string;
+    detail: string;
+    progress: number;
+    progressLabel: string;
+    mode: string;
+  }
+
+  interface AttentionItem {
+    workspace: WorkspaceProfile;
+    title: string;
+    detail: string;
+    level: "warning" | "error" | "info";
+  }
+
+  interface ActivityItem {
+    workspace: WorkspaceProfile;
+    title: string;
+    detail: string;
+    timestamp: number;
+  }
+
   let lastWorkspaceId = $state("");
   let planningByWorkspace = $state<Record<string, PlanningStateDto | null>>({});
   let usageByWorkspace = $state<Record<string, ServiceUsageStats[]>>({});
+  let historyByWorkspace = $state<Record<string, HistorySessionSummary[]>>({});
   let usageHistory = $state<UsagePoint[]>([]);
   let usageWorkspaceKey = $state("");
   let planningGeneration = 0;
   let usageGeneration = 0;
+  let historyGeneration = 0;
   let mcpBusyMap = $state<Record<string, boolean>>({});
   let copiedPathId = $state<string | null>(null);
-  let copiedEndpointId = $state<string | null>(null);
+  let commandOpen = $state(false);
+  let commandQuery = $state("");
+  let preferencesOpen = $state(false);
+  let commandInput = $state<HTMLInputElement | null>(null);
 
   const workspaceCount = $derived($workspaces.length);
-  const mcpRunning = $derived(
-    $workspaces.filter((workspace) => $mcpRuntimeStates[workspace.id] === "running").length,
-  );
-  const errorServices = $derived(
-    $workspaces.reduce((count, workspace) => {
-      return count + ($mcpRuntimeStates[workspace.id] === "error" ? 1 : 0);
-    }, 0),
-  );
+  const orderedWorkspaces = $derived.by(() => {
+    const ids = sortWorkspaceIds($workspaces.map((workspace) => workspace.id), $dashboardPreferences);
+    const byId = new Map($workspaces.map((workspace) => [workspace.id, workspace]));
+    return ids.map((id) => byId.get(id)).filter((item): item is WorkspaceProfile => Boolean(item));
+  });
+  const mcpRunning = $derived($workspaces.filter((workspace) => $mcpRuntimeStates[workspace.id] === "running").length);
+  const errorServices = $derived($workspaces.filter((workspace) => $mcpRuntimeStates[workspace.id] === "error").length);
   const totalServices = $derived(workspaceCount);
-  const runningServices = $derived(mcpRunning);
-  const serviceHealth = $derived(
-    totalServices === 0 ? 0 : Math.round((runningServices / totalServices) * 100),
-  );
-  const recentWorkspace = $derived(
-    $workspaces.find((workspace) => workspace.id === lastWorkspaceId) ?? $workspaces[0] ?? null,
-  );
-
+  const serviceHealth = $derived(totalServices === 0 ? 0 : Math.round((mcpRunning / totalServices) * 100));
   const planningStats = $derived.by(() => summarizePlanning(planningByWorkspace));
   const connectionStats = $derived.by(() => summarizeConnections($workspaces));
   const usageTotals = $derived.by(() => summarizeUsage(usageByWorkspace));
-  const averageTokens = $derived(
-    usageTotals.toolCallCount === 0
-      ? 0
-      : usageTotals.estimatedToolCallTokens / usageTotals.toolCallCount,
-  );
+  const averageTokens = $derived(usageTotals.toolCallCount === 0 ? 0 : usageTotals.estimatedToolCallTokens / usageTotals.toolCallCount);
   const usageChart = $derived.by(() => buildUsageChart(usageHistory));
 
-  function planningLabel(workspaceId: string): string {
-    return getPlanningLabel(planningByWorkspace, workspaceId);
-  }
+  const focusItems = $derived.by((): FocusItem[] => orderedWorkspaces.flatMap((workspace) => {
+    const planning = planningByWorkspace[workspace.id];
+    if (!planning) return [];
+    const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
+    const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
+    if (!goal && !plan) return [];
+    if (plan) {
+      const completed = plan.steps.filter((step) => ["completed", "skipped"].includes(step.status)).length;
+      const total = plan.steps.length;
+      return [{ workspace, title: plan.title, detail: goal?.title ?? plan.objective,
+        progress: total === 0 ? 0 : Math.round((completed / total) * 100),
+        progressLabel: `${completed} / ${total} Steps`, mode: planning.mode.toUpperCase() }];
+    }
+    const completed = goal!.success_criteria.filter((criterion) => criterion.completed).length;
+    const total = goal!.success_criteria.length;
+    return [{ workspace, title: goal!.title, detail: goal!.objective,
+      progress: total === 0 ? 0 : Math.round((completed / total) * 100),
+      progressLabel: `${completed} / ${total} Criteria`, mode: planning.mode.toUpperCase() }];
+  }));
 
-  function percentage(count: number): number {
-    return totalServices === 0 ? 0 : Math.round((count / totalServices) * 100);
+  const primaryFocus = $derived.by(() => focusItems.find((item) => item.workspace.id === lastWorkspaceId) ?? focusItems[0] ?? null);
+
+  const attentionItems = $derived.by((): AttentionItem[] => {
+    const items: AttentionItem[] = [];
+    for (const workspace of orderedWorkspaces) {
+      const runtimeState = $mcpRuntimeStates[workspace.id];
+      const planning = planningByWorkspace[workspace.id];
+      const usage = usageByWorkspace[workspace.id] ?? [];
+      if (runtimeState === "error") items.push({ workspace, title: "MCP Runtime 异常", detail: "进入工作区查看诊断和日志。", level: "error" });
+      const reviews = planning ? planning.goals.filter((goal) => goal.status === "awaiting_acceptance").length
+        + planning.plans.filter((plan) => plan.status === "awaiting_acceptance").length : 0;
+      if (reviews > 0) items.push({ workspace, title: `${reviews} 项 Planning 等待验收`, detail: "完成后需要人工确认才能归档。", level: "warning" });
+      if (planning?.execution.last_error) items.push({ workspace, title: "最近执行存在错误", detail: planning.execution.last_error, level: "error" });
+      const errors = usage.reduce((sum, item) => sum + item.errorCount, 0);
+      if (errors > 0) items.push({ workspace, title: `${formatCount(errors)} 次工具请求错误`, detail: "MCP 使用统计检测到失败请求。", level: "warning" });
+    }
+    return items.slice(0, 6);
+  });
+
+  const usageRanking = $derived.by(() => {
+    const rows = orderedWorkspaces.map((workspace) => {
+      const stats = usageByWorkspace[workspace.id] ?? [];
+      return { workspace, tokens: stats.reduce((sum, item) => sum + item.estimatedTokens, 0) };
+    }).sort((a, b) => b.tokens - a.tokens);
+    const max = Math.max(rows[0]?.tokens ?? 0, 1);
+    return rows.map((row) => ({ ...row, percentage: Math.round((row.tokens / max) * 100) }));
+  });
+
+  const recentActivities = $derived.by((): ActivityItem[] => {
+    const items: ActivityItem[] = [];
+    for (const workspace of orderedWorkspaces) {
+      for (const session of historyByWorkspace[workspace.id] ?? []) {
+        items.push({ workspace, title: session.title || workspace.name,
+          detail: session.latest_focus || session.snippets.at(-1)?.text || "History session updated",
+          timestamp: parseTimestamp(session.updated_at ?? session.created_at) });
+      }
+    }
+    return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 8);
+  });
+
+  const commandEntries = $derived.by(() => {
+    const query = commandQuery.trim().toLowerCase();
+    const entries = [
+      { label: "添加工作区", hint: "Workspace", run: () => window.dispatchEvent(new CustomEvent("coding-tools:add-workspace")) },
+      { label: "打开通用设置", hint: "Settings", run: () => goto("/settings/general") },
+      { label: "启动全部 MCP", hint: "Runtime", run: () => void setAllRuntime(true) },
+      { label: "停止全部 MCP", hint: "Runtime", run: () => void setAllRuntime(false) },
+      ...orderedWorkspaces.map((workspace) => ({ label: `打开 ${workspace.name}`, hint: "Workspace", run: () => openWorkspace(workspace.id) })),
+    ];
+    return query ? entries.filter((entry) => `${entry.label} ${entry.hint}`.toLowerCase().includes(query)) : entries;
+  });
+
+  function moduleVisible(moduleId: DashboardModuleId) { return !$dashboardPreferences.hiddenModules.includes(moduleId); }
+  function parseTimestamp(value?: string | null): number {
+    if (!value) return 0;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  function formatRelativeTime(timestamp: number): string {
+    if (!timestamp) return "—";
+    const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60_000);
+    if (minutes < 1) return "刚刚";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+  }
+  function workspaceUsageTokens(workspaceId: string) { return (usageByWorkspace[workspaceId] ?? []).reduce((sum, item) => sum + item.estimatedTokens, 0); }
+  function planningSummary(workspaceId: string): string {
+    const planning = planningByWorkspace[workspaceId];
+    if (!planning) return "—";
+    const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
+    const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
+    return goal?.title ?? plan?.title ?? planning.mode.toUpperCase();
   }
 
   async function loadPlanning(items: WorkspaceProfile[]) {
     const generation = ++planningGeneration;
-    if (items.length === 0) {
-      planningByWorkspace = {};
-      return;
-    }
-
-    const nextPlanning = await loadPlanningByWorkspace(items);
-    if (generation !== planningGeneration) return;
-    planningByWorkspace = nextPlanning;
+    if (items.length === 0) { planningByWorkspace = {}; return; }
+    const next = await loadPlanningByWorkspace(items);
+    if (generation === planningGeneration) planningByWorkspace = next;
   }
-
   async function loadUsage(items: WorkspaceProfile[]) {
     const generation = ++usageGeneration;
-    if (items.length === 0) {
-      usageByWorkspace = {};
-      usageHistory = [];
-      usageWorkspaceKey = "";
-      return;
-    }
-
+    if (items.length === 0) { usageByWorkspace = {}; usageHistory = []; usageWorkspaceKey = ""; return; }
     const workspaceKey = items.map((item) => item.id).sort().join("|");
-    if (workspaceKey !== usageWorkspaceKey) {
-      usageWorkspaceKey = workspaceKey;
-      usageHistory = [];
-    }
-
-    const nextUsage = await loadUsageByWorkspace(items);
+    if (workspaceKey !== usageWorkspaceKey) { usageWorkspaceKey = workspaceKey; usageHistory = []; }
+    const next = await loadUsageByWorkspace(items);
     if (generation !== usageGeneration) return;
-    usageByWorkspace = nextUsage;
-    const previousPoint = usageHistory[usageHistory.length - 1];
-    usageHistory = [...usageHistory, buildUsagePoint(nextUsage, previousPoint)].slice(-24);
+    usageByWorkspace = next;
+    usageHistory = [...usageHistory, buildUsagePoint(next, usageHistory.at(-1))].slice(-24);
   }
-
-  function openWorkspace(id: string) {
-    goto(`/workspace/${id}`);
+  async function loadHistory(items: WorkspaceProfile[]) {
+    const generation = ++historyGeneration;
+    const entries = await Promise.all(items.map(async (workspace) => {
+      try { const catalog = await listHistorySessions(workspace.id); return [workspace.id, catalog.sessions.slice(0, 5)] as const; }
+      catch { return [workspace.id, []] as const; }
+    }));
+    if (generation === historyGeneration) historyByWorkspace = Object.fromEntries(entries);
   }
-
+  function openWorkspace(id: string) { commandOpen = false; goto(`/workspace/${id}`); }
   async function toggleWorkspaceMcp(id: string) {
     if (mcpBusyMap[id]) return;
-    const currentState = $mcpRuntimeStates[id];
-    const wasRunning = currentState === "running";
+    const wasRunning = $mcpRuntimeStates[id] === "running";
     mcpBusyMap = { ...mcpBusyMap, [id]: true };
     try {
-      const status = await runServiceToggle(
-        wasRunning,
-        () => startRuntime(id),
-        () => stopRuntime(id),
-        "MCP",
-      );
-      if (status) {
-        mcpRuntimeStates.update((map) => ({ ...map, [id]: status.state }));
-      }
-    } finally {
-      mcpBusyMap = { ...mcpBusyMap, [id]: false };
+      const status = await runServiceToggle(wasRunning, () => startRuntime(id), () => stopRuntime(id), "MCP");
+      if (status) mcpRuntimeStates.update((map) => ({ ...map, [id]: status.state }));
+    } finally { mcpBusyMap = { ...mcpBusyMap, [id]: false }; }
+  }
+  async function setAllRuntime(start: boolean) {
+    commandOpen = false;
+    for (const workspace of orderedWorkspaces) {
+      const running = $mcpRuntimeStates[workspace.id] === "running";
+      if (start !== running) await toggleWorkspaceMcp(workspace.id);
     }
   }
-
   async function copyWorkspacePath(id: string, path: string) {
     try {
-      await navigator.clipboard.writeText(path);
-      copiedPathId = id;
-      setTimeout(() => {
-        if (copiedPathId === id) copiedPathId = null;
-      }, 2000);
-      showToast("工作区物理路径已复制", { kind: "success", duration: 2500 });
-    } catch {
-      showToast("复制路径失败", { kind: "error" });
-    }
+      await navigator.clipboard.writeText(path); copiedPathId = id;
+      setTimeout(() => { if (copiedPathId === id) copiedPathId = null; }, 1500);
+      showToast("工作区路径已复制", { kind: "success", duration: 1800 });
+    } catch { showToast("复制路径失败", { kind: "error" }); }
   }
-
   async function revealDirectory(path: string) {
-    try {
-      await openWorkspaceDirectory(path);
-    } catch (err) {
-      showToast(`打开目录失败: ${err instanceof Error ? err.message : String(err)}`, { kind: "error" });
-    }
+    try { await openWorkspaceDirectory(path); }
+    catch (error) { showToast(`打开目录失败: ${error instanceof Error ? error.message : String(error)}`, { kind: "error" }); }
   }
-
-  let activeSection = $state("dashboard-overview");
-
-  function scrollToAnchor(event: MouseEvent, targetId: string) {
-    event.preventDefault();
-    const el = document.getElementById(targetId);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      activeSection = targetId;
-      try {
-        history.replaceState(null, "", `#${targetId}`);
-      } catch {
-        // ignore
-      }
-    }
-  }
+  function runCommand(run: () => void) { commandOpen = false; commandQuery = ""; run(); }
 
   onMount(() => {
-    const usageTimer = window.setInterval(() => {
-      void loadUsage($workspaces);
-    }, 5000);
-    void getLastWorkspaceId()
-      .then((id) => {
-        lastWorkspaceId = id ?? "";
-      })
-      .catch(() => {
-        lastWorkspaceId = "";
-      });
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            activeSection = entry.target.id;
-          }
-        }
-      },
-      { rootMargin: "-10% 0px -70% 0px" },
-    );
-
-    const anchorIds = [
-      "dashboard-overview",
-      "dashboard-metrics",
-      "dashboard-workspaces",
-      "dashboard-usage",
-      "dashboard-details",
-    ];
-    for (const id of anchorIds) {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
-    }
-
-    return () => {
-      window.clearInterval(usageTimer);
-      observer.disconnect();
+    loadDashboardPreferences();
+    const usageTimer = window.setInterval(() => void loadUsage($workspaces), 5000);
+    const historyTimer = window.setInterval(() => void loadHistory($workspaces), 30_000);
+    void getLastWorkspaceId().then((id) => { lastWorkspaceId = id ?? ""; }).catch(() => { lastWorkspaceId = ""; });
+    const handleKeydown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault(); commandOpen = !commandOpen; commandQuery = "";
+      } else if (event.key === "Escape") { commandOpen = false; preferencesOpen = false; }
     };
+    window.addEventListener("keydown", handleKeydown);
+    return () => { window.clearInterval(usageTimer); window.clearInterval(historyTimer); window.removeEventListener("keydown", handleKeydown); };
   });
-
+  $effect(() => { const items = $workspaces; void loadPlanning(items); void loadUsage(items); void loadHistory(items); });
   $effect(() => {
-    const items = $workspaces;
-    void loadPlanning(items);
-    void loadUsage(items);
+    if (!commandOpen) return;
+    requestAnimationFrame(() => commandInput?.focus());
   });
 </script>
 
-<section class="page-scroll tx-dashboard-page">
-  <header class="page-header tx-dashboard-header">
+<section class="page-scroll wb-dashboard" data-density={$dashboardPreferences.density}>
+  <header class="page-header wb-dashboard-header">
     <div>
-      <div class="flex items-center gap-2">
-        <LayoutDashboard size={15} class="text-[var(--primary)]" />
-        <p class="page-kicker">全局控制台</p>
+      <div class="wb-dashboard-title-row">
+        <LayoutDashboard size={18} class="text-[var(--primary)]" />
+        <h1 class="wb-dashboard-title">工作台</h1>
       </div>
-      <h2 class="page-title">Dashboard</h2>
-      <p class="mt-2 max-w-2xl text-sm text-[var(--color-text-muted)]">
-        不进入具体工作区，也可以查看服务状态、Token 趋势、连接方式和 AI Planning 进度。
-      </p>
+      <p class="wb-dashboard-subtitle">继续上一次 Coding 工作、处理需要关注的状态，并快速控制所有 Workspace Runtime。</p>
+    </div>
+    <div class="wb-header-actions">
+      <button class="wb-command-button" type="button" onclick={() => { commandOpen = true; commandQuery = ""; }}>
+        <Command size={14} />
+        <span>Quick Actions</span>
+        <span class="wb-kbd">⌘K</span>
+      </button>
+      <div class="wb-preferences-wrap">
+        <button class="wb-icon-button" type="button" title="工作台偏好" onclick={() => preferencesOpen = !preferencesOpen}>
+          <SlidersHorizontal size={14} />
+        </button>
+        {#if preferencesOpen}
+          <div class="wb-preferences-popover">
+            <p class="wb-pref-title">工作台偏好</p>
+            <div class="wb-pref-row">
+              <span>信息密度</span>
+              <button type="button" onclick={() => updateDashboardPreferences((current) => ({ ...current, density: current.density === "compact" ? "comfortable" : "compact" }))}>
+                {$dashboardPreferences.density === "compact" ? "紧凑" : "舒适"}
+              </button>
+            </div>
+            {#each [
+              ["focus", "当前 Focus"], ["attention", "需要关注"], ["workspaces", "工作区"],
+              ["activity", "最近活动"], ["usage", "Token Analytics"], ["health", "系统健康"],
+            ] as item}
+              <div class="wb-pref-row">
+                <span>{item[1]}</span>
+                <button type="button" onclick={() => toggleDashboardModule(item[0] as DashboardModuleId)}>
+                  {moduleVisible(item[0] as DashboardModuleId) ? "隐藏" : "显示"}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
   </header>
 
-  <div class="page-body tx-dashboard-body">
+  <div class="page-body wb-dashboard-main">
     {#if workspaceCount === 0}
-      <div class="tx-dashboard-empty">
-        <EmptyState />
-      </div>
+      <EmptyState />
     {:else}
-      <div class="tx-dashboard-canvas">
-        <DashboardQuickNav {activeSection} onNavigate={scrollToAnchor} />
-
-        <div class="tx-dashboard-content">
-      <div id="dashboard-overview" class="tx-dashboard-hero-grid tx-dashboard-anchor">
-        <section class="tx-card tx-dashboard-health-card">
-          <div class="tx-dashboard-health-copy">
-            <div class="flex items-center gap-2">
-              <Gauge size={16} class="text-[var(--primary)]" />
-              <p class="tx-section-label">全局运行健康度</p>
-            </div>
-            <strong>{runningServices} / {totalServices} 个服务在线</strong>
-            <p>
-              {#if errorServices > 0}
-                当前有 {errorServices} 个服务处于异常状态，建议优先进入对应工作区查看日志。
-              {:else if runningServices === totalServices}
-                所有 MCP 服务都处于运行状态。
-              {:else}
-                当前没有运行时异常，{totalServices - runningServices} 个服务处于停止或切换状态。
-              {/if}
-            </p>
-          </div>
-          <div class="tx-dashboard-ring" aria-label={`服务在线率 ${serviceHealth}%`}>
-            <svg viewBox="0 0 120 120" role="img" aria-hidden="true">
-              <circle class="tx-dashboard-ring-track" cx="60" cy="60" r="48" pathLength="100" />
-              <circle
-                class="tx-dashboard-ring-value"
-                cx="60"
-                cy="60"
-                r="48"
-                pathLength="100"
-                stroke-dasharray={`${serviceHealth} 100`}
-              />
-            </svg>
-            <div>
-              <strong>{serviceHealth}%</strong>
-              <span>在线率</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="tx-card tx-dashboard-recent-card">
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-              <FolderKanban size={16} class="text-[var(--primary)]" />
-              <p class="tx-section-label">最近工作区</p>
-            </div>
-            {#if recentWorkspace}
-              <div class="flex items-center gap-1.5">
-                <button
-                  class="tx-dashboard-action-icon"
-                  type="button"
-                  title="在访达/资源管理器中打开"
-                  onclick={() => void revealDirectory(recentWorkspace!.path)}
-                >
-                  <FolderOpen size={13} />
+      {#if moduleVisible("focus")}
+        <section class="wb-hero">
+          <div class="wb-focus">
+            <div class="wb-eyebrow"><Sparkles size={13} /> Continue Working</div>
+            {#if primaryFocus}
+              <h2>{primaryFocus.title}</h2>
+              <p>{primaryFocus.detail}</p>
+              <div class="wb-progress" aria-label={primaryFocus.progressLabel}><span style={`width:${primaryFocus.progress}%`}></span></div>
+              <div class="wb-focus-meta">
+                <span>{primaryFocus.workspace.name}</span>
+                <span>{primaryFocus.mode}</span>
+                <span>{primaryFocus.progressLabel}</span>
+                <span>{tunnelLabel(primaryFocus.workspace)}</span>
+              </div>
+              <div class="wb-focus-actions">
+                <button class="wb-primary-button" type="button" onclick={() => openWorkspace(primaryFocus!.workspace.id)}>
+                  继续工作 <ArrowUpRight size={13} />
                 </button>
-                <button
-                  class="tx-dashboard-action-icon"
-                  type="button"
-                  title="复制物理路径"
-                  onclick={() => void copyWorkspacePath(recentWorkspace!.id, recentWorkspace!.path)}
-                >
-                  {#if copiedPathId === recentWorkspace.id}
-                    <Check size={13} class="text-[var(--success)]" />
+                <button class="wb-soft-button" type="button" onclick={() => void toggleWorkspaceMcp(primaryFocus!.workspace.id)}>
+                  {#if mcpBusyMap[primaryFocus.workspace.id]}
+                    <RotateCw size={12} class="animate-spin" />
+                  {:else if $mcpRuntimeStates[primaryFocus.workspace.id] === "running"}
+                    <Square size={11} /> 停止 MCP
                   {:else}
-                    <Copy size={13} />
+                    <Play size={11} /> 启动 MCP
                   {/if}
                 </button>
-                <button
-                  class="tx-dashboard-action-icon primary"
-                  type="button"
-                  title="进入工作区"
-                  onclick={() => openWorkspace(recentWorkspace!.id)}
-                >
-                  <ArrowUpRight size={14} />
-                </button>
               </div>
+            {:else}
+              <h2>选择一个工作区开始</h2>
+              <p>当前没有聚焦的 Goal 或 Plan。你仍然可以从下面的工作区继续工作。</p>
             {/if}
           </div>
-          {#if recentWorkspace}
-            <div class="tx-dashboard-recent-main">
-              <button
-                type="button"
-                class="text-left font-bold truncate block hover:text-[var(--primary)] transition-colors cursor-pointer"
-                onclick={() => openWorkspace(recentWorkspace!.id)}
-              >
-                {recentWorkspace.name}
-              </button>
-              <span class="truncate">{recentWorkspace.path}</span>
-            </div>
-            <div class="tx-dashboard-service-pair">
-              <div class="tx-dashboard-service-state {stateClass($mcpRuntimeStates[recentWorkspace.id])}">
-                <div class="flex items-center gap-2 min-w-0">
-                  <Radio size={13} class="shrink-0" />
-                  <span class="font-semibold text-[var(--text-main)]">MCP</span>
-                  <strong class="truncate">{stateLabel($mcpRuntimeStates[recentWorkspace.id])}</strong>
-                  <span class="font-mono text-[10px] text-[var(--text-muted)] shrink-0">:{recentWorkspace.runtime.local_port}</span>
-                  <span class="rounded bg-[var(--surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--text-secondary)] font-medium shrink-0">
-                    {tunnelLabel(recentWorkspace)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  class="tx-dashboard-quick-toggle shrink-0"
-                  class:running={$mcpRuntimeStates[recentWorkspace.id] === "running"}
-                  disabled={mcpBusyMap[recentWorkspace.id] || $mcpRuntimeStates[recentWorkspace.id] === "starting" || $mcpRuntimeStates[recentWorkspace.id] === "stopping"}
-                  onclick={() => void toggleWorkspaceMcp(recentWorkspace!.id)}
-                >
-                  {#if mcpBusyMap[recentWorkspace.id]}
-                    <RotateCw size={10} class="animate-spin shrink-0" />
-                  {:else if $mcpRuntimeStates[recentWorkspace.id] === "running"}
-                    <Square size={10} class="shrink-0" />
-                    <span>停止</span>
-                  {:else}
-                    <Play size={10} class="shrink-0" />
-                    <span>启动</span>
-                  {/if}
-                </button>
+          <div class="wb-health-orb">
+            <div class="wb-health-ring" style={`--health-angle:${serviceHealth * 3.6}deg`}>
+              <div class="wb-health-ring-content">
+                <strong>{serviceHealth}%</strong>
+                <span>Runtime</span>
+                <small>Online</small>
               </div>
             </div>
-          {/if}
+          </div>
         </section>
+      {/if}
+
+      <div class="wb-stat-strip">
+        <div class="wb-stat"><span>Workspaces</span><strong>{workspaceCount}</strong><small>{mcpRunning} 个在线</small></div>
+        <div class="wb-stat"><span>MCP Tokens</span><strong>{formatCount(usageTotals.estimatedTokens)}</strong><small>{formatCount(usageTotals.toolCallCount)} 次工具调用</small></div>
+        <div class="wb-stat"><span>Active Goals</span><strong>{planningStats.activeGoals}</strong><small>{planningStats.activePlans} 个 Plan</small></div>
+        <div class="wb-stat"><span>Need Review</span><strong>{planningStats.pendingReview}</strong><small>{errorServices > 0 ? `${errorServices} 个 Runtime 异常` : "无 Runtime 异常"}</small></div>
       </div>
 
-      <div id="dashboard-metrics" class="tx-dashboard-metrics tx-dashboard-anchor">
-        <div class="tx-dashboard-metric-card">
-          <span>工作区</span>
-          <strong>{workspaceCount}</strong>
-          <small>{runningServices > 0 ? `${runningServices} 个服务在线` : "当前全部停止"}</small>
-        </div>
-        <div class="tx-dashboard-metric-card">
-          <span>MCP 在线</span>
-          <strong>{mcpRunning}</strong>
-          <small>{workspaceCount - mcpRunning} 个未运行</small>
-        </div>
-        <div class="tx-dashboard-metric-card">
-          <span>待人工验收</span>
-          <strong>{planningStats.pendingReview}</strong>
-          <small>{planningStats.activeGoals} Goal · {planningStats.activePlans} Plan 活跃</small>
-        </div>
-        <div class="tx-dashboard-metric-card">
-          <span>MCP Token 估算</span>
-          <strong>{formatCount(usageTotals.estimatedTokens)}</strong>
-          <small>{formatCount(usageTotals.toolCallCount)} 次工具调用 · 当前应用会话</small>
-        </div>
-      </div>
-
-      <section id="dashboard-workspaces" class="tx-dashboard-section tx-dashboard-anchor">
-        <div class="tx-dashboard-section-heading">
-          <div>
-            <div class="flex items-center gap-2">
-              <Boxes size={16} class="text-[var(--primary)]" />
-              <h3>工作区运行矩阵</h3>
-            </div>
-            <p>把运行状态、端口、连接方式和当前 Planning 焦点放在同一个视图中。</p>
+      {#if moduleVisible("attention") && attentionItems.length > 0}
+        <section class="wb-section">
+          <div class="wb-section-heading">
+            <div><h3>需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div>
+            <AlertTriangle size={15} class="text-[var(--warning)]" />
           </div>
-          <span class="tx-dashboard-badge">{workspaceCount} Workspaces</span>
-        </div>
-
-        <div class="tx-dashboard-workspace-grid">
-          {#each $workspaces as workspace (workspace.id)}
-            <DashboardWorkspaceCard
-              {workspace}
-              planning={planningByWorkspace[workspace.id]}
-              planningLabel={planningLabel(workspace.id)}
-              runtimeState={$mcpRuntimeStates[workspace.id]}
-              busy={mcpBusyMap[workspace.id]}
-              copied={copiedPathId === workspace.id}
-              onOpen={openWorkspace}
-              onReveal={revealDirectory}
-              onCopy={copyWorkspacePath}
-              onToggle={toggleWorkspaceMcp}
-            />
-          {/each}
-        </div>
-      </section>
-
-      <div id="dashboard-details" class="tx-dashboard-detail-grid tx-dashboard-anchor">
-        <DashboardUsagePanel totals={usageTotals} {averageTokens} chart={usageChart} />
-
-        <section class="tx-card tx-dashboard-detail-card">
-          <div class="tx-dashboard-section-heading compact">
-            <div>
-              <div class="flex items-center gap-2">
-                <Network size={16} class="text-[var(--primary)]" />
-                <h3>服务连接方式</h3>
-              </div>
-              <p>统计 MCP 当前配置的公网暴露方式。</p>
-            </div>
+          <div class="wb-attention-list">
+            {#each attentionItems as item}
+              <button class="wb-attention-row text-left border-0 bg-transparent cursor-pointer" type="button" onclick={() => openWorkspace(item.workspace.id)}>
+                {#if item.level === "error"}<X size={14} class="text-[var(--danger)]" />{:else}<AlertTriangle size={14} class="text-[var(--warning)]" />{/if}
+                <div class="min-w-0"><strong>{item.workspace.name} · {item.title}</strong><span class="truncate">{item.detail}</span></div>
+                <ArrowUpRight size={12} class="text-[var(--text-muted)]" />
+              </button>
+            {/each}
           </div>
-          <div class="tx-dashboard-bars">
-            {#each [
-              ["Global Gateway", connectionStats.gateway],
-              ["FRP", connectionStats.frp],
-              ["Cloudflare", connectionStats.cloudflare],
-              ["仅本地", connectionStats.local],
-            ] as item}
-              <div class="tx-dashboard-bar-row">
-                <div><span>{item[0]}</span><strong>{item[1]}</strong></div>
-                <div class="tx-dashboard-bar-track">
-                  <span style={`width: ${percentage(Number(item[1]))}%`}></span>
+        </section>
+      {/if}
+
+      {#if moduleVisible("workspaces")}
+        <section class="wb-section">
+          <div class="wb-section-heading">
+            <div><h3>工作区</h3><p>运行状态、当前 Planning 和 MCP 用量放在同一行；Pin 与排序会同步到 Sidebar。</p></div>
+            <span class="text-[10px] text-[var(--text-muted)]">{workspaceCount} Workspaces</span>
+          </div>
+          <div class="wb-workspace-list">
+            <div class="wb-workspace-header"><span>Workspace</span><span>Runtime</span><span>Planning</span><span>Tokens</span><span></span></div>
+            {#each orderedWorkspaces as workspace (workspace.id)}
+              <div class="wb-workspace-row" class:is-pinned={$dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)}>
+                <div class="wb-workspace-name">
+                  <button type="button" class="truncate" onclick={() => openWorkspace(workspace.id)}>{workspace.name}</button>
+                  <small title={workspace.path}>{workspace.path}</small>
+                </div>
+                <div class="wb-runtime-pill">
+                  <span class="wb-runtime-dot {stateClass($mcpRuntimeStates[workspace.id])}"></span>
+                  <span>{stateLabel($mcpRuntimeStates[workspace.id])}</span>
+                  <span class="font-mono text-[9px]">:{workspace.runtime.local_port}</span>
+                </div>
+                <div class="wb-mode-pill min-w-0"><GitBranch size={11} /><span class="truncate" title={planningSummary(workspace.id)}>{planningSummary(workspace.id)}</span></div>
+                <div class="wb-workspace-token">{formatCount(workspaceUsageTokens(workspace.id))}</div>
+                <div class="wb-workspace-actions">
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title={$dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id) ? "取消置顶" : "置顶"} onclick={() => togglePinnedWorkspace(workspace.id)}>
+                    {#if $dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)}<PinOff size={11} />{:else}<Pin size={11} />{/if}
+                  </button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title="上移" onclick={() => moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))}><ChevronUp size={11} /></button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title="下移" onclick={() => moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))}><ChevronDown size={11} /></button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title="打开目录" onclick={() => void revealDirectory(workspace.path)}><FolderOpen size={11} /></button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title="复制路径" onclick={() => void copyWorkspacePath(workspace.id, workspace.path)}>
+                    {#if copiedPathId === workspace.id}<Check size={11} class="text-[var(--success)]" />{:else}<Copy size={11} />{/if}
+                  </button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title={$mcpRuntimeStates[workspace.id] === "running" ? "停止 MCP" : "启动 MCP"} onclick={() => void toggleWorkspaceMcp(workspace.id)}>
+                    {#if mcpBusyMap[workspace.id]}<RotateCw size={11} class="animate-spin" />{:else if $mcpRuntimeStates[workspace.id] === "running"}<Square size={10} />{:else}<Play size={10} />{/if}
+                  </button>
+                  <button class="wb-icon-button !w-7 !min-h-7" type="button" title="进入工作区" onclick={() => openWorkspace(workspace.id)}><ArrowUpRight size={11} /></button>
                 </div>
               </div>
             {/each}
           </div>
         </section>
+      {/if}
 
-        <section class="tx-card tx-dashboard-detail-card">
-          <div class="tx-dashboard-section-heading compact">
-            <div>
-              <div class="flex items-center gap-2">
-                <ListChecks size={16} class="text-[var(--primary)]" />
-                <h3>AI Planning</h3>
+      <div class="wb-grid-two">
+        {#if moduleVisible("activity")}
+          <section class="wb-section">
+            <div class="wb-section-heading">
+              <div><h3>最近活动</h3><p>从各工作区 History Session 汇总最近的 Coding 上下文。</p></div>
+              <Activity size={14} />
+            </div>
+            {#if recentActivities.length > 0}
+              <div class="wb-activity-list">
+                {#each recentActivities as item}
+                  <button class="wb-activity-row text-left border-0 bg-transparent cursor-pointer" type="button" onclick={() => openWorkspace(item.workspace.id)}>
+                    <span class="wb-activity-time">{formatRelativeTime(item.timestamp)}</span>
+                    <div class="min-w-0"><strong>{item.workspace.name} · {item.title}</strong><p>{item.detail}</p></div>
+                    <ArrowUpRight size={11} class="text-[var(--text-muted)]" />
+                  </button>
+                {/each}
               </div>
-              <p>跨工作区汇总当前执行约束与人工验收队列。</p>
+            {:else}
+              <div class="wb-empty-inline">还没有可汇总的 History Session。</div>
+            {/if}
+          </section>
+        {/if}
+
+        {#if moduleVisible("health")}
+          <section class="wb-section">
+            <div class="wb-section-heading">
+              <div><h3>系统健康</h3><p>把 Runtime、连接和 Planning 状态压缩成可扫描信息。</p></div>
+              <Gauge size={14} />
             </div>
+            <div class="wb-health-list">
+              <div class="wb-health-row"><span>Runtime</span><strong>{mcpRunning}/{workspaceCount} Running</strong></div>
+              <div class="wb-health-row"><span>Planning</span><strong>{planningStats.pendingReview > 0 ? `${planningStats.pendingReview} Waiting Review` : "Healthy"}</strong></div>
+              <div class="wb-health-row"><span>Tool Errors</span><strong>{usageTotals.errorCount > 0 ? formatCount(usageTotals.errorCount) : "0"}</strong></div>
+              <div class="wb-health-row"><span>Global Gateway</span><strong>{connectionStats.gateway}</strong></div>
+              <div class="wb-health-row"><span>FRP / Cloudflare / Local</span><strong>{connectionStats.frp} / {connectionStats.cloudflare} / {connectionStats.local}</strong></div>
+              <div class="wb-health-row"><span>Quality Signal</span><strong>{errorServices === 0 && usageTotals.errorCount === 0 ? "Passed" : "Needs Attention"}</strong></div>
+            </div>
+          </section>
+        {/if}
+      </div>
+
+      {#if moduleVisible("usage")}
+        <section class="wb-section">
+          <div class="wb-section-heading">
+            <div><h3>Token Analytics</h3><p>MCP JSON 传输量估算；用于观察工具调用趋势，不等同于模型账单 Token。</p></div>
+            <Zap size={14} />
           </div>
-          <div class="tx-dashboard-planning-stats">
-            <div>
-              <CircleCheck size={15} />
-              <span>活跃 Goal</span>
-              <strong>{planningStats.activeGoals}</strong>
+          <div class="wb-grid-two">
+            <DashboardUsagePanel totals={usageTotals} {averageTokens} chart={usageChart} />
+            <div class="wb-ranking">
+              {#each usageRanking as row}
+                <div class="wb-rank-row">
+                  <span title={row.workspace.name}>{row.workspace.name}</span>
+                  <div class="wb-rank-track"><i style={`width:${row.percentage}%`}></i></div>
+                  <strong>{formatCount(row.tokens)}</strong>
+                </div>
+              {/each}
+              <div class="wb-health-row"><span>Input / Output</span><strong>{formatCount(usageTotals.estimatedInputTokens)} / {formatCount(usageTotals.estimatedOutputTokens)}</strong></div>
+              <div class="wb-health-row"><span>Avg / Tool Call</span><strong>{formatCount(averageTokens)}</strong></div>
+              <div class="wb-health-row"><span>Requests / Calls</span><strong>{formatCount(usageTotals.requestCount)} / {formatCount(usageTotals.toolCallCount)}</strong></div>
             </div>
-            <div>
-              <GitBranch size={15} />
-              <span>活跃 Plan</span>
-              <strong>{planningStats.activePlans}</strong>
-            </div>
-            <div class:attention={planningStats.pendingReview > 0}>
-              <CircleAlert size={15} />
-              <span>待验收</span>
-              <strong>{planningStats.pendingReview}</strong>
-            </div>
-          </div>
-          <div class="tx-dashboard-mode-strip">
-            <span><strong>{planningStats.modes.direct}</strong> Direct</span>
-            <span><strong>{planningStats.modes.plan}</strong> Plan</span>
-            <span><strong>{planningStats.modes.goal}</strong> Goal</span>
           </div>
         </section>
-
-        <section class="tx-card tx-dashboard-detail-card">
-          <div class="tx-dashboard-section-heading compact">
-            <div>
-              <div class="flex items-center gap-2">
-                <Activity size={16} class="text-[var(--primary)]" />
-                <h3>服务 Token 用量</h3>
-              </div>
-              <p>由本地 MCP 服务统计 JSON 请求大小后估算，不保存请求正文。</p>
-            </div>
-          </div>
-          <div class="tx-dashboard-planning-stats">
-            <div>
-              <span>输入 Token</span>
-              <strong>{formatCount(usageTotals.estimatedInputTokens)}</strong>
-            </div>
-            <div>
-              <span>输出 Token</span>
-              <strong>{formatCount(usageTotals.estimatedOutputTokens)}</strong>
-            </div>
-            <div class:attention={usageTotals.errorCount > 0}>
-              <span>错误请求</span>
-              <strong>{formatCount(usageTotals.errorCount)}</strong>
-            </div>
-          </div>
-          <div class="tx-dashboard-mode-strip">
-            <span><strong>{formatCount(usageTotals.toolCallCount)}</strong> 工具调用</span>
-            <span><strong>{formatCount(usageTotals.requestCount)}</strong> 请求</span>
-            <span>重启后仍保留本次应用会话累计</span>
-          </div>
-        </section>
-      </div>
-        </div>
-      </div>
+      {/if}
     {/if}
   </div>
 </section>
+
+{#if commandOpen}
+  <div class="wb-command-backdrop" role="presentation" onclick={(event) => { if (event.currentTarget === event.target) commandOpen = false; }}>
+    <div class="wb-command-palette" role="dialog" aria-modal="true" aria-label="Quick Actions">
+      <div class="wb-command-search">
+        <Search size={15} class="text-[var(--text-muted)]" />
+        <input
+          bind:this={commandInput}
+          bind:value={commandQuery}
+          placeholder="搜索工作区或操作…"
+          onkeydown={(event) => {
+            if (event.key === "Enter" && commandEntries[0]) runCommand(commandEntries[0].run);
+          }}
+        />
+        <span class="wb-kbd">ESC</span>
+      </div>
+      <div class="wb-command-results">
+        {#if commandEntries.length === 0}
+          <div class="wb-empty-inline">没有匹配的操作。</div>
+        {:else}
+          {#each commandEntries as entry, index}
+            <button class="wb-command-item" class:active={index === 0} type="button" onclick={() => runCommand(entry.run)}>
+              {#if entry.hint === "Settings"}
+                <Settings2 size={14} />
+              {:else if entry.hint === "Runtime"}
+                <Zap size={14} />
+              {:else}
+                <GitBranch size={14} />
+              {/if}
+              <span>{entry.label}</span><small>{entry.hint}</small>
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}

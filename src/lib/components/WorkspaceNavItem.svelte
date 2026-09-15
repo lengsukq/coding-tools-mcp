@@ -1,5 +1,4 @@
 <script lang="ts">
-  import StatusOrb from "$lib/components/StatusOrb.svelte";
   import type { RuntimeState, WorkspaceProfile } from "$lib/types";
 
   interface Props {
@@ -11,37 +10,31 @@
 
   let { workspace, active, mcpState, onClick }: Props = $props();
 
-  const isRunning = $derived(mcpState === "running");
-  const isError = $derived(mcpState === "error");
+  const directoryName = $derived(workspace.path.split(/[\\/]/).filter(Boolean).pop() || workspace.path);
+  const stateText = $derived(
+    mcpState === "running"
+      ? "MCP 运行中"
+      : mcpState === "error"
+        ? "MCP 异常"
+        : mcpState === "starting"
+          ? "MCP 启动中"
+          : mcpState === "stopping"
+            ? "MCP 停止中"
+            : "MCP 已停止",
+  );
 </script>
 
 <div class="tx-nav-item" class:active>
   <button
     type="button"
-    class="tx-nav-button select-none group"
+    class="tx-nav-button wb-sidebar-workspace-row select-none group"
     onclick={onClick}
     title={`${workspace.name}\n${workspace.path}`}
   >
-    <div class="flex min-w-0 flex-1 items-center gap-2.5">
-      <div class="shrink-0 flex items-center">
-        <StatusOrb state={mcpState} />
-      </div>
-      <div class="min-w-0 flex-1 text-left">
-        <div class="truncate text-xs font-semibold tracking-tight">{workspace.name}</div>
-        <div class="tx-nav-meta truncate text-[11px] leading-tight mt-0.5">
-          {#if isError}
-            <span class="text-[var(--danger)]">服务异常</span>
-          {:else if isRunning}
-            <span class="text-[var(--success)]">
-              MCP 运行
-            </span>
-          {:else}
-            <span>已就绪</span>
-          {/if}
-          <span class="text-[var(--sidebar-text-muted)] opacity-60"> · </span>
-          <span class="text-[var(--sidebar-text-muted)] truncate">{workspace.path.split(/[\\/]/).filter(Boolean).pop() || ""}</span>
-        </div>
-      </div>
+    <div class="min-w-0 flex-1 text-left">
+      <div class="wb-sidebar-workspace-name truncate">{workspace.name}</div>
+      <div class="wb-sidebar-workspace-path truncate">{directoryName}</div>
     </div>
+    <span class="wb-sidebar-runtime-dot {mcpState}" title={stateText} aria-label={stateText}></span>
   </button>
 </div>

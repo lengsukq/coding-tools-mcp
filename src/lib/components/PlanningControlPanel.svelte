@@ -269,47 +269,6 @@
   {/if}
 
   {#if planning}
-    <div class="tx-planning-mode-hint">
-      {#if planning.mode === "plan"}
-        <ShieldCheck size={14} />
-      {:else if planning.mode === "goal"}
-        <Crosshair size={14} />
-      {:else}
-        <ListChecks size={14} />
-      {/if}
-      <span>{modeDescription(planning.mode)}</span>
-    </div>
-
-    <div class="tx-planning-overview">
-      <div class="tx-planning-focus-summary">
-        <span>当前 Goal</span>
-        <strong>{focusedGoal?.title ?? "暂无 Goal"}</strong>
-        <small>{focusedGoal ? statusLabel(focusedGoal.status) : "AI 会在需要长期跟踪时创建"}</small>
-      </div>
-      <div class="tx-planning-focus-summary">
-        <span>当前 Plan</span>
-        <strong>{focusedPlan?.title ?? "暂无 Plan"}</strong>
-        <small>{focusedPlan ? statusLabel(focusedPlan.status) : "复杂任务会拆成可追踪步骤"}</small>
-      </div>
-      <div class="tx-planning-stat-summary">
-        <span><strong>{pendingGoals.length + pendingPlans.length}</strong> 待验收</span>
-        <span><strong>{activeGoalCount + activePlanCount}</strong> 活跃</span>
-        <span><strong>{archivedCount}</strong> 已归档</span>
-      </div>
-    </div>
-
-    <PlanningReviewQueue
-      goals={pendingGoals}
-      plans={pendingPlans}
-      {busy}
-      {feedbackFor}
-      onFeedback={setFeedback}
-      onAcceptGoal={acceptGoal}
-      onRejectGoal={rejectGoal}
-      onAcceptPlan={acceptPlan}
-      onRejectPlan={rejectPlan}
-    />
-
     <div class="mt-5 grid gap-4 xl:grid-cols-2">
       <div class="rounded-[12px] border border-[var(--color-border)] p-4">
         <p class="tx-section-label">AI 当前 Goal</p>
@@ -371,6 +330,48 @@
         {/if}
       </div>
     </div>
+
+    <div class="tx-planning-mode-hint">
+      {#if planning.mode === "plan"}
+        <ShieldCheck size={14} />
+      {:else if planning.mode === "goal"}
+        <Crosshair size={14} />
+      {:else}
+        <ListChecks size={14} />
+      {/if}
+      <span>{modeDescription(planning.mode)}</span>
+    </div>
+
+    <div class="tx-planning-overview">
+      <div class="tx-planning-focus-summary">
+        <span>当前 Goal</span>
+        <strong>{focusedGoal?.title ?? "暂无 Goal"}</strong>
+        <small>{focusedGoal ? statusLabel(focusedGoal.status) : "AI 会在需要长期跟踪时创建"}</small>
+      </div>
+      <div class="tx-planning-focus-summary">
+        <span>当前 Plan</span>
+        <strong>{focusedPlan?.title ?? "暂无 Plan"}</strong>
+        <small>{focusedPlan ? statusLabel(focusedPlan.status) : "复杂任务会拆成可追踪步骤"}</small>
+      </div>
+      <div class="tx-planning-stat-summary">
+        <span><strong>{pendingGoals.length + pendingPlans.length}</strong> 待验收</span>
+        <span><strong>{activeGoalCount + activePlanCount}</strong> 活跃</span>
+        <span><strong>{archivedCount}</strong> 已归档</span>
+      </div>
+    </div>
+
+    <PlanningReviewQueue
+      goals={pendingGoals}
+      plans={pendingPlans}
+      {busy}
+      {feedbackFor}
+      onFeedback={setFeedback}
+      onAcceptGoal={acceptGoal}
+      onRejectGoal={rejectGoal}
+      onAcceptPlan={acceptPlan}
+      onRejectPlan={rejectPlan}
+    />
+
   {/if}
 
   <ConfirmDialog

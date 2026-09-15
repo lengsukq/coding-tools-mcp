@@ -25,11 +25,11 @@
   }: Props = $props();
 </script>
 
-<header class="page-header border-b border-[var(--border)] bg-[var(--glass-bg)] pb-4 backdrop-blur-xl">
+<header class="page-header wb-workspace-header pb-4">
   <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2.5">
-        <div class="flex size-9 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20 shadow-sm">
+        <div class="wb-workspace-icon flex size-9 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)]">
           <Folder size={18} strokeWidth={2.2} />
         </div>
         <div class="min-w-0">
@@ -40,7 +40,7 @@
       </div>
 
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <div class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--text-secondary)] shadow-sm max-w-full">
+        <div class="wb-workspace-path inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-[var(--text-secondary)] max-w-full">
           <HardDrive size={12} class="text-[var(--text-muted)] shrink-0" />
           <span class="truncate font-mono text-[11px] select-all">{profile.path}</span>
         </div>
@@ -63,7 +63,7 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-2.5 shrink-0">
-      <div class="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1.5 shadow-sm">
+      <div class="wb-workspace-runtime flex items-center gap-2 rounded-xl px-3 py-1.5">
         <StatusOrb state={runtimeState} />
         <div class="text-xs">
           <span class="font-semibold text-[var(--text-main)]">MCP</span>

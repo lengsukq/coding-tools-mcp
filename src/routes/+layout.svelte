@@ -1,5 +1,6 @@
 <script lang="ts">
   import "../app.css";
+  import "../styles/workbench.css";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -19,9 +20,22 @@
   import { startCloseGuard } from "$lib/close-guard";
   import CloseConfirmDialog from "$lib/components/CloseConfirmDialog.svelte";
   import type { RuntimeState } from "$lib/types";
+  import {
+    dashboardPreferences,
+    loadDashboardPreferences,
+    sortWorkspaceIds,
+  } from "$lib/dashboard-preferences";
 
   let { children } = $props();
   let closeConfirmOpen = $state(false);
+  const sidebarWorkspaces = $derived.by(() => {
+    const orderedIds = sortWorkspaceIds(
+      $workspaces.map((workspace) => workspace.id),
+      $dashboardPreferences,
+    );
+    const byId = new Map($workspaces.map((workspace) => [workspace.id, workspace]));
+    return orderedIds.map((id) => byId.get(id)).filter(Boolean);
+  });
 
   async function refreshWorkspaces() {
     const items = await listWorkspaces();
@@ -78,6 +92,7 @@
   }
 
   onMount(() => {
+    loadDashboardPreferences();
     const stopGuard = startUiMemoryGuard();
     const stopClose = startCloseGuard(() => {
       closeConfirmOpen = true;
@@ -94,9 +109,12 @@
       }
       await refreshWorkspaces();
     })();
+    const handleAddWorkspace = () => void addWorkspace();
+    window.addEventListener("coding-tools:add-workspace", handleAddWorkspace);
     return () => {
       stopGuard();
       stopClose();
+      window.removeEventListener("coding-tools:add-workspace", handleAddWorkspace);
     };
   });
   import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
@@ -123,8 +141,10 @@
 </script>
 
 <AppShell
+  onOpenDashboard={() => goto("/")}
   onAddWorkspace={addWorkspace}
   onOpenSettings={openGeneralSettings}
+  dashboardActive={$page.url.pathname === "/"}
   settingsActive={$page.url.pathname.startsWith("/settings")}
 >
   {#snippet settingsNav()}
@@ -136,13 +156,13 @@
     />
   {/snippet}
   {#snippet sidebar()}
-    <div class="space-y-1">
-      {#each $workspaces as workspace (workspace.id)}
+    <div class="wb-sidebar-workspaces">
+      {#each sidebarWorkspaces as workspace (workspace!.id)}
         <WorkspaceNavItem
-          workspace={workspace}
-          active={$page.url.pathname === `/workspace/${workspace.id}`}
-          mcpState={$mcpRuntimeStates[workspace.id] ?? "stopped"}
-          onClick={() => openWorkspace(workspace.id)}
+          workspace={workspace!}
+          active={$page.url.pathname === `/workspace/${workspace!.id}`}
+          mcpState={$mcpRuntimeStates[workspace!.id] ?? "stopped"}
+          onClick={() => openWorkspace(workspace!.id)}
         />
       {/each}
     </div>
