@@ -7,7 +7,7 @@ Coding Tools MCP Desktop 设计系统文档集。
 1. [设计原则](./01-principles.md) — 核心价值观
 2. [交互规范](./02-interaction.md) — 状态、动效、反馈
 3. [布局规范](./03-layout.md) — 页面结构与组件层级
-4. [技术配置](./04-config.md) — Tailwind CSS 变量与 Svelte 实现
+4. [技术配置](./04-config.md) — Tailwind CSS 变量与 Vue 实现
 
 ## 相关文档
 

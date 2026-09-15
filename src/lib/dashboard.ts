@@ -21,6 +21,9 @@ export interface UsageChart {
   areaPath: string;
   points: ChartPoint[];
   max: number;
+  latest: number;
+  average: number;
+  sampleCount: number;
 }
 
 export interface UsageTotals {
@@ -204,6 +207,9 @@ export function buildUsageChart(history: UsagePoint[]): UsageChart {
       areaPath: "M 0 32 L 100 32 L 100 36 L 0 36 Z",
       points: [],
       max: 0,
+      latest: 0,
+      average: 0,
+      sampleCount: 0,
     };
   }
 
@@ -224,5 +230,8 @@ export function buildUsageChart(history: UsagePoint[]): UsageChart {
     areaPath: `${path} L ${last.x.toFixed(2)} 36 L ${first.x.toFixed(2)} 36 Z`,
     points,
     max,
+    latest: values.at(-1) ?? 0,
+    average: values.reduce((sum, value) => sum + value, 0) / values.length,
+    sampleCount: values.length,
   };
 }

@@ -12,8 +12,8 @@
 | Security Contract | `cargo test --test call_tool_security` | `src-tauri/tests/call_tool_security.rs` |
 | Harness | `cargo test --test harness_state --test harness_tool_contract` | `src-tauri/tests/` |
 | History Session | `cargo test --test history_session` | `src-tauri/tests/history_session.rs` |
-| Frontend 类型/组件检查 | `npm run check` | SvelteKit / TypeScript |
-| Frontend 生产构建 | `npm run build` | Vite + adapter-static |
+| Frontend 类型/组件检查 | `npm run check` | Vue 3 / `vue-tsc` / TypeScript |
+| Frontend 生产构建 | `npm run build` | Vite 6 |
 
 当前仓库没有配置 vitest。历史 Python compliance suite 已退出当前代码路径；Rust contract/security 测试所需的最小 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 

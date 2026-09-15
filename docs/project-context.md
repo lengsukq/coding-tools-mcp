@@ -7,9 +7,9 @@
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.2.3` |
+| 版本 | `0.2.5` |
 | 桌面端 | Tauri 2 |
-| 前端 | SvelteKit 2 + Svelte 5 + TypeScript |
+| 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
 | 类型 | AI Coding Workspace Desktop + 内嵌 MCP Runtime |
 | 核心定位 | 把本地项目变成可被 AI 安全开发、跨会话恢复、可视化管理的持久 Workspace |
@@ -50,4 +50,4 @@
 原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
-*当前事实更新: 2026-09-14*
+*当前事实更新: 2026-09-15*

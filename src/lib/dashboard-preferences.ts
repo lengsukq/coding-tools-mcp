@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { ref } from "vue";
 
 export type DashboardDensity = "comfortable" | "compact";
 export type DashboardModuleId =
@@ -42,22 +42,20 @@ function readPreferences(): DashboardPreferences {
   }
 }
 
-export const dashboardPreferences = writable<DashboardPreferences>(defaults);
+export const dashboardPreferences = ref<DashboardPreferences>(defaults);
 
 export function loadDashboardPreferences() {
-  dashboardPreferences.set(readPreferences());
+  dashboardPreferences.value = readPreferences();
 }
 
 export function updateDashboardPreferences(
   updater: (current: DashboardPreferences) => DashboardPreferences,
 ) {
-  dashboardPreferences.update((current) => {
-    const next = updater(current);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    }
-    return next;
-  });
+  const next = updater(dashboardPreferences.value);
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+  dashboardPreferences.value = next;
 }
 
 export function toggleDashboardModule(moduleId: DashboardModuleId) {

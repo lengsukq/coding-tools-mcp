@@ -45,7 +45,7 @@
 | [设计原则](./design-guidelines/01-principles.md) | 价值观与决策指导 |
 | [交互规范](./design-guidelines/02-interaction.md) | 八态、动效、反馈 |
 | [布局规范](./design-guidelines/03-layout.md) | 页面结构、栅格、组件层级 |
-| [技术配置](./design-guidelines/04-config.md) | Tailwind + Svelte 实现 |
+| [技术配置](./design-guidelines/04-config.md) | Tailwind + Vue 实现 |
 | [UI 规格](../specs/rust-desktop-client/ui-design.md) | 页面线框与组件清单 |
 
 ## 交付检查清单

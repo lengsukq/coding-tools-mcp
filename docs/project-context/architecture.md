@@ -8,7 +8,7 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 
 ```text
 ┌──────────────────────────────────────────────┐
-│ SvelteKit Desktop UI                        │
+│ Vue 3 Desktop UI                            │
 │ Workspace / Dashboard / Planning / Settings │
 └──────────────────────┬───────────────────────┘
                        │ Tauri IPC
@@ -39,7 +39,7 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 下载、配置与进程监督 |
 | `src-tauri/src/global_gateway.rs` | 多 Workspace 共享公网入口 `/w/<workspace-id>` |
 | `src-tauri/src/workspace/` | Workspace 配置、持久化与兼容迁移 |
-| `src/` | SvelteKit 5 桌面 UI、Tauri API 封装与状态展示 |
+| `src/` | Vue 3 桌面 UI、Vue Router、Tauri API 封装与状态展示 |
 | `docs/history-session/` | 项目内、可审计、无损 Markdown 会话档案 |
 | `.coding-tools/planning/state.json` | 项目本地 Goal / Plan / Execution Ledger 状态 |
 

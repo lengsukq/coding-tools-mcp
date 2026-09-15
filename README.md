@@ -451,7 +451,7 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 | `src-tauri/src/mcp/` | MCP Streamable HTTP 服务 |
 | `src-tauri/src/tunnel/` | FRP / Cloudflare 隧道和进程管理 |
 | `src-tauri/tests/fixtures/` | 当前 Rust 集成测试使用的隔离 fixture |
-| `src/` | SvelteKit 桌面界面 |
+| `src/` | Vue 3 + Tailwind CSS 4 桌面界面 |
 
 ## 致谢
 感谢 [Linux.do](https://linux.do/) 社区对项目推广与反馈的支持。

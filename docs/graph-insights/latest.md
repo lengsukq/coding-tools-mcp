@@ -1,6 +1,6 @@
 # 项目图谱洞察
 
-更新时间：2026-09-14
+更新时间：2026-09-15
 
 ## 分析状态
 
@@ -10,12 +10,12 @@
 
 ## 项目定位
 
-这是一个 Rust + Tauri 2 + Svelte 的桌面客户端，将 Coding Tools MCP 能力以内嵌 HTTP 服务形式暴露。每个工作区独立运行 MCP 服务，并可配合 Global Gateway、FRP 或 Cloudflare 隧道提供公网入口。
+这是一个 Rust + Tauri 2 + Vue 3 的桌面客户端，前端使用 Vue Router 4、Tailwind CSS 4 与 Vite 6，将 Coding Tools MCP 能力以内嵌 HTTP 服务形式暴露。每个工作区独立运行 MCP 服务，并可配合 Global Gateway、FRP 或 Cloudflare 隧道提供公网入口。
 
 ## 主执行链路
 
 ```text
-Svelte 页面
+Vue 页面 / Vue Router
   → src/lib/api/* 的 Tauri invoke
   → src-tauri/src/commands/*
   → AppState
@@ -59,9 +59,9 @@ Svelte 页面
 
 ### 前端
 
-- `src/routes/+layout.svelte` 加载工作区、刷新 MCP 状态并承载全局导航和 Toast。
-- `src/routes/workspace/[id]/+page.svelte` 是核心工作区页面，管理 MCP、认证、策略、隧道、日志和健康检查。
-- `src/lib/api/` 封装 Tauri IPC；`src/lib/components/` 提供配置表单和状态面板；`src/lib/stores/` 管理前端共享状态。
+- `src/main.ts` 创建 Vue 应用，`src/App.vue` 加载工作区、刷新 MCP 状态并承载全局导航、Toast 与关闭确认。
+- `src/router.ts` 使用 Hash History，兼容 Tauri 静态产物；`src/views/WorkspaceView.vue` 是核心工作区页面，管理 MCP、认证、策略、隧道、日志和健康检查。
+- `src/lib/api/` 封装 Tauri IPC；`src/components/` 提供 Vue 配置表单和状态面板；`src/lib/stores/` 使用 Vue `ref` 管理前端共享状态。
 
 ## 当前工作区观察
 
@@ -72,10 +72,10 @@ Svelte 页面
 
 ## 验证结果
 
-- `npm run version:check`：通过，项目版本 `0.2.3` 一致。
+- `npm run version:check`：通过，项目版本 `0.2.5` 一致。
 - `npm run check`：通过，0 错误、0 警告。
-- `npm run build`：通过，SvelteKit/Vite 生产构建成功。
-- `npm run test:release`：通过；Rust library 164/164，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7。
+- `npm run build`：通过，Vue 3 + Vite 生产构建成功，静态产物输出到 `build/`。
+- `npm run test:release`：通过；Rust library 182/182，Tool Contract 22/22，Security 24/24，Harness 4/4 + 11/11，History 20/20，Workspace E2E 7/7。
 - 额外 `cargo clippy --all-targets -- -D warnings` 仍会被仓库既有的全局 lint 债务阻塞，主要分布于 Agent Context、Planning、MCP Server 等与 Actions 删除无关的模块。
 - `cargo fmt --all -- --check` 同样揭示仓库既有的大范围格式差异；本次未执行全局自动格式化，以免覆盖当前未提交的其他 UI/代码改动。
 

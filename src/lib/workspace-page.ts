@@ -1,7 +1,36 @@
 import { getRuntimeStatus, listWorkspaces } from "$lib/api/workspaces";
-import type { RuntimePolicyDraft } from "$lib/components/RuntimePolicyForm.svelte";
-import type { TunnelFormConfig } from "$lib/components/TunnelConfigForm.svelte";
 import type { AuthConfig, RuntimeState, RuntimeStatus, WorkspaceProfile } from "$lib/types";
+
+export interface RuntimePolicyDraft {
+  toolProfile: string;
+  permissionMode: string;
+  allowedCommands: string;
+  executablePaths: string;
+  aiInstructions: string;
+  instructionSources: string[];
+  skillSources: string[];
+  customInstructionPaths: string;
+  customSkillPaths: string;
+  workspaceLocalEntries: boolean;
+  workspaceScriptExtensions: string;
+}
+
+export interface TunnelFormConfig {
+  type: string;
+  public_url: string;
+  frp_server: string;
+  frp_subdomain: string;
+  frp_profile_id: string;
+  frp_server_port: number;
+  cloudflare_mode: string;
+  use_proxy: boolean;
+  use_global_gateway: boolean;
+}
+
+export interface SaveTunnelOptions {
+  skipTunnelRestart?: boolean;
+  skipServicePrompt?: boolean;
+}
 
 export type WorkspaceTab = "services" | "diagnostics" | "planning" | "settings";
 export type McpConfigSection = "connection" | "auth" | "policy" | "history";
@@ -24,6 +53,38 @@ export interface WorkspaceSnapshot {
   items: WorkspaceProfile[];
   profile: WorkspaceProfile | null;
   runtime: RuntimeStatus | null;
+}
+
+export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceProfile {
+  const tunnel = profile.tunnel ?? ({} as WorkspaceProfile["tunnel"]);
+  const auth = profile.auth ?? ({} as WorkspaceProfile["auth"]);
+  const runtime = profile.runtime ?? ({} as WorkspaceProfile["runtime"]);
+
+  return {
+    ...profile,
+    tunnel: {
+      ...tunnel,
+      type: tunnel.type ?? "none",
+      public_url: tunnel.public_url ?? "",
+      frp_server: tunnel.frp_server ?? "",
+      frp_subdomain: tunnel.frp_subdomain ?? "",
+      cloudflare_mode: tunnel.cloudflare_mode ?? "quick",
+      use_proxy: tunnel.use_proxy ?? true,
+      use_global_gateway: tunnel.use_global_gateway ?? false,
+    },
+    auth: {
+      ...auth,
+      type: auth.type ?? "none",
+      oauth_client_id: auth.oauth_client_id ?? "",
+      use_shared_secrets: auth.use_shared_secrets ?? false,
+    },
+    runtime: {
+      ...runtime,
+      local_port: runtime.local_port ?? 0,
+      tool_profile: runtime.tool_profile ?? "core",
+      permission_mode: runtime.permission_mode ?? "safe",
+    },
+  };
 }
 
 export function stateLabel(state: RuntimeState): string {
@@ -60,14 +121,14 @@ export function tunnelFormFromProfile(profile: WorkspaceProfile | null): TunnelF
 }
 
 export async function loadWorkspaceSnapshot(id: string): Promise<WorkspaceSnapshot> {
-  const items = await listWorkspaces();
+  const items = (await listWorkspaces()).map(normalizeWorkspaceProfile);
   const profile = items.find((item) => item.id === id) ?? null;
   const runtime = profile ? await getRuntimeStatus(id) : null;
   return { items, profile, runtime };
 }
 
 export async function refreshWorkspaceSnapshot(id: string) {
-  const items = await listWorkspaces();
+  const items = (await listWorkspaces()).map(normalizeWorkspaceProfile);
   return {
     items,
     profile: items.find((item) => item.id === id) ?? null,

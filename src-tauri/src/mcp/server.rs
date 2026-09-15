@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn workspace_prompt_uses_lazy_history_workflow() {
-        let component = include_str!("../../../src/lib/components/ChatGptSessionPrompt.svelte");
+        let component = include_str!("../../../src/components/workspace/ChatGptSessionPrompt.vue");
 
         assert!(component.contains("ChatGPT 新会话启动提示词"));
         assert!(component.contains("不需要强制调用 history_session_bootstrap"));

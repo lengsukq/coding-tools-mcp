@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "name": "Coding Tools MCP Desktop",
   "productType": "Developer Tool",
-  "stack": "svelte",
+  "stack": "vue-tailwind",
   "aesthetic": "refined-utilitarian",
   "references": ["Linear", "Raycast", "Vercel Dashboard"],
   "defaultTheme": "dark",

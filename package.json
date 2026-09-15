@@ -1,6 +1,6 @@
 {
   "name": "coding-tools-mcp-desktop",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Coding Tools MCP desktop client",
   "type": "module",
   "repository": {
@@ -18,7 +18,7 @@
     "start": "tauri dev",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check": "vue-tsc --noEmit",
     "test:workspace": "cargo test --manifest-path src-tauri/Cargo.toml --test workspace_e2e --locked",
     "test:release": "npm run version:check && npm run check && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
     "version:set": "node scripts/sync-version.mjs",
@@ -27,20 +27,19 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@lucide/svelte": "^0.487.0",
+    "@lucide/vue": "^1.46.0",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2"
+    "@tauri-apps/plugin-dialog": "^2",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.6",
-    "@sveltejs/kit": "^2.9.0",
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tauri-apps/cli": "^2",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
+    "@vitejs/plugin-vue": "^5.2.1",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.2.0"
   }
 }

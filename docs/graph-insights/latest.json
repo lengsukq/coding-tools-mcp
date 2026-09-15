@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-14",
+  "updated_at": "2026-09-15",
   "project": "coding-tools-mcp-desktop",
   "analysis_status": "partial",
   "gitnexus": {
@@ -10,7 +10,7 @@
     "rust_symbol_queries_reliable": false
   },
   "architecture": {
-    "frontend": "SvelteKit + Tauri invoke",
+    "frontend": "Vue 3 + Vue Router 4 + Tailwind CSS 4 + Tauri invoke",
     "backend": "Rust + Tauri 2",
     "state": ["AppState", "DataStore", "RuntimeSupervisor"],
     "services": ["MCP Streamable HTTP"],
@@ -18,16 +18,16 @@
   },
   "entrypoints": {
     "tauri": "src-tauri/src/lib.rs",
-    "frontend_layout": "src/routes/+layout.svelte",
-    "workspace_page": "src/routes/workspace/[id]/+page.svelte",
+    "frontend_layout": "src/App.vue",
+    "workspace_page": "src/views/WorkspaceView.vue",
     "runtime_commands": "src-tauri/src/commands/runtime.rs"
   },
   "verification": {
-    "version_check": "passed_0.2.3",
-    "svelte_check": "passed_zero_errors_zero_warnings",
+    "version_check": "passed_0.2.5",
+    "vue_check": "passed_zero_errors",
     "frontend_build": "passed",
     "release_gate": "passed",
-    "rust_lib_tests": "164_passed",
+    "rust_lib_tests": "182_passed",
     "clippy_strict": "blocked_by_existing_repository_wide_lints",
     "rustfmt_check": "blocked_by_existing_repository_wide_format_diffs"
   },

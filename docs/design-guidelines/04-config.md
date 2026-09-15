@@ -1,161 +1,93 @@
 # 技术配置
 
-Svelte + TailwindCSS 4 实现设计 Token。
+当前桌面端使用 **Vue 3 + Vite 6 + Vue Router 4 + Tailwind CSS 4**。Tailwind 通过 `@tailwindcss/vite` 直接接入，项目不维护旧式 `tailwind.config.js`；全局 Token 位于 `src/app.css` 与 `src/styles/ios-vue.css`。
 
-## tailwind.config.js
+## Vite
 
 ```js
-/** @type {import('tailwindcss').Config} */
-export default {
-  darkMode: 'class',
-  content: ['./src/**/*.{html,js,svelte,ts}'],
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'Cascadia Code', 'Consolas', 'monospace'],
-      },
-      colors: {
-        bg: 'var(--color-bg)',
-        surface: 'var(--color-surface)',
-        border: 'var(--color-border)',
-        accent: 'var(--color-accent)',
-        muted: 'var(--color-text-muted)',
-      },
-      borderRadius: {
-        sm: '6px',
-        md: '10px',
-        lg: '14px',
-      },
-      transitionTimingFunction: {
-        out: 'cubic-bezier(0.16, 1, 0.3, 1)',
-      },
-    },
-  },
-  plugins: [],
-};
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [vue(), tailwindcss()],
+  build: { outDir: "build" },
+});
 ```
 
-## app.css — CSS Variables
+Tauri 的生产目录保持为 `build/`。Router 使用 `createWebHashHistory()`，避免桌面端静态资源模式下动态路由依赖服务器 fallback。
+
+## Tailwind CSS 4
+
+`src/app.css` 必须保留：
 
 ```css
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+```
 
+组件优先使用 Tailwind utility；跨页面重复的视觉语义使用 CSS Token / utility class 收口，不在页面里重复大量 style 属性。
+
+## iOS 彩色玻璃 Token
+
+核心视觉变量定义于 `src/styles/ios-vue.css`：
+
+```css
 :root {
-  --color-bg: oklch(0.98 0.004 260);
-  --color-surface: oklch(1 0 0);
-  --color-surface-hover: oklch(0.97 0.006 260);
-  --color-border: oklch(0.90 0.008 260);
-  --color-text: oklch(0.18 0.015 260);
-  --color-text-secondary: oklch(0.42 0.015 260);
-  --color-text-muted: oklch(0.58 0.012 260);
-  --color-accent: oklch(0.52 0.20 275);
-  --color-accent-hover: oklch(0.46 0.22 275);
-  --color-success: oklch(0.55 0.17 155);
-  --color-warning: oklch(0.62 0.14 75);
-  --color-error: oklch(0.55 0.20 25);
+  --ios-blue: #0a84ff;
+  --ios-indigo: #5e5ce6;
+  --ios-purple: #bf5af2;
+  --ios-pink: #ff375f;
+  --ios-orange: #ff9f0a;
+  --ios-green: #30d158;
+  --ios-cyan: #64d2ff;
+  --ios-glass: rgba(255, 255, 255, 0.68);
+  --ios-radius: 22px;
 }
 
-.dark {
-  --color-bg: oklch(0.13 0.005 260);
-  --color-surface: oklch(0.19 0.008 260);
-  --color-surface-hover: oklch(0.22 0.010 260);
-  --color-border: oklch(0.28 0.010 260);
-  --color-text: oklch(0.97 0.005 260);
-  --color-text-secondary: oklch(0.72 0.012 260);
-  --color-text-muted: oklch(0.55 0.012 260);
-  --color-accent: oklch(0.62 0.18 275);
-  --color-accent-hover: oklch(0.68 0.20 275);
-  --color-success: oklch(0.72 0.17 155);
-  --color-warning: oklch(0.78 0.14 75);
-  --color-error: oklch(0.65 0.20 25);
-}
-
-body {
-  font-family: 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: var(--color-bg);
-  color: var(--color-text);
+.ios-glass {
+  background: var(--ios-glass);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--ios-glass-border);
+  box-shadow: var(--ios-shadow);
 }
 ```
 
-## 组件示例：StatusOrb.svelte
+设计原则：**彩色但不高饱和铺满、玻璃但保留 Card 层级、无界但不混淆信息分组**。Dashboard 与 Workspace 的主要信息仍使用明确卡片容器。
 
-```svelte
-<script lang="ts">
-  export let state: 'running' | 'starting' | 'stopped' | 'error' = 'stopped';
+## Vue 组件示例
 
-  const colors = {
-    running: 'bg-[var(--color-success)]',
-    starting: 'bg-[var(--color-warning)] animate-spin-slow',
-    stopped: 'bg-[var(--color-text-muted)]',
-    error: 'bg-[var(--color-error)]',
-  };
+```vue
+<script setup lang="ts">
+import GlassCard from "$src/components/ui/GlassCard.vue";
+import StatusPill from "$src/components/ui/StatusPill.vue";
+
+defineProps<{ name: string; state: string; path: string }>();
 </script>
 
-<span
-  class="inline-block h-2.5 w-2.5 rounded-full {colors[state]}"
-  class:animate-pulse={state === 'running'}
-  aria-label={state}
-/>
+<template>
+  <GlassCard :interactive="true">
+    <div class="flex items-center gap-2">
+      <h3 class="font-semibold">{{ name }}</h3>
+      <StatusPill :status="state" />
+    </div>
+    <p class="mt-2 truncate font-mono text-xs text-[var(--text-muted)]">{{ path }}</p>
+  </GlassCard>
+</template>
 ```
 
-## 组件示例：WorkspaceCard.svelte 结构
-
-```svelte
-<button
-  class="group w-full rounded-lg border border-[var(--color-border)]
-         bg-[var(--color-surface)] p-5 text-left
-         transition-all duration-200 ease-out
-         hover:border-[var(--color-accent)] hover:-translate-y-px
-         focus-visible:outline-2 focus-visible:outline-offset-2
-         focus-visible:outline-[var(--color-accent)]"
-  on:click
->
-  <div class="flex items-center gap-2">
-    <StatusOrb {state} />
-    <span class="font-semibold">{name}</span>
-  </div>
-  <p class="mt-2 truncate font-mono text-sm text-[var(--color-text-muted)]">{path}</p>
-  <div class="mt-3 flex items-center justify-between">
-    <Badge>{tunnelType}</Badge>
-    <span class="truncate font-mono text-xs text-[var(--color-text-secondary)]">{endpoint}</span>
-  </div>
-</button>
-```
+基础组件集中在 `src/components/ui/`，页面优先组合这些组件，而不是自行复制按钮、输入框、Modal、Toggle 和状态标签样式。
 
 ## 图标
 
-使用 [Lucide Svelte](https://lucide.dev/)：
+使用 `@lucide/vue`：
 
-```bash
-pnpm add @lucide/svelte
+```ts
+import { FolderOpen, Play, Square, Settings } from "@lucide/vue";
 ```
 
-常用图标：FolderOpen, Play, Square, Copy, Check, Settings, Activity, Terminal, Globe, Shield
+## 主题
 
-## 主题切换
-
-```svelte
-<script lang="ts">
-  import { onMount } from 'svelte';
-
-  let dark = true;
-
-  onMount(() => {
-    dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    apply();
-  });
-
-  function apply() {
-    document.documentElement.classList.toggle('dark', dark);
-  }
-
-  function toggle() {
-    dark = !dark;
-    apply();
-  }
-</script>
-```
+主题由根节点 `data-theme="light|dark"` 驱动，`ThemeToggle.vue` 负责读取系统偏好并持久化用户选择。玻璃透明度、阴影与背景渐变必须同时提供 light / dark Token。
 
 ---
 *返回: [README.md](./README.md)*

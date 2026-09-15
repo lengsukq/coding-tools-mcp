@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { ref } from "vue";
 
 export type ToastKind = "info" | "success" | "warning" | "error";
 
@@ -23,10 +23,8 @@ export interface ToastOptions {
   action?: ToastAction;
 }
 
-const { subscribe, update } = writable<Toast[]>([]);
+export const toasts = ref<Toast[]>([]);
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
-
-export const toasts = { subscribe };
 
 function nextId(): string {
   return crypto.randomUUID();
@@ -41,7 +39,7 @@ export function showToast(message: string, options: ToastOptions = {}): string {
     action: options.action,
   };
 
-  update((items) => [...items, toast]);
+  toasts.value = [...toasts.value, toast];
 
   const duration = options.duration ?? 5000;
   if (duration > 0) {
@@ -58,5 +56,5 @@ export function dismissToast(id: string): void {
     clearTimeout(timer);
     timers.delete(id);
   }
-  update((items) => items.filter((item) => item.id !== id));
+  toasts.value = toasts.value.filter((item) => item.id !== id);
 }

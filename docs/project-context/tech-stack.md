@@ -6,11 +6,11 @@
 
 | 属性 | 当前值 |
 | --- | --- |
-| 应用版本 | `0.2.3` |
+| 应用版本 | `0.2.5` |
 | Rust Edition | 2021 |
 | 前端语言 | TypeScript |
 | 桌面框架 | Tauri 2 |
-| 前端框架 | SvelteKit 2 / Svelte 5 |
+| 前端框架 | Vue 3 + Vue Router 4 |
 | 构建工具 | Vite 6 |
 
 ## Rust Core
@@ -37,13 +37,14 @@
 
 | 技术 | 用途 |
 | --- | --- |
-| `@sveltejs/kit` | 路由与应用结构 |
-| `svelte` 5 | UI |
+| `vue` 3 | UI、Composition API 与响应式状态 |
+| `vue-router` 4 | Hash 路由；兼容 Tauri 静态产物 |
+| `@vitejs/plugin-vue` | Vue SFC 构建 |
 | `@tauri-apps/api` | 前端到 Tauri IPC |
 | `@tauri-apps/plugin-dialog` | 原生 Dialog |
-| `@lucide/svelte` | 图标 |
-| Tailwind CSS 4 | 样式能力，与项目自定义 CSS/设计系统共存 |
-| TypeScript 5.6 | 类型检查 |
+| `@lucide/vue` | 图标 |
+| Tailwind CSS 4 | 主样式体系，与 iOS 彩色玻璃设计 Token 共存 |
+| TypeScript 5.6 + `vue-tsc` | 类型检查 |
 
 ## 包管理与命令
 
