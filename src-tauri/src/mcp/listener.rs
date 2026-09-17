@@ -325,16 +325,19 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
     if state.auth.oauth_enabled() {
         if let Some(oauth) = state.oauth.as_ref() {
             let server_url = resolve_oauth_base(state, headers);
-            if let Some(mut response) = verify_oauth_bearer_header(headers, oauth, &server_url) {
-                if response.status() == StatusCode::UNAUTHORIZED {
-                    let metadata_url = protected_resource_metadata_url(&server_url);
-                    if let Ok(value) =
-                        format!("Bearer resource_metadata=\"{metadata_url}\"").parse()
-                    {
-                        response.headers_mut().insert(WWW_AUTHENTICATE, value);
+            match verify_oauth_bearer_header(headers, oauth, &server_url) {
+                None => return None,
+                Some(mut response) => {
+                    if response.status() == StatusCode::UNAUTHORIZED {
+                        let metadata_url = protected_resource_metadata_url(&server_url);
+                        if let Ok(value) =
+                            format!("Bearer resource_metadata=\"{metadata_url}\"").parse()
+                        {
+                            response.headers_mut().insert(WWW_AUTHENTICATE, value);
+                        }
                     }
+                    return Some(response);
                 }
-                return Some(response);
             }
         }
     }
@@ -433,11 +436,14 @@ mod tests {
     use std::sync::Arc;
     use std::{fs, path::Path};
 
-    use axum::http::header::CACHE_CONTROL;
+    use axum::http::header::{AUTHORIZATION, CACHE_CONTROL};
     use axum::http::{HeaderMap, StatusCode};
     use axum::response::IntoResponse;
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde::Serialize;
     use serde_json::json;
 
+    use crate::auth::OAuthRuntime;
     use crate::mcp::gateway::GatewayState;
     use crate::settings::AppSettings;
     use crate::workspace::{AuthConfig, WorkspaceProfile};
@@ -484,6 +490,61 @@ mod tests {
 
         state.auth.auth_type = "noauth".into();
         assert!(require_mcp_auth(&state, &HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn mcp_auth_allows_a_valid_oauth_bearer() {
+        #[derive(Serialize)]
+        struct Claims {
+            iss: String,
+            aud: String,
+            iat: i64,
+            exp: i64,
+            scope: String,
+            client_id: String,
+            token_use: String,
+        }
+
+        let mut state = test_listener_state();
+        state.auth.auth_type = "oauth".into();
+        state.configured_public_url = "https://coding-mcp.lengsu.top".into();
+        let token_secret = "oauth-token-secret";
+        state.oauth = Some(Arc::new(OAuthRuntime::new(
+            "https://coding-mcp.lengsu.top".into(),
+            "test-client".into(),
+            None,
+            "test-password".into(),
+            token_secret.into(),
+        )));
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs() as i64;
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                iss: "https://coding-mcp.lengsu.top".into(),
+                aud: "https://coding-mcp.lengsu.top".into(),
+                iat: now,
+                exp: now + 60,
+                scope: "mcp".into(),
+                client_id: "test-client".into(),
+                token_use: "access".into(),
+            },
+            &EncodingKey::from_secret(token_secret.as_bytes()),
+        )
+        .expect("oauth access token");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {token}")
+                .parse()
+                .expect("authorization header"),
+        );
+
+        assert!(require_mcp_auth(&state, &headers).is_none());
     }
 
     fn listener_state(profiles: Vec<WorkspaceProfile>) -> ListenerState {

@@ -16,9 +16,10 @@ export interface RuntimePolicyDraft {
   workspaceScriptExtensions: string;
 }
 
-export type WorkspaceTab = "services" | "diagnostics" | "planning" | "settings";
+export type WorkspaceTab = "overview" | "services" | "diagnostics" | "planning" | "settings";
 
 export const WORKSPACE_TABS: Array<{ value: WorkspaceTab; label: string }> = [
+  { value: "overview", label: "概览" },
   { value: "services", label: "项目上下文" },
   { value: "diagnostics", label: "诊断与日志" },
   { value: "planning", label: "任务规划" },

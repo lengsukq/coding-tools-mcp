@@ -297,7 +297,11 @@
 
 .wb-dashboard {
   --wb-dashboard-gap: 22px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   padding-bottom: 46px;
+  box-sizing: border-box;
 }
 
 .wb-dashboard[data-density="compact"] {
@@ -391,7 +395,11 @@
 .wb-dashboard-main {
   display: grid;
   gap: var(--wb-dashboard-gap);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   margin-top: 14px;
+  box-sizing: border-box;
 }
 
 .wb-hero {
@@ -972,8 +980,9 @@
 
 .wb-workspace-header,
 .wb-workspace-row {
-  grid-template-columns: minmax(220px, 1.5fr) minmax(110px, .65fr) minmax(150px, .9fr) minmax(100px, .55fr) auto;
-  gap: 14px;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(80px, .6fr) minmax(100px, .85fr) minmax(60px, .5fr) auto;
+  gap: 12px;
+  min-width: 0;
 }
 
 .wb-workspace-header {
@@ -1044,35 +1053,176 @@
 .wb-activity-row:hover { background: color-mix(in srgb, var(--ios-blue) 5%, transparent); }
 
 .wb-ranking {
-  display: grid;
-  gap: 8px;
-  align-content: start;
-  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
   border: 1px solid color-mix(in srgb, var(--text-main) 5%, transparent);
-  border-radius: 16px;
+  border-radius: var(--wb-inner-radius);
   background:
-    linear-gradient(150deg, color-mix(in srgb, var(--ios-purple) 4%, transparent), transparent 54%),
-    color-mix(in srgb, var(--text-main) 2.1%, transparent);
-}
-.wb-rank-row { display: grid; min-height: 28px; grid-template-columns: minmax(110px, .8fr) minmax(120px, 1.6fr) 68px; align-items: center; gap: 10px; }
-.wb-rank-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 10px; }
-.wb-rank-track { height: 5px; overflow: hidden; border-radius: 99px; background: var(--wb-surface-hover); }
-.wb-rank-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ios-blue), var(--ios-indigo)); transition: width 380ms var(--wb-ease); }
-.wb-rank-row strong { text-align: right; color: var(--text-main); font-size: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
-
-.wb-ranking > .wb-health-row {
-  min-height: 36px;
-  padding: 7px 2px;
-  border-radius: 0;
-  background: transparent;
+    radial-gradient(circle at 10% 10%, color-mix(in srgb, var(--ios-purple) 5%, transparent), transparent 45%),
+    color-mix(in srgb, var(--text-main) 1.8%, transparent);
 }
 
-.wb-ranking > .wb-health-row:hover { background: transparent; }
-.wb-ranking > .wb-health-row strong { font-weight: 650; }
-.wb-ranking .wb-rank-row + .wb-health-row {
+.wb-ranking-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wb-ranking-title {
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+}
+
+.wb-ranking-subtitle {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.wb-ranking-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-main) 4%, transparent);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wb-ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-ranking-empty {
+  padding: 14px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.wb-rank-row {
+  display: grid;
+  min-width: 0;
+  min-height: 32px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(48px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-main) 2%, transparent);
+  transition: background var(--wb-motion-fast) var(--wb-ease);
+}
+
+.wb-rank-row:hover {
+  background: color-mix(in srgb, var(--text-main) 4.5%, transparent);
+}
+
+.wb-rank-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-rank-index {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-main) 6%, transparent);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.wb-rank-index.is-top {
+  background: color-mix(in srgb, var(--ios-blue) 14%, transparent);
+  color: var(--ios-blue);
+}
+
+.wb-rank-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wb-rank-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--wb-surface-hover);
+}
+
+.wb-rank-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ios-blue), var(--ios-indigo));
+  transition: width 380ms var(--wb-ease);
+}
+
+.wb-rank-val {
+  text-align: right;
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wb-ranking-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin-top: 4px;
-  padding-top: 11px;
+  padding-top: 12px;
   border-top: 1px solid color-mix(in srgb, var(--text-main) 6%, transparent);
+}
+
+.wb-stat-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-main) 2.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-main) 4%, transparent);
+  min-width: 0;
+}
+
+.wb-stat-pill-label {
+  color: var(--text-muted);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-stat-pill-value {
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wb-health-row {
@@ -1164,7 +1314,8 @@
 .wb-health-signal.warning strong { color: #d88100; }
 
 .wb-analytics-section .wb-grid-two {
-  grid-template-columns: minmax(0, 1.55fr) minmax(290px, .82fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: start;
 }
 
 .wb-analytics-card {
@@ -1336,35 +1487,37 @@
 
 .wb-empty-inline { padding: 18px 6px; color: var(--text-muted); font-size: 11px; }
 
-@media (max-width: 1180px) {
+@media (max-width: 1240px) {
+  .wb-visual-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wb-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1040px) {
+  .wb-hero { grid-template-columns: 1fr; }
+  .wb-grid-two { grid-template-columns: 1fr; }
+  .wb-health-panel { min-height: 0; }
+  .wb-analytics-section .wb-grid-two { grid-template-columns: 1fr; }
+  .wb-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wb-workspace-header { display: none; }
+  .wb-workspace-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .wb-workspace-row > :nth-child(3), .wb-workspace-row > :nth-child(4) { display: none; }
+  .wb-workspace-actions { opacity: 1; }
   .wb-visual-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 920px) {
-  .wb-hero,.wb-grid-two { grid-template-columns: 1fr; }
-  .wb-health-panel { min-height: 0; }
-  .wb-analytics-section .wb-grid-two { grid-template-columns: 1fr; }
-  .wb-stat-strip { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .wb-workspace-header { display: none; }
-  .wb-workspace-row { grid-template-columns: minmax(0,1fr) auto auto; }
-  .wb-workspace-row > :nth-child(3), .wb-workspace-row > :nth-child(4) { display: none; }
-  .wb-workspace-actions { opacity: 1; }
-  .wb-usage-layout { grid-template-columns: 1fr; }
-  .wb-visual-overview { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .page-header { padding-inline: 20px; }
   .page-body { padding-inline: 20px; }
   .wb-dashboard-header { flex-direction: column; }
   .wb-header-actions { align-self: stretch; }
   .wb-command-button { flex: 1; }
-  .wb-stat-strip { grid-template-columns: 1fr 1fr; }
+  .wb-stat-strip { grid-template-columns: 1fr; }
   .wb-analytics-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wb-health-panel { grid-template-columns: 1fr; justify-items: start; }
   .wb-health-connections { grid-column: 1; }
   .wb-visual-overview { grid-template-columns: 1fr; }
   .wb-overview-card { min-height: 0; }
+  .wb-ranking-stats { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

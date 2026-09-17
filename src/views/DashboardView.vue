@@ -19,17 +19,16 @@ import {
   PinOff,
   Play,
   RotateCw,
-  Search,
-  Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Square,
   X,
   Zap,
 } from "@lucide/vue";
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
+import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
 import DashboardUsagePanel from "$src/components/dashboard/DashboardUsagePanel.vue";
 import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
 import type { PlanningStateDto } from "$lib/api/planning";
@@ -128,10 +127,10 @@ const copiedPathId = ref<string | null>(null);
 const commandOpen = ref(false);
 const commandQuery = ref("");
 const preferencesOpen = ref(false);
-const commandInput = ref<HTMLInputElement | null>(null);
 let planningGeneration = 0;
 let usageGeneration = 0;
 let historyGeneration = 0;
+let planningTimer = 0;
 let usageTimer = 0;
 let historyTimer = 0;
 
@@ -376,7 +375,14 @@ async function loadPlanning(items: WorkspaceProfile[]) {
     return;
   }
   const next = await loadPlanningByWorkspace(items);
-  if (generation === planningGeneration) planningByWorkspace.value = next;
+  if (generation !== planningGeneration) return;
+  const current = planningByWorkspace.value;
+  const currentIds = Object.keys(current).sort();
+  const nextIds = Object.keys(next).sort();
+  const unchanged = currentIds.length === nextIds.length
+    && currentIds.every((id, index) => id === nextIds[index]
+      && current[id]?.revision === next[id]?.revision);
+  if (!unchanged) planningByWorkspace.value = next;
 }
 
 async function loadUsage(items: WorkspaceProfile[]) {
@@ -482,14 +488,11 @@ watch(
   { immediate: true, deep: true },
 );
 
-watch(commandOpen, async (open) => {
-  if (!open) return;
-  await nextTick();
-  commandInput.value?.focus();
-});
-
 onMounted(() => {
   loadDashboardPreferences();
+  planningTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void loadPlanning(workspaces.value);
+  }, 3000);
   usageTimer = window.setInterval(() => {
     void loadUsage(workspaces.value);
     void loadGlobalOverview();
@@ -511,6 +514,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.clearInterval(planningTimer);
   window.clearInterval(usageTimer);
   window.clearInterval(historyTimer);
   window.removeEventListener("keydown", handleKeydown);
@@ -537,29 +541,14 @@ onUnmounted(() => {
           <span>Quick Actions</span>
           <span class="wb-kbd">⌘K</span>
         </button>
-        <div class="wb-preferences-wrap">
-          <button class="wb-icon-button ios-glass" type="button" title="工作台偏好" @click="preferencesOpen = !preferencesOpen">
-            <SlidersHorizontal :size="14" />
-          </button>
-          <div v-if="preferencesOpen" class="wb-preferences-popover ios-glass-strong rounded-[20px]">
-            <p class="wb-pref-title">工作台偏好</p>
-            <div class="wb-pref-row">
-              <span>信息密度</span>
-              <button type="button" @click="updateDashboardPreferences((current) => ({ ...current, density: current.density === 'compact' ? 'comfortable' : 'compact' }))">
-                {{ dashboardPreferences.density === "compact" ? "紧凑" : "舒适" }}
-              </button>
-            </div>
-            <div v-for="item in [
-              ['focus', '当前 Focus'], ['attention', '需要关注'], ['workspaces', '工作区'],
-              ['activity', '最近活动'], ['usage', 'Token Analytics'], ['health', '系统健康'],
-            ]" :key="item[0]" class="wb-pref-row">
-              <span>{{ item[1] }}</span>
-              <button type="button" @click="toggleDashboardModule(item[0] as DashboardModuleId)">
-                {{ moduleVisible(item[0] as DashboardModuleId) ? "隐藏" : "显示" }}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DashboardPreferencesPopover
+          :open="preferencesOpen"
+          :density="dashboardPreferences.density"
+          :hidden-modules="dashboardPreferences.hiddenModules"
+          @toggle-open="preferencesOpen = !preferencesOpen"
+          @toggle-density="updateDashboardPreferences((current) => ({ ...current, density: current.density === 'compact' ? 'comfortable' : 'compact' }))"
+          @toggle-module="toggleDashboardModule"
+        />
       </div>
     </header>
 
@@ -840,10 +829,48 @@ onUnmounted(() => {
           <div class="wb-grid-two">
             <DashboardUsagePanel :totals="usageTotals" :average-tokens="averageTokens" :chart="usageChart" />
             <div class="wb-ranking">
-              <div v-for="row in usageRanking" :key="row.workspace.id" class="wb-rank-row"><span :title="row.workspace.name">{{ row.workspace.name }}</span><div class="wb-rank-track"><i :style="{ width: `${row.percentage}%` }" /></div><strong>{{ formatCount(row.tokens) }}</strong></div>
-              <div class="wb-health-row"><span>Input / Output</span><strong>{{ formatCount(usageTotals.estimatedInputTokens) }} / {{ formatCount(usageTotals.estimatedOutputTokens) }}</strong></div>
-              <div class="wb-health-row"><span>Avg / Tool Call</span><strong>{{ formatCount(averageTokens) }}</strong></div>
-              <div class="wb-health-row"><span>Requests / Calls</span><strong>{{ formatCount(usageTotals.requestCount) }} / {{ formatCount(usageTotals.toolCallCount) }}</strong></div>
+              <div class="wb-ranking-header">
+                <div>
+                  <span class="wb-ranking-title">工作区消耗排行</span>
+                  <p class="wb-ranking-subtitle">各项目的 Token 占用量与相对比例</p>
+                </div>
+                <span class="wb-ranking-badge">{{ orderedWorkspaces.length }} Workspaces</span>
+              </div>
+
+              <div class="wb-ranking-list">
+                <div v-if="usageRanking.length === 0" class="wb-ranking-empty">
+                  暂无工作区用量数据
+                </div>
+                <div
+                  v-for="(row, index) in usageRanking"
+                  :key="row.workspace.id"
+                  class="wb-rank-row"
+                >
+                  <div class="wb-rank-meta">
+                    <span class="wb-rank-index" :class="{ 'is-top': index === 0 }">{{ index + 1 }}</span>
+                    <span class="wb-rank-name" :title="row.workspace.name">{{ row.workspace.name }}</span>
+                  </div>
+                  <div class="wb-rank-track">
+                    <i :style="{ width: `${row.percentage}%` }" />
+                  </div>
+                  <strong class="wb-rank-val">{{ formatCount(row.tokens) }}</strong>
+                </div>
+              </div>
+
+              <div class="wb-ranking-stats">
+                <div class="wb-stat-pill">
+                  <span class="wb-stat-pill-label">Input / Output</span>
+                  <strong class="wb-stat-pill-value">{{ formatCount(usageTotals.estimatedInputTokens) }} / {{ formatCount(usageTotals.estimatedOutputTokens) }}</strong>
+                </div>
+                <div class="wb-stat-pill">
+                  <span class="wb-stat-pill-label">Avg / Tool Call</span>
+                  <strong class="wb-stat-pill-value">{{ formatCount(averageTokens) }}</strong>
+                </div>
+                <div class="wb-stat-pill">
+                  <span class="wb-stat-pill-label">Requests / Calls</span>
+                  <strong class="wb-stat-pill-value">{{ formatCount(usageTotals.requestCount) }} / {{ formatCount(usageTotals.toolCallCount) }}</strong>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -851,18 +878,11 @@ onUnmounted(() => {
     </div>
   </section>
 
-  <Teleport to="body">
-    <div v-if="commandOpen" class="wb-command-backdrop" @click.self="commandOpen = false">
-      <div class="wb-command-palette ios-glass-strong rounded-[24px]" role="dialog" aria-modal="true">
-        <div class="wb-command-search"><Search :size="15" /><input ref="commandInput" v-model="commandQuery" placeholder="搜索工作区或操作…" @keydown.enter="commandEntries[0] && runCommand(commandEntries[0].run)" /><span class="wb-kbd">ESC</span></div>
-        <div class="wb-command-results">
-          <div v-if="commandEntries.length === 0" class="wb-empty-inline">没有匹配的操作。</div>
-          <button v-for="(entry, index) in commandEntries" v-else :key="entry.label" class="wb-command-item" :class="{ active: index === 0 }" type="button" @click="runCommand(entry.run)">
-            <Settings2 v-if="entry.hint === 'Settings'" :size="14" /><Zap v-else-if="entry.hint === 'Runtime'" :size="14" /><GitBranch v-else :size="14" />
-            <span>{{ entry.label }}</span><small>{{ entry.hint }}</small>
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+  <DashboardCommandPalette
+    v-model:query="commandQuery"
+    :open="commandOpen"
+    :entries="commandEntries"
+    @close="commandOpen = false"
+    @select="(index) => commandEntries[index] && runCommand(commandEntries[index].run)"
+  />
 </template>

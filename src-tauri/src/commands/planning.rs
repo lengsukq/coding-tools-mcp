@@ -23,6 +23,15 @@ pub fn reset_planning_state(
 }
 
 #[tauri::command]
+pub fn delete_plan(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    plan_id: String,
+) -> AppResult<PlanningState> {
+    service_for_workspace(&state, &workspace_id)?.delete_plan(&plan_id)
+}
+
+#[tauri::command]
 pub fn set_planning_mode(
     state: State<'_, AppState>,
     workspace_id: String,

@@ -29,7 +29,7 @@ pub use health::run_health_checks;
 pub use history::list_history_sessions;
 pub use logs::read_workspace_logs;
 pub use planning::{
-    accept_goal_review, accept_plan_review, get_planning_state, reject_goal_review,
+    accept_goal_review, accept_plan_review, delete_plan, get_planning_state, reject_goal_review,
     reject_plan_review, reset_planning_state, set_planning_mode,
 };
 pub use runtime::{
@@ -47,5 +47,6 @@ pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
 pub use window_chrome::{hide_to_tray, quit_app, show_main_window};
 pub use workspace::{
-    create_workspace, delete_workspace, list_workspaces, open_workspace_directory, update_workspace,
+    create_workspace, delete_workspace, detect_installed_ides, get_workspace_git_summary,
+    list_workspaces, open_workspace_directory, open_workspace_in_ide, update_workspace,
 };

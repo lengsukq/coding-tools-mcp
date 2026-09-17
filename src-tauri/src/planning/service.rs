@@ -153,6 +153,10 @@ impl PlanningService {
     pub fn update_plan(&self, request: UpdatePlanRequest) -> AppResult<Plan> {
         plan::update(&self.store, request)
     }
+
+    pub fn delete_plan(&self, plan_id: &str) -> AppResult<PlanningState> {
+        plan::delete(&self.store, plan_id)
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +356,50 @@ mod tests {
             rejected.review_feedback.as_deref(),
             Some("Add one more regression test")
         );
+        assert_eq!(state.focus_goal_id.as_deref(), Some(goal.id.as_str()));
+    }
+
+    #[test]
+    fn deleting_plan_cleans_focus_goal_links_and_execution_references() {
+        let workspace = tempdir().expect("workspace");
+        let service = PlanningService::new(workspace.path());
+        let goal = service
+            .create_goal("Goal", "Objective", Vec::new(), Vec::new())
+            .expect("goal");
+        service
+            .update_goal(UpdateGoalRequest::focus(&goal.id, true))
+            .expect("focus goal");
+        let plan = service
+            .create_plan(
+                Some(goal.id.clone()),
+                "Disposable plan",
+                "Temporary work",
+                vec!["First step".into()],
+            )
+            .expect("plan");
+        let step_id = plan.steps[0].id.clone();
+        service
+            .update_plan(UpdatePlanRequest {
+                plan_id: plan.id.clone(),
+                status: Some(PlanStatus::Active),
+                step_updates: vec![(step_id.clone(), PlanStepStatus::InProgress, None)],
+                focus: Some(true),
+            })
+            .expect("focus plan");
+        service
+            .record_execution(ExecutionLedgerUpdate {
+                state: Some("running".into()),
+                ..ExecutionLedgerUpdate::default()
+            })
+            .expect("execution");
+
+        let state = service.delete_plan(&plan.id).expect("delete plan");
+
+        assert!(state.plans.is_empty());
+        assert!(state.goals[0].plan_ids.is_empty());
+        assert_eq!(state.focus_plan_id, None);
+        assert_eq!(state.execution.plan_id, None);
+        assert_eq!(state.execution.step_id, None);
         assert_eq!(state.focus_goal_id.as_deref(), Some(goal.id.as_str()));
     }
 }

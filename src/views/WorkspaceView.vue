@@ -7,6 +7,7 @@ import ModalDialog from "../components/ui/ModalDialog.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import WorkspaceDiagnostics from "../components/workspace/WorkspaceDiagnostics.vue";
 import WorkspaceHeader from "../components/workspace/WorkspaceHeader.vue";
+import WorkspaceOverview from "../components/workspace/WorkspaceOverview.vue";
 import WorkspacePlanning from "../components/workspace/WorkspacePlanning.vue";
 import WorkspaceServices from "../components/workspace/WorkspaceServices.vue";
 import WorkspaceSettings from "../components/workspace/WorkspaceSettings.vue";
@@ -32,7 +33,7 @@ import type { WorkspaceProfile } from "$lib/types";
 const route = useRoute();
 const router = useRouter();
 const profile = ref<WorkspaceProfile | null>(null);
-const activeTab = ref<WorkspaceTab>("services");
+const activeTab = ref<WorkspaceTab>("overview");
 const pathCopied = ref(false);
 const deleteConfirmOpen = ref(false);
 const deleteBusy = ref(false);
@@ -88,33 +89,33 @@ function copyPath() {
 
 async function savePolicy(draft: RuntimePolicyDraft) {
   if (!profile.value) return;
-  profile.value = withRuntimePolicy(profile.value, draft);
-  await updateWorkspace(profile.value);
-  await load();
-  showToast("Workspace 执行策略已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
+  const current = profile.value;
+  const next = withRuntimePolicy(current, draft);
+  await updateWorkspace(next);
+  if (workspaceId.value !== current.id) return;
+  profile.value = next;
 }
 
 async function saveHistory(recording: boolean, sessions: number[]) {
   if (!profile.value) return;
-  profile.value = withHistoryContext(profile.value, recording, sessions);
-  await updateWorkspace(profile.value);
-  await load();
-  showToast("History 设置已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
-}
-
-async function saveName(name: string) {
-  if (!profile.value || !name || profile.value.name === name) return;
-  const next = { ...profile.value, name };
+  const current = profile.value;
+  const next = withHistoryContext(current, recording, sessions);
   await updateWorkspace(next);
+  if (workspaceId.value !== current.id) return;
   profile.value = next;
-  workspaces.value = workspaces.value.map((item) => item.id === next.id ? { ...item, name } : item);
 }
 
-async function savePath(path: string) {
-  if (!profile.value || !path || profile.value.path === path) return;
-  profile.value = { ...profile.value, path };
-  await updateWorkspace(profile.value);
-  showToast("工作区目录已更新，新的请求会使用新目录。", { kind: "success" });
+async function saveWorkspaceSettings(draft: { name: string; path: string }) {
+  if (!profile.value) return;
+  const current = profile.value;
+  if (current.name === draft.name && current.path === draft.path) return;
+  const next = { ...current, name: draft.name, path: draft.path };
+  await updateWorkspace(next);
+  if (workspaceId.value !== current.id) return;
+  profile.value = next;
+  workspaces.value = workspaces.value.map((item) => item.id === next.id
+    ? { ...item, name: next.name, path: next.path }
+    : item);
 }
 
 async function confirmDelete() {
@@ -133,7 +134,7 @@ async function confirmDelete() {
 
 watch(workspaceId, (id) => {
   profile.value = null;
-  activeTab.value = "services";
+  activeTab.value = "overview";
   void load(id);
 }, { immediate: true });
 
@@ -169,16 +170,23 @@ onBeforeUnmount(() => { loadGeneration += 1; });
       <SegmentedControl :items="WORKSPACE_TABS" :model-value="activeTab" @update:model-value="activeTab = $event as WorkspaceTab" />
     </div>
     <div class="mx-auto max-w-[1380px] px-7 pt-6 sm:px-8">
-      <WorkspaceServices
-          v-if="activeTab === 'services'"
+      <WorkspaceOverview
+          v-if="activeTab === 'overview'"
           :workspace-id="workspaceId"
           :profile="profile"
-          @save-policy="savePolicy"
-          @save-history="saveHistory"
+          @navigate="activeTab = $event"
+          @reveal-directory="revealDirectory"
+        />
+      <WorkspaceServices
+          v-else-if="activeTab === 'services'"
+          :workspace-id="workspaceId"
+          :profile="profile"
+          :on-save-policy="savePolicy"
+          :on-save-history="saveHistory"
         />
       <WorkspaceDiagnostics v-else-if="activeTab === 'diagnostics'" :workspace-id="workspaceId" />
       <WorkspacePlanning v-else-if="activeTab === 'planning'" :workspace-id="workspaceId" />
-      <WorkspaceSettings v-else :profile="profile" @save-name="saveName" @update-path="savePath" @delete="deleteConfirmOpen = true" />
+      <WorkspaceSettings v-else :profile="profile" :on-save="saveWorkspaceSettings" @delete="deleteConfirmOpen = true" />
     </div>
   </section>
 

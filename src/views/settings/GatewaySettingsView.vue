@@ -19,6 +19,7 @@ import {
 } from "$lib/api/global-gateway";
 import { listFrpProfiles, type FrpProfileDto } from "$lib/api/settings";
 import { getGlobalMcpOverview, startRuntime, stopRuntime, type GlobalMcpOverviewDto } from "$lib/api/workspaces";
+import { globalMcpRuntimeState } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 
 const config = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
@@ -30,6 +31,7 @@ const loading = ref(true);
 const saving = ref(false);
 const busy = ref(false);
 const checking = ref(false);
+let savePromise: Promise<void> | null = null;
 const running = computed(() => status.value?.state === "running");
 const dirty = computed(() => JSON.stringify(config) !== baseline.value);
 const tunnelOptions = [
@@ -46,6 +48,7 @@ async function refresh() {
     Object.assign(config, DEFAULT_GLOBAL_GATEWAY, nextConfig);
     baseline.value = JSON.stringify(config);
     status.value = nextStatus;
+    globalMcpRuntimeState.value = nextStatus.state;
     frpProfiles.value = nextFrp;
   } catch (error) { showToast(String(error), { title: "加载 Global MCP 连接失败", kind: "error", duration: 8000 }); }
   finally { loading.value = false; }
@@ -57,30 +60,45 @@ function normalizePort(value: number, fallback: number) {
   return port;
 }
 
-async function saveConfig() {
-  if (!dirty.value || saving.value) return;
+async function persistConfig() {
+  if (savePromise) return savePromise;
+  if (!dirty.value) return;
   saving.value = true;
-  try {
-    const payload: GlobalGatewayConfigDto = {
-      ...config,
-      localPort: normalizePort(config.localPort, 28765),
-      frpServerPort: normalizePort(config.frpServerPort, 7000),
-      publicUrl: config.publicUrl.trim(),
-      frpServer: config.frpServer.trim(),
-      frpSubdomain: config.frpSubdomain.trim(),
-    };
+  const payload: GlobalGatewayConfigDto = {
+    ...config,
+    localPort: normalizePort(config.localPort, 28765),
+    frpServerPort: normalizePort(config.frpServerPort, 7000),
+    publicUrl: config.publicUrl.trim(),
+    frpServer: config.frpServer.trim(),
+    frpSubdomain: config.frpSubdomain.trim(),
+  };
+  savePromise = (async () => {
     await setGlobalGatewayConfig(payload);
     Object.assign(config, payload);
     baseline.value = JSON.stringify(config);
+  })();
+  try {
+    await savePromise;
+  } finally {
+    savePromise = null;
+    saving.value = false;
+  }
+}
+
+async function saveConfig() {
+  if (!dirty.value && !savePromise) return;
+  try {
+    await persistConfig();
     showToast("Global MCP 连接配置已保存；端口或 Tunnel 变更会在重启 Global MCP 后应用。", { kind: "success", duration: 7000 });
-  } catch (error) { showToast(String(error), { title: "保存失败", kind: "error" }); }
-  finally { saving.value = false; }
+  } catch (error) {
+    showToast(String(error), { title: "保存失败", kind: "error" });
+  }
 }
 
 async function start() {
   if (busy.value) return;
   busy.value = true;
-  try { if (dirty.value) await saveConfig(); await startRuntime(); status.value = await getGlobalMcpOverview(); await runHealth(); showToast("Global MCP 已启动", { kind: "success" }); }
+  try { await persistConfig(); await startRuntime(); status.value = await getGlobalMcpOverview(); globalMcpRuntimeState.value = status.value.state; await runHealth(); showToast("Global MCP 已启动", { kind: "success" }); }
   catch (error) { showToast(String(error), { title: "启动失败", kind: "error" }); }
   finally { busy.value = false; }
 }
@@ -88,7 +106,7 @@ async function start() {
 async function stop() {
   if (busy.value) return;
   busy.value = true;
-  try { await stopRuntime(); status.value = await getGlobalMcpOverview(); health.value = []; showToast("Global MCP 已停止", { kind: "info" }); }
+  try { await stopRuntime(); status.value = await getGlobalMcpOverview(); globalMcpRuntimeState.value = status.value.state; health.value = []; showToast("Global MCP 已停止", { kind: "info" }); }
   catch (error) { showToast(String(error), { title: "停止失败", kind: "error" }); }
   finally { busy.value = false; }
 }
@@ -96,7 +114,7 @@ async function stop() {
 async function runHealth() {
   if (checking.value) return;
   checking.value = true;
-  try { health.value = await checkGlobalGatewayHealth(); status.value = await getGlobalMcpOverview(); }
+  try { health.value = await checkGlobalGatewayHealth(); status.value = await getGlobalMcpOverview(); globalMcpRuntimeState.value = status.value.state; }
   catch (error) { showToast(String(error), { title: "健康检查失败", kind: "error" }); }
   finally { checking.value = false; }
 }

@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
 
-use super::super::model::{Plan, PlanStatus, PlanStep, PlanStepStatus};
+use super::super::model::{Plan, PlanStatus, PlanStep, PlanStepStatus, PlanningState};
 use super::super::store::PlanningStore;
 use super::util::{new_id, non_empty, required_text, timestamp};
 use super::UpdatePlanRequest;
@@ -55,6 +55,79 @@ pub(super) fn create(
         }
         state.plans.push(plan.clone());
         Ok(plan)
+    })
+}
+
+pub(super) fn delete(store: &PlanningStore, plan_id: &str) -> AppResult<PlanningState> {
+    store.update(|state| {
+        let index = state
+            .plans
+            .iter()
+            .position(|plan| plan.id == plan_id)
+            .ok_or_else(|| AppError::Message(format!("plan not found: {plan_id}")))?;
+        let removed = state.plans.remove(index);
+        let removed_step_ids = removed
+            .steps
+            .iter()
+            .map(|step| step.id.as_str())
+            .collect::<Vec<_>>();
+
+        for goal in &mut state.goals {
+            let linked = goal.plan_ids.iter().any(|id| id == plan_id);
+            goal.plan_ids.retain(|id| id != plan_id);
+
+            let mut checkpoint_changed = false;
+            if let Some(checkpoint) = goal.execution_checkpoint.as_mut() {
+                if checkpoint
+                    .current_step_id
+                    .as_deref()
+                    .is_some_and(|id| removed_step_ids.contains(&id))
+                {
+                    checkpoint.current_step_id = None;
+                    checkpoint_changed = true;
+                }
+                let before = checkpoint.completed_step_ids.len();
+                checkpoint
+                    .completed_step_ids
+                    .retain(|id| !removed_step_ids.contains(&id.as_str()));
+                if checkpoint.completed_step_ids.len() != before {
+                    checkpoint_changed = true;
+                }
+                if checkpoint_changed {
+                    checkpoint.updated_at = timestamp();
+                }
+            }
+
+            if linked || checkpoint_changed {
+                goal.updated_at = timestamp();
+            }
+        }
+
+        if state.focus_plan_id.as_deref() == Some(plan_id) {
+            state.focus_plan_id = None;
+        }
+
+        let execution_references_plan = state.execution.plan_id.as_deref() == Some(plan_id);
+        let execution_references_step = state
+            .execution
+            .step_id
+            .as_deref()
+            .is_some_and(|id| removed_step_ids.contains(&id));
+        if execution_references_plan || execution_references_step {
+            state.execution.plan_id = None;
+            state.execution.step_id = None;
+            if state
+                .execution
+                .task_id
+                .as_deref()
+                .is_some_and(|id| removed.task_ids.iter().any(|task_id| task_id == id))
+            {
+                state.execution.task_id = None;
+            }
+            state.execution.updated_at = timestamp();
+        }
+
+        Ok(state.clone())
     })
 }
 

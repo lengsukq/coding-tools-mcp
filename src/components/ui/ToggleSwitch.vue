@@ -15,7 +15,7 @@ defineProps<{ label?: string; description?: string; disabled?: boolean }>();
       :aria-checked="model"
       :disabled="disabled"
       class="relative h-7 w-12 shrink-0 rounded-full transition duration-200"
-      :class="model ? 'bg-[#30d158]' : 'bg-black/15 dark:bg-white/16'"
+      :class="model ? 'toggle-active' : 'bg-black/15 dark:bg-white/16'"
       @click.prevent="model = !model"
     >
       <span
@@ -25,3 +25,7 @@ defineProps<{ label?: string; description?: string; disabled?: boolean }>();
     </button>
   </label>
 </template>
+
+<style scoped>
+.toggle-active { background: var(--success); }
+</style>

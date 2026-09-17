@@ -143,7 +143,7 @@ onUnmounted(() => {
     </template>
 
     <RouterView v-slot="{ Component }">
-      <component :is="Component" :key="route.fullPath" />
+      <component :is="Component" />
     </RouterView>
   </AppShell>
 

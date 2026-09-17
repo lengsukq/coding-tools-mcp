@@ -20,6 +20,32 @@ export async function openWorkspaceDirectory(path: string): Promise<void> {
   return invoke("open_workspace_directory", { path });
 }
 
+export interface WorkspaceGitSummaryDto {
+  available: boolean;
+  branch: string | null;
+  changedFiles: number;
+  ahead: number;
+  behind: number;
+  lastCommit: string | null;
+}
+
+export async function getWorkspaceGitSummary(workspaceId: string): Promise<WorkspaceGitSummaryDto> {
+  return invoke<WorkspaceGitSummaryDto>("get_workspace_git_summary", { workspaceId });
+}
+
+export interface DetectedIdeDto {
+  id: string;
+  name: string;
+}
+
+export async function detectInstalledIdes(): Promise<DetectedIdeDto[]> {
+  return invoke<DetectedIdeDto[]>("detect_installed_ides");
+}
+
+export async function openWorkspaceInIde(workspaceId: string, ideId: string): Promise<void> {
+  return invoke("open_workspace_in_ide", { workspaceId, ideId });
+}
+
 export async function deleteWorkspace(id: string): Promise<void> {
   return invoke("delete_workspace", { id });
 }

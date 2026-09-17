@@ -11,10 +11,8 @@ import type { RuntimePolicyDraft } from "$lib/workspace-page";
 const props = defineProps<{
   workspaceId: string;
   profile: WorkspaceProfile;
-}>();
-const emit = defineEmits<{
-  savePolicy: [draft: RuntimePolicyDraft];
-  saveHistory: [recording: boolean, sessions: number[]];
+  onSavePolicy: (draft: RuntimePolicyDraft) => Promise<void>;
+  onSaveHistory: (recording: boolean, sessions: number[]) => Promise<void>;
 }>();
 const section = ref("policy");
 const items = [
@@ -47,8 +45,8 @@ const policyModel = computed<RuntimePolicyDraft>(() => ({
         </div>
         <SegmentedControl :items="items" :model-value="section" @update:model-value="section = $event" />
       </div>
-      <RuntimePolicyPanel v-if="section === 'policy'" :workspace-id="workspaceId" :model="policyModel" @save="$emit('savePolicy', $event)" />
-      <HistoryContextPanel v-else :workspace-id="workspaceId" :profile="profile" @save="(recording, sessions) => $emit('saveHistory', recording, sessions)" />
+      <RuntimePolicyPanel v-if="section === 'policy'" :workspace-id="workspaceId" :model="policyModel" :on-save="onSavePolicy" />
+      <HistoryContextPanel v-else :workspace-id="workspaceId" :profile="profile" :on-save="onSaveHistory" />
     </GlassCard>
   </div>
 </template>

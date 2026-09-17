@@ -7,14 +7,14 @@ import TextField from "$src/components/ui/TextField.vue";
 import ToggleSwitch from "$src/components/ui/ToggleSwitch.vue";
 import { scanAgentContext, type AgentContextSnapshotDto } from "$lib/api/agent-context";
 import { AGENT_SOURCE_OPTIONS, toggleSource } from "$lib/agent-context";
+import { showToast } from "$lib/stores/toast";
 import type { RuntimePolicyDraft } from "$lib/workspace-page";
 
 const props = defineProps<{
   workspaceId: string;
   model: RuntimePolicyDraft;
+  onSave: (draft: RuntimePolicyDraft) => Promise<void>;
 }>();
-
-const emit = defineEmits<{ save: [draft: RuntimePolicyDraft] }>();
 
 const toolOptions = [
   { value: "compact", label: "精简开发（推荐）" },
@@ -35,6 +35,7 @@ const saving = ref(false);
 const scanning = ref(false);
 const scanResult = ref<AgentContextSnapshotDto | null>(null);
 const scanError = ref("");
+let persistPromise: Promise<boolean> | null = null;
 
 function syncModel() {
   Object.assign(draft, props.model, {
@@ -54,25 +55,50 @@ function toggleSkill(value: string, checked: boolean) {
   draft.skillSources = toggleSource(draft.skillSources, value, checked);
 }
 
-async function save() {
-  if (saving.value || !dirty.value) return;
+function normalizedDraft(): RuntimePolicyDraft {
+  return {
+    ...draft,
+    allowedCommands: draft.allowedCommands.trim(),
+    executablePaths: draft.executablePaths.trim(),
+    aiInstructions: draft.aiInstructions.trim(),
+    customInstructionPaths: draft.customInstructionPaths.trim(),
+    customSkillPaths: draft.customSkillPaths.trim(),
+    workspaceScriptExtensions: draft.workspaceScriptExtensions.trim(),
+    instructionSources: [...draft.instructionSources],
+    skillSources: [...draft.skillSources],
+  };
+}
+
+async function persist() {
+  if (persistPromise) return persistPromise;
+  if (!dirty.value) return false;
   saving.value = true;
-  try {
-    emit("save", {
-      ...draft,
-      allowedCommands: draft.allowedCommands.trim(),
-      executablePaths: draft.executablePaths.trim(),
-      aiInstructions: draft.aiInstructions.trim(),
-      customInstructionPaths: draft.customInstructionPaths.trim(),
-      customSkillPaths: draft.customSkillPaths.trim(),
-      workspaceScriptExtensions: draft.workspaceScriptExtensions.trim(),
-      instructionSources: [...draft.instructionSources],
-      skillSources: [...draft.skillSources],
+  const payload = normalizedDraft();
+  persistPromise = (async () => {
+    await props.onSave(payload);
+    Object.assign(draft, payload, {
+      instructionSources: [...payload.instructionSources],
+      skillSources: [...payload.skillSources],
     });
     baseline.value = JSON.stringify(draft);
     scanResult.value = null;
+    return true;
+  })();
+  try {
+    await persistPromise;
   } finally {
+    persistPromise = null;
     saving.value = false;
+  }
+}
+
+async function save() {
+  try {
+    if (await persist()) {
+      showToast("Workspace 执行策略已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
+    }
+  } catch (error) {
+    showToast(String(error), { title: "保存执行策略失败", kind: "error" });
   }
 }
 
@@ -81,7 +107,7 @@ async function scan() {
   scanning.value = true;
   scanError.value = "";
   try {
-    if (dirty.value) await save();
+    if (dirty.value) await persist();
     scanResult.value = await scanAgentContext(props.workspaceId);
   } catch (error) {
     scanError.value = String(error);

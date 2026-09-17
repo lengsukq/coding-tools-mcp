@@ -3,10 +3,10 @@ import { computed } from "vue";
 const props = withDefaults(defineProps<{ status?: string; label?: string }>(), { status: "stopped" });
 const tone = computed(() => {
   const value = props.status.toLowerCase();
-  if (["running", "ok", "success", "active", "completed"].includes(value)) return "bg-[#30d158]/12 text-[#15913c] dark:text-[#5ee27a]";
-  if (["starting", "stopping", "pending", "in_progress", "warning"].includes(value)) return "bg-[#ff9f0a]/14 text-[#b56b00] dark:text-[#ffb340]";
-  if (["error", "failed", "blocked", "danger"].includes(value)) return "bg-[#ff375f]/12 text-[#d91e48] dark:text-[#ff6480]";
-  return "bg-black/5 text-[var(--text-secondary)] dark:bg-white/8";
+  if (["running", "ok", "success", "active", "completed"].includes(value)) return "is-success";
+  if (["starting", "stopping", "pending", "in_progress", "warning"].includes(value)) return "is-warning";
+  if (["error", "failed", "blocked", "danger"].includes(value)) return "is-danger";
+  return "is-neutral";
 });
 </script>
 
@@ -16,3 +16,10 @@ const tone = computed(() => {
     {{ label || status }}
   </span>
 </template>
+
+<style scoped>
+.is-success { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
+.is-warning { background: color-mix(in srgb, var(--warning) 13%, transparent); color: var(--warning); }
+.is-danger { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.is-neutral { background: color-mix(in srgb, var(--text-main) 5%, transparent); color: var(--text-secondary); }
+</style>

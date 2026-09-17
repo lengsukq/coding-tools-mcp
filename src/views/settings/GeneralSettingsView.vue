@@ -126,7 +126,15 @@ onMounted(() => { void refresh(); });
 <template>
   <div class="mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="通用" description="配置全局 Agent Runtime、网络代理、自动恢复与界面运行状态。" />
-    <div class="grid gap-4">
+    <div v-if="loading" class="grid gap-4" aria-busy="true" aria-live="polite">
+      <GlassCard>
+        <div class="flex min-h-28 items-center justify-center gap-3 text-sm text-[var(--text-muted)]">
+          <RefreshCw :size="17" class="animate-spin text-[var(--primary)]" />
+          <span>正在加载全局设置与 Agent Context…</span>
+        </div>
+      </GlassCard>
+    </div>
+    <div v-else class="grid gap-4">
       <GlassCard>
         <div class="flex items-center gap-4"><div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0a84ff]/16 to-[#5e5ce6]/12 text-[#0a84ff]"><span class="text-xs font-black">CT</span></div><div class="min-w-0 flex-1"><h2 class="text-sm font-semibold">Coding Tools MCP</h2><p class="mt-1 text-xs text-[var(--text-muted)]">v{{ APP_VERSION }} · Tauri 2 · Vue 3 · Tailwind CSS 4</p></div><BaseButton variant="ghost" @click="openUrl(REPO_URL)"><ExternalLink :size="14" />仓库</BaseButton><BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate"><RefreshCw :size="14" />检查更新</BaseButton></div>
       </GlassCard>

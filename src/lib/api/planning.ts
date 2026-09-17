@@ -142,6 +142,13 @@ export async function resetPlanningState(workspaceId: string): Promise<PlanningS
   return invoke<PlanningStateDto>("reset_planning_state", { workspaceId });
 }
 
+export async function deletePlan(
+  workspaceId: string,
+  planId: string,
+): Promise<PlanningStateDto> {
+  return invoke<PlanningStateDto>("delete_plan", { workspaceId, planId });
+}
+
 export async function setPlanningMode(
   workspaceId: string,
   mode: PlanningMode,

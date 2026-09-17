@@ -23,7 +23,7 @@ defineEmits<{ confirm: []; cancel: [] }>();
 </script>
 
 <template>
-  <ModalDialog :open="open" @close="$emit('cancel')">
+  <ModalDialog :open="open" :aria-label="title" :dismissible="!busy" @close="$emit('cancel')">
     <div class="flex items-start gap-3">
       <div class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl" :class="severity === 'danger' ? 'bg-red-500/12 text-[var(--danger)]' : 'bg-amber-500/12 text-[var(--warning)]'">
         <AlertTriangle :size="19" />
