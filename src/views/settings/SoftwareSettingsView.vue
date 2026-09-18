@@ -69,13 +69,13 @@ onMounted(() => void refresh());
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-8 py-7">
+  <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="软件管理" description="管理 frpc 与 cloudflared 隧道客户端，以及下载镜像和代理策略。" />
     <ConnectionSettingsNav />
     <div class="grid gap-4">
       <GlassCard>
         <div class="mb-4 flex items-center justify-between"><div><h2 class="text-sm font-semibold">隧道客户端</h2><p class="mt-1 text-xs text-[var(--text-muted)]">应用托管的二进制会放在缓存目录，不覆盖系统安装。</p></div><BaseButton variant="ghost" size="sm" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
-        <div class="grid gap-2 md:grid-cols-2">
+        <div class="software-grid">
           <div v-for="item in software" :key="item.kind" class="ios-glass flex items-center gap-3 rounded-2xl p-3.5">
             <div class="grid h-10 w-10 place-items-center rounded-2xl bg-[#5e5ce6]/12 text-[#5e5ce6]"><Package :size="18" /></div>
             <div class="min-w-0 flex-1"><p class="text-xs font-semibold">{{ item.name }}</p><p class="mt-1 truncate font-mono text-[10px] text-[var(--text-muted)]">{{ item.installed ? item.path : "未安装" }} · {{ item.managed ? "应用托管" : "系统安装" }}</p></div>
@@ -99,3 +99,28 @@ onMounted(() => void refresh());
     </div>
   </div>
 </template>
+
+<style scoped>
+.settings-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.software-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+  min-width: 0;
+}
+
+@container app-main (max-width: 720px) {
+  .settings-page {
+    padding-inline: 16px;
+  }
+
+  .software-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

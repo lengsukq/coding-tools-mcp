@@ -124,6 +124,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         Err(output) => return output,
     };
     let operation_id = begin_operation_tracking(ctx, name, args, task_id.as_deref());
+    let command_snapshot = (name == "exec_command").then(|| crate::review::snapshot_text_files(ctx.workspace.root()));
 
     let result = routing::execute_tool(ctx, name, &effective_args);
     let mut output = match result {
@@ -137,6 +138,19 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         operation_id.as_deref(),
         &mut output,
     );
+    let command_succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
+    if let (Some(before), Some(object)) = (command_snapshot, output.as_object_mut()) {
+        if command_succeeded {
+            let after = crate::review::snapshot_text_files(ctx.workspace.root());
+            let change_id = uuid::Uuid::new_v4().simple().to_string();
+            if let Ok(Some(link)) = crate::review::create_snapshot_review(ctx.workspace.root(), &change_id, operation_id.as_deref(), "exec_command workspace changes", &before, &after) {
+                let settings = crate::settings::AppSettings::load_or_default();
+                let base = settings.global_gateway.public_url.trim().trim_end_matches('/');
+                object.insert("change_id".into(), Value::String(change_id));
+                if !base.is_empty() { object.insert("review_url".into(), Value::String(format!("{base}/review/{}?t={}", link.change_id, link.token))); }
+            }
+        }
+    }
     finish_task_tracking(ctx, name, args, task_id.as_deref(), &output);
     finish_operation_tracking(
         ctx,
@@ -290,6 +304,9 @@ fn enrich_execution_output(
     }
     if let (Some(id), Some(object)) = (operation_id, output.as_object_mut()) {
         object.insert("operation_id".into(), Value::String(id.to_string()));
+        if let Some(change_id) = object.get("change_id").and_then(Value::as_str).map(str::to_string) {
+            let _ = crate::review::attach_operation(ctx.workspace.root(), &change_id, id);
+        }
     }
     if output.get("ok").and_then(Value::as_bool) == Some(false) {
         *output = attach_harness_status(ctx, std::mem::take(output), task_id.is_none());
@@ -670,6 +687,12 @@ pub fn server_info(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
         "auth_enabled": ctx.auth.auth_enabled(),
         "auth_type": ctx.auth.auth_type,
         "endpoint_path": "/mcp",
+        "change_review": {
+            "supported": true,
+            "scope": "eligible source mutations",
+            "review_path": "/review/{change_id}",
+            "behavior": "Use the exact review_url returned by a write tool; never expose review_token separately."
+        },
         "tool_api": crate::tools::registry::tool_api_descriptor(),
         "tools": tools,
         "tool_count": tools.len()

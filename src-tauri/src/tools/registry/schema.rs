@@ -108,6 +108,24 @@ pub fn input_schema(name: &str) -> Value {
             },
             "additionalProperties": false
         }),
+        "change_review" => json!({
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["workspace", "session"],
+                    "default": "workspace",
+                    "description": "workspace compares the current working tree to HEAD; session aggregates operation reviews attributed to one AI/chat session."
+                },
+                "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional explicit session id. Usually omitted because the Gateway injects the active chat session."
+                },
+                "summary": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+        }),
         "history_manage" => history_manage_schema(),
         "planning_manage" => planning_manage_schema(),
         "task_manage" => task_manage_schema(),

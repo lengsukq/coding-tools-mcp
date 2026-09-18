@@ -123,13 +123,13 @@ onMounted(() => void refresh());
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-8 py-7">
+  <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="Global MCP 连接" description="整个应用只保留一个 MCP Endpoint；Chat 会话在连接内部选择 Workspace，文件、命令、History 与 Planning 仍按项目隔离。" />
     <ConnectionSettingsNav />
     <div class="grid gap-4">
       <GlassCard>
         <div class="flex flex-wrap items-start justify-between gap-4"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-[#0a84ff]/13 text-[#0a84ff]"><Globe2 :size="20" /></div><div><h2 class="text-sm font-semibold">唯一 MCP Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ running ? `${status?.sessionCount ?? 0} 个 Session · ${status?.workspaceCount ?? 0} 个 Workspace` : "当前未运行" }}</p></div></div><StatusPill :status="running ? 'running' : 'stopped'" /></div>
-        <div class="mt-4 grid gap-3 md:grid-cols-2"><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">本地 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.localEndpoint ?? `http://127.0.0.1:${config.localPort}/mcp` }}</code></div><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">公网 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.publicEndpoint || (config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/mcp` : "尚未配置") }}</code></div></div>
+        <div class="settings-two-col mt-4"><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">本地 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.localEndpoint ?? `http://127.0.0.1:${config.localPort}/mcp` }}</code></div><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">公网 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.publicEndpoint || (config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/mcp` : "尚未配置") }}</code></div></div>
         <div class="mt-4 flex flex-wrap gap-2"><BaseButton :busy="busy && !running" :disabled="running || loading" @click="start"><Play :size="13" />启动 Global MCP</BaseButton><BaseButton variant="secondary" :busy="busy && running" :disabled="!running" @click="stop"><Square :size="12" />停止</BaseButton><BaseButton variant="ghost" :busy="checking" @click="runHealth"><Activity :size="13" />健康检查</BaseButton><BaseButton variant="ghost" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
       </GlassCard>
 
@@ -137,11 +137,11 @@ onMounted(() => void refresh());
         <div class="mb-4"><h2 class="text-sm font-semibold">Endpoint 与公网 Tunnel</h2><p class="mt-1 text-xs text-[var(--text-muted)]">本地端口就是唯一 MCP Listener；FRP / Cloudflare 只负责把这个 Endpoint 暴露到公网。</p></div>
         <div class="grid gap-3">
           <div class="ios-glass rounded-2xl p-3"><ToggleSwitch v-model="config.enabled" label="启用公网 Tunnel" description="关闭时仍可正常使用本地 Global MCP；只是不自动暴露公网入口。" /></div>
-          <div class="grid gap-3 md:grid-cols-2"><TextField :model-value="String(config.localPort)" label="Global MCP 本地端口" type="number" @update:model-value="config.localPort = Number($event)" /><SelectField v-model="config.tunnelType" label="公网方式" :options="tunnelOptions" /></div>
+          <div class="settings-two-col"><TextField :model-value="String(config.localPort)" label="Global MCP 本地端口" type="number" @update:model-value="config.localPort = Number($event)" /><SelectField v-model="config.tunnelType" label="公网方式" :options="tunnelOptions" /></div>
           <template v-if="config.tunnelType === 'frp'">
             <SelectField v-model="config.frpProfileId" label="FRP 配置" :options="frpOptions" />
             <TextField v-model="config.frpSubdomain" label="子域名" placeholder="coding-tools" />
-            <div v-if="!config.frpProfileId" class="grid gap-3 md:grid-cols-2"><TextField v-model="config.frpServer" label="FRP 服务器" placeholder="frp.example.com" /><TextField :model-value="String(config.frpServerPort)" label="端口" type="number" @update:model-value="config.frpServerPort = Number($event)" /></div>
+            <div v-if="!config.frpProfileId" class="settings-two-col"><TextField v-model="config.frpServer" label="FRP 服务器" placeholder="frp.example.com" /><TextField :model-value="String(config.frpServerPort)" label="端口" type="number" @update:model-value="config.frpServerPort = Number($event)" /></div>
           </template>
           <div v-if="config.tunnelType === 'cloudflare'" class="rounded-2xl bg-[#64d2ff]/8 p-3 text-xs leading-5 text-[var(--text-secondary)]">Global Gateway 使用 Cloudflare Quick Tunnel；固定域名建议使用 FRP 或外部反代。</div>
           <TextField v-if="config.tunnelType === 'none'" v-model="config.publicUrl" label="外部公网 URL（可选）" placeholder="https://gateway.example.com" />
@@ -154,3 +154,28 @@ onMounted(() => void refresh());
     </div>
   </div>
 </template>
+
+<style scoped>
+.settings-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.settings-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  min-width: 0;
+}
+
+@container app-main (max-width: 700px) {
+  .settings-page {
+    padding-inline: 16px;
+  }
+
+  .settings-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

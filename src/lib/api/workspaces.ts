@@ -4,6 +4,55 @@ import type { RuntimeState, RuntimeStatus, WorkspaceProfile } from "$lib/types";
 export async function listWorkspaces(): Promise<WorkspaceProfile[]> {
   return invoke<WorkspaceProfile[]>("list_workspaces");
 }
+export async function issueWorkspaceReviewUrl(workspaceId: string, reviewId: string): Promise<string> {
+  return invoke<string>("issue_workspace_review_url", { workspaceId, reviewId });
+}
+export interface ReviewLaunchDto {
+  changeId: string;
+  url: string;
+  scope: "workspace" | "session" | string;
+  files: number;
+  additions: number;
+  deletions: number;
+}
+export async function createWorkspaceReviewUrl(workspaceId: string): Promise<ReviewLaunchDto | null> {
+  return invoke<ReviewLaunchDto | null>("create_workspace_review_url", { workspaceId });
+}
+export async function createSessionReviewUrl(workspaceId: string, sessionId: string): Promise<ReviewLaunchDto | null> {
+  return invoke<ReviewLaunchDto | null>("create_session_review_url", { workspaceId, sessionId });
+}
+export async function deleteWorkspaceReview(workspaceId: string, reviewId: string): Promise<void> {
+  return invoke("delete_workspace_review", { workspaceId, reviewId });
+}
+
+export interface WorkspaceReviewSummaryDto {
+  id: string; createdAt: number; expiresAt: number; summary: string; files: number;
+  additions: number; deletions: number; operationIds: string[];
+  storageBytes: number;
+  sessionId?: string | null;
+  scope: "operation" | "workspace" | "session" | string;
+}
+export async function listWorkspaceReviews(workspaceId: string): Promise<WorkspaceReviewSummaryDto[]> {
+  return invoke<WorkspaceReviewSummaryDto[]>("list_workspace_reviews", { workspaceId });
+}
+
+export interface WorkspaceActivityEventDto {
+  createdAt: number;
+  operations: number;
+  files: number;
+  additions: number;
+  deletions: number;
+}
+export interface WorkspaceActivityMetricsDto {
+  events: WorkspaceActivityEventDto[];
+  totalOperations: number;
+  totalFiles: number;
+  totalAdditions: number;
+  totalDeletions: number;
+}
+export async function getWorkspaceActivityMetrics(workspaceId: string): Promise<WorkspaceActivityMetricsDto> {
+  return invoke<WorkspaceActivityMetricsDto>("get_workspace_activity_metrics", { workspaceId });
+}
 
 export async function createWorkspace(
   path: string,
@@ -22,6 +71,17 @@ export async function openWorkspaceDirectory(path: string): Promise<void> {
 
 export interface WorkspaceGitSummaryDto {
   available: boolean;
+  branch: string | null;
+  changedFiles: number;
+  ahead: number;
+  behind: number;
+  lastCommit: string | null;
+  subRepositories: WorkspaceSubGitSummaryDto[];
+}
+
+export interface WorkspaceSubGitSummaryDto {
+  name: string;
+  path: string;
   branch: string | null;
   changedFiles: number;
   ahead: number;

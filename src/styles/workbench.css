@@ -1,5 +1,5 @@
 :root {
-  --wb-content-max: 1280px;
+  --wb-content-max: 1520px;
   --wb-section-gap: 24px;
   --wb-card-radius: 20px;
   --wb-inner-radius: 13px;
@@ -25,6 +25,90 @@
   --wb-motion-fast: 140ms;
   --wb-motion-normal: 210ms;
   --wb-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.wb-global-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+/* App pages live beside a persistent sidebar, so viewport media queries are not
+   sufficient: use the actual main-content width as the responsive source. */
+@container app-main (max-width: 1050px) {
+  .wb-hero,
+  .wb-grid-two,
+  .wb-analytics-section .wb-grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .wb-visual-overview,
+  .wb-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wb-workspace-header {
+    display: none;
+  }
+
+  .wb-workspace-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .wb-workspace-row > :nth-child(3),
+  .wb-workspace-row > :nth-child(4) {
+    display: none;
+  }
+
+  .wb-workspace-actions {
+    opacity: 1;
+  }
+}
+
+@container app-main (max-width: 760px) {
+  .page-header,
+  .page-body {
+    padding-inline: 16px;
+  }
+
+  .wb-dashboard-header {
+    flex-direction: column;
+  }
+
+  .wb-header-actions {
+    width: 100%;
+    align-self: stretch;
+    flex-wrap: wrap;
+  }
+
+  .wb-command-button {
+    flex: 1 1 auto;
+  }
+
+  .wb-stat-strip,
+  .wb-visual-overview,
+  .wb-analytics-metrics,
+  .wb-ranking-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .wb-health-panel {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .wb-health-connections {
+    grid-column: 1;
+  }
+
+  .wb-overview-card {
+    min-height: 0;
+  }
+
+  .wb-global-health-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .wb-surface {

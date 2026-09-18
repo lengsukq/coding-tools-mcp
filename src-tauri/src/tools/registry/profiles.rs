@@ -46,6 +46,7 @@ impl ToolProfile {
 /// without a flag day.
 pub const CORE_TOOLS: &[&str] = &[
     "server_info",
+    "change_review",
     "history_manage",
     "planning_manage",
     "task_manage",
@@ -91,6 +92,7 @@ pub const CORE_TOOLS: &[&str] = &[
 /// harness internals, and permission helpers to legacy/advanced profiles.
 pub const COMPACT_TOOLS: &[&str] = &[
     "server_info",
+    "change_review",
     "history_manage",
     "planning_manage",
     "read_file",
@@ -114,6 +116,7 @@ pub const COMPACT_TOOLS: &[&str] = &[
 
 pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "server_info",
+    "change_review",
     "planning_state",
     "check_exec_environment",
     "get_default_cwd",
@@ -139,6 +142,7 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "harness_status",
     "operation_log",
     "server_info",
+    "change_review",
     "history_manage",
     "planning_manage",
     "task_manage",
@@ -195,6 +199,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "harness_status",
     "operation_log",
     "server_info",
+    "change_review",
     "history_session_search",
     "history_session_read",
     "planning_state",
@@ -268,6 +273,7 @@ pub fn list_tools() -> Vec<Value> {
 fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
     match name {
         "server_info" => "Return compact server and workspace metadata.",
+        "change_review" => "Create a frozen Workspace or Session aggregate diff and return a remote review_url.",
         "history_manage" => "Manage project history through one stable action-based API.",
         "planning_manage" => "Manage Goal and Plan state through one stable action-based API. Goal/Plan writes remain allowed in Plan mode.",
         "task_manage" => "Manage durable task state through one stable action-based API.",

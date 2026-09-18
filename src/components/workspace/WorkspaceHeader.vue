@@ -16,7 +16,7 @@ defineEmits<{
 
 <template>
   <header class="page-header wb-workspace-header pb-4">
-    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div class="workspace-header-layout">
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-3">
           <div class="grid size-11 place-items-center rounded-[18px] bg-gradient-to-br from-[#0a84ff]/18 via-[#5e5ce6]/14 to-[#bf5af2]/16 text-[var(--ios-blue)] shadow-sm">
@@ -49,3 +49,36 @@ defineEmits<{
     </div>
   </header>
 </template>
+
+<style scoped>
+.wb-workspace-header {
+  width: 100% !important;
+  max-width: none !important;
+  margin-inline: 0 !important;
+  padding-inline: 0 !important;
+}
+
+.workspace-header-layout {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: var(--workspace-content-max, 1640px);
+  margin-inline: auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-inline: var(--workspace-gutter, 28px);
+  box-sizing: border-box;
+}
+
+@container workspace-page (max-width: 700px) {
+  .workspace-header-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .workspace-header-layout > :last-child {
+    align-self: flex-start;
+  }
+}
+</style>

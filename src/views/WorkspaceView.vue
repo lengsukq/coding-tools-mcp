@@ -5,7 +5,6 @@ import { RotateCw } from "@lucide/vue";
 import BaseButton from "../components/ui/BaseButton.vue";
 import ModalDialog from "../components/ui/ModalDialog.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
-import WorkspaceDiagnostics from "../components/workspace/WorkspaceDiagnostics.vue";
 import WorkspaceHeader from "../components/workspace/WorkspaceHeader.vue";
 import WorkspaceOverview from "../components/workspace/WorkspaceOverview.vue";
 import WorkspacePlanning from "../components/workspace/WorkspacePlanning.vue";
@@ -22,6 +21,7 @@ import { showToast } from "$lib/stores/toast";
 import {
   WORKSPACE_TABS,
   loadWorkspaceSnapshot,
+  normalizeWorkspaceProfile,
   refreshWorkspaceSnapshot,
   withHistoryContext,
   withRuntimePolicy,
@@ -133,8 +133,17 @@ async function confirmDelete() {
 }
 
 watch(workspaceId, (id) => {
-  profile.value = null;
   activeTab.value = "overview";
+  const cached = workspaces.value.find((item) => item.id === id);
+  if (cached) {
+    profile.value = normalizeWorkspaceProfile(cached);
+    loadError.value = "";
+    renderError.value = "";
+    void setLastWorkspace(id).catch(() => undefined);
+    void refreshProfile(id).catch(() => undefined);
+    return;
+  }
+  profile.value = null;
   void load(id);
 }, { immediate: true });
 
@@ -166,10 +175,12 @@ onBeforeUnmount(() => { loadGeneration += 1; });
       @reveal-directory="revealDirectory"
       @copy-path="copyPath"
     />
-    <div class="sticky top-0 z-20 mt-3 border-y border-white/35 bg-white/38 px-7 py-2.5 backdrop-blur-2xl dark:border-white/6 dark:bg-black/15 sm:px-8">
-      <SegmentedControl :items="WORKSPACE_TABS" :model-value="activeTab" @update:model-value="activeTab = $event as WorkspaceTab" />
+    <div class="workspace-tabs sticky top-0 z-20 mt-3 border-y border-white/35 bg-white/38 py-2.5 backdrop-blur-2xl dark:border-white/6 dark:bg-black/15">
+      <div class="workspace-shell">
+        <SegmentedControl :items="WORKSPACE_TABS" :model-value="activeTab" @update:model-value="activeTab = $event as WorkspaceTab" />
+      </div>
     </div>
-    <div class="mx-auto max-w-[1380px] px-7 pt-6 sm:px-8">
+    <div class="workspace-content workspace-shell pt-6">
       <WorkspaceOverview
           v-if="activeTab === 'overview'"
           :workspace-id="workspaceId"
@@ -184,7 +195,6 @@ onBeforeUnmount(() => { loadGeneration += 1; });
           :on-save-policy="savePolicy"
           :on-save-history="saveHistory"
         />
-      <WorkspaceDiagnostics v-else-if="activeTab === 'diagnostics'" :workspace-id="workspaceId" />
       <WorkspacePlanning v-else-if="activeTab === 'planning'" :workspace-id="workspaceId" />
       <WorkspaceSettings v-else :profile="profile" :on-save="saveWorkspaceSettings" @delete="deleteConfirmOpen = true" />
     </div>
@@ -199,10 +209,43 @@ onBeforeUnmount(() => { loadGeneration += 1; });
 
 <style scoped>
 .workspace-route {
+  --workspace-content-max: 1640px;
+  --workspace-gutter: clamp(20px, 2.2vw, 38px);
   display: flex;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   flex: 1;
   flex-direction: column;
   overflow: hidden;
+  container-name: workspace-page;
+  container-type: inline-size;
+}
+
+.workspace-tabs {
+  width: 100%;
+}
+
+.workspace-shell {
+  width: 100%;
+  min-width: 0;
+  max-width: var(--workspace-content-max);
+  margin-inline: auto;
+  padding-inline: var(--workspace-gutter);
+  box-sizing: border-box;
+}
+
+.workspace-content {
+  padding-bottom: 12px;
+}
+
+@container workspace-page (max-width: 760px) {
+  .workspace-route {
+    --workspace-gutter: 16px;
+  }
+
+  .workspace-content {
+    padding-top: 16px;
+  }
 }
 </style>

@@ -51,6 +51,7 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
     let mut affected = Vec::new();
     let mut summaries = Vec::new();
     let mut staged: HashMap<String, Option<String>> = HashMap::new();
+    let mut review_files: Vec<(String, String, String, String)> = Vec::new();
 
     for fp in &file_patches {
         ws.reject_unsafe_text(&fp.path)?;
@@ -75,6 +76,7 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
         };
 
         if fp.is_deleted {
+            review_files.push((resolved.display.clone(), "delete".into(), original.clone(), String::new()));
             staged.insert(resolved.display.clone(), None);
             affected.push(json!({ "path": resolved.display, "operation": "delete" }));
             summaries.push(format!("D {}", resolved.display));
@@ -83,6 +85,7 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
 
         let updated = apply_hunks(&original, &fp.hunks)?;
         let op = if resolved.existed { "update" } else { "add" };
+        review_files.push((resolved.display.clone(), op.into(), original.clone(), updated.clone()));
         staged.insert(resolved.display.clone(), Some(updated));
         affected.push(json!({ "path": resolved.display, "operation": op }));
         summaries.push(format!(
@@ -99,10 +102,19 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
     if !dry_run {
         let _transaction_backups = commit_staged(ws, &staged)?;
         let change_id = Uuid::new_v4().simple().to_string();
+        let review = crate::review::create_patch_review(
+            ws.root(), &change_id, None, &summaries.join("\n"), &review_files
+        ).ok();
+        let review_url = review.as_ref().and_then(|review| {
+            let settings = crate::settings::AppSettings::load_or_default();
+            let base = settings.global_gateway.public_url.trim().trim_end_matches('/');
+            (!base.is_empty()).then(|| format!("{base}/review/{}?t={}", review.change_id, review.token))
+        });
         return Ok(tool_ok(json!({
             "dry_run": false,
             "clean": true,
             "change_id": change_id,
+            "review_url": review_url,
             "summary": summaries.join("\n"),
             "affected_files": affected,
             "files_created": files_created,

@@ -25,7 +25,7 @@ pub use global_gateway::{
     check_global_gateway_health, get_global_gateway_config, get_global_gateway_status,
     set_global_gateway_config, start_global_gateway, stop_global_gateway,
 };
-pub use health::run_health_checks;
+pub use health::run_global_health_checks;
 pub use history::list_history_sessions;
 pub use logs::read_workspace_logs;
 pub use planning::{
@@ -47,6 +47,6 @@ pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
 pub use window_chrome::{hide_to_tray, quit_app, show_main_window};
 pub use workspace::{
-    create_workspace, delete_workspace, detect_installed_ides, get_workspace_git_summary,
-    list_workspaces, open_workspace_directory, open_workspace_in_ide, update_workspace,
+    create_session_review_url, create_workspace, create_workspace_review_url, delete_workspace, delete_workspace_review, detect_installed_ides, get_workspace_git_summary, issue_workspace_review_url, list_workspace_reviews,
+    get_workspace_activity_metrics, list_workspaces, open_workspace_directory, open_workspace_in_ide, update_workspace,
 };

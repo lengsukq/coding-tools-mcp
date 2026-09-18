@@ -126,7 +126,7 @@ async function scan() {
         description="使用 设置 → 通用 中的全局权限模式和命令白名单；关闭后可为当前 Workspace 单独覆盖。"
       />
     </div>
-    <div class="grid gap-3 md:grid-cols-2">
+    <div class="runtime-two-col">
       <SelectField v-model="draft.toolProfile" label="工具档位" :options="toolOptions" />
       <SelectField v-model="draft.permissionMode" label="权限模式" :options="permissionOptions" :disabled="draft.inheritGlobalExecutionPolicy" :hint="draft.inheritGlobalExecutionPolicy ? '当前由全局执行权限控制。' : undefined" />
     </div>
@@ -136,7 +136,7 @@ async function scan() {
     <div class="ios-glass ios-card-surface p-4">
       <p class="text-sm font-semibold">Agent Context Sources</p>
       <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">Workspace 未选择来源时继承全局设置；compact 档位只常驻核心规则，其余按需读取。</p>
-      <div class="mt-4 grid gap-4 md:grid-cols-2">
+      <div class="runtime-two-col mt-4">
         <div>
           <p class="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-[var(--text-muted)]">Instructions</p>
           <label v-for="option in AGENT_SOURCE_OPTIONS" :key="option.value" class="mb-2 flex cursor-pointer gap-2.5 rounded-2xl bg-white/35 p-2.5 dark:bg-white/4">
@@ -152,7 +152,7 @@ async function scan() {
           </label>
         </div>
       </div>
-      <div v-if="draft.instructionSources.includes('custom') || draft.skillSources.includes('custom')" class="mt-3 grid gap-3 border-t border-white/40 pt-3 md:grid-cols-2 dark:border-white/8">
+      <div v-if="draft.instructionSources.includes('custom') || draft.skillSources.includes('custom')" class="runtime-two-col mt-3 border-t border-white/40 pt-3 dark:border-white/8">
         <TextAreaField v-if="draft.instructionSources.includes('custom')" v-model="draft.customInstructionPaths" label="自定义 Instructions 文件" mono placeholder="docs/AI_RULES.md" />
         <TextAreaField v-if="draft.skillSources.includes('custom')" v-model="draft.customSkillPaths" label="自定义 Skills 根目录" mono placeholder=".my-agent/skills" />
       </div>
@@ -176,3 +176,18 @@ async function scan() {
     <div class="flex justify-end"><BaseButton variant="primary" :busy="saving" :disabled="!dirty" @click="save">保存策略</BaseButton></div>
   </form>
 </template>
+
+<style scoped>
+.runtime-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  min-width: 0;
+}
+
+@container workspace-page (max-width: 700px) {
+  .runtime-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

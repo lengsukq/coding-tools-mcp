@@ -56,12 +56,12 @@ onMounted(() => { void load(); });
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-8 py-7">
+  <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="Global MCP 密钥" description="唯一 MCP Endpoint 的认证凭据。所有 Workspace 共用这一组连接认证，项目数据与执行策略仍彼此隔离。" />
     <GlassCard>
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
       <div v-else class="grid gap-4">
-        <div v-for="item in keys" :key="item.key" class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+        <div v-for="item in keys" :key="item.key" class="key-setting-row">
           <label class="block min-w-0">
             <span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">{{ item.label }}</span>
             <SecretField v-model="secrets[item.key]" />
@@ -74,3 +74,34 @@ onMounted(() => { void load(); });
     </GlassCard>
   </div>
 </template>
+
+<style scoped>
+.settings-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.key-setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: .5rem;
+  min-width: 0;
+}
+
+@container app-main (max-width: 620px) {
+  .settings-page {
+    padding-inline: 16px;
+  }
+
+  .key-setting-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .key-setting-row > :last-child {
+    justify-self: start;
+  }
+}
+</style>

@@ -69,6 +69,14 @@ pub const P0_TOOLS: &[ToolDefinition] = tool_definitions![
         false,
     ),
     (
+        "change_review",
+        "Change review",
+        "Create a frozen read-only Workspace or Session aggregate Change Review and return its remote review_url.",
+        true,
+        false,
+        false,
+    ),
+    (
         "history_manage",
         "History manager",
         "Stable Tool API v2 entry point for history bootstrap, checkpoint, validation, search, and bounded reads.",
@@ -515,10 +523,12 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 38);
+        assert_eq!(tools.len(), 39);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_manage"));
         assert!(names.contains(&"planning_manage"));
+        assert!(names.contains(&"change_review"));
+        assert!(names.contains(&"change_review"));
         assert!(names.contains(&"task_manage"));
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
@@ -555,7 +565,7 @@ mod tests {
             .map(|tool| tool["name"].as_str().expect("tool name"))
             .collect();
 
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 21);
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"apply_patch"));
         assert!(names.contains(&"exec_command"));

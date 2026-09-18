@@ -7,6 +7,6 @@ export interface HealthItem {
   hint: string;
 }
 
-export async function runHealthChecks(workspaceId: string): Promise<HealthItem[]> {
-  return invoke<HealthItem[]>("run_health_checks", { id: workspaceId });
+export async function runGlobalHealthChecks(): Promise<HealthItem[]> {
+  return invoke<HealthItem[]>("run_global_health_checks");
 }

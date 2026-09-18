@@ -1,9 +1,7 @@
-use std::path::Path;
-
 use serde::Serialize;
 
 use crate::global_gateway::GatewayHealthItem;
-use crate::workspace::{RuntimeStatusDto, WorkspaceProfile};
+use crate::workspace::RuntimeStatusDto;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,32 +12,11 @@ pub struct HealthItem {
     pub hint: String,
 }
 
-pub fn run_health_checks(
-    profile: &WorkspaceProfile,
+pub fn run_global_health_checks(
     global_runtime: &RuntimeStatusDto,
     gateway_health: Vec<GatewayHealthItem>,
 ) -> Vec<HealthItem> {
-    let root = Path::new(&profile.path);
     let mut items = vec![
-        health_item(
-            "Workspace Root",
-            root.is_dir(),
-            if root.is_dir() {
-                profile.path.clone()
-            } else {
-                format!("目录不可用：{}", profile.path)
-            },
-            "确认 Workspace 目录仍然存在，并在工作区设置中更新路径。",
-        ),
-        health_item(
-            "Workspace Context",
-            !profile.runtime.tool_profile.trim().is_empty(),
-            format!(
-                "Tool Profile={} · Policy={}",
-                profile.runtime.tool_profile, profile.runtime.permission_mode
-            ),
-            "检查 Workspace Tool Profile 与执行策略配置。",
-        ),
         health_item(
             "Global MCP Runtime",
             global_runtime.state == "running",

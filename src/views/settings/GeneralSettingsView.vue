@@ -124,7 +124,7 @@ onMounted(() => { void refresh(); });
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-8 py-7">
+  <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="通用" description="配置全局 Agent Runtime、网络代理、自动恢复与界面运行状态。" />
     <div v-if="loading" class="grid gap-4" aria-busy="true" aria-live="polite">
       <GlassCard>
@@ -136,7 +136,7 @@ onMounted(() => { void refresh(); });
     </div>
     <div v-else class="grid gap-4">
       <GlassCard>
-        <div class="flex items-center gap-4"><div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0a84ff]/16 to-[#5e5ce6]/12 text-[#0a84ff]"><span class="text-xs font-black">CT</span></div><div class="min-w-0 flex-1"><h2 class="text-sm font-semibold">Coding Tools MCP</h2><p class="mt-1 text-xs text-[var(--text-muted)]">v{{ APP_VERSION }} · Tauri 2 · Vue 3 · Tailwind CSS 4</p></div><BaseButton variant="ghost" @click="openUrl(REPO_URL)"><ExternalLink :size="14" />仓库</BaseButton><BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate"><RefreshCw :size="14" />检查更新</BaseButton></div>
+        <div class="flex flex-wrap items-center gap-3"><div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0a84ff]/16 to-[#5e5ce6]/12 text-[#0a84ff]"><span class="text-xs font-black">CT</span></div><div class="min-w-[180px] flex-1"><h2 class="text-sm font-semibold">Coding Tools MCP</h2><p class="mt-1 text-xs text-[var(--text-muted)]">v{{ APP_VERSION }} · Tauri 2 · Vue 3 · Tailwind CSS 4</p></div><BaseButton variant="ghost" @click="openUrl(REPO_URL)"><ExternalLink :size="14" />仓库</BaseButton><BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate"><RefreshCw :size="14" />检查更新</BaseButton></div>
       </GlassCard>
 
       <GlassCard>
@@ -145,7 +145,7 @@ onMounted(() => { void refresh(); });
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-5 flex items-center justify-between"><div><h2 class="text-sm font-semibold">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-sm font-semibold">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex flex-wrap gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
         <div class="grid gap-4">
           <div v-if="runtime.migrationNotice" class="rounded-2xl border border-[#ff9f0a]/25 bg-[#ff9f0a]/8 px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
             <strong class="text-[#c56b00] dark:text-[#ffb340]">0.3.0 迁移需要复核</strong>
@@ -164,22 +164,53 @@ onMounted(() => { void refresh(); });
               <TextAreaField v-model="runtime.executablePaths" label="默认可执行 PATH" :rows="6" mono hint="已按当前平台预置常见工具目录。Workspace 额外 PATH 会排在全局 PATH 之前。" />
             </div>
           </div>
-          <div class="grid grid-cols-2 gap-3"><TextField v-model="runtime.customInstructionPaths" label="自定义 Instructions 路径" /><TextField v-model="runtime.customSkillPaths" label="自定义 Skills 路径" /></div>
+          <div class="settings-two-col"><TextField v-model="runtime.customInstructionPaths" label="自定义 Instructions 路径" /><TextField v-model="runtime.customSkillPaths" label="自定义 Skills 路径" /></div>
           <label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">全局 AI Instructions</span><textarea v-model="runtime.aiInstructions" rows="4" class="w-full resize-y rounded-xl border border-white/70 bg-white/60 p-3 text-sm outline-none focus:border-[#0a84ff]/50 dark:border-white/10 dark:bg-white/6" /></label>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="settings-two-col">
             <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Instruction 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`i-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#0a84ff]" :checked="runtime.instructionSources.includes(item.value)" @change="runtime.instructionSources = toggleSource(runtime.instructionSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
             <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Skill 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`s-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#bf5af2]" :checked="runtime.skillSources.includes(item.value)" @change="runtime.skillSources = toggleSource(runtime.skillSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
           </div>
-          <div class="grid grid-cols-2 gap-3"><ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许唯一 Global MCP Endpoint 被局域网设备访问。" /><ToggleSwitch v-model="runtime.restoreRuntimeStateOnLaunch" label="启动时恢复 Global MCP" description="应用下次启动时恢复唯一 MCP 服务，不再逐 Workspace 启停。" /></div>
+          <div class="settings-two-col"><ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许唯一 Global MCP Endpoint 被局域网设备访问。" /><ToggleSwitch v-model="runtime.restoreRuntimeStateOnLaunch" label="启动时恢复 Global MCP" description="应用下次启动时恢复唯一 MCP 服务，不再逐 Workspace 启停。" /></div>
           <div class="flex justify-end"><BaseButton :busy="runtimeSaving" @click="saveRuntime"><Save :size="14" />保存 Runtime</BaseButton></div>
         </div>
       </GlassCard>
 
       <GlassCard>
         <div class="mb-4"><h2 class="text-sm font-semibold">网络代理</h2><p class="mt-1 text-xs text-[var(--text-muted)]">供下载、Tunnel 等需要访问公网的模块使用。</p></div>
-        <div class="grid grid-cols-[220px_minmax(0,1fr)] gap-3"><label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">代理模式</span><select v-model="proxy.mode" class="h-10 w-full rounded-xl border border-white/70 bg-white/60 px-3 text-sm outline-none dark:border-white/10 dark:bg-[#232329]"><option value="none">不使用代理</option><option value="system">系统代理</option><option value="custom">自定义代理</option></select></label><TextField v-model="proxy.url" label="代理 URL" placeholder="http://127.0.0.1:7890" :disabled="proxy.mode !== 'custom'" /></div>
+        <div class="proxy-settings-grid"><label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">代理模式</span><select v-model="proxy.mode" class="h-10 w-full rounded-xl border border-white/70 bg-white/60 px-3 text-sm outline-none dark:border-white/10 dark:bg-[#232329]"><option value="none">不使用代理</option><option value="system">系统代理</option><option value="custom">自定义代理</option></select></label><TextField v-model="proxy.url" label="代理 URL" placeholder="http://127.0.0.1:7890" :disabled="proxy.mode !== 'custom'" /></div>
         <div class="mt-4 flex justify-end"><BaseButton :busy="proxySaving" @click="saveProxy"><Save :size="14" />保存代理</BaseButton></div>
       </GlassCard>
     </div>
   </div>
 </template>
+
+<style scoped>
+.settings-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.settings-two-col,
+.proxy-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  min-width: 0;
+}
+
+.proxy-settings-grid {
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+}
+
+@container app-main (max-width: 700px) {
+  .settings-page {
+    padding-inline: 16px;
+  }
+
+  .settings-two-col,
+  .proxy-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

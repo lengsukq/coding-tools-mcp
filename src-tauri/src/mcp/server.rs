@@ -202,7 +202,7 @@ pub fn handle_gateway_request(
 
 fn gateway_initialize_result(state: &GatewayState, protocol_version: &str) -> Value {
     let registry_revision = state.registry.revision().unwrap_or_default();
-    let instructions = "Coding Tools MCP is a local-first coding runtime exposed through one Global MCP connection. The user-facing workflow is Workspace → Goal/Plan → Execution → History. Workspace data is isolated: call workspace_list when the target is unknown, then workspace_select for stateful clients that preserve the same MCP transport session. Do not infer a filesystem root or use the desktop UI selection as routing authority. If the client does not preserve MCP session state, or an ordinary tool reports WORKSPACE_NOT_SELECTED after selection, use workspace_invoke with the explicit workspace_id for that operation instead of guessing or repeatedly selecting. Keep Planning as the durable source of intent and progress, Execution Ledger/checkpoints as the source of runtime progress and failures, Verification evidence as the completion gate, and History as the cross-session recovery record. When resuming existing work, continue the active Goal/Plan and its current execution checkpoint before creating duplicate work. workspace_invoke is one-off and never changes another request or Chat session.";
+    let instructions = "Coding Tools MCP is a local-first coding runtime exposed through one Global MCP connection. The user-facing workflow is Workspace → Goal/Plan → Execution → History. Workspace data is isolated: call workspace_list when the target is unknown, then workspace_select for stateful clients that preserve the same MCP transport session. Do not infer a filesystem root or use the desktop UI selection as routing authority. If the client does not preserve MCP session state, or an ordinary tool reports WORKSPACE_NOT_SELECTED after selection, use workspace_invoke with the explicit workspace_id for that operation instead of guessing or repeatedly selecting. Keep Planning as the durable source of intent and progress, Execution Ledger/checkpoints as the source of runtime progress and failures, Verification evidence as the completion gate, and History as the cross-session recovery record. When resuming existing work, continue the active Goal/Plan and its current execution checkpoint before creating duplicate work. workspace_invoke is one-off and never changes another request or Chat session. When a successful mutation returns review_url, surface that exact URL as the preferred inspection link; never reconstruct it or expose review_token separately. When the user asks for all current workspace changes, a PR-style overall diff, or all changes from the current chat/session, call change_review with scope=workspace or scope=session and surface the returned review_url.";
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
@@ -240,7 +240,26 @@ fn handle_gateway_tools_call(
     let request = resolve_tool_workspace(state, session_id, &mut args)?;
     let canonical_name = crate::tools::registry::canonical_tool_name(name);
     ensure_gateway_tool_allowed(&request, canonical_name)?;
+    let logical_session_id = params.get("_meta")
+        .and_then(|meta| meta.get("openai/session"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| session_id.map(str::to_string));
+    if canonical_name == "change_review"
+        && args.get("scope").and_then(Value::as_str) == Some("session")
+        && args.get("session_id").is_none()
+    {
+        if !args.is_object() { args = json!({}); }
+        if let Some(value) = logical_session_id.as_deref() {
+            args["_review_session_id"] = Value::String(value.to_string());
+        }
+    }
     let structured = call_tool(request.tools.as_ref(), canonical_name, &args);
+    if let (Some(session), Some(change)) = (logical_session_id.as_deref(), structured.get("change_id").and_then(Value::as_str)) {
+        let _ = crate::review::attach_session(request.tools.workspace.root(), change, session);
+    }
     let mut result = wrap_mcp_tool_result(canonical_name, &args, structured);
     if canonical_name == "server_info" {
         attach_gateway_server_info(&mut result, state, &request);
@@ -332,7 +351,19 @@ fn handle_workspace_tool(
             // The outer workspace_id is the authoritative scope for workspace_invoke.
             // Ignore a nested scope field so it can never redirect the request.
             remove_workspace_scope(&mut nested_args)?;
+            let logical_session_id = args.get("_host_session_key").and_then(Value::as_str)
+                .map(str::trim).filter(|value| !value.is_empty())
+                .unwrap_or(session_id);
+            if canonical_name == "change_review"
+                && nested_args.get("scope").and_then(Value::as_str) == Some("session")
+                && nested_args.get("session_id").is_none()
+            {
+                nested_args["_review_session_id"] = Value::String(logical_session_id.to_string());
+            }
             let structured = call_tool(request.tools.as_ref(), canonical_name, &nested_args);
+            if let Some(change) = structured.get("change_id").and_then(Value::as_str) {
+                let _ = crate::review::attach_session(request.tools.workspace.root(), change, logical_session_id);
+            }
             let mut result = wrap_mcp_tool_result(canonical_name, &nested_args, structured);
             if let Some(object) = result
                 .get_mut("structuredContent")
@@ -484,6 +515,7 @@ fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     } else {
         base_instructions
     };
+    let review_instructions = "Change Review is supported for eligible source mutations. When a successful write result contains review_url, surface that exact complete URL to the user as the preferred way to inspect what the AI changed. Never reconstruct, shorten, or modify review_url, and never expose review_token separately. If several writes return review URLs, keep the URLs relevant to the current user task. Do not claim that command-side filesystem changes are included unless their result explicitly provides a review_url.";
     let current_ai_instructions = state.current_ai_instructions();
     let configured = if current_ai_instructions.trim().is_empty() {
         String::new()
@@ -522,6 +554,7 @@ fn initialize_result(state: &SharedState, protocol_version: &str) -> Value {
     }
     let instructions = [
         base_instructions,
+        review_instructions,
         configured.as_str(),
         skill_catalog.as_str(),
         history_context.as_str(),
@@ -574,7 +607,7 @@ fn tool_arguments(name: &str, params: &Value) -> Value {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
-    if name.starts_with("history_session_") {
+    if name.starts_with("history_session_") || name == "workspace_invoke" {
         if let Some(session_key) = params
             .get("_meta")
             .and_then(|meta| meta.get("openai/session"))

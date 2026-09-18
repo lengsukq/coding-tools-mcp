@@ -30,6 +30,7 @@ import { useRouter } from "vue-router";
 import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
 import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
 import DashboardUsagePanel from "$src/components/dashboard/DashboardUsagePanel.vue";
+import { runGlobalHealthChecks, type HealthItem } from "$lib/api/health";
 import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
 import type { PlanningStateDto } from "$lib/api/planning";
 import { getLastWorkspaceId } from "$lib/api/settings";
@@ -113,6 +114,8 @@ const historyByWorkspace = ref<Record<string, HistorySessionSummary[]>>({});
 const usageHistory = ref<UsagePoint[]>([]);
 const usageWorkspaceKey = ref("");
 const globalRuntimeBusy = ref(false);
+const globalHealth = ref<HealthItem[]>([]);
+const globalHealthBusy = ref(false);
 const gatewayConfig = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
 const globalOverview = ref<GlobalMcpOverviewDto>({
   state: "stopped",
@@ -133,6 +136,19 @@ let historyGeneration = 0;
 let planningTimer = 0;
 let usageTimer = 0;
 let historyTimer = 0;
+let healthTimer = 0;
+
+async function loadGlobalHealth() {
+  if (globalHealthBusy.value) return;
+  globalHealthBusy.value = true;
+  try {
+    globalHealth.value = await runGlobalHealthChecks();
+  } catch {
+    // Preserve the last successful snapshot so the dashboard does not flicker offline.
+  } finally {
+    globalHealthBusy.value = false;
+  }
+}
 
 const workspaceCount = computed(() => workspaces.value.length);
 const orderedWorkspaces = computed(() => {
@@ -498,6 +514,9 @@ onMounted(() => {
     void loadGlobalOverview();
   }, 5000);
   historyTimer = window.setInterval(() => void loadHistory(workspaces.value), 30_000);
+  healthTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void loadGlobalHealth();
+  }, 10_000);
   void getLastWorkspaceId().then((id) => {
     lastWorkspaceId.value = id ?? "";
   }).catch(() => {
@@ -510,6 +529,7 @@ onMounted(() => {
   });
   void getGlobalGatewayConfig().then((config) => Object.assign(gatewayConfig, config)).catch(() => undefined);
   void loadGlobalOverview();
+  void loadGlobalHealth();
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -517,6 +537,7 @@ onUnmounted(() => {
   window.clearInterval(planningTimer);
   window.clearInterval(usageTimer);
   window.clearInterval(historyTimer);
+  window.clearInterval(healthTimer);
   window.removeEventListener("keydown", handleKeydown);
 });
 </script>
@@ -783,7 +804,14 @@ onUnmounted(() => {
           </section>
 
           <section v-if="moduleVisible('health')" class="wb-section wb-surface">
-            <div class="wb-section-heading"><div><h3>系统健康</h3><p>Global MCP、唯一公网入口和 Planning 状态压缩成可扫描信息。</p></div><Gauge :size="14" /></div>
+            <div class="wb-section-heading"><div><h3>系统健康</h3><p>Global MCP 与公网入口属于全局运行时，不绑定任何单个 Workspace。</p></div><Gauge :size="14" /></div>
+            <div v-if="globalHealth.length" class="wb-global-health-grid mb-3">
+              <div v-for="item in globalHealth" :key="item.label" class="rounded-xl bg-black/[.025] px-3 py-2.5 dark:bg-white/[.035]">
+                <div class="flex items-center justify-between gap-3"><strong class="text-[11px]">{{ item.label }}</strong><span class="text-[10px] font-semibold" :class="item.ok ? 'text-[var(--success)]' : 'text-[var(--danger)]'">{{ item.ok ? '正常' : '异常' }}</span></div>
+                <p class="mt-1 text-[10px] leading-4 text-[var(--text-secondary)]">{{ item.detail }}</p>
+                <p v-if="item.hint" class="mt-1 text-[9px] leading-4 text-[var(--text-muted)]">{{ item.hint }}</p>
+              </div>
+            </div>
             <div class="wb-health-overview">
               <div class="wb-mix-chart">
                 <div class="wb-mix-head"><span>Global MCP</span><strong>{{ globalMcpRuntimeState }}</strong></div>

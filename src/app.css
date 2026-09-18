@@ -22,6 +22,12 @@
   --primary-soft: rgba(37, 99, 235, 0.08);
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   --accent-gradient-hover: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+  --ios-blue: #0a84ff;
+  --accent-indigo: #5e5ce6;
+  --accent-purple: #bf5af2;
+  --accent-success: #30d158;
+  --accent-warning: #ff9f0a;
+  --accent-danger: #ff453a;
 
   --success: #10b981;
   --success-soft: rgba(16, 185, 129, 0.1);
@@ -128,6 +134,12 @@
   --primary-soft: rgba(59, 130, 246, 0.16);
   --accent-gradient: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
   --accent-gradient-hover: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  --ios-blue: #0a84ff;
+  --accent-indigo: #6e6cf4;
+  --accent-purple: #c56cf0;
+  --accent-success: #30d158;
+  --accent-warning: #ff9f0a;
+  --accent-danger: #ff453a;
 
   --success: #10b981;
   --success-soft: rgba(16, 185, 129, 0.16);

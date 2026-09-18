@@ -42,7 +42,7 @@ async function openRepo() {
 
     <aside class="ios-sidebar">
       <div class="ios-sidebar__header" data-tauri-drag-region>
-        <div class="flex items-start justify-between gap-2" data-tauri-drag-region>
+        <div class="ios-sidebar__header-row flex items-start justify-between gap-2" data-tauri-drag-region>
           <button
             type="button"
             class="ios-brand"
@@ -223,6 +223,8 @@ async function openRepo() {
   flex-direction: column;
   overflow: hidden;
   background: rgba(246,248,252,.68);
+  container-name: app-main;
+  container-type: inline-size;
 }
 
 .ios-settings-scroll {
@@ -246,4 +248,97 @@ async function openRepo() {
 :global(.dark) .ios-brand:hover,
 :global(.dark) .ios-sidebar__settings:hover { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.055); }
 :global(.dark) .ios-main { background: rgba(11,14,21,.78); }
+
+@media (max-width: 1080px) {
+  .ios-sidebar {
+    width: 210px;
+    flex-basis: 210px;
+  }
+}
+
+@media (max-width: 760px) {
+  .ios-sidebar {
+    width: 72px;
+    flex-basis: 72px;
+  }
+
+  .ios-sidebar__header {
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__header-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ios-brand {
+    flex: 0 0 auto;
+    justify-content: center;
+    padding: 5px;
+  }
+
+  .ios-brand > div:last-child,
+  .ios-sidebar__section-label,
+  .ios-sidebar__settings span,
+  .ios-sidebar__meta p,
+  .ios-sidebar__repo span {
+    display: none;
+  }
+
+  .ios-sidebar__body {
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__section-head {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .ios-sidebar__footer {
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__settings {
+    justify-content: center;
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__meta {
+    justify-content: center;
+    padding: 0;
+  }
+
+  :global(.ios-workspace-nav) {
+    min-height: 46px !important;
+    justify-content: center;
+    gap: 0 !important;
+    padding: 7px !important;
+  }
+
+  :global(.ios-workspace-nav.active) {
+    min-height: 46px !important;
+  }
+
+  :global(.ios-workspace-nav__content) {
+    display: none !important;
+  }
+
+  :global(.ios-workspace-nav__status) {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+  }
+}
+
+@container app-main (max-width: 760px) {
+  .tx-settings-tabs {
+    padding-inline: 14px;
+  }
+
+  .ios-settings-scroll > :global(div) {
+    max-width: 100% !important;
+    padding-inline: 16px !important;
+  }
+}
 </style>

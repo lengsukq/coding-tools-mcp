@@ -92,10 +92,10 @@ onMounted(() => void refresh());
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-8 py-7">
+  <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="FRP 配置" description="集中管理 FRP 服务器与 Token，各 Workspace 只需选择 Profile 并配置自己的子域名。" />
     <ConnectionSettingsNav />
-    <div class="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]">
+    <div class="frp-settings-grid">
       <GlassCard>
         <div class="mb-5 flex items-center gap-3">
           <div class="grid h-10 w-10 place-items-center rounded-2xl bg-[#64d2ff]/14 text-[#0a84ff]"><RadioTower :size="18" /></div>
@@ -115,7 +115,7 @@ onMounted(() => void refresh());
         <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
         <p v-else-if="profiles.length === 0" class="py-8 text-center text-xs text-[var(--text-muted)]">暂无 FRP 配置。</p>
         <div v-else class="space-y-2">
-          <div v-for="profile in profiles" :key="profile.id" class="ios-glass flex items-center justify-between gap-3 rounded-2xl p-3.5">
+          <div v-for="profile in profiles" :key="profile.id" class="frp-profile-row ios-glass rounded-2xl p-3.5">
             <div class="min-w-0"><p class="truncate text-xs font-semibold">{{ profile.name }}</p><p class="mt-1 truncate font-mono text-[10px] text-[var(--text-muted)]">{{ profile.server }}:{{ profile.serverPort }} · Token {{ profile.hasToken ? "已配置" : "未配置" }}</p></div>
             <div class="flex gap-1"><BaseButton variant="ghost" size="sm" @click="edit(profile)"><Edit3 :size="12" />编辑</BaseButton><BaseButton variant="danger" size="sm" @click="pendingDelete = profile"><Trash2 :size="12" />删除</BaseButton></div>
           </div>
@@ -136,3 +136,43 @@ onMounted(() => void refresh());
     @cancel="pendingDelete = null"
   />
 </template>
+
+<style scoped>
+.settings-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.frp-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+}
+
+.frp-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  min-width: 0;
+}
+
+@container app-main (max-width: 900px) {
+  .frp-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@container app-main (max-width: 640px) {
+  .settings-page {
+    padding-inline: 16px;
+  }
+
+  .frp-profile-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+}
+</style>
