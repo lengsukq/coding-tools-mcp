@@ -584,7 +584,7 @@ onUnmounted(() => {
       </div>
 
       <template v-else>
-        <section v-if="moduleVisible('focus')" class="wb-hero wb-surface">
+        <section v-if="moduleVisible('focus')" class="wb-hero wb-surface ios-fade-in-up ios-stagger-1">
           <div class="wb-focus">
             <div class="wb-eyebrow text-[var(--ios-purple)]"><Sparkles :size="13" /> 当前执行</div>
             <template v-if="primaryFocus">
@@ -626,26 +626,26 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <div class="wb-stat-strip mt-4">
+        <div class="wb-stat-strip mt-5 ios-fade-in-up ios-stagger-2">
           <div class="wb-stat wb-surface wb-stat--blue">
-            <div class="wb-stat-head"><span>AI Executions</span><i><Boxes :size="15" /></i></div>
+            <div class="wb-stat-head"><span>AI Executions</span><i><Boxes :size="16" /></i></div>
             <strong>{{ executionStats.running }}</strong><small><b>{{ executionStats.changedFiles }}</b> 个执行变更文件</small>
           </div>
           <div class="wb-stat wb-surface wb-stat--indigo">
-            <div class="wb-stat-head"><span>MCP Tokens</span><i><Cpu :size="15" /></i></div>
+            <div class="wb-stat-head"><span>MCP Tokens</span><i><Cpu :size="16" /></i></div>
             <strong>{{ formatCount(usageTotals.estimatedTokens) }}</strong><small><b>{{ formatCount(usageTotals.toolCallCount) }}</b> 次工具调用</small>
           </div>
           <div class="wb-stat wb-surface wb-stat--purple">
-            <div class="wb-stat-head"><span>Active Goals</span><i><ListChecks :size="15" /></i></div>
+            <div class="wb-stat-head"><span>Active Goals</span><i><ListChecks :size="16" /></i></div>
             <strong>{{ planningStats.activeGoals }}</strong><small><b>{{ planningStats.activePlans }}</b> 个 Plan 进行中</small>
           </div>
           <div class="wb-stat wb-surface" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
-            <div class="wb-stat-head"><span>Verification</span><i><ShieldCheck :size="15" /></i></div>
+            <div class="wb-stat-head"><span>Verification</span><i><ShieldCheck :size="16" /></i></div>
             <strong>{{ executionStats.verified }}</strong><small>{{ executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收` }}</small>
           </div>
         </div>
 
-        <section class="wb-visual-overview">
+        <section class="wb-visual-overview mt-5 ios-fade-in-up ios-stagger-3">
           <article class="wb-overview-card wb-overview-card--flow wb-surface">
             <div class="wb-overview-head">
               <div>
@@ -761,7 +761,7 @@ onUnmounted(() => {
           </article>
         </section>
 
-        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface">
+        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface ios-fade-in-up ios-stagger-3">
           <div class="wb-section-heading"><div><h3>需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>
           <div class="wb-attention-list">
             <button v-for="item in attentionItems" :key="`${item.workspace.id}-${item.title}`" class="wb-attention-row" type="button" @click="openWorkspace(item.workspace.id)">
@@ -771,7 +771,7 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface">
+        <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface ios-fade-in-up ios-stagger-4">
           <div class="wb-section-heading"><div><h3>工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)]">{{ workspaceCount }} Workspaces</span></div>
           <div class="wb-workspace-list">
             <div class="wb-workspace-header"><span>Workspace</span><span>Context</span><span>Planning</span><span>Tokens</span><span /></div>
@@ -792,12 +792,33 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <div class="wb-grid-two">
+        <div class="wb-grid-two ios-fade-in-up ios-stagger-5">
           <section v-if="moduleVisible('activity')" class="wb-section wb-surface">
             <div class="wb-section-heading"><div><h3>最近活动</h3><p>汇总各工作区最近的 History Session。</p></div><Activity :size="14" /></div>
             <div v-if="recentActivities.length" class="wb-activity-list">
-              <button v-for="item in recentActivities" :key="`${item.workspace.id}-${item.timestamp}-${item.title}`" class="wb-activity-row" type="button" @click="openWorkspace(item.workspace.id)">
-                <span class="wb-activity-time">{{ formatRelativeTime(item.timestamp) }}</span><div class="min-w-0"><strong>{{ item.workspace.name }} · {{ item.title }}</strong><p>{{ item.detail }}</p></div><ArrowUpRight :size="11" />
+              <button
+                v-for="item in recentActivities"
+                :key="`${item.workspace.id}-${item.timestamp}-${item.title}`"
+                class="wb-activity-row"
+                type="button"
+                @click="openWorkspace(item.workspace.id)"
+              >
+                <div class="wb-activity-icon">
+                  <Activity :size="13" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="wb-activity-head">
+                    <span class="wb-activity-workspace-badge">{{ item.workspace.name }}</span>
+                    <strong class="wb-activity-title">{{ item.title }}</strong>
+                  </div>
+                  <p class="wb-activity-detail">{{ item.detail }}</p>
+                </div>
+                <div class="wb-activity-meta">
+                  <span v-if="formatRelativeTime(item.timestamp) !== '—'" class="wb-activity-time">
+                    {{ formatRelativeTime(item.timestamp) }}
+                  </span>
+                  <ArrowUpRight :size="12" class="wb-activity-arrow" />
+                </div>
               </button>
             </div>
             <div v-else class="wb-empty-inline">还没有可汇总的 History Session。</div>
@@ -852,7 +873,7 @@ onUnmounted(() => {
           </section>
         </div>
 
-        <section v-if="moduleVisible('usage')" class="wb-section wb-surface wb-analytics-section">
+        <section v-if="moduleVisible('usage')" class="wb-section wb-surface wb-analytics-section ios-fade-in-up ios-stagger-6">
           <div class="wb-section-heading"><div><h3>Token Analytics</h3><p>MCP JSON 传输量估算，用于观察工具调用趋势。</p></div><Zap :size="14" /></div>
           <div class="wb-grid-two">
             <DashboardUsagePanel :totals="usageTotals" :average-tokens="averageTokens" :chart="usageChart" />

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Archive, CheckCircle2, Circle, RefreshCw, RotateCcw, Target, Trash2 } from "@lucide/vue";
+import { Archive, Check, CheckCircle2, Circle, RefreshCw, RotateCcw, Target, Trash2 } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ConfirmDialog from "../ui/ConfirmDialog.vue";
 import GlassCard from "../ui/GlassCard.vue";
@@ -123,24 +123,50 @@ onUnmounted(() => window.clearInterval(refreshTimer));
         <template v-if="focusedGoal">
           <h2 class="text-base font-semibold">{{ focusedGoal.title }}</h2>
           <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{{ focusedGoal.objective }}</p>
-          <div class="planning-detail-grid mt-4">
+          <div class="planning-criteria-list mt-4">
             <div
               v-for="item in focusedGoal.success_criteria"
               :key="item.id"
-              class="flex items-start gap-2 rounded-xl border px-2.5 py-2 text-[11px] transition"
-              :class="item.completed
-                ? 'border-[#30d158]/12 bg-[#30d158]/[.055]'
-                : 'border-black/[.035] bg-black/[.018] dark:border-white/[.045] dark:bg-white/[.03]'"
+              class="planning-criteria-item"
+              :class="{ 'is-completed': item.completed }"
             >
-              <CheckCircle2 v-if="item.completed" :size="14" class="mt-0.5 shrink-0 text-[#30d158]" />
-              <Circle v-else :size="14" class="mt-0.5 shrink-0 text-[var(--text-muted)] opacity-70" />
-              <span :class="item.completed ? 'text-[var(--text-muted)] line-through decoration-[#30d158]/45' : 'text-[var(--text-secondary)]'">{{ item.text }}</span>
+              <div class="planning-criteria-icon">
+                <CheckCircle2 v-if="item.completed" :size="15" />
+                <Circle v-else :size="15" />
+              </div>
+              <span class="planning-criteria-text" :class="{ 'is-done': item.completed }">{{ item.text }}</span>
             </div>
           </div>
         </template>
         <p v-else class="py-5 text-center text-xs text-[var(--text-muted)]">当前没有 focused Goal</p>
       </GlassCard>
-      <GlassCard class="min-h-[260px]"><div class="mb-3 flex items-center justify-between"><h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Plan</h3><StatusPill v-if="focusedPlan" :status="focusedPlan.status" /></div><template v-if="focusedPlan"><h2 class="text-base font-semibold">{{ focusedPlan.title }}</h2><p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{{ focusedPlan.objective }}</p><div class="planning-detail-grid mt-4"><div v-for="(step, index) in focusedPlan.steps" :key="step.id" class="flex items-start gap-2 rounded-xl bg-black/[.022] px-2.5 py-2 text-[11px] dark:bg-white/[.035]"><span class="mt-0.5 w-4 shrink-0 text-right text-[10px] text-[var(--text-muted)]">{{ index + 1 }}</span><span class="min-w-0 flex-1 leading-4">{{ step.title }}</span><StatusPill class="shrink-0" :status="step.status" /></div></div></template><p v-else class="py-5 text-center text-xs text-[var(--text-muted)]">当前没有 focused Plan</p></GlassCard>
+
+      <GlassCard class="min-h-[260px]">
+        <div class="mb-3 flex items-center justify-between">
+          <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Plan</h3>
+          <StatusPill v-if="focusedPlan" :status="focusedPlan.status" />
+        </div>
+        <template v-if="focusedPlan">
+          <h2 class="text-base font-semibold">{{ focusedPlan.title }}</h2>
+          <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{{ focusedPlan.objective }}</p>
+          <div class="planning-step-list mt-4">
+            <div
+              v-for="(step, index) in focusedPlan.steps"
+              :key="step.id"
+              class="planning-step-item"
+              :class="`is-${step.status}`"
+            >
+              <div class="planning-step-badge">
+                <Check v-if="step.status === 'completed'" :size="12" :stroke-width="2.5" />
+                <span v-else>{{ index + 1 }}</span>
+              </div>
+              <span class="planning-step-text">{{ step.title }}</span>
+              <StatusPill class="planning-step-pill" :status="step.status" />
+            </div>
+          </div>
+        </template>
+        <p v-else class="py-5 text-center text-xs text-[var(--text-muted)]">当前没有 focused Plan</p>
+      </GlassCard>
     </div>
 
     <GlassCard v-if="state?.plans.length">
@@ -203,11 +229,108 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   gap: .5rem;
 }
 
-.planning-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .5rem;
+.planning-step-list,
+.planning-criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planning-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: all 160ms var(--ease-spring);
+}
+
+.planning-step-item:hover {
+  border-color: rgba(0, 113, 227, 0.3);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.planning-step-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--primary);
+  font-size: 10.5px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.planning-step-item.is-completed .planning-step-badge {
+  background: rgba(52, 199, 89, 0.12);
+  color: #248a3d;
+}
+:global([data-theme="dark"]) .planning-step-item.is-completed .planning-step-badge,
+:global(.dark) .planning-step-item.is-completed .planning-step-badge {
+  color: #30d158;
+}
+
+.planning-step-text {
   min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.planning-step-item.is-completed .planning-step-text {
+  color: var(--text-secondary);
+}
+
+.planning-step-pill {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.planning-criteria-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  font-size: 11.5px;
+  transition: all 160ms ease;
+}
+
+.planning-criteria-item.is-completed {
+  border-color: rgba(52, 199, 89, 0.2);
+  background: rgba(52, 199, 89, 0.04);
+}
+
+.planning-criteria-icon {
+  margin-top: 1px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.planning-criteria-item.is-completed .planning-criteria-icon {
+  color: var(--success);
+}
+
+.planning-criteria-text {
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.planning-criteria-text.is-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(52, 199, 89, 0.4);
 }
 
 @container workspace-page (max-width: 820px) {
@@ -221,10 +344,6 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   .planning-toolbar-copy,
   .planning-revision {
     display: none;
-  }
-
-  .planning-detail-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

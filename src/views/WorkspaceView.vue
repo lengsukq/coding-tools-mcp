@@ -175,7 +175,7 @@ onBeforeUnmount(() => { loadGeneration += 1; });
       @reveal-directory="revealDirectory"
       @copy-path="copyPath"
     />
-    <div class="workspace-tabs sticky top-0 z-20 mt-3 border-y border-white/35 bg-white/38 py-2.5 backdrop-blur-2xl dark:border-white/6 dark:bg-black/15">
+    <div class="workspace-tabs mt-3">
       <div class="workspace-shell">
         <SegmentedControl :items="WORKSPACE_TABS" :model-value="activeTab" @update:model-value="activeTab = $event as WorkspaceTab" />
       </div>

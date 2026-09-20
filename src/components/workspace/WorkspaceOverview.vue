@@ -209,10 +209,26 @@ watch(() => props.workspaceId, () => void load());
           </div>
         </div>
         <div class="overview-stat-grid mt-5">
-          <div class="overview-stat"><GitBranch :size="15" /><strong>{{ git === null ? "—" : (git.available ? (git.branch || "detached") : (git.subRepositories.length ? git.subRepositories.length + " 个子 Git" : "非 Git")) }}</strong><small>{{ git?.available ? '当前分支' : (git?.subRepositories.length ? '一级子仓库' : '当前目录') }}</small></div>
-          <button type="button" class="overview-stat text-left transition hover:bg-[#0a84ff]/8" @click="viewWorkspaceReview"><Activity :size="15" /><strong>{{ changedFiles }}</strong><small>{{ creatingWorkspaceReview ? '正在生成 Diff…' : '变更文件 · 查看全部 Diff' }}</small></button>
-          <div class="overview-stat"><Activity :size="15" /><strong>{{ activeSessions }}</strong><small>活跃会话</small></div>
-          <div class="overview-stat"><ShieldCheck :size="15" /><strong>{{ verificationCount }}</strong><small>验证证据</small></div>
+          <div class="overview-stat">
+            <div class="overview-stat-icon is-blue"><GitBranch :size="15" /></div>
+            <strong>{{ git === null ? "—" : (git.available ? (git.branch || "detached") : (git.subRepositories.length ? git.subRepositories.length + " 个子 Git" : "非 Git")) }}</strong>
+            <small>{{ git?.available ? '当前分支' : (git?.subRepositories.length ? '一级子仓库' : '当前目录') }}</small>
+          </div>
+          <button type="button" class="overview-stat is-interactive text-left" @click="viewWorkspaceReview">
+            <div class="overview-stat-icon is-cyan"><Activity :size="15" /></div>
+            <strong>{{ changedFiles }}</strong>
+            <small>{{ creatingWorkspaceReview ? '正在生成 Diff…' : '变更文件 · 查看全部 Diff' }}</small>
+          </button>
+          <div class="overview-stat">
+            <div class="overview-stat-icon is-purple"><Activity :size="15" /></div>
+            <strong>{{ activeSessions }}</strong>
+            <small>活跃会话</small>
+          </div>
+          <div class="overview-stat">
+            <div class="overview-stat-icon is-green"><ShieldCheck :size="15" /></div>
+            <strong>{{ verificationCount }}</strong>
+            <small>验证证据</small>
+          </div>
         </div>
         <p v-if="git?.available && git.lastCommit" class="mt-3 truncate text-[11px] text-[var(--text-secondary)]">最近提交 · {{ git.lastCommit }}</p>
         <div v-if="git?.subRepositories.length" class="mt-3">
@@ -357,12 +373,65 @@ watch(() => props.workspaceId, () => void load());
 .overview-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: .5rem;
+  gap: .75rem;
   min-width: 0;
 }
-.overview-stat { display:flex; min-width:0; flex-direction:column; gap:.25rem; border-radius:1rem; background:color-mix(in srgb,var(--text-primary) 4%,transparent); padding:.75rem; }
-.overview-stat strong { margin-top:.15rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.8rem; }
-.overview-stat small { font-size:.625rem; color:var(--text-muted); }
+.overview-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .35rem;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--text-main) 6%, transparent);
+  background: color-mix(in srgb, var(--text-main) 2.5%, transparent);
+  padding: .85rem;
+  transition: all 200ms var(--ease-apple-spring);
+}
+.overview-stat.is-interactive { cursor: pointer; }
+.overview-stat.is-interactive:hover,
+.overview-stat:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ios-blue) 25%, transparent);
+  background: color-mix(in srgb, var(--text-main) 4.5%, transparent);
+}
+.overview-stat strong {
+  margin-top: .2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .92rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+}
+.overview-stat small {
+  font-size: .65rem;
+  color: var(--text-muted);
+}
+.overview-stat-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  color: white;
+}
+.overview-stat-icon.is-blue {
+  background: linear-gradient(135deg, var(--ios-blue), var(--ios-indigo));
+  box-shadow: 0 3px 10px rgba(0, 113, 227, 0.28);
+}
+.overview-stat-icon.is-cyan {
+  background: linear-gradient(135deg, var(--ios-cyan), var(--ios-blue));
+  box-shadow: 0 3px 10px rgba(100, 210, 255, 0.28);
+}
+.overview-stat-icon.is-purple {
+  background: linear-gradient(135deg, var(--ios-purple), #9333ea);
+  box-shadow: 0 3px 10px rgba(191, 90, 242, 0.28);
+}
+.overview-stat-icon.is-green {
+  background: linear-gradient(135deg, var(--ios-green), #16a34a);
+  box-shadow: 0 3px 10px rgba(48, 209, 88, 0.28);
+}
 .overview-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; border-bottom:1px solid color-mix(in srgb,var(--text-primary) 7%,transparent); padding:.42rem 0; color:var(--text-muted); }
 .overview-row:last-child { border-bottom:0; }
 .overview-row strong { color:var(--text-secondary); font-weight:600; }

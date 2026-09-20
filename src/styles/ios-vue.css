@@ -1,59 +1,149 @@
+/* Apple / iOS Design System Tokens & Foundations */
+
 :root,
 [data-theme="light"] {
+  /* Apple Signature Colors */
+  --ios-blue: #0071e3;
+  --ios-blue-rgb: 0, 113, 227;
+  --ios-indigo: #5856d6;
+  --ios-purple: #af52de;
+  --ios-pink: #ff2d55;
+  --ios-orange: #ff9500;
+  --ios-green: #34c759;
+  --ios-cyan: #32ade6;
+  --ios-teal: #30b0c7;
+  --ios-yellow: #ffcc00;
+
+  --accent-indigo: var(--ios-indigo);
+  --accent-purple: var(--ios-purple);
+  --accent-cyan: var(--ios-cyan);
+
+  /* Apple Canvas & Surface Base */
+  --ios-canvas-bg: #F5F5F7;
+  --ios-glass: #FFFFFF;
+  --ios-glass-strong: #FFFFFF;
+  --ios-glass-border: rgba(0, 0, 0, 0.08);
+  --ios-card-outline: rgba(0, 0, 0, 0.06);
+  --ios-hairline: rgba(0, 0, 0, 0.07);
+  --ios-hairline-subtle: rgba(0, 0, 0, 0.04);
+
+  /* Apple Multi-layer Shadows & Specular Hairlines */
+  --ios-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --ios-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ios-shadow:
+    var(--ios-specular-top),
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 14px rgba(0, 0, 0, 0.03);
+  --ios-shadow-float:
+    var(--ios-specular-top),
+    0 2px 5px rgba(0, 0, 0, 0.05),
+    0 12px 32px rgba(0, 0, 0, 0.08);
+  --ios-shadow-hover:
+    var(--ios-specular-top),
+    0 3px 8px rgba(0, 0, 0, 0.06),
+    0 14px 36px rgba(0, 0, 0, 0.07);
+
+  /* Apple Squircle Radius - Refined & Crisp */
+  --ios-radius-xs: 6px;
+  --ios-radius-sm: 8px;
+  --ios-radius-md: 10px;
+  --ios-radius-lg: 14px;
+  --ios-radius-xl: 16px;
+  --ios-radius: var(--ios-radius-lg);
+
+  /* Theme Tokens mapped to Apple Palette */
+  --page-bg: var(--ios-canvas-bg);
+  --main-content-bg: transparent;
+  --card-bg: var(--ios-glass);
+  --card-border: var(--ios-glass-border);
+  --card-shadow: var(--ios-shadow);
+  --card-radius: var(--ios-radius-lg);
+
+  --primary: var(--ios-blue);
+  --primary-dark: #0060c2;
+  --primary-soft: rgba(0, 113, 227, 0.10);
+  --success: var(--ios-green);
+  --warning: var(--ios-orange);
+  --danger: var(--ios-pink);
+
+  /* Button fills according to Apple Hierarchy */
+  --btn-primary-bg: #0071e3;
+  --btn-primary-hover: #0077ed;
+  --btn-secondary-bg: #E5E5EA;
+  --btn-secondary-hover: #dcdce0;
+  --btn-secondary-text: #1d1d1f;
+
+  /* Input fills */
+  --input-bg: #F2F2F7;
+  --input-bg-focus: #FFFFFF;
+  --input-border: rgba(0, 0, 0, 0.04);
+  --input-ring: rgba(0, 113, 227, 0.18);
+
+  /* Apple Gradients */
+  --accent-gradient: linear-gradient(135deg, #0071e3 0%, #5856d6 55%, #af52de 100%);
+  --accent-gradient-hover: linear-gradient(135deg, #0077ed 0%, #4d4bc2 55%, #9c40cb 100%);
+
+  /* Physics Springs */
+  --ease-apple-spring: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-apple-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-apple-bounce: cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+
+[data-theme="dark"],
+.dark {
   --ios-blue: #0a84ff;
+  --ios-blue-rgb: 10, 132, 255;
   --ios-indigo: #5e5ce6;
   --ios-purple: #bf5af2;
   --ios-pink: #ff375f;
   --ios-orange: #ff9f0a;
   --ios-green: #30d158;
   --ios-cyan: #64d2ff;
-  --accent-indigo: var(--ios-indigo);
-  --accent-purple: var(--ios-purple);
-  --accent-cyan: var(--ios-cyan);
-  --ios-canvas-bg: #f4f6fb;
-  --ios-glass: rgba(255, 255, 255, 0.66);
-  --ios-glass-strong: rgba(255, 255, 255, 0.84);
-  --ios-glass-border: rgba(255, 255, 255, 0.76);
-  --ios-hairline: rgba(15, 23, 42, 0.065);
-  --ios-shadow: 0 1px 2px rgba(40, 52, 79, 0.035), 0 12px 32px rgba(67, 82, 122, 0.075);
-  --ios-shadow-float: 0 18px 54px rgba(50, 63, 98, 0.14);
-  --ios-radius-sm: 12px;
-  --ios-radius-md: 16px;
-  --ios-radius-lg: 20px;
-  --ios-radius-xl: 24px;
-  --ios-radius: var(--ios-radius-lg);
-  /* Keep these as plain colors. Several legacy/layout rules use them in color-mix(). */
-  --page-bg: var(--ios-canvas-bg);
-  --main-content-bg: #f6f8fc;
-  --card-bg: var(--ios-glass);
-  --card-border: rgba(255, 255, 255, 0.74);
-  --card-shadow: var(--ios-shadow);
-  --card-radius: var(--ios-radius);
-  --primary: var(--ios-blue);
-  --primary-dark: #0071e3;
-  --primary-soft: rgba(10, 132, 255, 0.12);
-  --success: var(--ios-green);
-  --warning: var(--ios-orange);
-  --danger: var(--ios-pink);
-  --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 52%, #bf5af2 100%);
-  --accent-gradient-hover: linear-gradient(135deg, #0077ed 0%, #514fc7 54%, #a943dc 100%);
-}
+  --ios-teal: #40c8e0;
+  --ios-yellow: #ffd60a;
 
-[data-theme="dark"] {
-  --ios-canvas-bg: #0d0f15;
-  --ios-glass: rgba(28, 31, 40, 0.7);
-  --ios-glass-strong: rgba(36, 40, 50, 0.86);
-  --ios-glass-border: rgba(255, 255, 255, 0.12);
-  --ios-hairline: rgba(255, 255, 255, 0.075);
-  --ios-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 16px 40px rgba(0, 0, 0, 0.22);
-  --ios-shadow-float: 0 22px 60px rgba(0, 0, 0, 0.35);
+  --ios-canvas-bg: #141417;
+  --ios-glass: #202025;
+  --ios-glass-strong: #25252b;
+  --ios-glass-border: rgba(255, 255, 255, 0.08);
+  --ios-card-outline: rgba(255, 255, 255, 0.07);
+  --ios-hairline: rgba(255, 255, 255, 0.08);
+  --ios-hairline-subtle: rgba(255, 255, 255, 0.04);
+
+  --ios-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --ios-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ios-shadow:
+    var(--ios-specular-top),
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.28);
+  --ios-shadow-float:
+    var(--ios-specular-top),
+    0 2px 6px rgba(0, 0, 0, 0.45),
+    0 16px 40px rgba(0, 0, 0, 0.4);
+  --ios-shadow-hover:
+    var(--ios-specular-top),
+    0 4px 12px rgba(0, 0, 0, 0.5),
+    0 20px 48px rgba(0, 0, 0, 0.45);
+
   --page-bg: var(--ios-canvas-bg);
-  --main-content-bg: #10131b;
+  --main-content-bg: transparent;
   --card-bg: var(--ios-glass);
   --card-border: var(--ios-glass-border);
   --card-shadow: var(--ios-shadow);
+
+  --btn-primary-bg: #0a84ff;
+  --btn-primary-hover: #198fff;
+  --btn-secondary-bg: rgba(255, 255, 255, 0.09);
+  --btn-secondary-hover: rgba(255, 255, 255, 0.14);
+  --btn-secondary-text: #f5f5f7;
+
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-bg-focus: rgba(255, 255, 255, 0.11);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --input-ring: rgba(10, 132, 255, 0.24);
 }
 
+/* Global Canvas Background */
 html,
 body,
 #app {
@@ -64,27 +154,129 @@ body {
   min-width: 0;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(100, 210, 255, 0.19), transparent 27%),
-    radial-gradient(circle at 86% 18%, rgba(191, 90, 242, 0.12), transparent 27%),
-    radial-gradient(circle at 72% 88%, rgba(48, 209, 88, 0.08), transparent 30%),
-    var(--ios-canvas-bg);
-  background-attachment: fixed;
+  background-color: var(--ios-canvas-bg);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-[data-theme="dark"] body {
-  background:
-    radial-gradient(circle at 12% 8%, rgba(10, 132, 255, 0.14), transparent 29%),
-    radial-gradient(circle at 88% 16%, rgba(191, 90, 242, 0.11), transparent 28%),
-    var(--ios-canvas-bg);
+/* ─── Aurora Ambient Background Elements ─── */
+.ios-aurora-bg {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  background-color: var(--ios-canvas-bg);
 }
 
+.ios-aurora-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(85px);
+  will-change: transform, opacity;
+  opacity: 0.85;
+}
+
+/* Orb 1: Apple Electric Sky Blue (top-left / central) */
+.ios-aurora-orb--blue {
+  width: 58vw;
+  height: 58vw;
+  max-width: 780px;
+  max-height: 780px;
+  top: -16vw;
+  left: 12vw;
+  background: radial-gradient(circle, rgba(162, 210, 255, 0.48) 0%, rgba(130, 195, 255, 0.22) 50%, rgba(162, 210, 255, 0) 72%);
+  animation: aurora-float-1 24s ease-in-out infinite alternate;
+}
+
+/* Orb 2: Apple Soft Violet / Lavender (top-right / upper) */
+.ios-aurora-orb--violet {
+  width: 54vw;
+  height: 54vw;
+  max-width: 720px;
+  max-height: 720px;
+  top: -8vw;
+  right: -8vw;
+  background: radial-gradient(circle, rgba(200, 180, 255, 0.38) 0%, rgba(180, 160, 245, 0.18) 48%, rgba(200, 180, 255, 0) 70%);
+  animation: aurora-float-2 28s ease-in-out infinite alternate;
+}
+
+/* Orb 3: Apple Gentle Mint / Cyan (bottom-right / lower) */
+.ios-aurora-orb--cyan {
+  width: 48vw;
+  height: 48vw;
+  max-width: 640px;
+  max-height: 640px;
+  bottom: -14vw;
+  right: 18vw;
+  background: radial-gradient(circle, rgba(100, 210, 255, 0.28) 0%, rgba(50, 180, 240, 0.12) 52%, rgba(100, 210, 255, 0) 72%);
+  animation: aurora-float-3 22s ease-in-out infinite alternate;
+}
+
+[data-theme="dark"] .ios-aurora-orb--blue,
+.dark .ios-aurora-orb--blue {
+  background: radial-gradient(circle, rgba(10, 132, 255, 0.22) 0%, rgba(10, 132, 255, 0.08) 52%, transparent 72%);
+  opacity: 0.9;
+}
+
+[data-theme="dark"] .ios-aurora-orb--violet,
+.dark .ios-aurora-orb--violet {
+  background: radial-gradient(circle, rgba(191, 90, 242, 0.18) 0%, rgba(191, 90, 242, 0.06) 50%, transparent 70%);
+  opacity: 0.9;
+}
+
+[data-theme="dark"] .ios-aurora-orb--cyan,
+.dark .ios-aurora-orb--cyan {
+  background: radial-gradient(circle, rgba(100, 210, 255, 0.14) 0%, rgba(48, 209, 88, 0.05) 50%, transparent 72%);
+  opacity: 0.85;
+}
+
+/* Aurora Keyframe Animations */
+@keyframes aurora-float-1 {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(5vw, 6vh, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-4vw, 3vh, 0) scale(0.95);
+  }
+}
+
+@keyframes aurora-float-2 {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-6vw, 5vh, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(3vw, -4vh, 0) scale(0.96);
+  }
+}
+
+@keyframes aurora-float-3 {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-5vw, -6vh, 0) scale(1.09);
+  }
+  100% {
+    transform: translate3d(4vw, 3vh, 0) scale(0.94);
+  }
+}
+
+/* ─── Glassmorphism & Squircles ─── */
 .ios-glass {
   border: 1px solid var(--ios-glass-border);
   background: var(--ios-glass);
   box-shadow: var(--ios-shadow);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 .ios-glass-strong {
@@ -96,33 +288,70 @@ body {
 }
 
 .ios-card-surface {
-  border-radius: var(--ios-radius-lg);
+  border-radius: var(--ios-radius-xl);
 }
 
 .ios-inset-surface {
   border-radius: var(--ios-radius-md);
-  background: color-mix(in srgb, var(--text-main) 2.4%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 46%, transparent);
+  background: color-mix(in srgb, var(--text-main) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
 }
 
 .ios-floating-surface {
-  border-radius: var(--ios-radius-xl);
+  border-radius: 26px;
   box-shadow: var(--ios-shadow-float);
 }
 
-.ios-accent-orb {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(70px);
-  opacity: 0.24;
-  pointer-events: none;
-}
-
 .ios-card-lift {
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  transition:
+    transform 220ms var(--ease-apple-spring),
+    box-shadow 220ms var(--ease-apple-spring),
+    border-color 220ms var(--ease-apple-spring);
 }
 
 .ios-card-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 22px 60px rgba(73, 88, 134, 0.18);
+  box-shadow: var(--ios-shadow-hover);
 }
+
+/* ─── Apple Physics & Fade-in-up Entry ─── */
+@keyframes apple-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.ios-fade-in-up {
+  animation: apple-fade-in-up 0.48s var(--ease-apple-smooth) both;
+}
+
+/* Bento Stagger Delays */
+.ios-stagger-1 { animation-delay: 0.04s; }
+.ios-stagger-2 { animation-delay: 0.09s; }
+.ios-stagger-3 { animation-delay: 0.14s; }
+.ios-stagger-4 { animation-delay: 0.19s; }
+.ios-stagger-5 { animation-delay: 0.24s; }
+
+/* Apple Icon Squircle Container */
+.ios-icon-box {
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 180ms var(--ease-apple-spring);
+}
+.ios-icon-box:hover {
+  transform: scale(1.05);
+}
+
+.ios-icon-box--blue { background: linear-gradient(135deg, #0071e3 0%, #4d6cff 100%); color: white; }
+.ios-icon-box--indigo { background: linear-gradient(135deg, #5856d6 0%, #7c5cff 100%); color: white; }
+.ios-icon-box--purple { background: linear-gradient(135deg, #af52de 0%, #d45fff 100%); color: white; }
+.ios-icon-box--orange { background: linear-gradient(135deg, #ff9500 0%, #ffaa33 100%); color: white; }
+.ios-icon-box--green { background: linear-gradient(135deg, #34c759 0%, #30d158 100%); color: white; }
+.ios-icon-box--pink { background: linear-gradient(135deg, #ff2d55 0%, #ff5277 100%); color: white; }
