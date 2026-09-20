@@ -19,11 +19,26 @@
   <a href="README.md">中文</a> · <a href="README.en.md">English</a> · <a href="https://github.com/lengsukq/coding-tools-mcp/releases/latest">下载最新版</a>
 </p>
 
-Coding Tools MCP 是一个 Rust + Tauri 2 桌面应用。选择项目目录并启动服务后，AI Agent 就能通过 MCP 读取文件、修改代码、运行命令和测试、查看 Git 状态，并把关键进度保存为项目内的历史会话。它更接近“AI 打开一个会记住开发进度的 IDE 工作区”；普通开发工具不要求先创建 Task，历史会话则负责在新对话中恢复上下文。
+Coding Tools MCP 是一个 Rust + Tauri 2 构建的 **local-first AI coding runtime**。桌面端只需要启动一个 Global MCP Endpoint，多个本地项目作为彼此隔离的 Workspace 注册进去；每个 Chat Session 再选择自己要操作的 Workspace。AI Agent 可以通过 MCP 读取和修改代码、运行命令与测试、检查 Git、维护 Goal / Plan，并把关键进度保存为项目内的历史会话。
+
+它更接近一个“给 AI 用的长期开发工作台”，而不是为每个项目重复启动一套 MCP 服务：**Workspace 负责项目边界，Planning 负责意图与进度，Execution / Verification 负责执行证据，History 负责跨会话恢复。**
 
 ![Coding Tools MCP 工作区总览](docs/images/workspace-overview.png)
 
-*当前版本的工作区概览：当前选中的工作区是 `coding-tools-mcp`，集中查看 MCP 状态、项目目录和会话恢复入口。*
+*当前版本的工作区概览：集中查看当前分支、全部 Diff、活跃 Session、验证证据、7 天 AI 修改趋势、Git Health、Goal / Plan 进度以及执行质量。*
+
+## v0.3.3：最近的重点改进
+
+0.3.x 的主要变化不是继续增加孤立工具，而是把“多工作区 AI 开发”这条主链路收拢成一个完整工作台：
+
+- **一个 Global MCP 管理所有 Workspace**：从 0.3.0 开始取消“每个项目一套 MCP / Tunnel”的模型，只保留一个 `/mcp` 入口；Chat Session 通过 `workspace_list` / `workspace_select` 选择项目，Workspace 之间仍保持数据和 Planning 隔离。
+- **Workspace Session 路由更稳定**：0.3.2 补强了客户端不稳定保留 Transport Session 时的 Workspace 选择保持；需要显式、一次性操作其他项目时可以使用 `workspace_invoke`，不会污染其他 Chat Session。
+- **Workspace Overview 变成真正的项目总览**：展示当前分支、一级子 Git、变更文件、活跃 Session、验证证据、最近提交、7 天 AI Activity、Git Health、Goal / Plan 完成度和执行错误；支持一键生成整个 Workspace 的 Diff / Review，并可直接用检测到的 IDE 打开项目。
+- **侧边栏直接显示开发状态**：Workspace 项会显示当前 Git 分支、clean / changed 状态、当前 Goal / Plan、完成进度和执行状态；切换工作区采用缓存优先加载，减少重复请求造成的卡顿。
+- **Dashboard 从“服务状态页”升级为 AI 工作台**：新增 AI Executions、Verification、Token Flow、Chat → Workspace Session 路由、Planning 完成度、Workspace Token Distribution、最近 History Session 和“需要关注”异常聚合。
+- **界面和响应式布局重做**：0.3.3 统一 Apple / iOS 风格设计 token、浅色/深色模式、表单与状态组件，并重新整理 Dashboard、Workspace、Planning 等页面在宽屏和窄屏下的布局。
+
+这意味着现在推荐的使用路径已经非常明确：**连接一次 Global MCP → 选择 Workspace → 维护 Goal / Plan → 执行与验证 → History 留档。**
 
 ## 功能全景：特点与优势
 
@@ -31,7 +46,7 @@ Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspa
 
 | 功能 | 主要特点 | 带来的优势 |
 | --- | --- | --- |
-| 工作区管理 | 每个项目有独立目录、名称、执行策略、Planning 与 History | 多项目切换更清晰，降低把命令执行到错误项目的风险 |
+| 工作区管理 | 每个项目有独立目录、执行策略、Planning 与 History；侧边栏直接展示分支、变更和当前 Goal / Plan | 多项目切换更清晰，降低把命令执行到错误项目的风险 |
 | MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | 单一协议入口减少重复状态机和兼容分支，策略、错误和权限更容易保持一致 |
 | 连接与公网入口 | 支持本地地址、Global Gateway、FRP 和 Cloudflare Tunnel | 本机开发和远程 ChatGPT 接入可以使用同一工作区，部署方式更灵活 |
 | 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer 和静态 Client | 既能提供现代 OAuth 安全流程，也能兼容旧客户端和简单部署 |
@@ -42,33 +57,34 @@ Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspa
 
 ### 桌面端全局 Dashboard：不进入工作区也能掌握全局状态
 
-全局 Dashboard 把多个 Workspace 的运行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看服务在线率、最近工作区、MCP 状态、工作区运行矩阵和当前 Planning 焦点。
+全局 Dashboard 把多个 Workspace 的运行与执行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看当前 AI Execution、验证证据、Global MCP 状态、Chat Session 路由、Planning 焦点和需要人工关注的异常。
 
 ![全局 Dashboard 运行总览](docs/images/dashboard-overview.png)
 
-*运行健康度、最近工作区和每个服务的连接方式集中展示，适合快速判断当前系统是否正常。*
+*从当前执行到 Session 路由集中展示，先判断“AI 正在做什么、是否有阻塞、请求落在哪个 Workspace”。*
 
-Dashboard 还会持续刷新当前应用会话的 Token 估算，并提供连接方式、AI Planning 队列和服务 Token 明细。Token 统计来自本地服务请求大小估算，不保存请求正文。
+Dashboard 还会持续刷新 MCP Token 估算，并提供 Token Flow、请求成功率、Planning 完成度、Workspace Token Distribution、最近 History Session 与系统健康状态。Token 统计来自本地服务请求大小估算，不保存请求正文。
 
 ![Dashboard 指标、连接方式、AI Planning 与 Token 用量](docs/images/dashboard-insights.png)
 
-*从工作区数量、在线服务、待人工验收到 Token 趋势，帮助开发者在开始任务前先了解整体运行成本和待处理状态。*
+*从执行数量、验证状态、Planning、Session 路由到 Token 趋势，帮助开发者快速判断当前工作负载和待处理事项。*
 
 ### 1. 工作区管理：把项目变成长期可识别的开发上下文
 
-工作区是 Coding Tools MCP 的项目上下文单位。它绑定一个本地项目目录，同时维护自己的执行策略、Planning 与 History。MCP Listener 和认证属于应用级 Global MCP；桌面端可以保存多个项目，但每次操作都会明确显示当前工作区名称和路径。
+工作区是 Coding Tools MCP 的项目上下文单位。它绑定一个本地项目目录，同时维护自己的执行策略、Planning 与 History。MCP Listener、认证和公网入口属于应用级 Global MCP；桌面端可以保存多个项目，而 Chat Session 的 Workspace 选择彼此隔离。
 
 **特点**
 
 - 项目目录是事实来源，工作区名称和项目配置分离维护。
 - MCP session 在全局连接内选择 Workspace，规划状态和历史会话仍围绕所选工作区组织。
-- 支持从侧边栏快速切换项目，并在概览页查看服务是否运行。
+- 侧边栏直接展示当前分支、clean / changed、当前 Goal / Plan、完成进度和执行状态。
+- Workspace Overview 支持主仓库与一级子 Git 状态、7 天修改趋势、执行质量、整个工作区 Diff / Review 和 IDE 快速打开。
 
 **优势**
 
-- 多项目并行时不容易混淆目录、端口和公网地址。
+- 多项目并行时不容易混淆目录、当前 Plan 和执行上下文。
 - AI 每次连接都能获得明确的项目边界，减少“对错仓库执行命令”的风险。
-- 配置跟随项目工作区保存，重启桌面端后仍可继续使用。
+- 状态读取采用缓存优先并在后台刷新，频繁切换 Workspace 时减少重复加载造成的卡顿。
 
 ### 2. MCP 工具运行时：一套内核覆盖真实开发动作
 
@@ -142,7 +158,7 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 - 计划、执行和验收分层，既保留灵活性，又能对高风险修改增加约束。
 - 开发者可以在桌面端快速看到“现在做到了哪一步、还差什么、是否已验证”。
 
-### 7. 历史会话：让上下文跟着仓库走
+### 6. 历史会话：让上下文跟着仓库走
 
 每个项目的长期开发记录保存在 `docs/history-session/`。Markdown 档案保留完整事实，`memory/state.json` 和 `memory/manifest.json` 只提供有界的当前状态与索引；新对话可以通过启动提示词、搜索和分页读取恢复需要的上下文。
 
@@ -158,7 +174,7 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 - 新 Agent 能快速获得当前状态，再按需精读旧决策，节省上下文和时间。
 - 重要的修改、测试、风险和下一步可以形成可追溯的交接记录。
 
-### 8. 日志、健康检查与安全边界：让问题可见，让权限有边界
+### 7. 日志、健康检查与安全边界：让问题可见，让权限有边界
 
 桌面端提供服务日志、端点检查、OAuth 元数据检查和运行状态展示。统一工具内核则把工作区路径、命令策略、仓库保护和危险操作确认放在同一套 Policy 中处理。
 
@@ -190,7 +206,9 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
   → 复制“公网 MCP 地址”
   → ChatGPT 开启开发人员模式
   → 新建 MCP 插件并粘贴地址
-  → 完成授权，在新对话中开始开发
+  → 完成授权
+  → workspace_list / workspace_select 选择项目
+  → 在新对话中开始开发
 ```
 
 第一次使用只需要记住两件事：**桌面端负责把项目变成 MCP 工作区，ChatGPT 负责通过公网 `/mcp` 地址连接它。**
@@ -261,16 +279,16 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 支持 MCP 的客户端使用界面中的公网 MCP URL。OAuth 当前支持 Authorization Code + PKCE S256、Dynamic Client Registration（`/register`）和 Refresh Token。支持动态注册的客户端可以直接读取服务端 metadata 并注册自己的 Client；不支持 DCR 的旧客户端仍可继续使用桌面端配置的静态 Client ID / Secret。
 
-首次连接可直接检查工作区；历史初始化不再是必需步骤：
+首次连接建议先明确选择 Workspace；历史初始化不再是必需步骤：
 
 ```text
+workspace_list
+workspace_select(workspace_id=...)
 server_info
-get_default_cwd
 git_status
-check_exec_environment
 ```
 
-这样 Agent 不需要依赖聊天上下文猜测当前项目、工作目录和执行能力。需要显式创建或恢复历史目标时，再手动调用 `history_session_bootstrap`。
+这样 Agent 不需要依赖聊天上下文猜测当前项目。如果客户端不能稳定保留 MCP Session，单次跨 Workspace 操作可以改用 `workspace_invoke(workspace_id=..., tool=..., arguments=...)`，而不是反复切换或猜测目录。需要显式创建或恢复历史目标时，再使用 History 能力。
 
 ## ChatGPT 接入方式
 
@@ -314,8 +332,8 @@ check_exec_environment
 创建一个启用了该插件的新对话，并发送：
 
 ```text
-请使用 Coding Tools MCP 调用 server_info、get_default_cwd 和 git_status，
-告诉我当前连接的工作区、默认目录和 Git 状态。
+请使用 Coding Tools MCP 先调用 workspace_list，选择 coding-tools-mcp 工作区，
+然后调用 server_info 和 git_status，告诉我当前 Workspace、MCP 状态和 Git 状态。
 ```
 
 如果能够返回当前项目的信息，说明“桌面端 → 公网隧道 → OAuth → ChatGPT → MCP 工具”链路已经打通。当前会话默认允许记录检查点；旧会话是否注入由工作区的“历史上下文”面板多选控制。
@@ -336,7 +354,7 @@ check_exec_environment
 - **面向真实开发**：文件、命令、Git、测试和长时间运行的进程都在同一个 Workspace 中。
 - **跨会话持续开发**：新对话先获得有界的当前状态，需要精确旧上下文时按关键词定位并读取原始档案，无需反复向 AI 解释项目背景和当前进度。
 - **进度可追溯**：每轮任务完成后可保存结构化检查点，决策、修改、测试结果和下一步都留在项目目录中。
-- **多工作区管理**：一个桌面客户端可以保存多个项目，并管理各自的 MCP 和公网地址。
+- **多工作区管理**：一个 Global MCP 连接管理多个本地项目，Chat Session 分别选择自己的 Workspace，不需要为每个项目重复配置 MCP 和公网入口。
 - **连接 ChatGPT 更直接**：内置 Streamable HTTP、OAuth、Bearer Token、FRP 和 Cloudflare 隧道。
 - **默认工具面保持简单**：稳定的核心工具默认可用，高级 Harness 能力按需开启。
 
@@ -382,10 +400,11 @@ check_exec_environment
 | 文件修改 | `apply_patch` |
 | 命令执行 | `exec_command`、`write_stdin`、`read_output`、`kill_session` |
 | Git | `git_status`、`git_diff`、`git_log`、`git_show`、`git_blame` |
-| 环境 | `server_info`、`check_exec_environment`、`get_default_cwd`、`set_default_cwd` |
-| 状态管理 | `history_manage`、`planning_manage`、`task_manage`（Stable Tool API v2） |
+| Workspace 路由 | `workspace_list`、`workspace_current`、`workspace_select`、`workspace_invoke` |
+| 运行时 | `server_info` |
+| 状态管理 | `history_manage`、`planning_manage`；Stable Tool API v2 继续提供聚合式生命周期接口 |
 
-聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；旧工具继续保留给兼容 profile。
+聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；兼容 profile 仍可保留旧工具名。
 
 长运行命令现在归属于 Workspace Runtime，而不是某一次 MCP transport 连接。`exec_command` 返回稳定 `command_id`，重新连接或从同一 Workspace 的另一运行入口仍可继续 `read_output` / `write_stdin` / `kill_session`；旧 `session_id` 参数继续兼容。stdout/stderr 在内存中保留固定预算的 Head + Tail 作为低延迟预览，同时完整原始输出会写入应用缓存目录；因此普通同步命令结束并从 SessionStore 回收后，稳定 `output_ref` 仍可分页读取中间内容。`read_output` 还支持 `query` / `regex` / `case_sensitive` 的受限日志搜索，完整日志不直接塞回模型上下文。
 

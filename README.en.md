@@ -19,11 +19,26 @@
   <a href="README.md">中文</a> · <a href="README.en.md">English</a> · <a href="https://github.com/lengsukq/coding-tools-mcp/releases/latest">Download latest</a>
 </p>
 
-Coding Tools MCP is a Rust + Tauri 2 desktop application. Select a project directory and start the service; an AI agent can then read files, edit code, run commands and tests, inspect Git, and preserve development progress inside the project through MCP. It behaves like an AI opening an IDE workspace that remembers where the last conversation stopped.
+Coding Tools MCP is a **local-first AI coding runtime** built with Rust and Tauri 2. The desktop app exposes one Global MCP endpoint, while local projects are registered as isolated Workspaces. Each Chat Session selects the Workspace it should operate on. Through MCP, an AI agent can read and edit code, run commands and tests, inspect Git, maintain Goals / Plans, and preserve development progress inside the project.
+
+It is closer to a long-lived AI development workbench than a separate MCP server per project: **Workspace defines the project boundary, Planning carries intent and progress, Execution / Verification carries runtime evidence, and History enables cross-conversation recovery.**
 
 ![Coding Tools MCP workspace overview](docs/images/workspace-overview.png)
 
-*Current workspace overview: `coding-tools-mcp` is the active workspace, with MCP status, the project directory, and the session-recovery entry point visible.*
+*Current workspace overview: branch state, whole-workspace Diff, active Sessions, verification evidence, 7-day AI activity, Git Health, Goal / Plan progress, and execution quality are visible together.*
+
+## v0.3.3: recent improvements
+
+The 0.3.x line focuses less on adding isolated tools and more on turning multi-workspace AI development into one coherent workflow:
+
+- **One Global MCP for every Workspace**: since 0.3.0, the app no longer runs a separate MCP / Tunnel stack per project. A single `/mcp` endpoint serves all registered Workspaces, while Chat Sessions select projects through `workspace_list` / `workspace_select`.
+- **More resilient Workspace session routing**: 0.3.2 improved Workspace selection for clients that do not reliably preserve the transport session. For explicit one-off operations against another project, `workspace_invoke` avoids mutating other Chat Sessions.
+- **A real Workspace Overview**: current branch, first-level nested Git repositories, changed files, active Sessions, verification evidence, recent commit, 7-day AI Activity, Git Health, Goal / Plan progress, and execution errors are surfaced together. The page can also generate a whole-workspace Diff / Review and open the project in a detected IDE.
+- **Development state directly in the sidebar**: Workspace rows show branch and clean / changed state, the focused Goal / Plan, progress, and execution status. Workspace switching uses cache-first loading with background refresh to reduce repeated requests and UI stalls.
+- **Dashboard upgraded from service status to an AI workbench**: AI Executions, Verification, Token Flow, Chat → Workspace routing, Planning completion, Workspace Token Distribution, recent History Sessions, and attention-required issues are summarized globally.
+- **Responsive UI refresh**: 0.3.3 unifies Apple / iOS-style design tokens, light and dark themes, form and status components, and responsive layouts across Dashboard, Workspace, and Planning screens.
+
+The recommended path is now straightforward: **connect one Global MCP → select a Workspace → maintain Goal / Plan → execute and verify → preserve History.**
 
 ## Feature overview: characteristics and advantages
 
@@ -31,7 +46,7 @@ Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** 
 
 | Feature | Main characteristics | Practical advantages |
 | --- | --- | --- |
-| Workspace management | Each project has its own directory, name, ports, auth, and tunnel configuration | Clearer multi-project switching and less risk of sending a command or credential to the wrong project |
+| Workspace management | Each project has its own directory, execution policy, Planning, and History; the sidebar shows branch, changes, and current Goal / Plan | Clearer multi-project switching and less risk of sending a command to the wrong project |
 | MCP tool runtime | Files, patches, commands, Git, images, Skills, and state management share one core | A single protocol surface reduces duplicated state machines and compatibility branches |
 | Connectivity and public entry points | Local endpoints, Global Gateway, FRP, and Cloudflare Tunnel | The same workspace can serve local development and remote ChatGPT access |
 | Authentication | OAuth Authorization Code, PKCE S256, DCR, and Refresh Tokens, with Bearer and static-client compatibility | Modern OAuth flows are available without abandoning older clients or simple deployments |
@@ -42,33 +57,34 @@ Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** 
 
 ### Global Dashboard: see the whole system without opening a workspace
 
-The global Dashboard summarizes multiple workspaces in one control surface. It does not require opening a project first; it shows service availability, the recent workspace, MCP status, the workspace runtime matrix, and the current Planning focus.
+The global Dashboard summarizes multiple Workspaces in one control surface. Without opening a project first, it shows current AI executions, verification evidence, Global MCP state, Chat Session routing, Planning focus, and issues that need attention.
 
 ![Global Dashboard runtime overview](docs/images/dashboard-overview.png)
 
-*Health, the recent workspace, and each service's connection mode are visible together, making it easy to judge the overall runtime state.*
+*Current execution, verification, and Session routing are visible together, making it easy to see what the AI is doing, whether anything is blocked, and where requests are routed.*
 
-The Dashboard also refreshes estimated token usage for the current application session and breaks it down by connection mode, AI Planning queue, and service token details. Token usage is estimated from local request sizes; request bodies are not stored.
+The Dashboard also refreshes estimated MCP token usage and exposes Token Flow, request success rate, Planning completion, Workspace Token Distribution, recent History Sessions, and system health. Token usage is estimated from local request sizes; request bodies are not stored.
 
 ![Dashboard metrics, connection modes, AI Planning, and token usage](docs/images/dashboard-insights.png)
 
-*Workspace count, online services, pending acceptance, and token trends help developers understand system state and likely runtime cost before starting work.*
+*Execution counts, verification, Planning, Session routing, and token trends provide a compact picture of workload and pending attention.*
 
 ### 1. Workspace management: turn a project into durable, identifiable context
 
-A workspace is the basic project context of Coding Tools MCP. It binds a local project directory and owns project policy, planning, and conversation history. The desktop app can store multiple projects while always showing the selected workspace name and path; the MCP listener and authentication are application-global.
+A Workspace is the basic project context of Coding Tools MCP. It binds a local project directory and owns project policy, Planning, and conversation history. The MCP listener, authentication, and public entry point are application-global, while each Chat Session keeps its own Workspace selection.
 
 **Characteristics**
 
 - The project directory is the source of truth; the workspace name is maintained separately from service configuration.
 - MCP requests select a workspace inside the global session; planning state and conversation history remain organized around that workspace.
-- The sidebar switches projects quickly, while the overview page exposes service status at a glance.
+- The sidebar shows branch, clean / changed state, the focused Goal / Plan, progress, and execution status.
+- Workspace Overview covers the main repository and first-level nested Git repositories, 7-day activity, execution quality, whole-workspace Diff / Review, and IDE shortcuts.
 
 **Advantages**
 
-- Fewer mix-ups between directories, ports, and public URLs when working on multiple projects.
+- Fewer mix-ups between directories, active Plans, and execution contexts when working on multiple projects.
 - Every connection gives the AI an explicit project boundary, reducing the risk of running commands in the wrong repository.
-- Configuration remains available after restarting the desktop app.
+- Cache-first state loading with background refresh reduces repeated requests and makes Workspace switching feel more immediate.
 
 ### 2. MCP tool runtime: one core for real development actions
 
@@ -142,7 +158,7 @@ The planning page separates goals, plans, and execution tasks. Direct suits smal
 - Planning, execution, and acceptance stay separate, adding control to high-risk changes without removing flexibility.
 - Developers can quickly see what is done, what remains, and whether the result has been verified.
 
-### 7. Conversation history: let context follow the repository
+### 6. Conversation history: let context follow the repository
 
 Long-term project records live in `docs/history-session/`. Markdown archives preserve the full record, while `memory/state.json` and `memory/manifest.json` provide bounded current state and indexes. A new conversation can recover the needed context through startup prompts, search, and paginated reads.
 
@@ -158,7 +174,7 @@ Long-term project records live in `docs/history-session/`. Markdown archives pre
 - A new agent gets the current state quickly and reads older decisions only when needed, saving context and time.
 - Important changes, tests, risks, and next steps become a traceable handoff record.
 
-### 8. Logs, health checks, and security boundaries: make failures visible and permissions explicit
+### 7. Logs, health checks, and security boundaries: make failures visible and permissions explicit
 
 The desktop app exposes service logs, endpoint checks, OAuth metadata checks, and runtime status. The unified tool runtime applies workspace paths, command policies, repository protection, and dangerous-operation confirmations through one Policy layer.
 
@@ -190,7 +206,9 @@ Install the desktop app
   → copy the Public MCP URL
   → enable ChatGPT developer mode
   → create an MCP plugin and paste the URL
-  → authorize it and start developing in a new conversation
+  → authorize it
+  → use workspace_list / workspace_select to choose the project
+  → start developing in a new conversation
 ```
 
 For a first connection, remember only this: **the desktop app turns the project into an MCP workspace, and ChatGPT connects to it through the public `/mcp` URL.**
@@ -261,16 +279,16 @@ Beyond ChatGPT, any web client with a remote MCP connector can reach the same wo
 
 Use the public MCP URL shown by the app. OAuth now supports Authorization Code + PKCE S256, Dynamic Client Registration (`/register`), and Refresh Tokens. Clients with DCR support can register themselves from the server metadata; older clients can continue to use the static Client ID / Secret configured in the desktop app.
 
-For a first connection, inspect the workspace directly; history bootstrap is optional:
+For a first connection, explicitly choose a Workspace first; history bootstrap is optional:
 
 ```text
+workspace_list
+workspace_select(workspace_id=...)
 server_info
-get_default_cwd
 git_status
-check_exec_environment
 ```
 
-This gives the agent explicit project and capability state instead of guessing from the current chat window.
+This keeps the agent from guessing the project from chat context. If a client cannot reliably preserve MCP Session state, use `workspace_invoke(workspace_id=..., tool=..., arguments=...)` for explicit one-off operations rather than repeatedly selecting or inferring a directory.
 
 ## Connect ChatGPT
 
@@ -314,8 +332,8 @@ For OAuth, prefer Dynamic Client Registration when the client supports it and le
 Start a new conversation with the plugin enabled and ask:
 
 ```text
-Use Coding Tools MCP to call server_info, get_default_cwd, and git_status.
-Tell me which workspace is connected, its default directory, and its Git status.
+Use Coding Tools MCP to call workspace_list, select the coding-tools-mcp Workspace,
+then call server_info and git_status. Tell me the active Workspace, MCP state, and Git status.
 ```
 
 If ChatGPT returns information from the current project, the desktop app, public tunnel, authentication, ChatGPT, and MCP tool chain are connected end to end. History can be initialized explicitly when a client or workflow needs a dedicated archived session, but it is not a prerequisite for normal development.
@@ -334,9 +352,9 @@ If ChatGPT still shows an old tool list, disconnect and reconnect the plugin or 
 ## Why use it
 
 - **Built for real development**: files, commands, Git, tests, and retained processes live in one Workspace.
-- **Cross-conversation continuity**: a new conversation can recover the complete history summary and the latest detailed handoff.
+- **Cross-conversation continuity**: a new conversation starts from bounded current state and can search/read exact older archives only when they are needed.
 - **Auditable progress**: structured checkpoints preserve decisions, changed files, test results, remaining issues, and next steps inside the project.
-- **Multiple workspaces**: one desktop client stores multiple projects and manages their MCP and public endpoints.
+- **Multiple workspaces**: one Global MCP connection manages multiple local projects, while each Chat Session selects its own Workspace. There is no need to configure a separate MCP and public endpoint per project.
 - **Direct ChatGPT connectivity**: Streamable HTTP, OAuth, Bearer tokens, FRP, and Cloudflare are built in.
 - **A focused default tool surface**: stable core tools are available by default; advanced Harness capabilities are opt-in.
 
@@ -346,7 +364,9 @@ Chat transcripts are useful for rereading a discussion, but they are a poor long
 
 ![ChatGPT new-conversation startup prompt](docs/images/history-session-prompt.png)
 
-*Paste the full prompt into a new conversation to initialize or restore history, then save a checkpoint after each completed task.*
+*The current conversation can be recorded by default; older sessions are selected from the Workspace History Context panel and injected only as bounded context.*
+
+The History Context panel controls current-session recording, multi-selects older sessions, previews the selected context, and clears selections. Applying a selection refreshes MCP context with only a bounded session index, recent checkpoints, key files, and selected snippets; the full Markdown archives remain in `docs/history-session/` and are searched/read on demand when exact older context is required.
 
 The default `compact` profile exposes history through the Stable Tool API v2 `history_manage` aggregate entry point. The five lifecycle-specific names below remain available in compatibility profiles:
 
@@ -356,7 +376,7 @@ The default `compact` profile exposes history through the Stable Tool API v2 `hi
 | `history_session_checkpoint` | Append structured progress and verbatim `raw_user_input` to the stable target returned by bootstrap; reject mismatched targets instead of writing to another history file |
 | `history_session_validate` | Validate numbering, history files, and session mappings; rebuild derived indexes when needed without deleting existing history |
 | `history_session_search` | Search lossless Markdown archives by deterministic keywords and return a bounded page of locations and snippets |
-| `history_session_read` | Read one original Markdown archive losslessly in UTF-8-safe pages by number or a search result path; pages default to `32 KiB`, are capped at `64 KiB`, and continue with `next_cursor` |
+| `history_session_read` | Read one original Markdown archive losslessly in UTF-8-safe pages by number or a search result path; pages default to `16 KiB`, are capped at `64 KiB`, and continue with `next_cursor` |
 
 History uses readable Markdown that can be backed up or committed with the project. `memory/state.json` is a bounded current-state projection, while `memory/manifest.json` stores only archive locations, hashes, and keywords; Markdown remains the lossless source of truth. ChatGPT must pass verbatim first-turn and per-turn text as `initial_user_input` and `raw_user_input`, because the server cannot inspect remote chat text that was not provided as a tool argument. Checkpoints are idempotent, changed content for the same `turn_id` is retained as a revision with supersession evidence, and progress should only be reported as saved after the tool returns `ok=true` with the same session target.
 
@@ -372,10 +392,11 @@ The default `compact` profile provides a stable, composable development tool set
 | File modification | `apply_patch` |
 | Command execution | `exec_command`, `write_stdin`, `read_output`, `kill_session` |
 | Git | `git_status`, `git_diff`, `git_log`, `git_show`, `git_blame` |
-| Environment | `server_info`, `check_exec_environment`, `get_default_cwd`, `set_default_cwd` |
-| State management | `history_manage`, `planning_manage`, `task_manage` (Stable Tool API v2) |
+| Workspace routing | `workspace_list`, `workspace_current`, `workspace_select`, `workspace_invoke` |
+| Runtime | `server_info` |
+| State management | `history_manage`, `planning_manage`; Stable Tool API v2 continues to provide aggregate lifecycle interfaces |
 
-Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while legacy profiles retain the old tool names.
+Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while compatibility profiles can retain legacy tool names.
 
 Long-running commands are owned by the Workspace Runtime rather than one MCP transport connection. `exec_command` returns a stable `command_id`, so reconnecting or using another runtime entry point for the same Workspace can continue with `read_output`, `write_stdin`, or `kill_session`; legacy `session_id` arguments remain supported. stdout and stderr keep a bounded in-memory head and tail for low-latency previews while the complete raw streams are appended to the application cache. A stable `output_ref` therefore remains pageable after a normal synchronous command has completed and its SessionStore entry has been reclaimed. `read_output` also supports bounded `query` / `regex` / `case_sensitive` searches without injecting the entire raw log into model context.
 
