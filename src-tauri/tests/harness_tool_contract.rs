@@ -7,8 +7,8 @@ use serde_json::json;
 fn 无任务时仍可执行_dry_run_预检() {
     let temp = tempfile::tempdir().expect("创建临时目录");
     let workspace = temp.path().join("workspace");
-    fs::create_dir_all(&workspace).expect("创建工作区");
-    fs::write(workspace.join("README.md"), "初始内容\n").expect("写入文件");
+    fs::create_dir_all(workspace.join("src")).expect("创建工作区");
+    fs::write(workspace.join("src/probe.txt"), "初始内容\n").expect("写入文件");
     let ctx = ToolContext::for_test(workspace, temp.path().join("harness")).expect("创建上下文");
 
     let result = call_tool(
@@ -16,7 +16,7 @@ fn 无任务时仍可执行_dry_run_预检() {
         "apply_patch",
         &json!({
             "dry_run": true,
-            "patch": "--- a/README.md\n+++ b/README.md\n@@\n-初始内容\n+预检内容\n"
+            "patch": "--- a/src/probe.txt\n+++ b/src/probe.txt\n@@\n-初始内容\n+预检内容\n"
         }),
     );
 
@@ -24,7 +24,7 @@ fn 无任务时仍可执行_dry_run_预检() {
     assert_eq!(result["preflight"], true);
     assert_eq!(result["harness_mode"], "standalone");
     assert_eq!(
-        fs::read_to_string(temp.path().join("workspace/README.md")).unwrap(),
+        fs::read_to_string(temp.path().join("workspace/src/probe.txt")).unwrap(),
         "初始内容\n"
     );
 }
@@ -133,8 +133,8 @@ fn codex_patch格式支持新增文件dry_run和实际应用() {
 fn 无任务时普通_patch也可执行并保留撤销能力() {
     let temp = tempfile::tempdir().expect("创建临时目录");
     let workspace = temp.path().join("workspace");
-    fs::create_dir_all(&workspace).expect("创建工作区");
-    fs::write(workspace.join("README.md"), "初始内容\n").expect("写入文件");
+    fs::create_dir_all(workspace.join("src")).expect("创建工作区");
+    fs::write(workspace.join("src/probe.txt"), "初始内容\n").expect("写入文件");
     let ctx =
         ToolContext::for_test(workspace.clone(), temp.path().join("harness")).expect("创建上下文");
 
@@ -142,7 +142,7 @@ fn 无任务时普通_patch也可执行并保留撤销能力() {
         &ctx,
         "apply_patch",
         &json!({
-            "patch": "--- a/README.md\n+++ b/README.md\n@@\n-初始内容\n+已修改\n"
+            "patch": "--- a/src/probe.txt\n+++ b/src/probe.txt\n@@\n-初始内容\n+已修改\n"
         }),
     );
 
@@ -153,7 +153,7 @@ fn 无任务时普通_patch也可执行并保留撤销能力() {
         .unwrap()
         .contains_key("pre_change_snapshot_id"));
     assert_eq!(
-        fs::read_to_string(workspace.join("README.md")).unwrap(),
+        fs::read_to_string(workspace.join("src/probe.txt")).unwrap(),
         "已修改\n"
     );
 

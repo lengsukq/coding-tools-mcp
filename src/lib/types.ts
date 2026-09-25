@@ -15,6 +15,7 @@ export interface RuntimeConfig {
   custom_skill_paths?: string;
   workspace_local_entries?: boolean;
   workspace_script_extensions?: string;
+  allow_high_risk_writes?: boolean;
 }
 
 export interface WorkspaceProfile {

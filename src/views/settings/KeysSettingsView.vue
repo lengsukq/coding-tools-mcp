@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { RefreshCw, Save } from "@lucide/vue";
 import BaseButton from "../../components/ui/BaseButton.vue";
+import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import GlassCard from "../../components/ui/GlassCard.vue";
 import SecretField from "../../components/SecretField.vue";
 import SettingsPageHeader from "../../components/settings/SettingsPageHeader.vue";
@@ -20,6 +21,8 @@ const originals = reactive<Partial<Record<SharedSecretKey, string>>>({});
 const loading = ref(true);
 const saving = ref(false);
 const regenerating = ref<SharedSecretKey | null>(null);
+const saveConfirmOpen = ref(false);
+const changedKeys = computed(() => keys.filter((item) => secrets[item.key] !== originals[item.key]));
 
 async function load() {
   loading.value = true;
@@ -39,15 +42,20 @@ async function regenerate(key: SharedSecretKey) {
   finally { regenerating.value = null; }
 }
 async function save() {
+  if (changedKeys.value.length === 0) {
+    saveConfirmOpen.value = false;
+    showToast("没有需要保存的密钥更改。", { kind: "info" });
+    return;
+  }
   saving.value = true;
   try {
-    const updates = keys
-      .filter((item) => secrets[item.key] !== originals[item.key])
+    const updates = changedKeys.value
       .map((item) => ({ key: item.key, value: secrets[item.key] ?? "" }));
     if (updates.length > 0) {
       await setSharedSecrets(updates);
       for (const update of updates) originals[update.key] = update.value;
     }
+    saveConfirmOpen.value = false;
     showToast("共享密钥已保存", { kind: "success" });
   } catch (error) { showToast(String(error), { title: "保存失败", kind: "error" }); }
   finally { saving.value = false; }
@@ -58,7 +66,7 @@ onMounted(() => { void load(); });
 <template>
   <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="Global MCP 密钥" description="唯一 MCP Endpoint 的认证凭据。所有 Workspace 共用这一组连接认证，项目数据与执行策略仍彼此隔离。" />
-    <GlassCard>
+    <GlassCard class="animate-fade-in-up delay-100">
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
       <div v-else class="grid gap-4">
         <div v-for="item in keys" :key="item.key" class="key-setting-row">
@@ -69,10 +77,22 @@ onMounted(() => { void load(); });
           </label>
           <BaseButton variant="secondary" :busy="regenerating === item.key" @click="regenerate(item.key)"><RefreshCw :size="13" />重新生成</BaseButton>
         </div>
-        <div class="flex justify-end border-t border-black/[.05] pt-4 dark:border-white/[.06]"><BaseButton :busy="saving" @click="save"><Save :size="14" />保存更改</BaseButton></div>
+        <div class="flex justify-end border-t border-black/[.05] pt-4 dark:border-white/[.06]"><BaseButton :busy="saving" :disabled="changedKeys.length === 0" @click="saveConfirmOpen = true"><Save :size="14" />保存更改</BaseButton></div>
       </div>
     </GlassCard>
   </div>
+
+  <ConfirmDialog
+    :open="saveConfirmOpen"
+    title="保存 Global MCP 密钥"
+    message="确定替换当前 Global MCP 认证凭据？部分已连接客户端可能需要重新认证或重新连接。"
+    :detail="changedKeys.map((item) => item.label).join('、')"
+    confirm-text="确认保存"
+    severity="danger"
+    :busy="saving"
+    @confirm="save"
+    @cancel="saveConfirmOpen = false"
+  />
 </template>
 
 <style scoped>

@@ -187,7 +187,7 @@ Global settings also bring together the application version and Releases links, 
 **Characteristics**
 
 - Reads, writes, and execution are allowed inside the workspace according to policy; outside the workspace is read-only by default.
-- `.git`, `.github`, and other repository assets receive extra protection; dangerous operations require explicit confirmation.
+- `.git` is permanently read-only. High-risk files such as `.github`, dependency manifests / lockfiles, build configuration, and README / LICENSE are protected by default and can be explicitly opened for Patch writes per Workspace; deleting high-risk files still requires confirmation.
 - Health checks report local service, public entry point, and authentication metadata separately.
 - Windows currently uses a `policy_only` execution boundary; the project does not present static policy as a full OS sandbox.
 
@@ -424,7 +424,7 @@ The project uses a Workspace-first permission model:
 - Normal files inside the Workspace can be read, created, modified, deleted, and executed.
 - Outside the Workspace, `read_file`, `list_dir`, `list_files`, `search_text`, and `view_image` provide read-only access.
 - Writes, deletes, and command execution outside the Workspace are blocked.
-- `.git` and `.github` cannot be damaged through ordinary file tools, Patch, or interpreter commands.
+- `.git/**` is permanently protected. High-risk files (including `.github/**`, `.gitignore`, `Cargo.toml` / `Cargo.lock`, `package.json` / lockfiles, `tauri.conf.json`, `vite.config.*`, `pyproject.toml`, README / LICENSE) reject Patch writes by default and can be enabled from **Workspace → Settings → Repository protection → Allow AI to modify high-risk files**. Even when enabled, deleting high-risk files still requires explicit confirmation and destructive command policies remain in effect.
 - Patch performs preflight validation and operation-local recovery; long-term recovery uses Git instead of full Workspace snapshots.
 
 > Windows child-process execution currently uses a `policy_only` boundary. The honest runtime value is `sandbox_enforced: false`; static command policy is not a complete OS filesystem sandbox.

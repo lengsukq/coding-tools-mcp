@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{
-    header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, REFERRER_POLICY, WWW_AUTHENTICATE, X_CONTENT_TYPE_OPTIONS},
+    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, REFERRER_POLICY, WWW_AUTHENTICATE, X_CONTENT_TYPE_OPTIONS},
     HeaderMap, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
@@ -23,9 +23,10 @@ use crate::mcp::audit::{log_request, record_response, RpcRequestMeta};
 use crate::mcp::gateway::{
     session_id_from_metadata, session_id_from_request, GatewayState, MCP_SESSION_HEADER,
 };
-use crate::mcp::server::handle_gateway_request;
+use crate::mcp::server::{audit_workspace_hint, handle_gateway_request};
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
+use crate::tool_audit::{record_tool_call, ToolAuditCall};
 use crate::tunnel::append_profile_log;
 use crate::workspace::AuthConfig;
 
@@ -294,6 +295,27 @@ async fn mcp_post(
         .map(str::to_string);
     log_request(&state.scope_id, effective_session_id.as_deref(), &meta);
 
+    let audit_call = if meta.method == "tools/call" {
+        let (auth_method, client_id) = audit_auth_identity(&state, &headers);
+        let request_bytes = serde_json::to_vec(&body)
+            .map(|bytes| bytes.len())
+            .unwrap_or_default();
+        Some(ToolAuditCall::new(
+            &meta.request_id,
+            &meta.tool_name,
+            effective_session_id.as_deref(),
+            auth_method,
+            client_id.as_deref(),
+            request_bytes,
+            &body,
+        ))
+    } else {
+        None
+    };
+    let audit_workspace_id = audit_call
+        .as_ref()
+        .and_then(|_| audit_workspace_hint(&state.gateway, effective_session_id.as_deref(), &body));
+
     let gateway = state.gateway.clone();
     let body_for_worker = body.clone();
     let session_for_worker = effective_session_id.clone();
@@ -316,6 +338,14 @@ async fn mcp_post(
                     &meta,
                     &response,
                 );
+            }
+            if let Some(call) = audit_call {
+                let workspace_id = gateway_response
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.workspace_id.clone())
+                    .or(audit_workspace_id);
+                record_tool_call(call, workspace_id, &response);
             }
             let mut http_response = Json(response).into_response();
             if let Some(session_id) = response_session_id {
@@ -342,6 +372,9 @@ async fn mcp_post(
                     }
                 }
             });
+            if let Some(call) = audit_call {
+                record_tool_call(call, audit_workspace_id, &error_response);
+            }
             append_profile_log(
                 &state.scope_id,
                 "mcp-requests.log",
@@ -353,6 +386,21 @@ async fn mcp_post(
             Json(error_response).into_response()
         }
     }
+}
+
+fn audit_auth_identity(state: &ListenerState, headers: &HeaderMap) -> (&'static str, Option<String>) {
+    if state.auth.bearer_enabled() {
+        return ("shared_bearer", None);
+    }
+    if state.auth.oauth_enabled() {
+        let client_id = state.oauth.as_ref().and_then(|oauth| {
+            let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+            let token = value.strip_prefix("Bearer ")?.trim();
+            oauth.access_token_client_id(token, &resolve_oauth_base(state, headers))
+        });
+        return ("oauth", client_id);
+    }
+    ("none", None)
 }
 
 fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Response> {

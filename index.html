@@ -1,13 +1,24 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f5f7ff" />
+    <meta name="theme-color" content="#030508" />
     <title>Coding Tools MCP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      // 启动前恢复调色盘，避免主题色闪烁（与 src/lib/palette.ts 保持一致）
+      try {
+        var savedPalette = localStorage.getItem("coding-tools-palette");
+        if (savedPalette) document.documentElement.dataset.palette = savedPalette;
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

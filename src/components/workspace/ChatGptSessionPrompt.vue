@@ -43,7 +43,7 @@ onBeforeUnmount(() => {
   <section class="ios-glass ios-card-surface p-4" aria-labelledby="chatgpt-session-prompt-title">
     <div class="flex items-center justify-between gap-4">
       <div class="flex min-w-0 items-center gap-3">
-        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#5e5ce6]/11 text-[#5e5ce6]"><History :size="17" /></span>
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><History :size="17" /></span>
         <div class="min-w-0">
           <h3 id="chatgpt-session-prompt-title" class="text-sm font-semibold">ChatGPT 新会话启动提示词</h3>
           <p class="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">当前会话默认记录；旧会话由面板选择后按需注入。</p>

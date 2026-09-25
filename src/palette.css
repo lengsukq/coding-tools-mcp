@@ -1,0 +1,287 @@
+/* ═══════════════════════════════════════════════════════════
+   调色盘系统 palette.css
+   由 <html data-palette="xxx"> 驱动（见 src/lib/palette.ts）。
+   本文件在 main.ts 中最后引入，覆盖 app.css / workbench.css / ios-vue.css
+   里的强调色、画布氛围色、玻璃表面边框与组件 token，使全站跟随所选调色盘。
+   ═══════════════════════════════════════════════════════════ */
+
+/* ——— 1) 锚点：浅色 ——— */
+:root[data-palette="ocean"] {
+  --pal-primary: #0071e3;
+  --pal-primary-dark: #005bb5;
+  --pal-primary-light: #64b5ff;
+  --pal-accent: #5856d6;
+  --pal-rgb: 0, 113, 227;
+  --pal-accent-rgb: 88, 86, 214;
+}
+:root[data-palette="coral"] {
+  --pal-primary: #e2574c;
+  --pal-primary-dark: #cf4339;
+  --pal-primary-light: #fcb6ad;
+  --pal-accent: #ff9d5c;
+  --pal-rgb: 226, 87, 76;
+  --pal-accent-rgb: 255, 157, 92;
+}
+:root[data-palette="grape"] {
+  --pal-primary: #8e4ec6;
+  --pal-primary-dark: #6d28b8;
+  --pal-primary-light: #d0a2ff;
+  --pal-accent: #d6409f;
+  --pal-rgb: 142, 78, 198;
+  --pal-accent-rgb: 214, 64, 159;
+}
+:root[data-palette="emerald"] {
+  --pal-primary: #0e9f6e;
+  --pal-primary-dark: #057a55;
+  --pal-primary-light: #6ee7b7;
+  --pal-accent: #0ea5a4;
+  --pal-rgb: 14, 159, 110;
+  --pal-accent-rgb: 14, 165, 164;
+}
+:root[data-palette="amber"] {
+  --pal-primary: #d97706;
+  --pal-primary-dark: #b45309;
+  --pal-primary-light: #fcd34d;
+  --pal-accent: #e2574c;
+  --pal-rgb: 217, 119, 6;
+  --pal-accent-rgb: 226, 87, 76;
+}
+:root[data-palette="sakura"] {
+  --pal-primary: #db2777;
+  --pal-primary-dark: #be185d;
+  --pal-primary-light: #f9a8d4;
+  --pal-accent: #a855f7;
+  --pal-rgb: 219, 39, 119;
+  --pal-accent-rgb: 168, 85, 247;
+}
+
+/* ——— 1) 锚点：深色 ——— */
+[data-theme="dark"][data-palette="ocean"],
+.dark[data-palette="ocean"] {
+  --pal-primary: #3898ff;
+  --pal-primary-dark: #0a84ff;
+  --pal-primary-light: #80c2ff;
+  --pal-accent: #7d7aff;
+  --pal-rgb: 56, 152, 255;
+  --pal-accent-rgb: 125, 122, 255;
+}
+[data-theme="dark"][data-palette="coral"],
+.dark[data-palette="coral"] {
+  --pal-primary: #ff6e61;
+  --pal-primary-dark: #e2574c;
+  --pal-primary-light: #fcb6ad;
+  --pal-accent: #ffb37a;
+  --pal-rgb: 255, 110, 97;
+  --pal-accent-rgb: 255, 179, 122;
+}
+[data-theme="dark"][data-palette="grape"],
+.dark[data-palette="grape"] {
+  --pal-primary: #b07fe8;
+  --pal-primary-dark: #8e4ec6;
+  --pal-primary-light: #dcbdff;
+  --pal-accent: #f06bb8;
+  --pal-rgb: 176, 127, 232;
+  --pal-accent-rgb: 240, 107, 184;
+}
+[data-theme="dark"][data-palette="emerald"],
+.dark[data-palette="emerald"] {
+  --pal-primary: #34d399;
+  --pal-primary-dark: #0e9f6e;
+  --pal-primary-light: #86efac;
+  --pal-accent: #2dd4bf;
+  --pal-rgb: 52, 211, 153;
+  --pal-accent-rgb: 45, 212, 191;
+}
+[data-theme="dark"][data-palette="amber"],
+.dark[data-palette="amber"] {
+  --pal-primary: #fbbf24;
+  --pal-primary-dark: #d97706;
+  --pal-primary-light: #fde68a;
+  --pal-accent: #fb7185;
+  --pal-rgb: 251, 191, 36;
+  --pal-accent-rgb: 251, 113, 133;
+}
+[data-theme="dark"][data-palette="sakura"],
+.dark[data-palette="sakura"] {
+  --pal-primary: #f472b6;
+  --pal-primary-dark: #ec4899;
+  --pal-primary-light: #fbcfe8;
+  --pal-accent: #c084fc;
+  --pal-rgb: 244, 114, 182;
+  --pal-accent-rgb: 192, 132, 252;
+}
+
+/* ——— 2) 通用重映射：浅色 ——— */
+:root[data-palette] {
+  /* 核心主色与渐变 */
+  --primary: var(--pal-primary);
+  --primary-dark: var(--pal-primary-dark);
+  --primary-soft: rgba(var(--pal-rgb), 0.12);
+  --primary-gradient: linear-gradient(135deg, var(--pal-primary-light) 0%, var(--pal-primary) 52%, var(--pal-primary-dark) 100%);
+  --accent-gradient: linear-gradient(135deg, var(--pal-primary) 0%, var(--pal-accent) 100%);
+  --accent-gradient-hover: linear-gradient(135deg, var(--pal-primary-light) 0%, var(--pal-primary) 55%, var(--pal-accent) 100%);
+
+  /* Apple / 强调色别名联动 */
+  --ios-blue: var(--pal-primary);
+  --ios-blue-rgb: var(--pal-rgb);
+  --ios-indigo: var(--pal-accent);
+  --accent-indigo: var(--pal-accent);
+  --accent-purple: color-mix(in srgb, var(--pal-accent) 75%, var(--pal-primary));
+  --color-accent: var(--pal-primary);
+  --color-accent-hover: var(--pal-primary-dark);
+
+  /* 画布与玻璃卡片表面 */
+  --ios-canvas-bg: color-mix(in srgb, var(--pal-primary) 7%, #f6f6f9);
+  --page-bg: var(--ios-canvas-bg);
+  --main-content-bg: transparent;
+  --ios-glass: rgba(255, 255, 255, 0.84);
+  --ios-glass-strong: color-mix(in srgb, var(--pal-primary) 9%, #ffffff);
+  --ios-glass-border: rgba(var(--pal-rgb), 0.15);
+  --ios-card-outline: rgba(var(--pal-rgb), 0.08);
+  --ios-hairline: rgba(var(--pal-rgb), 0.10);
+  --ios-hairline-subtle: rgba(var(--pal-rgb), 0.05);
+  --card-bg: rgba(255, 255, 255, 0.80);
+  --card-border: rgba(var(--pal-rgb), 0.15);
+  --card-border-active: rgba(var(--pal-rgb), 0.36);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 18px 42px rgba(var(--pal-rgb), 0.10), 0 2px 8px rgba(15, 23, 42, 0.04);
+  --ios-shadow: var(--ios-specular-top), 0 2px 6px rgba(var(--pal-rgb), 0.06), 0 12px 28px rgba(var(--pal-rgb), 0.10);
+  --ios-shadow-hover: var(--ios-specular-top), 0 20px 48px rgba(var(--pal-rgb), 0.20);
+
+  /* 按钮、输入框、焦点与侧栏 */
+  --btn-primary-bg: var(--pal-primary);
+  --btn-primary-hover: var(--pal-primary-dark);
+  --input-ring: rgba(var(--pal-rgb), 0.22);
+  --focus-ring: 0 0 0 3px rgba(var(--pal-rgb), 0.28);
+  --focus-border: var(--pal-primary);
+  --surface-active: rgba(var(--pal-rgb), 0.12);
+  --sidebar-active-bg: rgba(var(--pal-rgb), 0.12);
+  --sidebar-active-text: var(--pal-primary-dark);
+  --sidebar-active-border: rgba(var(--pal-rgb), 0.24);
+  --sidebar-surface-active: rgba(var(--pal-rgb), 0.12);
+  --stat-icon-bg: rgba(var(--pal-rgb), 0.12);
+  --stat-icon-color: var(--pal-primary);
+
+  /* Workbench (--wb-*) 表面与阴影 */
+  --wb-surface-subtle: rgba(var(--pal-rgb), 0.05);
+  --wb-surface-hover: rgba(var(--pal-rgb), 0.08);
+  --wb-surface-active: rgba(var(--pal-rgb), 0.15);
+  --wb-divider: rgba(var(--pal-rgb), 0.10);
+  --wb-card-bg: rgba(255, 255, 255, 0.78);
+  --wb-card-bg-strong: color-mix(in srgb, var(--pal-primary) 10%, rgba(255, 255, 255, 0.88));
+  --wb-card-border: rgba(var(--pal-rgb), 0.15);
+  --wb-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 24px 52px rgba(var(--pal-rgb), 0.12), 0 0 0 1px rgba(var(--pal-rgb), 0.06);
+  --wb-glass-bg: rgba(255, 255, 255, 0.75);
+  --wb-glass-bg-strong: color-mix(in srgb, var(--pal-primary) 10%, rgba(255, 255, 255, 0.85));
+  --wb-glass-border: rgba(var(--pal-rgb), 0.15);
+  --wb-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 24px 52px rgba(var(--pal-rgb), 0.11), 0 0 0 1px rgba(var(--pal-rgb), 0.06);
+  --wb-shadow-float: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 12px 28px rgba(var(--pal-rgb), 0.18), 0 0 0 1px rgba(var(--pal-rgb), 0.10);
+
+  /* 兼容 --coral-* 家族重映射 */
+  --coral-primary: var(--pal-primary);
+  --coral-accent: var(--pal-accent);
+  --coral-dot: var(--pal-primary);
+  --coral-soft: rgba(var(--pal-rgb), 0.12);
+  --coral-glow: rgba(var(--pal-rgb), 0.35);
+  --coral-600: var(--pal-primary);
+  --coral-700: var(--pal-primary-dark);
+  --coral-500: color-mix(in srgb, var(--pal-primary) 70%, white);
+  --coral-400: color-mix(in srgb, var(--pal-primary) 45%, white);
+  --coral-300: color-mix(in srgb, var(--pal-primary) 28%, white);
+  --coral-200: color-mix(in srgb, var(--pal-primary) 16%, white);
+  --coral-100: color-mix(in srgb, var(--pal-primary) 9%, white);
+  --coral-50: color-mix(in srgb, var(--pal-primary) 5%, white);
+  --coral-800: color-mix(in srgb, var(--pal-primary-dark) 75%, black);
+  --coral-900: color-mix(in srgb, var(--pal-primary-dark) 55%, black);
+  --coral-peach: color-mix(in srgb, var(--pal-primary) 45%, white);
+  --coral-blush: color-mix(in srgb, var(--pal-primary) 14%, white);
+  --coral-canvas: color-mix(in srgb, var(--pal-primary) 7%, white);
+  --coral-card: color-mix(in srgb, var(--pal-primary) 24%, white);
+  --coral-badge-shadow: 0 8px 20px rgba(var(--pal-rgb), 0.18);
+  --coral-card-shadow: 0 30px 60px rgba(var(--pal-rgb), 0.24);
+  --coral-shadow: 0 12px 28px rgba(var(--pal-rgb), 0.32);
+}
+
+/* ——— 2) 通用重映射：深色 ——— */
+[data-theme="dark"][data-palette],
+.dark[data-palette] {
+  --primary: var(--pal-primary);
+  --primary-dark: var(--pal-primary-dark);
+  --primary-soft: rgba(var(--pal-rgb), 0.20);
+  --primary-gradient: linear-gradient(135deg, var(--pal-primary-light) 0%, var(--pal-primary) 52%, var(--pal-primary-dark) 100%);
+  --accent-gradient: linear-gradient(135deg, var(--pal-primary) 0%, var(--pal-accent) 100%);
+  --accent-gradient-hover: linear-gradient(135deg, var(--pal-primary-light) 0%, var(--pal-primary) 55%, var(--pal-accent) 100%);
+
+  --ios-blue: var(--pal-primary);
+  --ios-blue-rgb: var(--pal-rgb);
+  --ios-indigo: var(--pal-accent);
+  --accent-indigo: var(--pal-accent);
+  --accent-purple: color-mix(in srgb, var(--pal-accent) 75%, var(--pal-primary));
+  --color-accent: var(--pal-primary);
+  --color-accent-hover: var(--pal-primary-light);
+
+  --ios-canvas-bg: color-mix(in srgb, var(--pal-primary) 5%, #0c0c0f);
+  --page-bg: var(--ios-canvas-bg);
+  --main-content-bg: transparent;
+  --ios-glass: color-mix(in srgb, var(--pal-primary) 6%, rgba(22, 22, 26, 0.72));
+  --ios-glass-strong: color-mix(in srgb, var(--pal-primary) 9%, rgba(28, 28, 33, 0.84));
+  --ios-glass-border: rgba(var(--pal-rgb), 0.16);
+  --ios-card-outline: rgba(var(--pal-rgb), 0.10);
+  --ios-hairline: rgba(var(--pal-rgb), 0.12);
+  --ios-hairline-subtle: rgba(var(--pal-rgb), 0.06);
+  --card-bg: color-mix(in srgb, var(--pal-primary) 5%, rgba(24, 24, 28, 0.74));
+  --card-border: rgba(var(--pal-rgb), 0.16);
+  --card-border-active: rgba(var(--pal-rgb), 0.45);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 0 20px rgba(var(--pal-rgb), 0.04), 0 22px 54px rgba(0, 0, 0, 0.58);
+  --ios-shadow: var(--ios-specular-top), 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 40px rgba(0, 0, 0, 0.55);
+  --ios-shadow-hover: var(--ios-specular-top), 0 4px 12px rgba(0, 0, 0, 0.55), 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 24px rgba(var(--pal-rgb), 0.16);
+
+  --btn-primary-bg: var(--pal-primary);
+  --btn-primary-hover: var(--pal-primary-light);
+  --input-ring: rgba(var(--pal-rgb), 0.28);
+  --focus-ring: 0 0 0 3px rgba(var(--pal-rgb), 0.40);
+  --focus-border: var(--pal-primary);
+  --surface-active: rgba(var(--pal-rgb), 0.18);
+  --sidebar-active-bg: rgba(var(--pal-rgb), 0.16);
+  --sidebar-active-text: var(--pal-primary);
+  --sidebar-active-border: rgba(var(--pal-rgb), 0.28);
+  --sidebar-surface-active: rgba(var(--pal-rgb), 0.14);
+  --stat-icon-bg: rgba(var(--pal-rgb), 0.16);
+  --stat-icon-color: var(--pal-primary);
+
+  --wb-surface-subtle: rgba(var(--pal-rgb), 0.06);
+  --wb-surface-hover: rgba(var(--pal-rgb), 0.10);
+  --wb-surface-active: rgba(var(--pal-rgb), 0.20);
+  --wb-divider: rgba(var(--pal-rgb), 0.12);
+  --wb-card-bg: color-mix(in srgb, var(--pal-primary) 5%, rgba(20, 20, 24, 0.70));
+  --wb-card-bg-strong: color-mix(in srgb, var(--pal-primary) 9%, rgba(26, 26, 31, 0.82));
+  --wb-card-border: rgba(var(--pal-rgb), 0.16);
+  --wb-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 24px rgba(var(--pal-rgb), 0.05), 0 30px 60px rgba(0, 0, 0, 0.68), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --wb-glass-bg: color-mix(in srgb, var(--pal-primary) 5%, rgba(20, 20, 24, 0.70));
+  --wb-glass-bg-strong: color-mix(in srgb, var(--pal-primary) 9%, rgba(26, 26, 31, 0.82));
+  --wb-glass-border: rgba(var(--pal-rgb), 0.16);
+  --wb-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 24px rgba(var(--pal-rgb), 0.05), 0 30px 60px rgba(0, 0, 0, 0.68), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --wb-shadow-float: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(var(--pal-rgb), 0.18);
+
+  --coral-primary: var(--pal-primary);
+  --coral-accent: var(--pal-accent);
+  --coral-dot: var(--pal-primary);
+  --coral-soft: rgba(var(--pal-rgb), 0.20);
+  --coral-glow: rgba(var(--pal-rgb), 0.45);
+  --coral-600: var(--pal-primary);
+  --coral-700: var(--pal-primary-dark);
+  --coral-500: color-mix(in srgb, var(--pal-primary) 70%, white);
+  --coral-400: color-mix(in srgb, var(--pal-primary) 50%, white);
+  --coral-300: color-mix(in srgb, var(--pal-primary) 32%, white);
+  --coral-200: color-mix(in srgb, var(--pal-primary) 20%, #1a1a1a);
+  --coral-100: color-mix(in srgb, var(--pal-primary) 12%, #1a1a1a);
+  --coral-50: color-mix(in srgb, var(--pal-primary) 6%, #141414);
+  --coral-800: color-mix(in srgb, var(--pal-primary-dark) 80%, black);
+  --coral-900: color-mix(in srgb, var(--pal-primary-dark) 60%, black);
+  --coral-peach: color-mix(in srgb, var(--pal-primary) 55%, white);
+  --coral-blush: rgba(var(--pal-rgb), 0.12);
+  --coral-canvas: color-mix(in srgb, var(--pal-primary) 6%, #0c0c0f);
+  --coral-card: color-mix(in srgb, var(--pal-primary) 22%, transparent);
+  --coral-badge-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  --coral-card-shadow: 0 30px 60px rgba(0, 0, 0, 0.7), 0 0 24px rgba(var(--pal-rgb), 0.12);
+  --coral-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
+}

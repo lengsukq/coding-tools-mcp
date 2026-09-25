@@ -105,17 +105,25 @@ async function saveHistory(recording: boolean, sessions: number[]) {
   profile.value = next;
 }
 
-async function saveWorkspaceSettings(draft: { name: string; path: string }) {
+async function saveWorkspaceSettings(draft: { name: string; path: string; allowHighRiskWrites: boolean }) {
   if (!profile.value) return;
   const current = profile.value;
-  if (current.name === draft.name && current.path === draft.path) return;
-  const next = { ...current, name: draft.name, path: draft.path };
+  if (current.name === draft.name
+    && current.path === draft.path
+    && (current.runtime.allow_high_risk_writes ?? false) === draft.allowHighRiskWrites) return;
+  const next = {
+    ...current,
+    name: draft.name,
+    path: draft.path,
+    runtime: {
+      ...current.runtime,
+      allow_high_risk_writes: draft.allowHighRiskWrites,
+    },
+  };
   await updateWorkspace(next);
   if (workspaceId.value !== current.id) return;
   profile.value = next;
-  workspaces.value = workspaces.value.map((item) => item.id === next.id
-    ? { ...item, name: next.name, path: next.path }
-    : item);
+  workspaces.value = workspaces.value.map((item) => item.id === next.id ? next : item);
 }
 
 async function confirmDelete() {
@@ -166,7 +174,7 @@ onBeforeUnmount(() => { loadGeneration += 1; });
     </div>
   </div>
   <div v-else-if="!profile" class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto">
-    <div class="flex flex-col items-center gap-3 text-[var(--text-muted)]"><RotateCw :size="23" class="animate-spin text-[#0a84ff]" /><p class="text-xs">正在加载工作区数据…</p></div>
+    <div class="flex flex-col items-center gap-3 text-[var(--text-muted)]"><RotateCw :size="23" class="animate-spin text-[var(--primary)]" /><p class="text-xs">正在加载工作区数据…</p></div>
   </div>
   <section v-else class="min-h-0 flex-1 overflow-y-auto pb-14">
     <WorkspaceHeader

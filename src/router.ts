@@ -6,12 +6,14 @@ import KeysSettingsView from "./views/settings/KeysSettingsView.vue";
 import GatewaySettingsView from "./views/settings/GatewaySettingsView.vue";
 import FrpSettingsView from "./views/settings/FrpSettingsView.vue";
 import SoftwareSettingsView from "./views/settings/SoftwareSettingsView.vue";
+import ToolAuditView from "./views/ToolAuditView.vue";
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", name: "dashboard", component: DashboardView },
     { path: "/workspace/:id", name: "workspace", component: WorkspaceView },
+    { path: "/audit", name: "tool-audit", component: ToolAuditView },
     { path: "/settings/general", name: "settings-general", component: GeneralSettingsView },
     { path: "/settings/keys", name: "settings-keys", component: KeysSettingsView },
     { path: "/settings/gateway", name: "settings-gateway", component: GatewaySettingsView },

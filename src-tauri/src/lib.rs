@@ -17,6 +17,7 @@ mod runtime;
 mod review;
 mod secret;
 mod settings;
+mod tool_audit;
 pub mod tools;
 mod tunnel;
 mod update;
@@ -40,6 +41,7 @@ use commands::{
     set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
     set_shared_secret, set_shared_secrets, show_main_window, start_global_gateway, start_runtime,
     stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
+    clear_tool_audit_records, list_tool_audit_records, set_tool_audit_retention_days,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -216,6 +218,9 @@ pub fn run() {
             set_shared_secrets,
             regenerate_shared_secret,
             read_workspace_logs,
+            list_tool_audit_records,
+            set_tool_audit_retention_days,
+            clear_tool_audit_records,
             list_frp_profiles,
             save_frp_profile,
             delete_frp_profile,

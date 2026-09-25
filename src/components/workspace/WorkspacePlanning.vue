@@ -25,6 +25,7 @@ const props = defineProps<{ workspaceId: string }>();
 const state = ref<PlanningStateDto | null>(null);
 const busy = ref(false);
 const deleteBusy = ref(false);
+const resetConfirmOpen = ref(false);
 const pendingDeletePlan = ref<PlanDto | null>(null);
 let refreshTimer = 0;
 let refreshInFlight = false;
@@ -42,7 +43,19 @@ async function load() {
   finally { busy.value = false; }
 }
 async function changeMode(value: string) { busy.value = true; try { state.value = await setPlanningMode(props.workspaceId, value as PlanningMode); } finally { busy.value = false; } }
-async function reset() { busy.value = true; try { state.value = await resetPlanningState(props.workspaceId); showToast("Planning 已重置", { kind: "success" }); } finally { busy.value = false; } }
+async function confirmReset() {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    state.value = await resetPlanningState(props.workspaceId);
+    resetConfirmOpen.value = false;
+    showToast("Planning 已重置", { kind: "success" });
+  } catch (error) {
+    showToast(String(error), { title: "重置 Planning 失败", kind: "error" });
+  } finally {
+    busy.value = false;
+  }
+}
 async function refreshSilently() {
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -107,12 +120,12 @@ onUnmounted(() => window.clearInterval(refreshTimer));
       <div class="flex items-center gap-1.5">
         <span v-if="state" class="planning-revision rounded-full bg-black/[.035] px-2.5 py-1 text-[10px] text-[var(--text-muted)] dark:bg-white/[.05]">rev {{ state.revision }}</span>
         <BaseButton variant="ghost" size="sm" :busy="busy" title="刷新 Planning" @click="load"><RefreshCw :size="13" /></BaseButton>
-        <BaseButton variant="ghost" size="sm" :busy="busy" @click="reset"><RotateCcw :size="13" />重置</BaseButton>
+        <BaseButton variant="danger" size="sm" :busy="busy" @click="resetConfirmOpen = true"><RotateCcw :size="13" />重置</BaseButton>
       </div>
     </div>
 
-    <div class="workspace-planning-focus-grid">
-      <GlassCard class="min-h-[260px]">
+    <div class="workspace-planning-focus-grid animate-fade-in-up">
+      <GlassCard hoverable class="min-h-[260px]">
         <div class="mb-3 flex items-center justify-between">
           <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Goal</h3>
           <div v-if="focusedGoal" class="flex items-center gap-2">
@@ -121,7 +134,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
           </div>
         </div>
         <template v-if="focusedGoal">
-          <h2 class="text-base font-semibold">{{ focusedGoal.title }}</h2>
+          <h2 class="text-base font-semibold font-display">{{ focusedGoal.title }}</h2>
           <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{{ focusedGoal.objective }}</p>
           <div class="planning-criteria-list mt-4">
             <div
@@ -141,13 +154,13 @@ onUnmounted(() => window.clearInterval(refreshTimer));
         <p v-else class="py-5 text-center text-xs text-[var(--text-muted)]">当前没有 focused Goal</p>
       </GlassCard>
 
-      <GlassCard class="min-h-[260px]">
+      <GlassCard hoverable class="min-h-[260px]">
         <div class="mb-3 flex items-center justify-between">
           <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Plan</h3>
           <StatusPill v-if="focusedPlan" :status="focusedPlan.status" />
         </div>
         <template v-if="focusedPlan">
-          <h2 class="text-base font-semibold">{{ focusedPlan.title }}</h2>
+          <h2 class="text-base font-semibold font-display">{{ focusedPlan.title }}</h2>
           <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{{ focusedPlan.objective }}</p>
           <div class="planning-step-list mt-4">
             <div
@@ -183,7 +196,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
             <div class="flex items-center gap-2">
               <p class="truncate text-xs font-semibold">{{ plan.title }}</p>
               <StatusPill :status="plan.status" />
-              <span v-if="plan.id === state.focus_plan_id" class="rounded-full bg-[#5e5ce6]/10 px-2 py-0.5 text-[9px] font-semibold text-[#5e5ce6]">Focused</span>
+              <span v-if="plan.id === state.focus_plan_id" class="rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[9px] font-semibold text-[var(--primary)]">Focused</span>
             </div>
             <p class="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--text-secondary)]">{{ plan.objective }}</p>
             <p class="mt-1 text-[10px] text-[var(--text-muted)]">{{ plan.steps.length }} Steps · revision {{ plan.revision }}</p>
@@ -200,7 +213,19 @@ onUnmounted(() => window.clearInterval(refreshTimer));
       </div>
     </GlassCard>
 
-    <GlassCard v-if="reviewGoals.length || reviewPlans.length"><div class="mb-3 flex items-center gap-2"><Archive :size="16" class="text-[#ff9f0a]" /><h2 class="text-sm font-semibold">等待人工验收</h2></div><div class="space-y-2"><div v-for="goal in reviewGoals" :key="goal.id" class="flex items-center gap-3 rounded-2xl bg-[#ff9f0a]/7 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Goal · {{ goal.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ goal.review_summary || goal.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('goal', goal.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('goal', goal.id, true)">通过</BaseButton></div><div v-for="plan in reviewPlans" :key="plan.id" class="flex items-center gap-3 rounded-2xl bg-[#5e5ce6]/7 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Plan · {{ plan.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ plan.review_summary || plan.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('plan', plan.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('plan', plan.id, true)">通过</BaseButton></div></div></GlassCard>
+    <GlassCard v-if="reviewGoals.length || reviewPlans.length"><div class="mb-3 flex items-center gap-2"><Archive :size="16" class="text-[#ff9f0a]" /><h2 class="text-sm font-semibold">等待人工验收</h2></div><div class="space-y-2"><div v-for="goal in reviewGoals" :key="goal.id" class="flex items-center gap-3 rounded-2xl bg-[#ff9f0a]/7 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Goal · {{ goal.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ goal.review_summary || goal.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('goal', goal.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('goal', goal.id, true)">通过</BaseButton></div><div v-for="plan in reviewPlans" :key="plan.id" class="flex items-center gap-3 rounded-2xl bg-[var(--primary-soft)] p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Plan · {{ plan.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ plan.review_summary || plan.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('plan', plan.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('plan', plan.id, true)">通过</BaseButton></div></div></GlassCard>
+
+    <ConfirmDialog
+      :open="resetConfirmOpen"
+      title="重置 Planning"
+      message="确定重置当前工作区的 Planning 状态？"
+      detail="Goal、Plan、Focused 状态和 Execution 记录会被清空，并恢复为 Direct 模式；此操作无法撤销，但不会删除源码文件或 History。"
+      confirm-text="确认重置"
+      severity="danger"
+      :busy="busy"
+      @confirm="confirmReset"
+      @cancel="resetConfirmOpen = false"
+    />
 
     <ConfirmDialog
       :open="!!pendingDeletePlan"
@@ -249,7 +274,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
 }
 
 .planning-step-item:hover {
-  border-color: rgba(0, 113, 227, 0.3);
+  border-color: var(--card-border-active, rgba(var(--pal-rgb, 0, 113, 227), 0.3));
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
@@ -260,7 +285,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: rgba(0, 113, 227, 0.08);
+  background: var(--primary-soft, rgba(var(--pal-rgb, 0, 113, 227), 0.1));
   color: var(--primary);
   font-size: 10.5px;
   font-weight: 700;

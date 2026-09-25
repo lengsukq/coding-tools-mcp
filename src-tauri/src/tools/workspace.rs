@@ -219,10 +219,10 @@ impl Workspace {
     pub fn reject_protected_write_path(&self, raw_path: &str) -> WorkspaceResult<()> {
         let normalized = raw_path.replace('\\', "/");
         let first = normalized.split('/').next().unwrap_or("");
-        if matches!(first, ".git" | ".github") {
+        if first == ".git" {
             return Err(WorkspaceError::Tool {
                 code: "PROTECTED_PATH",
-                message: format!("禁止普通文件操作写入受保护目录: {raw_path}"),
+                message: format!("禁止普通文件操作写入 .git: {raw_path}"),
                 category: "security",
                 retryable: false,
             });

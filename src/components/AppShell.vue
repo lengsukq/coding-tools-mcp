@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GitBranch, Plus, Settings } from "@lucide/vue";
+import { ClipboardList, GitBranch, Plus, Settings } from "@lucide/vue";
 import ThemeToggle from "$src/components/ThemeToggle.vue";
 import SegmentedControl from "$src/components/ui/SegmentedControl.vue";
 import { APP_VERSION } from "$lib/app-version";
@@ -9,12 +9,14 @@ import { message } from "@tauri-apps/plugin-dialog";
 
 defineProps<{
   dashboardActive?: boolean;
+  auditActive?: boolean;
   settingsActive?: boolean;
   activeSettingsNav?: string;
 }>();
 
 const emit = defineEmits<{
   openDashboard: [];
+  openAudit: [];
   addWorkspace: [];
   openSettings: [];
   settingsNavChange: [value: string];
@@ -42,15 +44,18 @@ async function openRepo() {
         <div class="ios-sidebar__header-row flex items-start justify-between gap-2" data-tauri-drag-region>
           <button
             type="button"
-            class="ios-brand"
+            class="ios-brand btn-hover"
             :class="{ active: dashboardActive }"
             title="返回工作台"
             @click="emit('openDashboard')"
           >
-            <div class="ios-brand__mark" aria-hidden="true">CT</div>
+            <div class="ios-brand__mark shadow-sm" aria-hidden="true">CT</div>
             <div class="min-w-0 text-left">
-              <p class="ios-brand__kicker">CODING TOOLS</p>
-              <h1 class="ios-brand__title">MCP Console</h1>
+              <div class="flex items-center gap-1.5">
+                <p class="ios-brand__kicker font-display tracking-widest">CODING TOOLS</p>
+                <span class="inline-block h-1.5 w-1.5 rounded-full bg-[var(--primary)] shadow-[0_0_6px_var(--coral-glow)] animate-pulse" />
+              </div>
+              <h1 class="ios-brand__title font-display tracking-tight text-white/90">MCP Console</h1>
             </div>
           </button>
           <ThemeToggle />
@@ -58,9 +63,19 @@ async function openRepo() {
       </div>
 
       <div class="ios-sidebar__body">
+        <button
+          type="button"
+          class="ios-sidebar__audit btn-hover"
+          :class="{ active: auditActive }"
+          title="工具调用审计"
+          @click="emit('openAudit')"
+        >
+          <ClipboardList :size="15" :stroke-width="2" />
+          <span>工具审计</span>
+        </button>
         <div class="ios-sidebar__section-head">
-          <p class="ios-sidebar__section-label">工作区</p>
-          <button class="ios-sidebar__add" type="button" title="添加工作区" @click="emit('addWorkspace')">
+          <p class="ios-sidebar__section-label font-display">工作区</p>
+          <button class="ios-sidebar__add btn-hover" type="button" title="添加工作区" @click="emit('addWorkspace')">
             <Plus :size="13" :stroke-width="2.2" />
           </button>
         </div>
@@ -70,7 +85,7 @@ async function openRepo() {
       <div class="ios-sidebar__footer">
         <button
           type="button"
-          class="ios-sidebar__settings"
+          class="ios-sidebar__settings btn-hover"
           :class="{ active: settingsActive }"
           @click="emit('openSettings')"
         >
@@ -78,7 +93,7 @@ async function openRepo() {
           <span>设置</span>
         </button>
         <div class="ios-sidebar__meta">
-          <p>v{{ APP_VERSION }}</p>
+          <p class="font-mono">v{{ APP_VERSION }}</p>
           <button type="button" class="ios-sidebar__repo" @click="openRepo">
             <GitBranch :size="12" :stroke-width="2" />
             <span>仓库</span>
@@ -109,7 +124,7 @@ async function openRepo() {
 .ios-app-shell {
   position: relative;
   isolation: isolate;
-  background: var(--ios-canvas-bg);
+  background: transparent;
 }
 
 .ios-sidebar {
@@ -144,7 +159,7 @@ async function openRepo() {
 }
 .ios-brand:hover { background: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.8); transform: scale(1.01); }
 .ios-brand:active { transform: scale(0.975); }
-.ios-brand.active { background: rgba(0, 113, 227, 0.08); border-color: rgba(0, 113, 227, 0.12); }
+.ios-brand.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); border-color: var(--card-border-active, rgba(var(--pal-rgb, 226, 87, 76), 0.25)); }
 .ios-brand__mark {
   display: grid;
   width: 32px;
@@ -152,8 +167,8 @@ async function openRepo() {
   flex: 0 0 32px;
   place-items: center;
   border-radius: 10px;
-  background: linear-gradient(145deg, #0071e3 0%, #5856d6 100%);
-  box-shadow: 0 5px 16px rgba(0, 113, 227, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background: var(--primary-gradient, var(--accent-gradient));
+  box-shadow: 0 5px 16px var(--coral-glow, rgba(226, 87, 76, 0.32)), inset 0 1px 0 rgba(255, 255, 255, 0.5);
   color: white;
   font-size: 11px;
   font-weight: 780;
@@ -162,6 +177,26 @@ async function openRepo() {
 .ios-brand__title { margin-top: 4px; color: var(--text-main); font-size: 12.5px; font-weight: 700; line-height: 1; letter-spacing: -.02em; }
 
 .ios-sidebar__body { min-height: 0; flex: 1; overflow-y: auto; padding: 8px 9px 12px; }
+.ios-sidebar__audit {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+  transition: all 180ms var(--ease-apple-spring);
+}
+.ios-sidebar__audit:hover { background: rgba(255, 255, 255, 0.65); color: var(--text-main); }
+.ios-sidebar__audit.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); color: var(--primary, #e2574c); font-weight: 600; }
 .ios-sidebar__section-head { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 0 5px; }
 .ios-sidebar__section-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ios-sidebar__add {
@@ -176,7 +211,7 @@ async function openRepo() {
   cursor: pointer;
   transition: background 180ms var(--ease-apple-spring), color 180ms var(--ease-apple-spring), transform 180ms var(--ease-apple-spring);
 }
-.ios-sidebar__add:hover { background: rgba(0, 113, 227, 0.09); color: #0071e3; transform: scale(1.08); }
+.ios-sidebar__add:hover { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.12)); color: var(--primary, #e2574c); transform: scale(1.08); }
 .ios-sidebar__add:active { transform: scale(0.92); }
 
 .ios-sidebar__footer { padding: 9px 10px 12px; }
@@ -197,7 +232,7 @@ async function openRepo() {
   transition: all 180ms var(--ease-apple-spring);
 }
 .ios-sidebar__settings:hover { background: rgba(255, 255, 255, 0.65); color: var(--text-main); }
-.ios-sidebar__settings.active { background: rgba(0, 113, 227, 0.09); color: #0071e3; font-weight: 600; }
+.ios-sidebar__settings.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); color: var(--primary, #e2574c); font-weight: 600; }
 .ios-sidebar__meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 0 7px; color: var(--text-muted); font-size: 9px; }
 .ios-sidebar__repo { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .ios-sidebar__repo:hover { color: var(--text-secondary); }
@@ -227,15 +262,37 @@ async function openRepo() {
 
 :global(.ios-sidebar-workspaces) { display: grid; gap: 4px; }
 
-:global(.dark) .ios-app-shell { background: #0b0d14; }
-:global(.dark) .ios-sidebar {
-  border-right-color: rgba(255, 255, 255, 0.07);
-  background: rgba(16, 19, 28, 0.84);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
+:global(.dark) .ios-app-shell,
+:global([data-theme="dark"]) .ios-app-shell { background: transparent; }
+:global(.dark) .ios-sidebar,
+:global([data-theme="dark"]) .ios-sidebar {
+  border-right-color: var(--sidebar-border, rgba(255, 255, 255, 0.08));
+  background: var(--sidebar-bg, rgba(14, 14, 18, 0.72));
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset -1px 0 0 rgba(255, 255, 255, 0.04), 0 20px 60px rgba(0, 0, 0, 0.4);
 }
 :global(.dark) .ios-brand:hover,
-:global(.dark) .ios-sidebar__settings:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.08); }
-:global(.dark) .ios-main { background: transparent; }
+:global([data-theme="dark"]) .ios-brand:hover,
+:global(.dark) .ios-sidebar__audit:hover,
+:global([data-theme="dark"]) .ios-sidebar__audit:hover,
+:global(.dark) .ios-sidebar__settings:hover,
+:global([data-theme="dark"]) .ios-sidebar__settings:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+:global(.dark) .ios-brand.active,
+:global([data-theme="dark"]) .ios-brand.active,
+:global(.dark) .ios-sidebar__audit.active,
+:global([data-theme="dark"]) .ios-sidebar__audit.active,
+:global(.dark) .ios-sidebar__settings.active,
+:global([data-theme="dark"]) .ios-sidebar__settings.active {
+  background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.16));
+  border-color: var(--card-border-active, rgba(var(--pal-rgb, 226, 87, 76), 0.35));
+  box-shadow: 0 0 18px rgba(var(--pal-rgb, 226, 87, 76), 0.22);
+}
+:global(.dark) .ios-main,
+:global([data-theme="dark"]) .ios-main { background: transparent; }
 
 @media (max-width: 1080px) {
   .ios-sidebar {
@@ -268,6 +325,7 @@ async function openRepo() {
 
   .ios-brand > div:last-child,
   .ios-sidebar__section-label,
+  .ios-sidebar__audit span,
   .ios-sidebar__settings span,
   .ios-sidebar__meta p,
   .ios-sidebar__repo span {
@@ -275,6 +333,13 @@ async function openRepo() {
   }
 
   .ios-sidebar__body {
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__audit {
+    min-height: 46px;
+    justify-content: center;
+    margin-bottom: 8px;
     padding-inline: 7px;
   }
 

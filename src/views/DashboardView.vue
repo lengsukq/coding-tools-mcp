@@ -551,13 +551,13 @@ onUnmounted(() => {
             <LayoutDashboard :size="18" />
           </div>
           <div>
-            <h1 class="wb-dashboard-title">工作台</h1>
+            <h1 class="wb-dashboard-title font-display text-2xl tracking-tight">工作台</h1>
             <p class="wb-dashboard-subtitle">查看正在执行的 AI 工作、进度、验证结果与需要你处理的风险。</p>
           </div>
         </div>
       </div>
       <div class="wb-header-actions">
-        <button class="wb-command-button ios-glass" type="button" @click="commandOpen = true; commandQuery = ''">
+        <button class="wb-command-button ios-glass btn-hover" type="button" @click="commandOpen = true; commandQuery = ''">
           <Command :size="14" />
           <span>Quick Actions</span>
           <span class="wb-kbd">⌘K</span>
@@ -574,21 +574,21 @@ onUnmounted(() => {
     </header>
 
     <div class="page-body wb-dashboard-main pb-14">
-      <div v-if="workspaceCount === 0" class="wb-empty-state wb-surface mx-auto mt-16 max-w-xl px-8 py-12 text-center">
+      <div v-if="workspaceCount === 0" class="wb-empty-state wb-surface card-hover mx-auto mt-16 max-w-xl px-8 py-12 text-center animate-fade-in-up">
         <div class="mx-auto grid h-16 w-16 place-items-center rounded-[24px] bg-[var(--accent-gradient)] text-white shadow-lg">
           <GitBranch :size="28" />
         </div>
-        <h2 class="mt-5 text-lg font-semibold">还没有工作区</h2>
+        <h2 class="mt-5 text-lg font-semibold font-display">还没有工作区</h2>
         <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">添加本地项目后，ChatGPT 可通过同一个 Global MCP 连接选择并操作不同 Workspace。</p>
-        <button class="wb-primary-button mt-5" type="button" @click="requestAddWorkspace">添加工作区</button>
+        <button class="wb-primary-button btn-hover mt-5" type="button" @click="requestAddWorkspace">添加工作区</button>
       </div>
 
       <template v-else>
-        <section v-if="moduleVisible('focus')" class="wb-hero wb-surface ios-fade-in-up ios-stagger-1">
+        <section v-if="moduleVisible('focus')" class="wb-hero wb-surface card-hover animate-fade-in-up delay-150">
           <div class="wb-focus">
-            <div class="wb-eyebrow text-[var(--ios-purple)]"><Sparkles :size="13" /> 当前执行</div>
+            <div class="wb-eyebrow text-[var(--coral-primary,#e2574c)] font-display"><Sparkles :size="13" /> 当前执行</div>
             <template v-if="primaryFocus">
-              <h2>{{ primaryFocus.title }}</h2>
+              <h2 class="font-display">{{ primaryFocus.title }}</h2>
               <p>{{ primaryFocus.detail }}</p>
               <div class="wb-progress"><span :style="{ width: `${primaryFocus.progress}%` }" /></div>
               <div class="wb-focus-meta">
@@ -596,8 +596,8 @@ onUnmounted(() => {
                 <span>{{ primaryFocus.progressLabel }}</span><span>{{ planningByWorkspace[primaryFocus.workspace.id]?.execution.state ?? 'idle' }}</span>
               </div>
               <div class="wb-focus-actions">
-                <button class="wb-primary-button" type="button" @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></button>
-                <button class="wb-soft-button" type="button" @click="toggleGlobalMcp">
+                <button class="wb-primary-button btn-hover" type="button" @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></button>
+                <button class="wb-soft-button btn-hover" type="button" @click="toggleGlobalMcp">
                   <RotateCw v-if="globalRuntimeBusy" :size="12" class="animate-spin" />
                   <template v-else-if="globalMcpRuntimeState === 'running'"><Square :size="11" /> 停止 Global MCP</template>
                   <template v-else><Play :size="11" /> 启动 Global MCP</template>
@@ -605,48 +605,48 @@ onUnmounted(() => {
               </div>
             </template>
             <template v-else>
-              <h2>选择一个工作区开始</h2>
+              <h2 class="font-display">选择一个工作区开始</h2>
               <p>当前没有聚焦的 Goal 或 Plan。你仍然可以从下面的工作区继续工作。</p>
             </template>
           </div>
           <div class="wb-health-panel">
             <div class="wb-health-ring" :style="{ '--health-angle': `${serviceHealth * 3.6}deg` }">
-              <div class="wb-health-ring-content"><strong>{{ serviceHealth }}%</strong><span>Global MCP</span><small>{{ globalMcpRuntimeState }}</small></div>
+              <div class="wb-health-ring-content"><strong class="font-display">{{ serviceHealth }}%</strong><span>Global MCP</span><small>{{ globalMcpRuntimeState }}</small></div>
             </div>
             <div class="wb-health-summary">
-              <div><span>Executing</span><strong>{{ executionStats.running }}</strong></div>
-              <div><span>Verified</span><strong>{{ executionStats.verified }}</strong></div>
-              <div :class="{ alert: executionStats.blocked > 0 }"><span>Blocked</span><strong>{{ executionStats.blocked }}</strong></div>
+              <div><span>Executing</span><strong class="font-display">{{ executionStats.running }}</strong></div>
+              <div><span>Verified</span><strong class="font-display">{{ executionStats.verified }}</strong></div>
+              <div :class="{ alert: executionStats.blocked > 0 }"><span>Blocked</span><strong class="font-display">{{ executionStats.blocked }}</strong></div>
             </div>
             <div class="wb-health-connections">
-              <span>{{ globalMcpRuntimeState === 'running' ? 'MCP Online' : 'MCP Offline' }}</span>
+              <span :class="{ 'animate-pulse-glow': globalMcpRuntimeState === 'running' }">{{ globalMcpRuntimeState === 'running' ? 'MCP Online' : 'MCP Offline' }}</span>
               <span>{{ globalOverview.sessionCount }} Sessions</span>
               <span>{{ executionStats.changedFiles }} Changed Files</span>
             </div>
           </div>
         </section>
 
-        <div class="wb-stat-strip mt-5 ios-fade-in-up ios-stagger-2">
-          <div class="wb-stat wb-surface wb-stat--blue">
-            <div class="wb-stat-head"><span>AI Executions</span><i><Boxes :size="16" /></i></div>
-            <strong>{{ executionStats.running }}</strong><small><b>{{ executionStats.changedFiles }}</b> 个执行变更文件</small>
+        <div class="wb-stat-strip mt-5 animate-fade-in-up delay-300">
+          <div class="wb-stat wb-surface wb-stat--blue card-hover">
+            <div class="wb-stat-head"><span class="font-display">AI Executions</span><i><Boxes :size="16" /></i></div>
+            <strong class="font-display">{{ executionStats.running }}</strong><small><b>{{ executionStats.changedFiles }}</b> 个执行变更文件</small>
           </div>
-          <div class="wb-stat wb-surface wb-stat--indigo">
-            <div class="wb-stat-head"><span>MCP Tokens</span><i><Cpu :size="16" /></i></div>
-            <strong>{{ formatCount(usageTotals.estimatedTokens) }}</strong><small><b>{{ formatCount(usageTotals.toolCallCount) }}</b> 次工具调用</small>
+          <div class="wb-stat wb-surface wb-stat--indigo card-hover">
+            <div class="wb-stat-head"><span class="font-display">MCP Tokens</span><i><Cpu :size="16" /></i></div>
+            <strong class="font-display">{{ formatCount(usageTotals.estimatedTokens) }}</strong><small><b>{{ formatCount(usageTotals.toolCallCount) }}</b> 次工具调用</small>
           </div>
-          <div class="wb-stat wb-surface wb-stat--purple">
-            <div class="wb-stat-head"><span>Active Goals</span><i><ListChecks :size="16" /></i></div>
-            <strong>{{ planningStats.activeGoals }}</strong><small><b>{{ planningStats.activePlans }}</b> 个 Plan 进行中</small>
+          <div class="wb-stat wb-surface wb-stat--purple card-hover">
+            <div class="wb-stat-head"><span class="font-display">Active Goals</span><i><ListChecks :size="16" /></i></div>
+            <strong class="font-display">{{ planningStats.activeGoals }}</strong><small><b>{{ planningStats.activePlans }}</b> 个 Plan 进行中</small>
           </div>
-          <div class="wb-stat wb-surface" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
-            <div class="wb-stat-head"><span>Verification</span><i><ShieldCheck :size="16" /></i></div>
-            <strong>{{ executionStats.verified }}</strong><small>{{ executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收` }}</small>
+          <div class="wb-stat wb-surface card-hover" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
+            <div class="wb-stat-head"><span class="font-display">Verification</span><i><ShieldCheck :size="16" /></i></div>
+            <strong class="font-display">{{ executionStats.verified }}</strong><small>{{ executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收` }}</small>
           </div>
         </div>
 
-        <section class="wb-visual-overview mt-5 ios-fade-in-up ios-stagger-3">
-          <article class="wb-overview-card wb-overview-card--flow wb-surface">
+        <section class="wb-visual-overview mt-5 animate-fade-in-up delay-500">
+          <article class="wb-overview-card wb-overview-card--flow wb-surface card-hover">
             <div class="wb-overview-head">
               <div>
                 <span class="wb-overview-kicker"><Activity :size="12" /> 实时流量</span>
@@ -664,13 +664,13 @@ onUnmounted(() => {
               <svg v-if="usageChart.points.length > 1" viewBox="0 0 100 40" preserveAspectRatio="none" class="wb-overview-spark">
                 <defs>
                   <linearGradient id="dashboardOverviewArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0" stop-color="var(--ios-blue)" stop-opacity=".30" />
-                    <stop offset="1" stop-color="var(--ios-blue)" stop-opacity="0" />
+                    <stop offset="0" stop-color="var(--coral-accent, #E5665B)" stop-opacity=".35" />
+                    <stop offset="1" stop-color="var(--coral-primary, #e2574c)" stop-opacity="0" />
                   </linearGradient>
                   <linearGradient id="dashboardOverviewLine" x1="0" x2="1" y1="0" y2="0">
-                    <stop offset="0" stop-color="var(--ios-cyan)" />
-                    <stop offset=".55" stop-color="var(--ios-blue)" />
-                    <stop offset="1" stop-color="var(--ios-indigo)" />
+                    <stop offset="0" stop-color="var(--coral-400)" />
+                    <stop offset=".55" stop-color="var(--coral-700)" />
+                    <stop offset="1" stop-color="var(--coral-600)" />
                   </linearGradient>
                 </defs>
                 <line x1="0" x2="100" y1="27" y2="27" class="wb-overview-gridline" />
@@ -687,22 +687,22 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface">
+          <article class="wb-overview-card wb-surface card-hover">
             <div class="wb-overview-head">
               <div>
-                <span class="wb-overview-kicker"><GitBranch :size="12" /> Session 路由</span>
-                <h3>Chat → Workspace</h3>
+                <span class="wb-overview-kicker font-display"><GitBranch :size="12" /> Session 路由</span>
+                <h3 class="font-display">Chat → Workspace</h3>
               </div>
-              <strong class="wb-overview-head-value">{{ sessionRouting.total }}</strong>
+              <strong class="wb-overview-head-value font-display">{{ sessionRouting.total }}</strong>
             </div>
             <div class="wb-ring-layout">
               <div class="wb-mini-ring" :style="{ '--ring-angle': `${sessionRouting.boundRate * 3.6}deg` }">
-                <div><strong>{{ sessionRouting.boundRate }}%</strong><span>已绑定</span></div>
+                <div><strong class="font-display">{{ sessionRouting.boundRate }}%</strong><span>已绑定</span></div>
               </div>
               <div class="wb-overview-bars">
                 <div v-if="sessionRouting.rows.length === 0" class="wb-overview-empty">尚无活跃 Session</div>
                 <div v-for="row in sessionRouting.rows" v-else :key="row.id" class="wb-overview-bar-row">
-                  <div><span :title="row.label">{{ row.label }}</span><strong>{{ row.value }}</strong></div>
+                  <div><span :title="row.label">{{ row.label }}</span><strong class="font-display">{{ row.value }}</strong></div>
                   <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
                 </div>
               </div>
@@ -713,21 +713,21 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface">
+          <article class="wb-overview-card wb-surface card-hover">
             <div class="wb-overview-head">
               <div>
-                <span class="wb-overview-kicker"><ListChecks :size="12" /> Planning</span>
-                <h3>Focus 完成度</h3>
+                <span class="wb-overview-kicker font-display"><ListChecks :size="12" /> Planning</span>
+                <h3 class="font-display">Focus 完成度</h3>
               </div>
-              <strong class="wb-overview-head-value">{{ planningCompletion.completed }}/{{ planningCompletion.total }}</strong>
+              <strong class="wb-overview-head-value font-display">{{ planningCompletion.completed }}/{{ planningCompletion.total }}</strong>
             </div>
             <div class="wb-ring-layout">
               <div class="wb-mini-ring wb-mini-ring--purple" :style="{ '--ring-angle': `${planningCompletion.percentage * 3.6}deg` }">
-                <div><strong>{{ planningCompletion.percentage }}%</strong><span>Completed</span></div>
+                <div><strong class="font-display">{{ planningCompletion.percentage }}%</strong><span>Completed</span></div>
               </div>
               <div class="wb-overview-bars">
                 <div v-for="row in planningModeRows" :key="row.key" class="wb-overview-bar-row" :class="`is-${row.key}`">
-                  <div><span>{{ row.label }}</span><strong>{{ row.value }}</strong></div>
+                  <div><span>{{ row.label }}</span><strong class="font-display">{{ row.value }}</strong></div>
                   <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
                 </div>
               </div>
@@ -739,18 +739,18 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface">
+          <article class="wb-overview-card wb-surface card-hover">
             <div class="wb-overview-head">
               <div>
-                <span class="wb-overview-kicker"><Boxes :size="12" /> Workspace 负载</span>
-                <h3>Token Distribution</h3>
+                <span class="wb-overview-kicker font-display"><Boxes :size="12" /> Workspace 负载</span>
+                <h3 class="font-display">Token Distribution</h3>
               </div>
-              <strong class="wb-overview-head-value">{{ workspaceCount }}</strong>
+              <strong class="wb-overview-head-value font-display">{{ workspaceCount }}</strong>
             </div>
             <div class="wb-overview-workspace-bars">
               <div v-if="usageRanking.length === 0" class="wb-overview-empty">暂无 Workspace 用量</div>
               <div v-for="row in usageRanking.slice(0, 4)" v-else :key="row.workspace.id" class="wb-overview-workspace-row">
-                <div><span :title="row.workspace.name">{{ row.workspace.name }}</span><strong>{{ formatCount(row.tokens) }}</strong></div>
+                <div><span :title="row.workspace.name">{{ row.workspace.name }}</span><strong class="font-display">{{ formatCount(row.tokens) }}</strong></div>
                 <div class="wb-overview-workspace-track"><i :style="{ width: `${row.percentage}%` }" /></div>
               </div>
             </div>
@@ -761,8 +761,8 @@ onUnmounted(() => {
           </article>
         </section>
 
-        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface ios-fade-in-up ios-stagger-3">
-          <div class="wb-section-heading"><div><h3>需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>
+        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface card-hover animate-fade-in-up delay-700">
+          <div class="wb-section-heading"><div><h3 class="font-display">需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>
           <div class="wb-attention-list">
             <button v-for="item in attentionItems" :key="`${item.workspace.id}-${item.title}`" class="wb-attention-row" type="button" @click="openWorkspace(item.workspace.id)">
               <X v-if="item.level === 'error'" :size="14" class="text-[var(--danger)]" /><AlertTriangle v-else :size="14" class="text-[var(--warning)]" />
@@ -771,30 +771,30 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface ios-fade-in-up ios-stagger-4">
-          <div class="wb-section-heading"><div><h3>工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)]">{{ workspaceCount }} Workspaces</span></div>
+        <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface card-hover animate-fade-in-up delay-700">
+          <div class="wb-section-heading"><div><h3 class="font-display">工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)] font-mono">{{ workspaceCount }} Workspaces</span></div>
           <div class="wb-workspace-list">
             <div class="wb-workspace-header"><span>Workspace</span><span>Context</span><span>Planning</span><span>Tokens</span><span /></div>
-            <div v-for="workspace in orderedWorkspaces" :key="workspace.id" class="wb-workspace-row" :class="{ 'is-pinned': dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id) }">
-              <div class="wb-workspace-name"><button type="button" class="truncate" @click="openWorkspace(workspace.id)">{{ workspace.name }}</button><small :title="workspace.path">{{ workspace.path }}</small></div>
+            <div v-for="workspace in orderedWorkspaces" :key="workspace.id" class="wb-workspace-row card-hover" :class="{ 'is-pinned': dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id) }">
+              <div class="wb-workspace-name"><button type="button" class="truncate font-display font-medium" @click="openWorkspace(workspace.id)">{{ workspace.name }}</button><small :title="workspace.path" class="font-mono">{{ workspace.path }}</small></div>
               <div class="wb-runtime-pill"><span class="wb-runtime-dot is-running" /><span>{{ workspace.runtime.tool_profile }}</span><span class="font-mono text-[9px]">isolated</span></div>
               <div class="wb-mode-pill min-w-0"><GitBranch :size="11" /><span class="truncate" :title="planningSummary(workspace.id)">{{ planningSummary(workspace.id) }}</span></div>
-              <div class="wb-workspace-token">{{ formatCount(workspaceUsageTokens(workspace.id)) }}</div>
+              <div class="wb-workspace-token font-mono">{{ formatCount(workspaceUsageTokens(workspace.id)) }}</div>
               <div class="wb-workspace-actions">
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="togglePinnedWorkspace(workspace.id)"><PinOff v-if="dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)" :size="11" /><Pin v-else :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))"><ChevronUp :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="revealDirectory(workspace.path)"><FolderOpen :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="11" class="text-[var(--success)]" /><Copy v-else :size="11" /></button>
-                <button class="wb-icon-button !h-7 !w-7 !min-h-7" type="button" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="togglePinnedWorkspace(workspace.id)"><PinOff v-if="dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)" :size="11" /><Pin v-else :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))"><ChevronUp :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="revealDirectory(workspace.path)"><FolderOpen :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="11" class="text-[var(--success)]" /><Copy v-else :size="11" /></button>
+                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="11" /></button>
               </div>
             </div>
           </div>
         </section>
 
-        <div class="wb-grid-two ios-fade-in-up ios-stagger-5">
-          <section v-if="moduleVisible('activity')" class="wb-section wb-surface">
-            <div class="wb-section-heading"><div><h3>最近活动</h3><p>汇总各工作区最近的 History Session。</p></div><Activity :size="14" /></div>
+        <div class="wb-grid-two animate-fade-in-up delay-900">
+          <section v-if="moduleVisible('activity')" class="wb-section wb-surface card-hover">
+            <div class="wb-section-heading"><div><h3 class="font-display">最近活动</h3><p>汇总各工作区最近的 History Session。</p></div><Activity :size="14" /></div>
             <div v-if="recentActivities.length" class="wb-activity-list">
               <button
                 v-for="item in recentActivities"
@@ -824,47 +824,62 @@ onUnmounted(() => {
             <div v-else class="wb-empty-inline">还没有可汇总的 History Session。</div>
           </section>
 
-          <section v-if="moduleVisible('health')" class="wb-section wb-surface">
-            <div class="wb-section-heading"><div><h3>系统健康</h3><p>Global MCP 与公网入口属于全局运行时，不绑定任何单个 Workspace。</p></div><Gauge :size="14" /></div>
+          <section v-if="moduleVisible('health')" class="wb-section wb-surface card-hover">
+            <div class="wb-section-heading"><div><h3 class="font-display">系统健康</h3><p>Global MCP 与公网入口属于全局运行时，不绑定任何单个 Workspace。</p></div><Gauge :size="14" /></div>
             <div v-if="globalHealth.length" class="wb-global-health-grid mb-3">
-              <div v-for="item in globalHealth" :key="item.label" class="rounded-xl bg-black/[.025] px-3 py-2.5 dark:bg-white/[.035]">
-                <div class="flex items-center justify-between gap-3"><strong class="text-[11px]">{{ item.label }}</strong><span class="text-[10px] font-semibold" :class="item.ok ? 'text-[var(--success)]' : 'text-[var(--danger)]'">{{ item.ok ? '正常' : '异常' }}</span></div>
-                <p class="mt-1 text-[10px] leading-4 text-[var(--text-secondary)]">{{ item.detail }}</p>
-                <p v-if="item.hint" class="mt-1 text-[9px] leading-4 text-[var(--text-muted)]">{{ item.hint }}</p>
+              <div
+                v-for="item in globalHealth"
+                :key="item.label"
+                class="wb-health-tile"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-xs font-semibold text-[var(--text-main)] font-display">{{ item.label }}</strong>
+                  <span
+                    class="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    :class="item.ok
+                      ? 'bg-[#30d158]/15 text-[#30d158] border border-[#30d158]/30 shadow-[0_0_8px_rgba(48,209,88,0.25)]'
+                      : 'bg-[#ff453a]/15 text-[#ff453a] border border-[#ff453a]/30 shadow-[0_0_8px_rgba(255,69,58,0.25)]'"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full" :class="item.ok ? 'bg-[#30d158]' : 'bg-[#ff453a] animate-pulse'" />
+                    {{ item.ok ? '正常' : '异常' }}
+                  </span>
+                </div>
+                <p class="mt-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">{{ item.detail }}</p>
+                <p v-if="item.hint" class="mt-1 text-[10px] leading-4 text-[var(--text-muted)] font-mono">{{ item.hint }}</p>
               </div>
             </div>
             <div class="wb-health-overview">
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>Global MCP</span><strong>{{ globalMcpRuntimeState }}</strong></div>
+                <div class="wb-mix-head"><span class="font-display">Global MCP</span><strong class="font-display">{{ globalMcpRuntimeState }}</strong></div>
                 <div class="wb-mix-track">
                   <i v-for="item in runtimeMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
                 </div>
                 <div class="wb-mix-legend"><span v-for="item in runtimeMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
               </div>
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>唯一连接方式</span><strong>1 Endpoint</strong></div>
+                <div class="wb-mix-head"><span class="font-display">唯一连接方式</span><strong class="font-display">1 Endpoint</strong></div>
                 <div class="wb-mix-track">
                   <i v-for="item in connectionMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
                 </div>
                 <div class="wb-mix-legend"><span v-for="item in connectionMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
               </div>
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>Planning 模式</span><strong>{{ planningStats.activeGoals }} Goals</strong></div>
+                <div class="wb-mix-head"><span class="font-display">Planning 模式</span><strong class="font-display">{{ planningStats.activeGoals }} Goals</strong></div>
                 <div class="wb-mix-track">
                   <i v-for="item in planningModeMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
                 </div>
                 <div class="wb-mix-legend"><span v-for="item in planningModeMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
               </div>
               <div class="wb-health-signal" :class="errorServices === 0 && usageTotals.errorCount === 0 ? 'healthy' : 'warning'">
-                <div><span>Quality Signal</span><strong>{{ errorServices === 0 && usageTotals.errorCount === 0 ? "Passed" : "Needs Attention" }}</strong></div>
+                <div><span>Quality Signal</span><strong class="font-display">{{ errorServices === 0 && usageTotals.errorCount === 0 ? "Passed" : "Needs Attention" }}</strong></div>
                 <small>{{ formatCount(usageTotals.errorCount) }} Tool Errors · {{ planningStats.pendingReview }} Waiting Review</small>
               </div>
               <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span>Chat Sessions</span><strong>{{ globalOverview.sessionCount }}</strong></div>
+                <div class="wb-mix-head"><span class="font-display">Chat Sessions</span><strong class="font-display">{{ globalOverview.sessionCount }}</strong></div>
                 <div v-if="globalOverview.sessions.length" class="mt-2 space-y-1.5">
                   <div v-for="session in globalOverview.sessions.slice(0, 4)" :key="session.sessionId" class="flex items-center justify-between gap-3 text-[10px]">
                     <span class="min-w-0 truncate text-[var(--text-secondary)]">{{ session.workspaceName }}</span>
-                    <code class="shrink-0 text-[9px] text-[var(--text-muted)]">{{ session.sessionId.slice(0, 8) }}</code>
+                    <code class="shrink-0 text-[9px] text-[var(--text-muted)] font-mono">{{ session.sessionId.slice(0, 8) }}</code>
                   </div>
                 </div>
                 <div v-else class="mt-2 text-[10px] text-[var(--text-muted)]">尚无活跃 Chat Session</div>
@@ -873,17 +888,17 @@ onUnmounted(() => {
           </section>
         </div>
 
-        <section v-if="moduleVisible('usage')" class="wb-section wb-surface wb-analytics-section ios-fade-in-up ios-stagger-6">
-          <div class="wb-section-heading"><div><h3>Token Analytics</h3><p>MCP JSON 传输量估算，用于观察工具调用趋势。</p></div><Zap :size="14" /></div>
+        <section v-if="moduleVisible('usage')" class="wb-section wb-surface wb-analytics-section card-hover animate-fade-in-up delay-1100">
+          <div class="wb-section-heading"><div><h3 class="font-display">Token Analytics</h3><p>MCP JSON 传输量估算，用于观察工具调用趋势。</p></div><Zap :size="14" /></div>
           <div class="wb-grid-two">
             <DashboardUsagePanel :totals="usageTotals" :average-tokens="averageTokens" :chart="usageChart" />
             <div class="wb-ranking">
               <div class="wb-ranking-header">
                 <div>
-                  <span class="wb-ranking-title">工作区消耗排行</span>
+                  <span class="wb-ranking-title font-display">工作区消耗排行</span>
                   <p class="wb-ranking-subtitle">各项目的 Token 占用量与相对比例</p>
                 </div>
-                <span class="wb-ranking-badge">{{ orderedWorkspaces.length }} Workspaces</span>
+                <span class="wb-ranking-badge font-mono">{{ orderedWorkspaces.length }} Workspaces</span>
               </div>
 
               <div class="wb-ranking-list">

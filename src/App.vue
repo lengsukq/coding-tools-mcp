@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import AppShell from "$src/components/AppShell.vue";
+import AmbientLiquidBackground from "$src/components/ui/AmbientLiquidBackground.vue";
 import CloseConfirmDialog from "$src/components/CloseConfirmDialog.vue";
 import ToastHost from "$src/components/ToastHost.vue";
 import WorkspaceNavItem from "$src/components/WorkspaceNavItem.vue";
@@ -37,6 +38,7 @@ const sidebarWorkspaces = computed(() => {
 
 const settingsActive = computed(() => route.path.startsWith("/settings"));
 const dashboardActive = computed(() => route.path === "/");
+const auditActive = computed(() => route.path === "/audit");
 const activeSettingsNav = computed(() => {
   if (route.path === "/settings/keys") return "keys";
   if (["/settings/gateway", "/settings/frp", "/settings/software"].includes(route.path)) {
@@ -121,33 +123,37 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppShell
-    :dashboard-active="dashboardActive"
-    :settings-active="settingsActive"
-    :active-settings-nav="activeSettingsNav"
-    @open-dashboard="router.push('/')"
-    @add-workspace="addWorkspace"
-    @open-settings="router.push('/settings/general')"
-    @settings-nav-change="handleSettingsNavChange"
-  >
-    <template #sidebar>
-      <div class="ios-sidebar-workspaces">
-        <WorkspaceNavItem
-          v-for="workspace in sidebarWorkspaces"
-          :key="workspace!.id"
-          :workspace="workspace!"
-          :active="route.path === `/workspace/${workspace!.id}`"
-          @click="openWorkspace(workspace!.id)"
-        />
-      </div>
-    </template>
+  <div class="relative min-h-screen w-full font-body overflow-x-hidden">
+    <AmbientLiquidBackground />
+    <AppShell
+      :dashboard-active="dashboardActive"
+      :settings-active="settingsActive"
+      :audit-active="auditActive"
+      :active-settings-nav="activeSettingsNav"
+      @open-dashboard="router.push('/')"
+      @open-audit="router.push('/audit')"
+      @add-workspace="addWorkspace"
+      @open-settings="router.push('/settings/general')"
+      @settings-nav-change="handleSettingsNavChange"
+    >
+      <template #sidebar>
+        <div class="ios-sidebar-workspaces">
+          <WorkspaceNavItem
+            v-for="workspace in sidebarWorkspaces"
+            :key="workspace!.id"
+            :workspace="workspace!"
+            :active="route.path === `/workspace/${workspace!.id}`"
+            @click="openWorkspace(workspace!.id)"
+          />
+        </div>
+      </template>
 
-    <RouterView v-slot="{ Component }">
-      <component :is="Component" />
-    </RouterView>
-  </AppShell>
+      <RouterView v-slot="{ Component }">
+        <component :is="Component" />
+      </RouterView>
+    </AppShell>
 
-  <ToastHost />
-  <CloseConfirmDialog v-model:open="closeConfirmOpen" />
+    <ToastHost />
+    <CloseConfirmDialog v-model:open="closeConfirmOpen" />
+  </div>
 </template>
-

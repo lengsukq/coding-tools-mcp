@@ -18,30 +18,59 @@
   --accent-purple: var(--ios-purple);
   --accent-cyan: var(--ios-cyan);
 
+  /* Warm Coral / Peach Palette Tokens from Design System */
+  --coral-50: #fbf5f4;
+  --coral-100: #F6E2DE;
+  --coral-200: #FBE7E2;
+  --coral-300: #f2cfcb;
+  --coral-400: #fdbdb4;
+  --coral-500: #F3B7AE;
+  --coral-600: #e2574c;
+  --coral-700: #E5665B;
+  --coral-800: #d6837b;
+  --coral-900: #7c6a66;
+  --coral-primary: #e2574c;
+  --coral-accent: #E5665B;
+  --coral-soft: rgba(226, 87, 76, 0.12);
+  --coral-peach: #fdbdb4;
+  --coral-blush: #FBE7E2;
+  --coral-canvas: #F6E2DE;
+  --coral-card: #f2cfcb;
+  --coral-dark: #111111;
+  --coral-text-muted: #7c6a66;
+  --coral-glow: rgba(226, 87, 76, 0.35);
+  --coral-shadow: 0 12px 28px rgba(60, 20, 15, 0.35);
+  --coral-card-shadow: 0 30px 60px rgba(190, 120, 110, 0.28);
+  --coral-badge-shadow: 0 8px 20px rgba(160, 80, 70, 0.18);
+  --coral-dot: #e2574c;
+
+  /* Prompt Motion Tokens & Physics Curves */
+  --ease-dc-rise: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-dc-pop: cubic-bezier(0.34, 1.5, 0.5, 1);
+  --ease-dc-scale: cubic-bezier(0.16, 1, 0.3, 1);
+
   /* Apple Canvas & Surface Base */
-  --ios-canvas-bg: #F5F5F7;
+  --ios-canvas-bg: #F6E2DE;
   --ios-glass: #FFFFFF;
-  --ios-glass-strong: #FFFFFF;
-  --ios-glass-border: rgba(0, 0, 0, 0.08);
-  --ios-card-outline: rgba(0, 0, 0, 0.06);
-  --ios-hairline: rgba(0, 0, 0, 0.07);
-  --ios-hairline-subtle: rgba(0, 0, 0, 0.04);
+  --ios-glass-strong: #FBE7E2;
+  --ios-glass-border: rgba(226, 87, 76, 0.14);
+  --ios-card-outline: rgba(226, 87, 76, 0.08);
+  --ios-hairline: rgba(226, 87, 76, 0.10);
+  --ios-hairline-subtle: rgba(226, 87, 76, 0.05);
 
   /* Apple Multi-layer Shadows & Specular Hairlines */
   --ios-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --ios-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ios-shadow-sm: 0 1px 3px rgba(190, 120, 110, 0.08);
   --ios-shadow:
     var(--ios-specular-top),
-    0 1px 3px rgba(0, 0, 0, 0.04),
-    0 4px 14px rgba(0, 0, 0, 0.03);
+    0 2px 6px rgba(190, 120, 110, 0.08),
+    0 10px 24px rgba(190, 120, 110, 0.12);
   --ios-shadow-float:
     var(--ios-specular-top),
-    0 2px 5px rgba(0, 0, 0, 0.05),
-    0 12px 32px rgba(0, 0, 0, 0.08);
+    0 12px 28px rgba(60, 20, 15, 0.22);
   --ios-shadow-hover:
     var(--ios-specular-top),
-    0 3px 8px rgba(0, 0, 0, 0.06),
-    0 14px 36px rgba(0, 0, 0, 0.07);
+    0 20px 48px rgba(190, 120, 110, 0.24);
 
   /* Apple Squircle Radius - Refined & Crisp */
   --ios-radius-xs: 6px;
@@ -49,6 +78,10 @@
   --ios-radius-md: 10px;
   --ios-radius-lg: 14px;
   --ios-radius-xl: 16px;
+  --ios-radius-2xl: 22px;
+  --ios-radius-3xl: 26px;
+  --ios-radius-4xl: 44px;
+  --ios-radius-pill: 999px;
   --ios-radius: var(--ios-radius-lg);
 
   /* Theme Tokens mapped to Apple Palette */
@@ -57,18 +90,18 @@
   --card-bg: var(--ios-glass);
   --card-border: var(--ios-glass-border);
   --card-shadow: var(--ios-shadow);
-  --card-radius: var(--ios-radius-lg);
+  --card-radius: var(--ios-radius-3xl);
 
-  --primary: var(--ios-blue);
-  --primary-dark: #0060c2;
-  --primary-soft: rgba(0, 113, 227, 0.10);
+  --primary: var(--coral-primary);
+  --primary-dark: #cf4339;
+  --primary-soft: var(--coral-soft);
   --success: var(--ios-green);
   --warning: var(--ios-orange);
   --danger: var(--ios-pink);
 
   /* Button fills according to Apple Hierarchy */
-  --btn-primary-bg: #0071e3;
-  --btn-primary-hover: #0077ed;
+  --btn-primary-bg: #e2574c;
+  --btn-primary-hover: #e5665b;
   --btn-secondary-bg: #E5E5EA;
   --btn-secondary-hover: #dcdce0;
   --btn-secondary-text: #1d1d1f;
@@ -77,11 +110,11 @@
   --input-bg: #F2F2F7;
   --input-bg-focus: #FFFFFF;
   --input-border: rgba(0, 0, 0, 0.04);
-  --input-ring: rgba(0, 113, 227, 0.18);
+  --input-ring: rgba(226, 87, 76, 0.22);
 
   /* Apple Gradients */
-  --accent-gradient: linear-gradient(135deg, #0071e3 0%, #5856d6 55%, #af52de 100%);
-  --accent-gradient-hover: linear-gradient(135deg, #0077ed 0%, #4d4bc2 55%, #9c40cb 100%);
+  --accent-gradient: linear-gradient(135deg, #FCB6AD 0%, #E5665B 50%, #e2574c 100%);
+  --accent-gradient-hover: linear-gradient(135deg, #fdbdb4 0%, #ef8177 50%, #d6837b 100%);
 
   /* Physics Springs */
   --ease-apple-spring: cubic-bezier(0.25, 1, 0.5, 1);
@@ -102,28 +135,44 @@
   --ios-teal: #40c8e0;
   --ios-yellow: #ffd60a;
 
-  --ios-canvas-bg: #141417;
-  --ios-glass: #202025;
-  --ios-glass-strong: #25252b;
-  --ios-glass-border: rgba(255, 255, 255, 0.08);
-  --ios-card-outline: rgba(255, 255, 255, 0.07);
-  --ios-hairline: rgba(255, 255, 255, 0.08);
-  --ios-hairline-subtle: rgba(255, 255, 255, 0.04);
+  --coral-primary: #ff6e61;
+  --coral-accent: #E5665B;
+  --coral-soft: rgba(255, 110, 97, 0.20);
+  --coral-peach: #fdbdb4;
+  --coral-blush: rgba(251, 231, 226, 0.12);
+  --coral-canvas: #0e0b0a;
+  --coral-card: rgba(42, 30, 28, 0.65);
+  --coral-dark: #111111;
+  --coral-text-muted: #b0a6a1;
+  --coral-glow: rgba(255, 110, 97, 0.45);
+  --coral-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
+  --coral-card-shadow: 0 30px 60px rgba(0, 0, 0, 0.7), 0 0 24px rgba(226, 87, 76, 0.08);
+  --coral-badge-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  --coral-dot: #ff6e61;
 
-  --ios-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --ios-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ios-canvas-bg: #0e0b0a;
+  --ios-glass: rgba(28, 20, 19, 0.68);
+  --ios-glass-strong: rgba(36, 25, 23, 0.82);
+  --ios-glass-border: rgba(253, 189, 180, 0.12);
+  --ios-card-outline: rgba(253, 189, 180, 0.08);
+  --ios-hairline: rgba(253, 189, 180, 0.10);
+  --ios-hairline-subtle: rgba(253, 189, 180, 0.05);
+
+  --ios-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --ios-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
   --ios-shadow:
     var(--ios-specular-top),
-    0 1px 3px rgba(0, 0, 0, 0.35),
-    0 8px 24px rgba(0, 0, 0, 0.28);
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    0 12px 40px rgba(0, 0, 0, 0.55);
   --ios-shadow-float:
     var(--ios-specular-top),
-    0 2px 6px rgba(0, 0, 0, 0.45),
-    0 16px 40px rgba(0, 0, 0, 0.4);
+    0 2px 6px rgba(0, 0, 0, 0.5),
+    0 16px 48px rgba(0, 0, 0, 0.65);
   --ios-shadow-hover:
     var(--ios-specular-top),
-    0 4px 12px rgba(0, 0, 0, 0.5),
-    0 20px 48px rgba(0, 0, 0, 0.45);
+    0 4px 12px rgba(0, 0, 0, 0.55),
+    0 24px 60px rgba(0, 0, 0, 0.75),
+    0 0 24px rgba(226, 87, 76, 0.12);
 
   --page-bg: var(--ios-canvas-bg);
   --main-content-bg: transparent;
@@ -131,8 +180,12 @@
   --card-border: var(--ios-glass-border);
   --card-shadow: var(--ios-shadow);
 
-  --btn-primary-bg: #0a84ff;
-  --btn-primary-hover: #198fff;
+  --primary: var(--coral-primary);
+  --primary-dark: #e5665b;
+  --primary-soft: var(--coral-soft);
+
+  --btn-primary-bg: #ff6e61;
+  --btn-primary-hover: #ff8579;
   --btn-secondary-bg: rgba(255, 255, 255, 0.09);
   --btn-secondary-hover: rgba(255, 255, 255, 0.14);
   --btn-secondary-text: #f5f5f7;
@@ -140,7 +193,7 @@
   --input-bg: rgba(255, 255, 255, 0.06);
   --input-bg-focus: rgba(255, 255, 255, 0.11);
   --input-border: rgba(255, 255, 255, 0.08);
-  --input-ring: rgba(10, 132, 255, 0.24);
+  --input-ring: rgba(255, 110, 97, 0.28);
 }
 
 /* Global Canvas Background */
@@ -275,24 +328,27 @@ body {
   border: 1px solid var(--ios-glass-border);
   background: var(--ios-glass);
   box-shadow: var(--ios-shadow);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
 }
 
 .ios-glass-strong {
   border: 1px solid var(--ios-glass-border);
   background: var(--ios-glass-strong);
   box-shadow: var(--ios-shadow);
-  backdrop-filter: blur(32px) saturate(190%);
-  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  backdrop-filter: blur(34px) saturate(190%);
+  -webkit-backdrop-filter: blur(34px) saturate(190%);
 }
 
 .ios-card-surface {
-  border-radius: var(--ios-radius-xl);
+  border-radius: var(--ios-radius-3xl, 26px);
+  border: 1px solid var(--ios-glass-border);
+  box-shadow: var(--ios-shadow);
+  overflow: hidden;
 }
 
 .ios-inset-surface {
-  border-radius: var(--ios-radius-md);
+  border-radius: var(--ios-radius-lg, 14px);
   background: color-mix(in srgb, var(--text-main) 3.5%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
 }
@@ -304,14 +360,25 @@ body {
 
 .ios-card-lift {
   transition:
-    transform 220ms var(--ease-apple-spring),
-    box-shadow 220ms var(--ease-apple-spring),
-    border-color 220ms var(--ease-apple-spring);
+    transform 350ms var(--ease-dc-pop, cubic-bezier(0.34, 1.5, 0.5, 1)),
+    box-shadow 350ms ease,
+    border-color 300ms ease;
+  will-change: transform, box-shadow;
 }
 
 .ios-card-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--ios-shadow-hover);
+  transform: translateY(-4px) scale(1.008);
+  box-shadow: var(--coral-card-shadow, 0 30px 60px rgba(var(--pal-rgb, 190, 120, 110), 0.22)),
+              inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border-color: var(--card-border-active, rgba(var(--pal-rgb, 226, 87, 76), 0.32));
+}
+
+:global([data-theme="dark"]) .ios-card-lift:hover,
+:global(.dark) .ios-card-lift:hover {
+  border-color: var(--card-border-active, rgba(var(--pal-rgb, 253, 189, 180), 0.28));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+              0 30px 60px rgba(0, 0, 0, 0.72),
+              0 0 24px rgba(var(--pal-rgb, 226, 87, 76), 0.16);
 }
 
 /* ─── Apple Physics & Fade-in-up Entry ─── */
@@ -355,3 +422,163 @@ body {
 .ios-icon-box--orange { background: linear-gradient(135deg, #ff9500 0%, #ffaa33 100%); color: white; }
 .ios-icon-box--green { background: linear-gradient(135deg, #34c759 0%, #30d158 100%); color: white; }
 .ios-icon-box--pink { background: linear-gradient(135deg, #ff2d55 0%, #ff5277 100%); color: white; }
+.ios-icon-box--coral { background: linear-gradient(135deg, #fcb6ad 0%, #e2574c 100%); color: white; }
+
+/* ─── Design System Prompt Animations (all use animation-fill-mode: backwards) ─── */
+@keyframes dcRise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dcRiseSm {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dcFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dcInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dcPop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dcScale {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dcRiseC {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes dcKen {
+  from {
+    transform: scale(1.16);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Animation Utility Classes */
+.dc-rise {
+  animation: dcRise 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.dc-rise-sm {
+  animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.dc-fade {
+  animation: dcFade 0.7s ease-out both;
+}
+
+.dc-in-left {
+  animation: dcInLeft 0.75s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.dc-pop {
+  animation: dcPop 0.65s var(--ease-dc-pop, cubic-bezier(0.34, 1.5, 0.5, 1)) both;
+}
+
+.dc-scale {
+  animation: dcScale 1s var(--ease-dc-scale, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+.dc-rise-c {
+  animation: dcRiseC 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.dc-ken {
+  animation: dcKen 16s ease-out both;
+}
+
+/* Stagger delays: dc-d1 through dc-d10 (0.08s to 0.80s increments) */
+.dc-d1  { animation-delay: 0.08s; }
+.dc-d2  { animation-delay: 0.16s; }
+.dc-d3  { animation-delay: 0.24s; }
+.dc-d4  { animation-delay: 0.32s; }
+.dc-d5  { animation-delay: 0.40s; }
+.dc-d6  { animation-delay: 0.48s; }
+.dc-d7  { animation-delay: 0.56s; }
+.dc-d8  { animation-delay: 0.64s; }
+.dc-d9  { animation-delay: 0.72s; }
+.dc-d10 { animation-delay: 0.80s; }
+
+/* Stagger children: dc-stagger > * uses dcRiseSm starting at 0.38s with 0.12s increments */
+.dc-stagger > *:nth-child(1) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.38s both; }
+.dc-stagger > *:nth-child(2) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.50s both; }
+.dc-stagger > *:nth-child(3) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.62s both; }
+.dc-stagger > *:nth-child(4) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.74s both; }
+.dc-stagger > *:nth-child(5) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.86s both; }
+.dc-stagger > *:nth-child(6) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.98s both; }
+.dc-stagger > *:nth-child(7) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 1.10s both; }
+.dc-stagger > *:nth-child(8) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 1.22s both; }
+
+/* Stagger children: dc-stagger2 > * starts at 0.64s */
+.dc-stagger2 > *:nth-child(1) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.64s both; }
+.dc-stagger2 > *:nth-child(2) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.76s both; }
+.dc-stagger2 > *:nth-child(3) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 0.88s both; }
+.dc-stagger2 > *:nth-child(4) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 1.00s both; }
+.dc-stagger2 > *:nth-child(5) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 1.12s both; }
+.dc-stagger2 > *:nth-child(6) { animation: dcRiseSm 0.85s var(--ease-dc-rise, cubic-bezier(0.22, 1, 0.36, 1)) 1.24s both; }
+
+/* Respect prefers-reduced-motion by disabling all animations */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

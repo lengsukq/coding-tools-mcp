@@ -155,6 +155,11 @@ pub struct RuntimeConfig {
     pub workspace_local_entries: bool,
     #[serde(default = "default_workspace_script_extensions")]
     pub workspace_script_extensions: String,
+    /// Allow patch-based edits to high-risk repository files for this workspace.
+    /// `.git/**` remains permanently protected and destructive operations keep
+    /// their existing confirmation / policy gates.
+    #[serde(default)]
+    pub allow_high_risk_writes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +276,7 @@ impl Default for RuntimeConfig {
             custom_skill_paths: String::new(),
             workspace_local_entries: default_workspace_local_entries(),
             workspace_script_extensions: default_workspace_script_extensions(),
+            allow_high_risk_writes: false,
         }
     }
 }
@@ -306,5 +312,6 @@ mod tests {
         let profile = WorkspaceProfile::new("/tmp/compact-default".into(), None);
         assert_eq!(profile.runtime.tool_profile, "compact");
         assert!(profile.runtime.history_recording);
+        assert!(!profile.runtime.allow_high_risk_writes);
     }
 }

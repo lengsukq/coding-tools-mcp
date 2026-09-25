@@ -11,6 +11,8 @@ const RELOAD_COOLDOWN_MS = 60 * 60 * 1000;
 const SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 /** Tick for hidden/minimized duration tracking. */
 const HIDDEN_TICK_MS = 30 * 1000;
+/** Give a hidden window one last chance to become visible before rebuilding it. */
+const HIDDEN_RECHECK_DELAY_MS = 500;
 
 const LAST_RELOAD_KEY = "ctm.uiMemory.lastReloadAt";
 
@@ -94,6 +96,16 @@ async function maybeSilentReload(): Promise<void> {
   markHidden();
   if (hiddenSince === null || !cooldownOk() || releasing) return;
   if (Date.now() - hiddenSince < HIDDEN_RELOAD_MS) return;
+
+  // The user may be restoring the app at the exact moment the hidden timer
+  // fires. Re-check after a short delay so a reveal never races a WebView
+  // recreate and produces a visible "restart" flash.
+  await new Promise((resolve) => window.setTimeout(resolve, HIDDEN_RECHECK_DELAY_MS));
+  if (!(await isWindowObscured())) {
+    markVisible();
+    return;
+  }
+
   await reloadUiOnly("hidden-or-minimized");
 }
 

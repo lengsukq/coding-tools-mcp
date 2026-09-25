@@ -29,17 +29,28 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
     }
     if let Some(path) = file_patches
         .iter()
-        .find(|file| is_protected_repository_asset(&file.path))
+        .find(|file| is_git_repository_asset(&file.path))
         .map(|file| file.path.as_str())
     {
         return Err(protected_repository_asset(format!(
-            "禁止删除仓库保护资产: {path}"
+            "禁止修改 .git 仓库保护资产: {path}"
         )));
+    }
+    if !ctx.policy.allow_high_risk_writes {
+        if let Some(path) = file_patches
+            .iter()
+            .find(|file| is_high_risk_file(&file.path))
+            .map(|file| file.path.as_str())
+        {
+            return Err(protected_repository_asset(format!(
+                "当前 Workspace 未开启高风险文件写入权限: {path}"
+            )));
+        }
     }
     if !confirm {
         if let Some(path) = file_patches
             .iter()
-            .find(|file| file.is_deleted && is_critical_file(&file.path))
+            .find(|file| file.is_deleted && is_high_risk_file(&file.path))
             .map(|file| file.path.as_str())
         {
             return Err(dangerous_operation(format!(
@@ -76,7 +87,12 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
         };
 
         if fp.is_deleted {
-            review_files.push((resolved.display.clone(), "delete".into(), original.clone(), String::new()));
+            review_files.push((
+                resolved.display.clone(),
+                "delete".into(),
+                original.clone(),
+                String::new(),
+            ));
             staged.insert(resolved.display.clone(), None);
             affected.push(json!({ "path": resolved.display, "operation": "delete" }));
             summaries.push(format!("D {}", resolved.display));
@@ -85,7 +101,12 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
 
         let updated = apply_hunks(&original, &fp.hunks)?;
         let op = if resolved.existed { "update" } else { "add" };
-        review_files.push((resolved.display.clone(), op.into(), original.clone(), updated.clone()));
+        review_files.push((
+            resolved.display.clone(),
+            op.into(),
+            original.clone(),
+            updated.clone(),
+        ));
         staged.insert(resolved.display.clone(), Some(updated));
         affected.push(json!({ "path": resolved.display, "operation": op }));
         summaries.push(format!(
@@ -103,12 +124,22 @@ pub fn apply_patch(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceEr
         let _transaction_backups = commit_staged(ws, &staged)?;
         let change_id = Uuid::new_v4().simple().to_string();
         let review = crate::review::create_patch_review(
-            ws.root(), &change_id, None, &summaries.join("\n"), &review_files
-        ).ok();
+            ws.root(),
+            &change_id,
+            None,
+            &summaries.join("\n"),
+            &review_files,
+        )
+        .ok();
         let review_url = review.as_ref().and_then(|review| {
             let settings = crate::settings::AppSettings::load_or_default();
-            let base = settings.global_gateway.public_url.trim().trim_end_matches('/');
-            (!base.is_empty()).then(|| format!("{base}/review/{}?t={}", review.change_id, review.token))
+            let base = settings
+                .global_gateway
+                .public_url
+                .trim()
+                .trim_end_matches('/');
+            (!base.is_empty())
+                .then(|| format!("{base}/review/{}?t={}", review.change_id, review.token))
         });
         return Ok(tool_ok(json!({
             "dry_run": false,
@@ -538,7 +569,7 @@ fn cleanup_temporary_files<'a>(paths: impl Iterator<Item = &'a PathBuf>) {
     }
 }
 
-fn is_critical_file(path: &str) -> bool {
+fn is_high_risk_file(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
     let first = normalized.split('/').next().unwrap_or("");
     if matches!(first, ".git" | ".github") {
@@ -558,10 +589,10 @@ fn is_critical_file(path: &str) -> bool {
         || name == "pyproject.toml"
 }
 
-fn is_protected_repository_asset(path: &str) -> bool {
+fn is_git_repository_asset(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
     let first = normalized.split('/').next().unwrap_or("");
-    matches!(first, ".git" | ".github")
+    first == ".git"
 }
 
 fn dangerous_operation(message: impl Into<String>) -> WorkspaceError {

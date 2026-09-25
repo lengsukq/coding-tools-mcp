@@ -55,6 +55,7 @@ pub struct PolicySettings {
     pub allowed_commands: HashSet<String>,
     pub workspace_local_entries: bool,
     pub workspace_script_extensions: HashSet<String>,
+    pub allow_high_risk_writes: bool,
     pub max_patch_bytes: usize,
     pub permission_mode: PermissionMode,
 }
@@ -98,6 +99,7 @@ impl Default for PolicySettings {
             allowed_commands: default_allowed_command_set(),
             workspace_local_entries: true,
             workspace_script_extensions: default_workspace_script_extension_set(),
+            allow_high_risk_writes: false,
             max_patch_bytes: 200_000,
             permission_mode: PermissionMode::trusted(),
         }
@@ -112,6 +114,7 @@ impl PolicySettings {
             workspace_script_extensions: parse_workspace_script_extensions(
                 &runtime.workspace_script_extensions,
             ),
+            allow_high_risk_writes: runtime.allow_high_risk_writes,
             max_patch_bytes: 200_000,
             permission_mode: runtime.permission_mode.clone().into(),
         }
@@ -131,6 +134,7 @@ impl PolicySettings {
             workspace_script_extensions: parse_workspace_script_extensions(
                 &runtime.workspace_script_extensions,
             ),
+            allow_high_risk_writes: runtime.allow_high_risk_writes,
             max_patch_bytes: 200_000,
             permission_mode: global.global_permission_mode.clone().into(),
         }
@@ -610,6 +614,7 @@ mod tests {
             inherit_global_execution_policy: true,
             permission_mode: "safe".into(),
             allowed_commands: "workspace-only".into(),
+            allow_high_risk_writes: true,
             ..crate::workspace::RuntimeConfig::default()
         };
         let global = crate::settings::AppSettings {
@@ -622,6 +627,7 @@ mod tests {
         assert_eq!(policy.permission_mode.as_str(), "trusted");
         assert!(policy.allowed_commands.contains("global-tool"));
         assert!(!policy.allowed_commands.contains("workspace-only"));
+        assert!(policy.allow_high_risk_writes);
     }
 
     #[test]

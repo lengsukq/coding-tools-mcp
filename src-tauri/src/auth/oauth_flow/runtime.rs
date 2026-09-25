@@ -280,6 +280,10 @@ impl OAuthRuntime {
     }
 
     pub fn verify_access_token(&self, token: &str, server_url: &str) -> bool {
+        self.access_token_client_id(token, server_url).is_some()
+    }
+
+    pub fn access_token_client_id(&self, token: &str, server_url: &str) -> Option<String> {
         let server_url = server_url.trim_end_matches('/');
         let mut validation = Validation::new(Algorithm::HS256);
         validation.set_audience(&[server_url]);
@@ -289,7 +293,9 @@ impl OAuthRuntime {
             &DecodingKey::from_secret(self.token_secret.as_bytes()),
             &validation,
         )
-        .is_ok_and(|data| data.claims.token_use == "access")
+        .ok()
+        .filter(|data| data.claims.token_use == "access")
+        .map(|data| data.claims.client_id)
     }
 }
 

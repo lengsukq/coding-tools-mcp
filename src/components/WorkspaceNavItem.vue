@@ -185,14 +185,14 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   flex: 0 0 30px;
   place-items: center;
   border-radius: 10px;
-  background: rgba(99, 102, 241, .075);
-  color: #5e5ce6;
+  background: var(--primary-soft, rgba(var(--pal-rgb, 99, 102, 241), 0.1));
+  color: var(--primary, #5e5ce6);
 }
 
 .active .ios-workspace-nav__icon {
-  background: linear-gradient(145deg, var(--ios-blue), var(--accent-indigo));
+  background: var(--primary-gradient, linear-gradient(145deg, var(--ios-blue), var(--accent-indigo)));
   color: #fff;
-  box-shadow: 0 5px 14px color-mix(in srgb,var(--ios-blue) 20%,transparent);
+  box-shadow: 0 5px 14px color-mix(in srgb,var(--ios-blue) 24%,transparent);
 }
 
 .ios-workspace-nav__content {
@@ -287,7 +287,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
 
 :global(.dark) .ios-workspace-nav.active {
   background: linear-gradient(135deg, color-mix(in srgb,var(--ios-blue) 18%,transparent), color-mix(in srgb,var(--accent-indigo) 11%,transparent));
-  border-color: rgba(100, 180, 255, .16);
+  border-color: var(--card-border-active, color-mix(in srgb,var(--ios-blue) 28%,transparent));
   box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 8px 22px rgba(0,0,0,.13);
 }
 </style>

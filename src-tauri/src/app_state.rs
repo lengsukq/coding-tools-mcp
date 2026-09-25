@@ -18,6 +18,12 @@ impl AppState {
     pub fn new() -> AppResult<Self> {
         let mut store = DataStore::load()?;
         store.init_shared_secrets()?;
+        crate::tool_audit::initialize(
+            store
+                .data()
+                .tool_audit_retention_days
+                .unwrap_or(crate::tool_audit::DEFAULT_RETENTION_DAYS),
+        );
         let gateway = Arc::new(GatewayState::default());
         Ok(Self {
             data: Mutex::new(store),

@@ -49,14 +49,14 @@ const latestLabel = computed(() => props.chart.latest > 0 ? `+${formatCount(prop
         <svg v-if="points.length > 1" viewBox="0 0 100 40" preserveAspectRatio="none" class="wb-token-chart">
           <defs>
             <linearGradient id="usageAreaGradient" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stop-color="var(--ios-blue)" stop-opacity=".28" />
-              <stop offset=".56" stop-color="var(--ios-indigo)" stop-opacity=".10" />
-              <stop offset="1" stop-color="var(--ios-purple)" stop-opacity="0" />
+              <stop offset="0" stop-color="var(--coral-accent, var(--primary))" stop-opacity=".32" />
+              <stop offset=".56" stop-color="var(--coral-peach, var(--primary))" stop-opacity=".12" />
+              <stop offset="1" stop-color="var(--coral-primary, var(--primary))" stop-opacity="0" />
             </linearGradient>
             <linearGradient id="usageLineGradient" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0" stop-color="var(--ios-cyan)" />
-              <stop offset=".55" stop-color="var(--ios-blue)" />
-              <stop offset="1" stop-color="var(--ios-indigo)" />
+              <stop offset="0" stop-color="var(--pal-primary-light, #FCB6AD)" />
+              <stop offset=".55" stop-color="var(--pal-primary, #E5665B)" />
+              <stop offset="1" stop-color="var(--pal-primary-dark, #e2574c)" />
             </linearGradient>
           </defs>
           <line v-for="y in [7, 19.5, 32]" :key="y" x1="0" x2="100" :y1="y" :y2="y" class="wb-token-gridline" />

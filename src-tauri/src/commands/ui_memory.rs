@@ -117,11 +117,14 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     // Unminimize BEFORE reading geometry. Minimized windows on Windows often
     // report outer_position ≈ (-32000, -32000); restoring that parks the new
     // window off-screen so the taskbar icon appears dead.
-    let _ = window.unminimize();
-    // Briefly show so geometry reads are sane; tray-hidden windows are re-hidden
-    // after rebuild (see was_hidden below).
-    let _ = window.show();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    //
+    // Do not show a tray-hidden window here. The old implementation briefly
+    // showed it just to read geometry, which made a "silent" memory refresh
+    // visibly flash/restart when the user happened to reopen the app.
+    if was_minimized {
+        let _ = window.unminimize();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 
     let outer_position = window.outer_position().ok().filter(is_sane_position);
     let outer_size = window.outer_size().ok().filter(is_sane_size);
@@ -145,9 +148,16 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
 
     let new_window = match app.config().app.windows.first() {
         Some(config) => match WebviewWindowBuilder::from_config(&app, config) {
-            Ok(builder) => builder.build().map_err(|err| {
-                AppError::Message(format!("rebuild webview from config failed: {err}"))
-            }),
+            Ok(builder) => {
+                let builder = if was_hidden {
+                    builder.visible(false)
+                } else {
+                    builder
+                };
+                builder.build().map_err(|err| {
+                    AppError::Message(format!("rebuild webview from config failed: {err}"))
+                })
+            }
             Err(err) => Err(AppError::Message(format!(
                 "webview builder from config failed: {err}"
             ))),
@@ -162,6 +172,7 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
                 .title("Coding Tools MCP")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)
+                .visible(!was_hidden)
                 .build()
                 .map_err(|err| {
                     AppError::Message(format!(
@@ -180,20 +191,18 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
         let _ = new_window.center();
     }
 
-    // Establish a normal on-screen window first so later minimize/hide is restorable.
-    let _ = new_window.unminimize();
-    let _ = new_window.show();
-    if is_maximized && !was_minimized && !was_hidden {
-        let _ = new_window.maximize();
-    }
-
-    // Remove keepalive only after main is back.
-    let _ = keepalive.destroy();
-
     if was_hidden {
-        // Stay in tray: do not steal focus after a silent recreate.
+        // Stay fully silent in the tray. The replacement window was built
+        // hidden, so there is no visible show -> hide flash.
         let _ = new_window.hide();
     } else {
+        // Establish a normal on-screen window first so later minimize is
+        // restorable and taskbar state remains sane.
+        let _ = new_window.unminimize();
+        let _ = new_window.show();
+        if is_maximized && !was_minimized {
+            let _ = new_window.maximize();
+        }
         let _ = new_window.set_focus();
         // If the user had it minimized (silent memory refresh), put it back in the
         // taskbar — but only after geometry is sane, so restore from taskbar works.
@@ -202,6 +211,9 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
             let _ = new_window.minimize();
         }
     }
+
+    // Remove keepalive only after main is fully restored to its intended state.
+    let _ = keepalive.destroy();
 
     Ok(())
 }

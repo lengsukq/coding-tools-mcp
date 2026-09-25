@@ -194,6 +194,23 @@ mod tests {
         .expect("refresh token");
 
         assert!(!oauth.verify_access_token(&refresh, "https://lb.example.com"));
+        assert_eq!(
+            oauth.access_token_client_id(&refresh, "https://lb.example.com"),
+            None
+        );
+
+        let access = create_token(
+            "https://lb.example.com",
+            &oauth.token_secret,
+            OAUTH_TOKEN_TTL_SECONDS,
+            "chatgpt-client-test",
+            "access",
+        )
+        .expect("access token");
+        assert_eq!(
+            oauth.access_token_client_id(&access, "https://lb.example.com"),
+            Some("chatgpt-client-test".into())
+        );
     }
 
     #[test]

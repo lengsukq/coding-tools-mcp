@@ -15,7 +15,7 @@ defineProps<{
       <select
         v-model="model"
         :disabled="disabled"
-        class="h-10 w-full appearance-none rounded-xl border border-black/[0.04] bg-[#F2F2F7] px-3.5 pr-9 text-sm text-[var(--text-main)] outline-none transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] focus:border-[#0071e3]/40 focus:bg-white focus:ring-4 focus:ring-[#0071e3]/15 dark:border-white/[0.07] dark:bg-white/[0.06] dark:focus:border-[#0a84ff]/50 dark:focus:bg-white/[0.11] dark:focus:ring-[#0a84ff]/20 disabled:cursor-not-allowed disabled:opacity-40"
+        class="h-10 w-full appearance-none rounded-xl border border-[var(--card-border)] bg-[var(--coral-50)]/80 px-3.5 pr-9 text-sm text-[var(--text-main)] outline-none transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] focus:border-[var(--primary)]/50 focus:bg-white focus:ring-4 focus:ring-[var(--primary)]/15 dark:border-white/[0.07] dark:bg-white/[0.06] dark:focus:border-[var(--primary)]/60 dark:focus:bg-white/[0.11] dark:focus:ring-[var(--primary)]/20 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
       </select>

@@ -9,6 +9,7 @@ import TextAreaField from "../../components/ui/TextAreaField.vue";
 import TextField from "../../components/ui/TextField.vue";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.vue";
 import SettingsPageHeader from "../../components/settings/SettingsPageHeader.vue";
+import PalettePicker from "../../components/settings/PalettePicker.vue";
 import { checkAppUpdate, openUrl } from "$lib/api/app-info";
 import { scanGlobalAgentContext, type GlobalAgentContextScanDto } from "$lib/api/agent-context";
 import {
@@ -134,18 +135,23 @@ onMounted(() => { void refresh(); });
         </div>
       </GlassCard>
     </div>
-    <div v-else class="grid gap-4">
+    <div v-else class="grid gap-4 animate-fade-in-up delay-100">
       <GlassCard>
-        <div class="flex flex-wrap items-center gap-3"><div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0a84ff]/16 to-[#5e5ce6]/12 text-[#0a84ff]"><span class="text-xs font-black">CT</span></div><div class="min-w-[180px] flex-1"><h2 class="text-sm font-semibold">Coding Tools MCP</h2><p class="mt-1 text-xs text-[var(--text-muted)]">v{{ APP_VERSION }} · Tauri 2 · Vue 3 · Tailwind CSS 4</p></div><BaseButton variant="ghost" @click="openUrl(REPO_URL)"><ExternalLink :size="14" />仓库</BaseButton><BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate"><RefreshCw :size="14" />检查更新</BaseButton></div>
+        <div class="flex flex-wrap items-center gap-3"><div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><span class="text-xs font-black">CT</span></div><div class="min-w-[180px] flex-1"><h2 class="text-sm font-semibold font-display">Coding Tools MCP</h2><p class="mt-1 text-xs text-[var(--text-muted)]">v{{ APP_VERSION }} · Tauri 2 · Vue 3 · Tailwind CSS 4</p></div><BaseButton variant="ghost" @click="openUrl(REPO_URL)"><ExternalLink :size="14" />仓库</BaseButton><BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate"><RefreshCw :size="14" />检查更新</BaseButton></div>
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-4 flex items-center justify-between"><div><h2 class="text-sm font-semibold">界面内存</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ memoryHint || '正在读取内存信息…' }}</p></div><MemoryStick :size="18" class="text-[#bf5af2]" /></div>
+        <div class="mb-4"><h2 class="text-sm font-semibold font-display">外观</h2><p class="mt-1 text-xs text-[var(--text-muted)]">选择应用的主题调色盘，切换后实时生效（深浅模式下会自动适配）。</p></div>
+        <PalettePicker />
+      </GlassCard>
+
+      <GlassCard>
+        <div class="mb-4 flex items-center justify-between"><div><h2 class="text-sm font-semibold font-display">界面内存</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ memoryHint || '正在读取内存信息…' }}</p></div><MemoryStick :size="18" class="text-[var(--primary)]" /></div>
         <div class="flex justify-end gap-2"><BaseButton variant="ghost" size="sm" @click="refreshMemory"><RefreshCw :size="13" />刷新</BaseButton><BaseButton variant="secondary" size="sm" :busy="releasingUi" @click="releaseUi">释放界面内存</BaseButton></div>
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-sm font-semibold">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex flex-wrap gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-sm font-semibold font-display">全局 Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">统一定义 Agent Context 来源、执行路径和启动行为。</p></div><div class="flex flex-wrap gap-2"><BaseButton variant="ghost" size="sm" :busy="scanning" @click="scanSources(false)"><ScanSearch :size="13" />扫描</BaseButton><BaseButton v-if="scan" variant="ghost" size="sm" @click="applyDetected">应用检测结果</BaseButton></div></div>
         <div class="grid gap-4">
           <div v-if="runtime.migrationNotice" class="rounded-2xl border border-[#ff9f0a]/25 bg-[#ff9f0a]/8 px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
             <strong class="text-[#c56b00] dark:text-[#ffb340]">0.3.0 迁移需要复核</strong>
@@ -165,10 +171,10 @@ onMounted(() => { void refresh(); });
             </div>
           </div>
           <div class="settings-two-col"><TextField v-model="runtime.customInstructionPaths" label="自定义 Instructions 路径" /><TextField v-model="runtime.customSkillPaths" label="自定义 Skills 路径" /></div>
-          <label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">全局 AI Instructions</span><textarea v-model="runtime.aiInstructions" rows="4" class="w-full resize-y rounded-xl border border-white/70 bg-white/60 p-3 text-sm outline-none focus:border-[#0a84ff]/50 dark:border-white/10 dark:bg-white/6" /></label>
+          <label><span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">全局 AI Instructions</span><textarea v-model="runtime.aiInstructions" rows="4" class="w-full resize-y rounded-xl border border-white/70 bg-white/60 p-3 text-sm outline-none focus:border-[var(--primary)]/50 dark:border-white/10 dark:bg-white/6" /></label>
           <div class="settings-two-col">
-            <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Instruction 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`i-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#0a84ff]" :checked="runtime.instructionSources.includes(item.value)" @change="runtime.instructionSources = toggleSource(runtime.instructionSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
-            <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Skill 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`s-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[#bf5af2]" :checked="runtime.skillSources.includes(item.value)" @change="runtime.skillSources = toggleSource(runtime.skillSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
+            <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Instruction 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`i-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[var(--primary)]" :checked="runtime.instructionSources.includes(item.value)" @change="runtime.instructionSources = toggleSource(runtime.instructionSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
+            <div class="rounded-2xl bg-black/[.025] p-3 dark:bg-white/[.04]"><p class="mb-2 text-xs font-semibold">Skill 来源</p><label v-for="item in AGENT_SOURCE_OPTIONS" :key="`s-${item.value}`" class="flex items-center gap-2 py-1 text-xs"><input type="checkbox" class="accent-[var(--accent-indigo)]" :checked="runtime.skillSources.includes(item.value)" @change="runtime.skillSources = toggleSource(runtime.skillSources, item.value, ($event.target as HTMLInputElement).checked)" />{{ item.label }}</label></div>
           </div>
           <div class="settings-two-col"><ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许唯一 Global MCP Endpoint 被局域网设备访问。" /><ToggleSwitch v-model="runtime.restoreRuntimeStateOnLaunch" label="启动时恢复 Global MCP" description="应用下次启动时恢复唯一 MCP 服务，不再逐 Workspace 启停。" /></div>
           <div class="flex justify-end"><BaseButton :busy="runtimeSaving" @click="saveRuntime"><Save :size="14" />保存 Runtime</BaseButton></div>

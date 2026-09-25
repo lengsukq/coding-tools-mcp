@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { Activity, ArrowRight, GitBranch, ShieldCheck, Target } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
+import ConfirmDialog from "../ui/ConfirmDialog.vue";
 import GlassCard from "../ui/GlassCard.vue";
 import StatusPill from "../ui/StatusPill.vue";
 import type { PlanningStateDto } from "$lib/api/planning";
@@ -36,6 +37,8 @@ const loading = ref(false);
 const ides = ref<DetectedIdeDto[]>([]);
 const reviews = ref<WorkspaceReviewSummaryDto[]>([]);
 const creatingWorkspaceReview = ref(false);
+const pendingDeleteReview = ref<WorkspaceReviewSummaryDto | null>(null);
+const deleteReviewBusy = ref(false);
 const operationReviews = computed(() => reviews.value.filter(review => review.scope === "operation"));
 const ideMenuOpen = ref(false);
 let loadGeneration = 0;
@@ -172,10 +175,21 @@ async function viewWorkspaceReview() {
     creatingWorkspaceReview.value = false;
   }
 }
-async function removeReview(id: string) {
-  await deleteWorkspaceReview(props.workspaceId, id);
-  reviews.value = reviews.value.filter(r => r.id !== id);
-  setCachedWorkspaceReviews(props.workspaceId, reviews.value);
+async function removeReview() {
+  const review = pendingDeleteReview.value;
+  if (!review || deleteReviewBusy.value) return;
+  deleteReviewBusy.value = true;
+  try {
+    await deleteWorkspaceReview(props.workspaceId, review.id);
+    reviews.value = reviews.value.filter(r => r.id !== review.id);
+    setCachedWorkspaceReviews(props.workspaceId, reviews.value);
+    pendingDeleteReview.value = null;
+    showToast("AI Change Review 已删除", { kind: "success" });
+  } catch (error) {
+    showToast(String(error), { title: "删除 Review 失败", kind: "error" });
+  } finally {
+    deleteReviewBusy.value = false;
+  }
 }
 async function viewReview(id: string) {
   try {
@@ -195,10 +209,10 @@ watch(() => props.workspaceId, () => void load());
 
 <template>
   <div class="grid min-w-0 gap-4 overflow-x-hidden">
-    <div class="workspace-overview-primary">
-      <GlassCard>
+    <div class="workspace-overview-primary animate-fade-in-up">
+      <GlassCard hoverable>
         <div class="flex flex-wrap items-start justify-between gap-4">
-          <div class="min-w-0"><p class="eyebrow">Workspace Status</p><h2 class="mt-1 text-sm font-semibold">代码与会话状态</h2><p class="mt-1 text-[11px] text-[var(--text-muted)]">这里保留需要快速判断的状态；名称、路径与目录操作统一放在上方 Workspace Header。</p></div>
+          <div class="min-w-0"><p class="eyebrow">Workspace Status</p><h2 class="mt-1 text-sm font-semibold font-display">代码与会话状态</h2><p class="mt-1 text-[11px] text-[var(--text-muted)]">这里保留需要快速判断的状态；名称、路径与目录操作统一放在上方 Workspace Header。</p></div>
           <div class="flex gap-2">
             <div v-if="ides.length" class="relative">
               <BaseButton size="sm" @click="ideMenuOpen = !ideMenuOpen">使用 IDE 打开<ArrowRight :size="13" /></BaseButton>
@@ -211,22 +225,22 @@ watch(() => props.workspaceId, () => void load());
         <div class="overview-stat-grid mt-5">
           <div class="overview-stat">
             <div class="overview-stat-icon is-blue"><GitBranch :size="15" /></div>
-            <strong>{{ git === null ? "—" : (git.available ? (git.branch || "detached") : (git.subRepositories.length ? git.subRepositories.length + " 个子 Git" : "非 Git")) }}</strong>
+            <strong class="font-display">{{ git === null ? "—" : (git.available ? (git.branch || "detached") : (git.subRepositories.length ? git.subRepositories.length + " 个子 Git" : "非 Git")) }}</strong>
             <small>{{ git?.available ? '当前分支' : (git?.subRepositories.length ? '一级子仓库' : '当前目录') }}</small>
           </div>
           <button type="button" class="overview-stat is-interactive text-left" @click="viewWorkspaceReview">
             <div class="overview-stat-icon is-cyan"><Activity :size="15" /></div>
-            <strong>{{ changedFiles }}</strong>
+            <strong class="font-display">{{ changedFiles }}</strong>
             <small>{{ creatingWorkspaceReview ? '正在生成 Diff…' : '变更文件 · 查看全部 Diff' }}</small>
           </button>
           <div class="overview-stat">
             <div class="overview-stat-icon is-purple"><Activity :size="15" /></div>
-            <strong>{{ activeSessions }}</strong>
+            <strong class="font-display">{{ activeSessions }}</strong>
             <small>活跃会话</small>
           </div>
           <div class="overview-stat">
             <div class="overview-stat-icon is-green"><ShieldCheck :size="15" /></div>
-            <strong>{{ verificationCount }}</strong>
+            <strong class="font-display">{{ verificationCount }}</strong>
             <small>验证证据</small>
           </div>
         </div>
@@ -244,8 +258,8 @@ watch(() => props.workspaceId, () => void load());
           </div>
         </div>
       </GlassCard>
-      <GlassCard>
-        <div class="flex items-center justify-between"><h3 class="text-sm font-semibold">运行状态</h3><StatusPill :status="mcp?.state ?? 'unknown'" :label="mcp?.state ?? '未知'" /></div>
+      <GlassCard hoverable>
+        <div class="flex items-center justify-between"><h3 class="text-sm font-semibold font-display">运行状态</h3><StatusPill :status="mcp?.state ?? 'unknown'" :label="mcp?.state ?? '未知'" /></div>
         <div class="mt-4 space-y-2 text-xs">
           <div class="overview-row"><span>Tool Profile</span><strong>{{ profile.runtime.tool_profile }}</strong></div>
           <div class="overview-row"><span>权限模式</span><strong>{{ profile.runtime.permission_mode }}</strong></div>
@@ -254,11 +268,11 @@ watch(() => props.workspaceId, () => void load());
         </div>
       </GlassCard>
     </div>
-    <div class="workspace-overview-metrics">
-      <GlassCard class="min-h-[220px]">
+    <div class="workspace-overview-metrics animate-fade-in-up delay-100">
+      <GlassCard hoverable class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
-          <div><p class="eyebrow">AI Activity · 7 Days</p><h3 class="mt-1 text-sm font-semibold">修改趋势</h3></div>
-          <div class="text-right"><strong class="block text-lg tabular-nums">{{ activityTotals.operations }}</strong><span class="text-[10px] text-[var(--text-muted)]">operations</span></div>
+          <div><p class="eyebrow">AI Activity · 7 Days</p><h3 class="mt-1 text-sm font-semibold font-display">修改趋势</h3></div>
+          <div class="text-right"><strong class="block text-lg tabular-nums font-display">{{ activityTotals.operations }}</strong><span class="text-[10px] text-[var(--text-muted)]">operations</span></div>
         </div>
         <div class="activity-chart mt-5">
           <div
@@ -281,15 +295,15 @@ watch(() => props.workspaceId, () => void load());
         </div>
       </GlassCard>
 
-      <GlassCard class="min-h-[220px]">
+      <GlassCard hoverable class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
-          <div><p class="eyebrow">Git Health</p><h3 class="mt-1 text-sm font-semibold">仓库状态</h3></div>
+          <div><p class="eyebrow">Git Health</p><h3 class="mt-1 text-sm font-semibold font-display">仓库状态</h3></div>
           <span class="text-[10px] text-[var(--text-muted)]">{{ gitHealthRows.length }} repos</span>
         </div>
         <div v-if="gitHealthRows.length" class="mt-4 space-y-3">
           <div v-for="repo in gitHealthRows.slice(0, 6)" :key="repo.name" class="git-health-row">
             <div class="flex min-w-0 items-center justify-between gap-3">
-              <div class="min-w-0"><strong class="block truncate text-[11px]">{{ repo.name }}</strong><span class="text-[9px] text-[var(--text-muted)]">{{ repo.branch }} · ↑{{ repo.ahead }} ↓{{ repo.behind }}</span></div>
+              <div class="min-w-0"><strong class="block truncate text-[11px] font-display">{{ repo.name }}</strong><span class="text-[9px] text-[var(--text-muted)]">{{ repo.branch }} · ↑{{ repo.ahead }} ↓{{ repo.behind }}</span></div>
               <span class="shrink-0 text-[10px] tabular-nums" :class="repo.changed ? 'text-[var(--accent-warning)]' : 'text-[var(--accent-success)]'">{{ repo.changed ? repo.changed + ' changed' : 'clean' }}</span>
             </div>
             <div class="git-health-track"><div class="git-health-fill" :class="{ clean: !repo.changed }" :style="{ width: (repo.changed ? Math.max(8, repo.changed / gitHealthMaxChanged * 100) : 4) + '%' }" /></div>
@@ -298,32 +312,32 @@ watch(() => props.workspaceId, () => void load());
         <p v-else class="py-10 text-center text-xs text-[var(--text-muted)]">未检测到 Git 仓库</p>
       </GlassCard>
 
-      <GlassCard class="min-h-[220px]">
+      <GlassCard hoverable class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
-          <div><p class="eyebrow">Execution Quality</p><h3 class="mt-1 text-sm font-semibold">执行与验证信号</h3></div>
+          <div><p class="eyebrow">Execution Quality</p><h3 class="mt-1 text-sm font-semibold font-display">执行与验证信号</h3></div>
           <StatusPill :status="planning?.execution.state ?? 'idle'" :label="planning?.execution.state ?? 'idle'" />
         </div>
         <div class="mt-4 grid grid-cols-2 gap-2">
-          <div class="quality-metric"><span>Verification</span><strong>{{ verificationCount }}</strong><small>evidence</small></div>
-          <div class="quality-metric" :class="{ danger: !!planning?.execution.last_error }"><span>Last Error</span><strong>{{ planning?.execution.last_error ? '1' : '0' }}</strong><small>{{ planning?.execution.last_error ? 'needs attention' : 'clear' }}</small></div>
+          <div class="quality-metric"><span>Verification</span><strong class="font-display">{{ verificationCount }}</strong><small>evidence</small></div>
+          <div class="quality-metric" :class="{ danger: !!planning?.execution.last_error }"><span>Last Error</span><strong class="font-display">{{ planning?.execution.last_error ? '1' : '0' }}</strong><small>{{ planning?.execution.last_error ? 'needs attention' : 'clear' }}</small></div>
         </div>
         <div class="mt-4 space-y-3">
           <div>
-            <div class="mb-1 flex items-center justify-between text-[10px]"><span class="text-[var(--text-muted)]">Goal criteria</span><strong class="tabular-nums">{{ goalCriteriaProgress.completed }}/{{ goalCriteriaProgress.total }}</strong></div>
+            <div class="mb-1 flex items-center justify-between text-[10px]"><span class="text-[var(--text-muted)]">Goal criteria</span><strong class="tabular-nums font-display">{{ goalCriteriaProgress.completed }}/{{ goalCriteriaProgress.total }}</strong></div>
             <div class="quality-track"><div class="quality-fill" :style="{ width: goalCriteriaProgress.percent + '%' }" /></div>
           </div>
           <div>
-            <div class="mb-1 flex items-center justify-between text-[10px]"><span class="text-[var(--text-muted)]">Plan steps</span><strong class="tabular-nums">{{ planStepProgress.completed }}/{{ planStepProgress.total }}</strong></div>
+            <div class="mb-1 flex items-center justify-between text-[10px]"><span class="text-[var(--text-muted)]">Plan steps</span><strong class="tabular-nums font-display">{{ planStepProgress.completed }}/{{ planStepProgress.total }}</strong></div>
             <div class="quality-track"><div class="quality-fill purple" :style="{ width: planStepProgress.percent + '%' }" /></div>
           </div>
         </div>
       </GlassCard>
     </div>
-    <GlassCard>
-        <div class="mb-4 flex items-center justify-between"><div class="flex items-center gap-2"><Target :size="16" class="text-[var(--accent-purple)]" /><h3 class="text-sm font-semibold">当前工作</h3></div><BaseButton variant="ghost" size="sm" @click="emit('navigate', 'planning')">查看计划<ArrowRight :size="13" /></BaseButton></div>
+    <GlassCard hoverable class="animate-fade-in-up delay-200">
+        <div class="mb-4 flex items-center justify-between"><div class="flex items-center gap-2"><Target :size="16" class="text-[var(--accent-purple)]" /><h3 class="text-sm font-semibold font-display">当前工作</h3></div><BaseButton variant="ghost" size="sm" @click="emit('navigate', 'planning')">查看计划<ArrowRight :size="13" /></BaseButton></div>
         <template v-if="focusedPlan || focusedGoal">
           <p v-if="focusedGoal" class="eyebrow">Goal · {{ focusedGoal.status }}</p>
-          <h4 class="mt-1 text-sm font-semibold">{{ focusedPlan?.title || focusedGoal?.title }}</h4>
+          <h4 class="mt-1 text-sm font-semibold font-display">{{ focusedPlan?.title || focusedGoal?.title }}</h4>
           <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-[var(--text-secondary)]">{{ focusedPlan?.objective || focusedGoal?.objective }}</p>
           <div v-if="focusedPlan" class="mt-4">
             <div class="mb-1.5 flex justify-between text-[10px] text-[var(--text-muted)]"><span>Plan Progress</span><span>{{ completedSteps }} / {{ focusedPlan.steps.length }}</span></div>
@@ -332,9 +346,9 @@ watch(() => props.workspaceId, () => void load());
         </template>
         <p v-else class="py-6 text-center text-xs text-[var(--text-muted)]">当前没有 focused Goal / Plan</p>
     </GlassCard>
-    <GlassCard>
+    <GlassCard hoverable class="animate-fade-in-up delay-300">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div><h3 class="text-sm font-semibold">最近 AI 修改</h3><p class="mt-1 text-[10px] text-[var(--text-muted)]">这里展示 Operation Review；Session Diff 在 History 中，Workspace Diff 可直接从右侧生成。</p></div>
+        <div><h3 class="text-sm font-semibold font-display">最近 AI 修改</h3><p class="mt-1 text-[10px] text-[var(--text-muted)]">这里展示 Operation Review；Session Diff 在 History 中，Workspace Diff 可直接从右侧生成。</p></div>
         <div class="flex items-center gap-2">
           <span class="text-[10px] text-[var(--text-muted)]">{{ operationReviews.length }} Reviews</span>
           <BaseButton variant="secondary" size="sm" :busy="creatingWorkspaceReview" @click="viewWorkspaceReview">查看工作区全部 Diff</BaseButton>
@@ -343,16 +357,28 @@ watch(() => props.workspaceId, () => void load());
       <div v-if="operationReviews.length" class="space-y-2">
         <div v-for="review in operationReviews.slice(0, 5)" :key="review.id" class="overview-row min-w-0">
           <div class="review-summary min-w-0 flex-1">
-            <strong class="review-summary-title">{{ review.summary || review.id }}</strong>
+            <strong class="review-summary-title font-display">{{ review.summary || review.id }}</strong>
             <span class="block text-[10px] text-[var(--text-muted)]">{{ review.scope }} · {{ review.files }} files · +{{ review.additions }} -{{ review.deletions }} · {{ review.operationIds.length }} operations</span>
           </div>
-          <div class="flex shrink-0 gap-1"><BaseButton variant="ghost" size="sm" @click="viewReview(review.id)">查看 Diff</BaseButton><BaseButton variant="ghost" size="sm" @click="removeReview(review.id)">删除</BaseButton></div>
+          <div class="flex shrink-0 gap-1"><BaseButton variant="ghost" size="sm" @click="viewReview(review.id)">查看 Diff</BaseButton><BaseButton variant="danger" size="sm" @click="pendingDeleteReview = review">删除</BaseButton></div>
         </div>
       </div>
       <p v-if="reviews.length" class="mt-2 text-[10px] text-[var(--text-muted)]">本地快照约 {{ Math.ceil((reviews[0]?.storageBytes || 0) / 1024) }} KB；聚合 Review 也是冻结快照，不会随着后续工作区变化而变化。</p>
       <p v-else class="py-4 text-center text-xs text-[var(--text-muted)]">暂无 AI Change Review</p>
     </GlassCard>
     <p v-if="loading" class="text-center text-[10px] text-[var(--text-muted)]">正在刷新 Workspace 摘要…</p>
+
+    <ConfirmDialog
+      :open="!!pendingDeleteReview"
+      title="删除 AI Change Review"
+      :message="pendingDeleteReview ? `确定删除「${pendingDeleteReview.summary || pendingDeleteReview.id}」？` : ''"
+      detail="删除后该冻结 Diff 快照无法恢复；源码文件、Git 历史和实际工作区内容不会被修改。"
+      confirm-text="确认删除"
+      severity="danger"
+      :busy="deleteReviewBusy"
+      @confirm="removeReview"
+      @cancel="pendingDeleteReview = null"
+    />
   </div>
 </template>
 
@@ -385,14 +411,15 @@ watch(() => props.workspaceId, () => void load());
   border: 1px solid color-mix(in srgb, var(--text-main) 6%, transparent);
   background: color-mix(in srgb, var(--text-main) 2.5%, transparent);
   padding: .85rem;
-  transition: all 200ms var(--ease-apple-spring);
+  transition: all 350ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .overview-stat.is-interactive { cursor: pointer; }
 .overview-stat.is-interactive:hover,
 .overview-stat:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--ios-blue) 25%, transparent);
-  background: color-mix(in srgb, var(--text-main) 4.5%, transparent);
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--ios-blue) 35%, transparent);
+  background: color-mix(in srgb, var(--text-main) 5%, transparent);
+  box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 .overview-stat strong {
   margin-top: .2rem;

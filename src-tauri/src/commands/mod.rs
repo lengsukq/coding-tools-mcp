@@ -10,6 +10,7 @@ pub(crate) mod runtime;
 mod runtime_settings;
 mod secrets;
 mod software;
+mod tool_audit;
 pub(crate) mod ui_memory;
 mod usage;
 pub(crate) mod window_chrome;
@@ -42,6 +43,9 @@ pub use secrets::{
 };
 pub use software::{
     get_download_config, install_software, list_software, set_download_config, uninstall_software,
+};
+pub use tool_audit::{
+    clear_tool_audit_records, list_tool_audit_records, set_tool_audit_retention_days,
 };
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;

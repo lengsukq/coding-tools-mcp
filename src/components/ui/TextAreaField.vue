@@ -15,7 +15,7 @@ withDefaults(defineProps<{ label?: string; placeholder?: string; hint?: string; 
       :rows="rows"
       :placeholder="placeholder"
       :disabled="disabled"
-      class="w-full resize-y rounded-2xl border border-black/[0.04] bg-[#F2F2F7] px-3.5 py-2.5 text-sm leading-5 text-[var(--text-main)] outline-none transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] placeholder:text-[var(--text-muted)] focus:border-[#0071e3]/40 focus:bg-white focus:ring-4 focus:ring-[#0071e3]/15 dark:border-white/[0.07] dark:bg-white/[0.06] dark:focus:border-[#0a84ff]/50 dark:focus:bg-white/[0.11] dark:focus:ring-[#0a84ff]/20 disabled:cursor-not-allowed disabled:opacity-40"
+      class="w-full resize-y rounded-2xl border border-[var(--card-border)] bg-[var(--coral-50)]/80 px-3.5 py-2.5 text-sm leading-5 text-[var(--text-main)] outline-none transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] placeholder:text-[var(--text-muted)] focus:border-[var(--primary)]/50 focus:bg-white focus:ring-4 focus:ring-[var(--primary)]/15 dark:border-white/[0.07] dark:bg-white/[0.06] dark:focus:border-[var(--primary)]/60 dark:focus:bg-white/[0.11] dark:focus:ring-[var(--primary)]/20 disabled:cursor-not-allowed disabled:opacity-40"
       :class="mono ? 'font-mono text-xs' : ''"
     />
     <span v-if="hint" class="mt-1.5 block text-[11px] leading-4 text-[var(--text-muted)]">{{ hint }}</span>

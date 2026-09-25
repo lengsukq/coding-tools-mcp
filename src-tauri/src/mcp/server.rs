@@ -15,6 +15,59 @@ pub struct GatewayResponse {
     pub workspace: Option<WorkspaceRequestContext>,
 }
 
+/// Best-effort routing attribution for a tools/call audit record. This helper
+/// must not mutate session state or influence normal request routing.
+pub fn audit_workspace_hint(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    body: &Value,
+) -> Option<String> {
+    if body.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let params = body.get("params")?;
+    let tool_name = params.get("name").and_then(Value::as_str)?;
+    if tool_name == "workspace_list" {
+        return None;
+    }
+
+    let explicit_workspace = params
+        .get("arguments")
+        .and_then(|arguments| arguments.get("workspace_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|workspace_id| !workspace_id.is_empty());
+    if let Some(workspace_id) = explicit_workspace {
+        return state
+            .registry
+            .resolve(workspace_id)
+            .ok()
+            .map(|profile| profile.id);
+    }
+
+    if let Some(workspace_id) = session_id
+        .and_then(|session_id| state.sessions.current(session_id).active_workspace_id)
+    {
+        return state
+            .registry
+            .resolve(&workspace_id)
+            .ok()
+            .map(|profile| profile.id);
+    }
+
+    if !is_gateway_tool(tool_name) {
+        return state
+            .registry
+            .list()
+            .ok()
+            .and_then(|profiles| match profiles.as_slice() {
+                [profile] => Some(profile.id.clone()),
+                _ => None,
+            });
+    }
+    None
+}
+
 fn gateway_scoped_tool_catalog() -> Vec<Value> {
     list_tools_for_profile("compact")
         .into_iter()
@@ -634,7 +687,7 @@ mod tests {
     use crate::tools::ToolContext;
 
     use super::{
-        handle_request, initialize_result, negotiate_protocol_version, tool_arguments,
+        audit_workspace_hint, handle_request, initialize_result, negotiate_protocol_version, tool_arguments,
         DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS,
     };
 
@@ -646,6 +699,42 @@ mod tests {
 
     fn test_state() -> Arc<ToolContext> {
         Arc::new(test_context())
+    }
+
+    #[test]
+    fn audit_workspace_attribution_follows_explicit_session_and_global_routes() {
+        let mut state = crate::mcp::gateway::GatewayState::default();
+        let workspace_a = crate::workspace::WorkspaceProfile::new(
+            "/tmp/audit-workspace-a".into(),
+            Some("Audit A".into()),
+        );
+        let workspace_b = crate::workspace::WorkspaceProfile::new(
+            "/tmp/audit-workspace-b".into(),
+            Some("Audit B".into()),
+        );
+        let id_a = workspace_a.id.clone();
+        let id_b = workspace_b.id.clone();
+        state.registry = crate::mcp::gateway_state::WorkspaceRegistry::from_profiles(vec![workspace_a, workspace_b]);
+
+        let explicit = json!({
+            "method":"tools/call",
+            "params":{"name":"workspace_invoke","arguments":{"workspace_id":id_b,"tool":"read_file"}}
+        });
+        assert_eq!(audit_workspace_hint(&state, None, &explicit), Some(id_b.clone()));
+
+        state.sessions.ensure_host_session("audit-session");
+        assert!(state.sessions.select("audit-session", id_a.clone()));
+        let selected = json!({
+            "method":"tools/call",
+            "params":{"name":"read_file","arguments":{"path":"/tmp/file"}}
+        });
+        assert_eq!(audit_workspace_hint(&state, Some("audit-session"), &selected), Some(id_a));
+
+        let global = json!({
+            "method":"tools/call",
+            "params":{"name":"workspace_list","arguments":{}}
+        });
+        assert_eq!(audit_workspace_hint(&state, Some("audit-session"), &global), None);
     }
 
     #[test]

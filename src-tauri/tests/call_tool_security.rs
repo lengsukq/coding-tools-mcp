@@ -16,11 +16,96 @@ const TRAVERSAL_PATCH: &str = r#"*** Begin Patch
 #[test]
 fn read_file_rejects_symlink_escape() {
     let fx = malicious_fixture();
-    let ctx = ctx_for(&fx.root);
+    let mut ctx = ctx_for(&fx.root);
+    ctx.policy.allow_high_risk_writes = true;
     let out = invoke(&ctx, "read_file", json!({"path": "outside-link.txt"}));
     if fx.root.join("outside-link.txt").exists() {
         assert_security_or_policy_err(&out);
     }
+}
+
+#[test]
+fn high_risk_github_patch_is_allowed_when_workspace_setting_is_enabled() {
+    let fx = tiny_js_fixture();
+    let mut ctx = ctx_for(&fx.root);
+    ctx.policy.allow_high_risk_writes = true;
+    let out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Add File: .github/workflows/ci.yml\n+name: CI\n*** End Patch\n"
+        }),
+    );
+    assert_ok(&out);
+    assert_eq!(
+        fs::read_to_string(fx.root.join(".github/workflows/ci.yml")).expect("读取 workflow"),
+        "name: CI\n"
+    );
+}
+
+#[test]
+fn high_risk_manifest_patch_requires_workspace_setting() {
+    let fx = tiny_js_fixture();
+    let ctx = ctx_for(&fx.root);
+    let out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Update File: package.json\n@@\n-  \"version\": \"0.0.0\",\n+  \"version\": \"0.0.1\",\n*** End Patch\n"
+        }),
+    );
+    assert_eq!(out["error"]["code"], "PROTECTED_REPOSITORY_ASSET");
+}
+
+#[test]
+fn high_risk_manifest_patch_is_allowed_when_workspace_setting_is_enabled() {
+    let fx = tiny_js_fixture();
+    let mut ctx = ctx_for(&fx.root);
+    ctx.policy.allow_high_risk_writes = true;
+    let out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Update File: package.json\n@@\n-  \"version\": \"0.0.0\",\n+  \"version\": \"0.0.1\",\n*** End Patch\n"
+        }),
+    );
+    assert_ok(&out);
+    assert!(fs::read_to_string(fx.root.join("package.json"))
+        .expect("读取 package.json")
+        .contains("\"version\": \"0.0.1\""));
+}
+
+#[test]
+fn deleting_high_risk_file_still_requires_confirmation_when_enabled() {
+    let fx = tiny_js_fixture();
+    let workflow_dir = fx.root.join(".github/workflows");
+    fs::create_dir_all(&workflow_dir).expect("创建 workflow 目录");
+    fs::write(workflow_dir.join("ci.yml"), "name: CI\n").expect("创建 workflow");
+    let mut ctx = ctx_for(&fx.root);
+    ctx.policy.allow_high_risk_writes = true;
+
+    let denied = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Delete File: .github/workflows/ci.yml\n*** End Patch\n"
+        }),
+    );
+    assert_eq!(
+        denied["error"]["code"],
+        "DANGEROUS_OPERATION_REQUIRES_CONFIRMATION"
+    );
+
+    let accepted = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "confirm": true,
+            "patch": "*** Begin Patch\n*** Delete File: .github/workflows/ci.yml\n*** End Patch\n"
+        }),
+    );
+    assert_ok(&accepted);
+    assert!(!workflow_dir.join("ci.yml").exists());
 }
 
 #[test]
@@ -144,7 +229,8 @@ fn dangerous_command_requires_explicit_confirmation() {
 #[test]
 fn deleting_readme_requires_explicit_confirmation() {
     let fx = tiny_js_fixture();
-    let ctx = ctx_for(&fx.root);
+    let mut ctx = ctx_for(&fx.root);
+    ctx.policy.allow_high_risk_writes = true;
     let out = invoke(
         &ctx,
         "apply_patch",

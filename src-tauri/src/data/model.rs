@@ -50,6 +50,8 @@ pub struct AppData {
     pub restore_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_audit_retention_days: Option<u16>,
     #[serde(default)]
     pub shared_secrets: HashMap<String, String>,
     #[serde(default)]

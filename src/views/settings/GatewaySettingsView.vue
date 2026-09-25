@@ -126,15 +126,15 @@ onMounted(() => void refresh());
   <div class="settings-page mx-auto max-w-[1180px] px-8 py-7">
     <SettingsPageHeader title="Global MCP 连接" description="整个应用只保留一个 MCP Endpoint；Chat 会话在连接内部选择 Workspace，文件、命令、History 与 Planning 仍按项目隔离。" />
     <ConnectionSettingsNav />
-    <div class="grid gap-4">
+    <div class="grid gap-4 animate-fade-in-up delay-100">
       <GlassCard>
-        <div class="flex flex-wrap items-start justify-between gap-4"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-[#0a84ff]/13 text-[#0a84ff]"><Globe2 :size="20" /></div><div><h2 class="text-sm font-semibold">唯一 MCP Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ running ? `${status?.sessionCount ?? 0} 个 Session · ${status?.workspaceCount ?? 0} 个 Workspace` : "当前未运行" }}</p></div></div><StatusPill :status="running ? 'running' : 'stopped'" /></div>
+        <div class="flex flex-wrap items-start justify-between gap-4"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><Globe2 :size="20" /></div><div><h2 class="text-sm font-semibold font-display">唯一 MCP Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ running ? `${status?.sessionCount ?? 0} 个 Session · ${status?.workspaceCount ?? 0} 个 Workspace` : "当前未运行" }}</p></div></div><StatusPill :status="running ? 'running' : 'stopped'" /></div>
         <div class="settings-two-col mt-4"><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">本地 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.localEndpoint ?? `http://127.0.0.1:${config.localPort}/mcp` }}</code></div><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">公网 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.publicEndpoint || (config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/mcp` : "尚未配置") }}</code></div></div>
         <div class="mt-4 flex flex-wrap gap-2"><BaseButton :busy="busy && !running" :disabled="running || loading" @click="start"><Play :size="13" />启动 Global MCP</BaseButton><BaseButton variant="secondary" :busy="busy && running" :disabled="!running" @click="stop"><Square :size="12" />停止</BaseButton><BaseButton variant="ghost" :busy="checking" @click="runHealth"><Activity :size="13" />健康检查</BaseButton><BaseButton variant="ghost" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-4"><h2 class="text-sm font-semibold">Endpoint 与公网 Tunnel</h2><p class="mt-1 text-xs text-[var(--text-muted)]">本地端口就是唯一 MCP Listener；FRP / Cloudflare 只负责把这个 Endpoint 暴露到公网。</p></div>
+        <div class="mb-4"><h2 class="text-sm font-semibold font-display">Endpoint 与公网 Tunnel</h2><p class="mt-1 text-xs text-[var(--text-muted)]">本地端口就是唯一 MCP Listener；FRP / Cloudflare 只负责把这个 Endpoint 暴露到公网。</p></div>
         <div class="grid gap-3">
           <div class="ios-glass rounded-2xl p-3"><ToggleSwitch v-model="config.enabled" label="启用公网 Tunnel" description="关闭时仍可正常使用本地 Global MCP；只是不自动暴露公网入口。" /></div>
           <div class="settings-two-col"><TextField :model-value="String(config.localPort)" label="Global MCP 本地端口" type="number" @update:model-value="config.localPort = Number($event)" /><SelectField v-model="config.tunnelType" label="公网方式" :options="tunnelOptions" /></div>

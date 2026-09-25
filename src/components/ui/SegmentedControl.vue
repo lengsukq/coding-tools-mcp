@@ -43,56 +43,64 @@ function handleKeydown(event: KeyboardEvent, index: number) {
 <style scoped>
 .ios-segmented {
   align-items: center;
-  gap: 2px;
-  padding: 3px;
+  gap: 4px;
+  padding: 4px;
   overflow-x: auto;
-  border: 1px solid rgba(15, 23, 42, .045);
-  border-radius: 12px;
-  background: rgba(118, 118, 128, .095);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .46);
+  border: 1px solid var(--card-border, rgba(var(--pal-rgb, 226, 87, 76), 0.16));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 8px rgba(var(--pal-rgb, 190, 120, 110), 0.06);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   scrollbar-width: none;
 }
 
 .ios-segmented::-webkit-scrollbar { display: none; }
 
 .ios-segmented__item {
-  min-height: 30px;
-  padding: 5px 12px;
-  border: 0;
-  border-radius: 9px;
+  min-height: 32px;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 560;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .ios-segmented__item:hover:not(.active) {
-  background: rgba(255, 255, 255, .34);
+  background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.08));
   color: var(--text-main);
 }
 
-.ios-segmented__item:active { transform: scale(.985); }
+.ios-segmented__item:active { transform: scale(.96); }
 
 .ios-segmented__item.active {
-  background: rgba(255, 255, 255, .88);
-  color: var(--text-main);
+  background: var(--primary-gradient, var(--primary));
+  color: #ffffff;
   font-weight: 650;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, .09), inset 0 1px 0 rgba(255, 255, 255, .82);
+  box-shadow: 0 4px 14px var(--coral-glow, rgba(var(--pal-rgb, 0, 113, 227), 0.28)), inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
-:global(.dark) .ios-segmented {
-  border-color: rgba(255, 255, 255, .055);
-  background: rgba(118, 118, 128, .16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+:global(.dark) .ios-segmented,
+:global([data-theme="dark"]) .ios-segmented {
+  border-color: var(--card-border, rgba(var(--pal-rgb, 253, 189, 180), 0.14));
+  background: rgba(20, 20, 24, 0.65);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-:global(.dark) .ios-segmented__item:hover:not(.active) { background: rgba(255, 255, 255, .055); }
-:global(.dark) .ios-segmented__item.active {
-  background: rgba(255, 255, 255, .13);
-  box-shadow: 0 1px 5px rgba(0, 0, 0, .2), inset 0 1px 0 rgba(255, 255, 255, .045);
+:global(.dark) .ios-segmented__item:hover:not(.active),
+:global([data-theme="dark"]) .ios-segmented__item:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global(.dark) .ios-segmented__item.active,
+:global([data-theme="dark"]) .ios-segmented__item.active {
+  background: var(--primary-gradient, var(--primary));
+  color: #ffffff;
+  box-shadow: 0 4px 14px var(--coral-glow, rgba(var(--pal-rgb, 0, 113, 227), 0.32)), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 </style>

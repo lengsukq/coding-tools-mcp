@@ -53,7 +53,7 @@ Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspa
 | Planning / Goal / Task | Direct、Plan、Goal 三种约束模式，Execution Ledger 统一记录执行状态 | 复杂任务可拆分、可恢复、可验收，减少 AI 在中途偏离目标的情况 |
 | 历史会话 | 项目内保存无损 Markdown 档案，并提供有界状态、搜索、分页读取和启动提示词 | 上下文跟着仓库走，不依赖某一个聊天窗口，也不会每次注入全部历史 |
 | 日志与健康检查 | 在桌面端查看请求日志、端点、OAuth 元数据和连接检查结果 | 出现连接或授权问题时，可以快速定位在本地服务、隧道还是客户端 |
-| Workspace-first 安全边界 | 工作区外默认只读，`.git` / `.github` 受保护，Patch 先预检，危险操作要求确认 | 权限范围明确、修改可控，适合把 AI 接入真实项目而不是临时演示目录 |
+| Workspace-first 安全边界 | 工作区外默认只读，`.git` 永久保护；`.github`、依赖清单/锁文件、构建配置等高风险文件默认保护，可按 Workspace 显式放开 Patch 写入 | 权限范围明确、修改可控，适合把 AI 接入真实项目而不是临时演示目录 |
 
 ### 桌面端全局 Dashboard：不进入工作区也能掌握全局状态
 
@@ -187,7 +187,7 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 **特点**
 
 - 工作区内允许按策略读写和执行；工作区外默认只读。
-- `.git`、`.github` 等仓库资产受额外保护，危险操作需要显式确认。
+- `.git` 永久不可写；`.github`、依赖清单/锁文件、构建配置、README/LICENSE 等高风险文件默认受保护，可在 Workspace 设置中显式允许 Patch 修改，删除高风险文件仍需确认。
 - 健康检查分别报告本地服务、公网入口和认证元数据的状态。
 - Windows 当前是 `policy_only` 执行边界，项目不会把静态策略夸大为完整 OS Sandbox。
 
@@ -432,7 +432,7 @@ git_status
 - Workspace 内普通文件可以读取、创建、修改、删除和执行。
 - Workspace 外允许完整只读：`read_file`、`list_dir`、`list_files`、`search_text`、`view_image`。
 - Workspace 外写入、删除和执行会被阻止。
-- `.git` 和 `.github` 不能被普通文件工具、Patch 或解释器命令破坏。
+- `.git/**` 永久禁止写入。高风险文件（包括 `.github/**`、`.gitignore`、`Cargo.toml` / `Cargo.lock`、`package.json` / lockfile、`tauri.conf.json`、`vite.config.*`、`pyproject.toml`、README/LICENSE）默认禁止 Patch 写入，可在单个 Workspace 的“设置 → 仓库保护 → 允许 AI 修改高风险文件”中开启。即使开启，删除高风险文件仍需显式确认，命令级危险操作继续受原有策略保护。
 - Patch 在单次操作内进行预检和失败恢复；长期恢复统一使用 Git，不创建全量 Workspace Snapshot。
 
 > Windows 子进程目前仍是 `policy_only` 执行边界，返回中的 `sandbox_enforced: false` 是真实状态。静态命令策略不能等同于完整的操作系统文件系统沙箱。

@@ -302,13 +302,19 @@ fn legacy_planning_workspace_migrates_without_losing_plan_details() {
 #[test]
 fn corrupt_planning_fails_closed_but_reset_restores_workspace_mutation() {
     let fixture = fixture_root("corrupt-planning");
+    fs::create_dir_all(fixture.root.join("src")).expect("create source dir");
+    fs::write(
+        fixture.root.join("src/main.rs"),
+        "fn main() { println!(\"corrupt-planning\"); }\n",
+    )
+    .expect("create source file");
     let ctx = ctx(&fixture);
 
     let blocked = call_tool(
         &ctx,
         "apply_patch",
         &json!({
-            "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-# Corrupt Planning Fixture\n+# Recovered Planning Fixture\n*** End Patch\n"
+            "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-fn main() { println!(\"corrupt-planning\"); }\n+fn main() { println!(\"recovered-planning\"); }\n*** End Patch\n"
         }),
     );
     assert_eq!(blocked["ok"], false);
@@ -325,13 +331,13 @@ fn corrupt_planning_fails_closed_but_reset_restores_workspace_mutation() {
         &ctx,
         "apply_patch",
         &json!({
-            "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-# Corrupt Planning Fixture\n+# Recovered Planning Fixture\n*** End Patch\n"
+            "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-fn main() { println!(\"corrupt-planning\"); }\n+fn main() { println!(\"recovered-planning\"); }\n*** End Patch\n"
         }),
     );
     assert_eq!(recovered["ok"], true, "{recovered}");
-    assert!(fs::read_to_string(fixture.root.join("README.md"))
+    assert!(fs::read_to_string(fixture.root.join("src/main.rs"))
         .expect("read recovered source")
-        .contains("# Recovered Planning Fixture"));
+        .contains("recovered-planning"));
 }
 
 #[test]
@@ -369,7 +375,7 @@ fn plan_and_goal_modes_keep_planning_writable_and_gate_project_mutation() {
         &ctx,
         "apply_patch",
         &json!({
-            "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-Stable source file used by real-workspace lifecycle tests.\n+Goal mode source mutation succeeded.\n*** End Patch\n"
+            "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-    println!(\"workspace-e2e\");\n+    println!(\"goal-mode-source-mutation\");\n*** End Patch\n"
         }),
     );
     assert_eq!(blocked["error"]["code"], "PLAN_MODE_READ_ONLY");
@@ -383,7 +389,7 @@ fn plan_and_goal_modes_keep_planning_writable_and_gate_project_mutation() {
         &ctx,
         "apply_patch",
         &json!({
-            "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-Stable source file used by real-workspace lifecycle tests.\n+Goal mode source mutation succeeded.\n*** End Patch\n"
+            "patch": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-    println!(\"workspace-e2e\");\n+    println!(\"goal-mode-source-mutation\");\n*** End Patch\n"
         }),
     );
     assert_eq!(changed["ok"], true, "{changed}");

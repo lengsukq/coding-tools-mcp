@@ -40,6 +40,7 @@ export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceP
       tool_profile: runtime.tool_profile ?? "core",
       permission_mode: runtime.permission_mode ?? "safe",
       inherit_global_execution_policy: runtime.inherit_global_execution_policy ?? false,
+      allow_high_risk_writes: runtime.allow_high_risk_writes ?? false,
     },
   };
 }
