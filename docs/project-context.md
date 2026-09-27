@@ -36,6 +36,8 @@
 - [如何测试](./project-context/how-to-test.md)
 - [代码图谱洞察](./graph-insights/latest.md)
 - [设计系统](./design-system.md)
+- [UI 页面结构](./ui/page-structure.json)
+- [UI 组件目录](./ui/component-catalog.json)
 
 ## 开发时的事实来源
 
@@ -51,4 +53,4 @@
 原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
-*当前事实更新: 2026-09-15*
+*当前事实更新: 2026-09-27*

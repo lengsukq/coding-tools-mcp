@@ -1,0 +1,71 @@
+{
+  "version": "1.0.0",
+  "dashboard": [
+    "page-header",
+    "current-focus",
+    "needs-attention",
+    "workspace-runtime-status",
+    "recent-activity",
+    "analytics-and-token"
+  ],
+  "workspace": [
+    "workspace-header",
+    "tabs",
+    "current-work-and-risk",
+    "git-runtime-verification",
+    "activity-review-history",
+    "technical-metadata"
+  ],
+  "audit": [
+    "page-header-and-health",
+    "filters-and-records",
+    "compact-supporting-metrics",
+    "retention-and-destructive-actions"
+  ],
+  "settingsGeneral": [
+    "page-header",
+    "global-runtime-and-primary-configuration",
+    "permissions-and-connection-defaults",
+    "collapsed-agent-context-advanced-options",
+    "proxy-settings",
+    "status-and-save-action",
+    "technical-help"
+  ],
+  "settingsKeys": [
+    "page-header",
+    "masked-credential-list",
+    "per-credential-regeneration",
+    "single-save-action"
+  ],
+  "settingsConnection": [
+    "runtime-state-and-primary-actions",
+    "endpoint-and-tunnel-configuration",
+    "conditional-provider-options",
+    "endpoint-health"
+  ],
+  "settingsFrp": [
+    "page-header",
+    "profile-create-form",
+    "saved-profile-list-and-impact-warning"
+  ],
+  "settingsSoftware": [
+    "page-header",
+    "managed-client-status",
+    "download-source-and-proxy-settings"
+  ],
+  "responsive": {
+    "wide": "multi-column where it improves scanning",
+    "compact": "secondary columns collapse",
+    "narrow": "single-column task order, no horizontal page scroll"
+  },
+  "avoid": [
+    "equal-weight card wall",
+    "decorative KPI colors",
+    "nested cards",
+    "static hover lift",
+    "sub-12px regular UI copy",
+    "strong or animated full-page decoration such as rings or orbs",
+    "technical settings expanded by default",
+    "100% success rate when there are no audit records"
+  ]
+}

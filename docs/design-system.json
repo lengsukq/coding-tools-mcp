@@ -1,115 +1,97 @@
 {
-  "version": "2.0.0",
-  "name": "Coding Tools MCP Desktop",
-  "productType": "Developer Tool",
-  "stack": "vue-tailwind",
-  "aesthetic": "workbench-glass",
-  "references": ["Desktop Developer Tools", "Raycast", "Linear"],
-  "defaultTheme": "system",
-  "colors": {
-    "dark": {
-      "bg": "oklch(0.13 0.005 260)",
-      "bgElevated": "oklch(0.16 0.006 260)",
-      "surface": "oklch(0.19 0.008 260)",
-      "surfaceHover": "oklch(0.22 0.010 260)",
-      "border": "oklch(0.28 0.010 260)",
-      "borderSubtle": "oklch(0.24 0.008 260)",
-      "text": "oklch(0.97 0.005 260)",
-      "textSecondary": "oklch(0.72 0.012 260)",
-      "textMuted": "oklch(0.55 0.012 260)",
-      "accent": "#0a84ff",
-      "accentHover": "#0071e3",
-      "accentMuted": "rgba(10, 132, 255, 0.14)",
-      "success": "oklch(0.72 0.17 155)",
-      "warning": "oklch(0.78 0.14 75)",
-      "error": "oklch(0.65 0.20 25)",
-      "info": "oklch(0.70 0.12 240)"
-    },
-    "light": {
-      "bg": "oklch(0.98 0.004 260)",
-      "bgElevated": "oklch(1 0 0)",
-      "surface": "oklch(1 0 0)",
-      "surfaceHover": "oklch(0.97 0.006 260)",
-      "border": "oklch(0.90 0.008 260)",
-      "borderSubtle": "oklch(0.94 0.006 260)",
-      "text": "oklch(0.18 0.015 260)",
-      "textSecondary": "oklch(0.42 0.015 260)",
-      "textMuted": "oklch(0.58 0.012 260)",
-      "accent": "#0a84ff",
-      "accentHover": "#0071e3",
-      "accentMuted": "rgba(10, 132, 255, 0.12)",
-      "success": "oklch(0.55 0.17 155)",
-      "warning": "oklch(0.62 0.14 75)",
-      "error": "oklch(0.55 0.20 25)",
-      "info": "oklch(0.52 0.12 240)"
-    },
-    "status": {
-      "running": "oklch(0.72 0.17 155)",
-      "starting": "oklch(0.78 0.14 75)",
-      "stopped": "oklch(0.55 0.012 260)",
-      "error": "oklch(0.65 0.20 25)"
-    }
+  "version": "4.0.0",
+  "name": "Coding Tools MCP iOS Glass",
+  "aesthetic": "ios-inspired-frosted-glass",
+  "principles": [
+    "information-first",
+    "translucent-frosted-surfaces",
+    "oversized-rounded-corners",
+    "semantic-status-colors",
+    "clear-interaction-affordances",
+    "progressive-disclosure-for-low-frequency-settings",
+    "single-source-design-tokens",
+    "restrained-ambient-light"
+  ],
+  "hierarchy": {
+    "L1": "current task, risk, primary action",
+    "L2": "status, progress, workspace and runtime objects",
+    "L3": "analytics, activity, history, reviews and audit summaries",
+    "L4": "technical metadata"
   },
   "typography": {
-    "fontFamily": {
-      "sans": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "PingFang SC", "Microsoft YaHei", "sans-serif"],
-      "mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Cascadia Code", "Consolas", "monospace"]
-    },
-    "fontSize": {
-      "xs": "0.75rem",
-      "sm": "0.875rem",
-      "base": "1rem",
-      "lg": "1.125rem",
-      "xl": "1.25rem",
-      "2xl": "1.5rem",
-      "3xl": "1.875rem"
-    },
-    "fontWeight": {
-      "normal": 400,
-      "medium": 500,
-      "semibold": 600,
-      "bold": 700
-    },
-    "lineHeight": {
-      "tight": 1.25,
-      "normal": 1.5,
-      "relaxed": 1.625
-    }
+    "family": "system-ui with platform Chinese fonts",
+    "mono": "ui-monospace",
+    "pageTitle": "24-28px",
+    "sectionTitle": "16px",
+    "body": "14px",
+    "dense": "12-13px",
+    "metadata": "12px",
+    "minimumRegularUiText": "12px"
+  },
+  "colorPolicy": {
+    "brand": "palette-controlled accent only",
+    "success": "fixed-semantic green",
+    "warning": "fixed-semantic amber",
+    "danger": "fixed-semantic red",
+    "neutralShareTarget": ">=90%",
+    "stateRequiresTextOrIcon": true
+  },
+  "surfaces": {
+    "canvas": "cool neutral with a faint palette-tinted ambient wash",
+    "surface": "translucent white in light theme and cool charcoal glass in dark theme",
+    "inset": "lighter translucent inset surface with a quiet hairline boundary",
+    "border": "1px translucent neutral line paired with backdrop blur",
+    "shadow": "soft layered highlight and depth on glass surfaces; stronger shadow only for overlays",
+    "backdropBlur": true,
+    "decorativeGradient": "restrained ambient light only; no rings or animated orbs"
+  },
+  "shape": {
+    "control": "16px",
+    "row": "20px",
+    "card": "26px",
+    "panel": "30px",
+    "overlay": "34px"
   },
   "spacing": {
     "base": 4,
-    "scale": [0, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96]
+    "scale": [4, 8, 12, 16, 24, 32, 48, 64],
+    "sectionGap": "24-32px",
+    "pageGutter": "clamp(20px, 2.4vw, 36px)"
   },
-  "borderRadius": {
-    "sm": "8px",
-    "md": "12px",
-    "lg": "16px",
-    "xl": "24px",
-    "full": "9999px"
+  "components": {
+    "page": ["PageShell", "PageHeader", "SectionHeader"],
+    "surface": ["GlassCard (compatibility name; standard surface)", "MetricCard", "ActionCard", "DataRow"],
+    "control": ["BaseButton", "TextField", "SelectField", "TextAreaField", "ToggleSwitch", "SegmentedControl"],
+    "feedback": ["StatusPill", "ToastHost", "ModalDialog", "ConfirmDialog"],
+    "disclosure": "Use native details/summary for advanced or low-frequency settings."
   },
-  "shadows": {
-    "sm": "0 1px 2px oklch(0 0 0 / 0.12)",
-    "md": "0 4px 12px oklch(0 0 0 / 0.16)",
-    "lg": "0 12px 32px oklch(0 0 0 / 0.24)",
-    "glow": "0 0 24px oklch(0.62 0.18 275 / 0.25)"
+  "affordance": {
+    "staticSurfaceHover": false,
+    "interactiveSurfaceHover": true,
+    "primaryActionsPerTaskRegion": 1,
+    "dangerActionIsolated": true,
+    "focusVisibleRequired": true
+  },
+  "responsive": {
+    "desktop": "stable sidebar and content width; multi-column only when it improves scanning",
+    "compact": "reduce columns and secondary metadata",
+    "narrow": "single-column task order, secondary controls collapse, no page-level horizontal scrolling"
   },
   "motion": {
-    "fast": "150ms",
-    "normal": "200ms",
-    "slow": "300ms",
-    "easing": "cubic-bezier(0.16, 1, 0.3, 1)"
+    "duration": "150-200ms",
+    "purpose": "direct interaction feedback only",
+    "reducedMotionRequired": true
   },
-  "breakpoints": {
-    "sm": "640px",
-    "md": "768px",
-    "lg": "1024px",
-    "xl": "1280px"
-  },
-  "zIndex": {
-    "dropdown": 100,
-    "sticky": 200,
-    "modal": 300,
-    "toast": 400,
-    "tooltip": 500
+  "acceptance": {
+    "targetScore": 8.5,
+    "requiredViewports": ["1440x900", "390x844"],
+    "blockingFailures": [
+      "horizontal page scrolling",
+      "primary state conveyed by color only",
+      "static cards that look interactive",
+      "analytics visually outranking current tasks or risks",
+      "misleading success status when no records exist",
+      "low-frequency technical settings dominating the initial view"
+    ]
   }
 }

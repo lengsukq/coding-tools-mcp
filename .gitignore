@@ -18,6 +18,7 @@ src-tauri/target
 
 # MCP Probe 临时图谱快照
 .mcp-probe-kit/graph-snapshots/
+.mcp-probe-kit/plans/
 
 # 当前桌面版不使用的 Tauri 移动端及中间图标资源
 src-tauri/icons/64x64.png

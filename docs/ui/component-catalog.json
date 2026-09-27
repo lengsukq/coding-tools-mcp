@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "components": [
+    { "name": "PageShell", "category": "layout", "purpose": "统一页面宽度、gutter 与底部留白" },
+    { "name": "PageHeader", "category": "layout", "purpose": "统一页面标题、说明和页面级操作" },
+    { "name": "SectionHeader", "category": "layout", "purpose": "统一内容区块标题与辅助操作" },
+    { "name": "GlassCard", "category": "surface", "purpose": "兼容名；统一标准 Surface" },
+    { "name": "MetricCard", "category": "surface", "purpose": "静态指标，不默认可点击" },
+    { "name": "ActionCard", "category": "surface", "purpose": "明确可点击任务/风险入口" },
+    { "name": "DataRow", "category": "surface", "purpose": "配置、Endpoint、软件/Profile、列表信息" },
+    { "name": "BaseButton", "category": "control", "purpose": "统一 primary/secondary/ghost/danger/icon 操作层级" },
+    { "name": "StatusPill", "category": "feedback", "purpose": "固定语义的状态表达" },
+    { "name": "TextField/SelectField/TextAreaField/ToggleSwitch", "category": "control", "purpose": "统一表单交互" }
+  ]
+}
