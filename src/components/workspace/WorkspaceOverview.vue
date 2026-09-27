@@ -210,9 +210,9 @@ watch(() => props.workspaceId, () => void load());
 <template>
   <div class="grid min-w-0 gap-4 overflow-x-hidden">
     <div class="workspace-overview-primary animate-fade-in-up">
-      <GlassCard hoverable>
+      <GlassCard>
         <div class="flex flex-wrap items-start justify-between gap-4">
-          <div class="min-w-0"><p class="eyebrow">Workspace Status</p><h2 class="mt-1 text-sm font-semibold font-display">代码与会话状态</h2><p class="mt-1 text-[11px] text-[var(--text-muted)]">这里保留需要快速判断的状态；名称、路径与目录操作统一放在上方 Workspace Header。</p></div>
+          <div class="min-w-0"><p class="eyebrow">Workspace Status</p><h2 class="mt-1 text-base font-semibold">代码与会话状态</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">快速判断 Git、变更、会话与验证状态；名称和路径操作保留在上方 Header。</p></div>
           <div class="flex gap-2">
             <div v-if="ides.length" class="relative">
               <BaseButton size="sm" @click="ideMenuOpen = !ideMenuOpen">使用 IDE 打开<ArrowRight :size="13" /></BaseButton>
@@ -258,7 +258,7 @@ watch(() => props.workspaceId, () => void load());
           </div>
         </div>
       </GlassCard>
-      <GlassCard hoverable>
+      <GlassCard>
         <div class="flex items-center justify-between"><h3 class="text-sm font-semibold font-display">运行状态</h3><StatusPill :status="mcp?.state ?? 'unknown'" :label="mcp?.state ?? '未知'" /></div>
         <div class="mt-4 space-y-2 text-xs">
           <div class="overview-row"><span>Tool Profile</span><strong>{{ profile.runtime.tool_profile }}</strong></div>
@@ -269,7 +269,7 @@ watch(() => props.workspaceId, () => void load());
       </GlassCard>
     </div>
     <div class="workspace-overview-metrics animate-fade-in-up delay-100">
-      <GlassCard hoverable class="min-h-[220px]">
+      <GlassCard class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
           <div><p class="eyebrow">AI Activity · 7 Days</p><h3 class="mt-1 text-sm font-semibold font-display">修改趋势</h3></div>
           <div class="text-right"><strong class="block text-lg tabular-nums font-display">{{ activityTotals.operations }}</strong><span class="text-[10px] text-[var(--text-muted)]">operations</span></div>
@@ -295,7 +295,7 @@ watch(() => props.workspaceId, () => void load());
         </div>
       </GlassCard>
 
-      <GlassCard hoverable class="min-h-[220px]">
+      <GlassCard class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
           <div><p class="eyebrow">Git Health</p><h3 class="mt-1 text-sm font-semibold font-display">仓库状态</h3></div>
           <span class="text-[10px] text-[var(--text-muted)]">{{ gitHealthRows.length }} repos</span>
@@ -312,7 +312,7 @@ watch(() => props.workspaceId, () => void load());
         <p v-else class="py-10 text-center text-xs text-[var(--text-muted)]">未检测到 Git 仓库</p>
       </GlassCard>
 
-      <GlassCard hoverable class="min-h-[220px]">
+      <GlassCard class="min-h-[220px]">
         <div class="flex items-start justify-between gap-3">
           <div><p class="eyebrow">Execution Quality</p><h3 class="mt-1 text-sm font-semibold font-display">执行与验证信号</h3></div>
           <StatusPill :status="planning?.execution.state ?? 'idle'" :label="planning?.execution.state ?? 'idle'" />
@@ -333,7 +333,7 @@ watch(() => props.workspaceId, () => void load());
         </div>
       </GlassCard>
     </div>
-    <GlassCard hoverable class="animate-fade-in-up delay-200">
+    <GlassCard class="workspace-current-work animate-fade-in-up delay-200">
         <div class="mb-4 flex items-center justify-between"><div class="flex items-center gap-2"><Target :size="16" class="text-[var(--accent-purple)]" /><h3 class="text-sm font-semibold font-display">当前工作</h3></div><BaseButton variant="ghost" size="sm" @click="emit('navigate', 'planning')">查看计划<ArrowRight :size="13" /></BaseButton></div>
         <template v-if="focusedPlan || focusedGoal">
           <p v-if="focusedGoal" class="eyebrow">Goal · {{ focusedGoal.status }}</p>
@@ -346,7 +346,7 @@ watch(() => props.workspaceId, () => void load());
         </template>
         <p v-else class="py-6 text-center text-xs text-[var(--text-muted)]">当前没有 focused Goal / Plan</p>
     </GlassCard>
-    <GlassCard hoverable class="animate-fade-in-up delay-300">
+    <GlassCard class="workspace-review-section animate-fade-in-up delay-300">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div><h3 class="text-sm font-semibold font-display">最近 AI 修改</h3><p class="mt-1 text-[10px] text-[var(--text-muted)]">这里展示 Operation Review；Session Diff 在 History 中，Workspace Diff 可直接从右侧生成。</p></div>
         <div class="flex items-center gap-2">
@@ -383,7 +383,11 @@ watch(() => props.workspaceId, () => void load());
 </template>
 
 <style scoped>
-.eyebrow { font-size:.625rem; font-weight:600; text-transform:uppercase; letter-spacing:.16em; color:var(--text-muted); }
+.eyebrow { font-size:.75rem; font-weight:600; letter-spacing:0; color:var(--ui-text-muted); }
+.workspace-current-work { order: 10; }
+.workspace-overview-primary { order: 20; }
+.workspace-overview-metrics { order: 30; }
+.workspace-review-section { order: 40; }
 .workspace-overview-primary {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(300px, .72fr);
@@ -407,33 +411,31 @@ watch(() => props.workspaceId, () => void load());
   min-width: 0;
   flex-direction: column;
   gap: .35rem;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--text-main) 6%, transparent);
-  background: color-mix(in srgb, var(--text-main) 2.5%, transparent);
+  border-radius: var(--ui-radius-row);
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface-subtle);
   padding: .85rem;
-  transition: all 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out;
 }
 .overview-stat.is-interactive { cursor: pointer; }
-.overview-stat.is-interactive:hover,
-.overview-stat:hover {
-  transform: translateY(-4px);
-  border-color: color-mix(in srgb, var(--ios-blue) 35%, transparent);
-  background: color-mix(in srgb, var(--text-main) 5%, transparent);
-  box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+.overview-stat.is-interactive:hover {
+  transform: translateY(-1px);
+  border-color: var(--card-border-active);
+  background: var(--ui-surface-hover);
 }
 .overview-stat strong {
   margin-top: .2rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: .92rem;
-  font-weight: 750;
+  font-size: .95rem;
+  font-weight: 650;
   letter-spacing: -0.02em;
-  color: var(--text-main);
+  color: var(--ui-text);
 }
 .overview-stat small {
-  font-size: .65rem;
-  color: var(--text-muted);
+  font-size: .75rem;
+  color: var(--ui-text-muted);
 }
 .overview-stat-icon {
   display: grid;
@@ -441,23 +443,21 @@ watch(() => props.workspaceId, () => void load());
   height: 30px;
   place-items: center;
   border-radius: 9px;
-  color: white;
+  color: var(--ui-text-secondary);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-line);
 }
 .overview-stat-icon.is-blue {
-  background: linear-gradient(135deg, var(--ios-blue), var(--ios-indigo));
-  box-shadow: 0 3px 10px rgba(0, 113, 227, 0.28);
+  color: var(--ui-accent);
 }
 .overview-stat-icon.is-cyan {
-  background: linear-gradient(135deg, var(--ios-cyan), var(--ios-blue));
-  box-shadow: 0 3px 10px rgba(100, 210, 255, 0.28);
+  color: var(--ui-accent);
 }
 .overview-stat-icon.is-purple {
-  background: linear-gradient(135deg, var(--ios-purple), #9333ea);
-  box-shadow: 0 3px 10px rgba(191, 90, 242, 0.28);
+  color: var(--ui-text-secondary);
 }
 .overview-stat-icon.is-green {
-  background: linear-gradient(135deg, var(--ios-green), #16a34a);
-  box-shadow: 0 3px 10px rgba(48, 209, 88, 0.28);
+  color: var(--ui-success);
 }
 .overview-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; border-bottom:1px solid color-mix(in srgb,var(--text-primary) 7%,transparent); padding:.42rem 0; color:var(--text-muted); }
 .overview-row:last-child { border-bottom:0; }
@@ -469,20 +469,20 @@ watch(() => props.workspaceId, () => void load());
 .activity-chart { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); align-items:end; gap:.45rem; height:92px; }
 .activity-day { display:grid; height:100%; grid-template-rows:1fr auto auto; align-items:end; gap:.15rem; text-align:center; }
 .activity-bar-wrap { display:flex; height:60px; align-items:flex-end; justify-content:center; }
-.activity-bar { width:min(22px,72%); min-height:3px; border-radius:999px 999px 5px 5px; background:linear-gradient(180deg,var(--ios-blue),var(--accent-indigo)); box-shadow:0 6px 18px color-mix(in srgb,var(--ios-blue) 16%,transparent); transition:height .2s ease; }
-.activity-day strong { font-size:.625rem; font-variant-numeric:tabular-nums; color:var(--text-secondary); }
-.activity-day span { font-size:.55rem; white-space:nowrap; color:var(--text-muted); }
+.activity-bar { width:min(22px,72%); min-height:3px; border-radius:999px 999px 5px 5px; background:var(--ui-accent); transition:height .2s ease; }
+.activity-day strong { font-size:.75rem; font-variant-numeric:tabular-nums; color:var(--ui-text-secondary); }
+.activity-day span { font-size:.75rem; white-space:nowrap; color:var(--ui-text-muted); }
 .git-health-row { min-width:0; }
 .git-health-track,.quality-track { margin-top:.3rem; height:.34rem; overflow:hidden; border-radius:999px; background:color-mix(in srgb,var(--text-primary) 6%,transparent); }
 .git-health-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--accent-warning),#ffcc00); transition:width .2s ease; }
 .git-health-fill.clean { background:var(--accent-success); }
 .quality-metric { display:grid; grid-template-columns:1fr auto; align-items:baseline; gap:.15rem .5rem; border-radius:.85rem; background:color-mix(in srgb,var(--text-primary) 3%,transparent); padding:.65rem .7rem; }
-.quality-metric span { grid-column:1/-1; font-size:.55rem; text-transform:uppercase; letter-spacing:.08em; color:var(--text-muted); }
+.quality-metric span { grid-column:1/-1; font-size:.75rem; color:var(--ui-text-muted); }
 .quality-metric strong { font-size:1rem; font-variant-numeric:tabular-nums; }
-.quality-metric small { font-size:.55rem; color:var(--accent-success); }
-.quality-metric.danger small { color:var(--accent-danger); }
-.quality-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--accent-success),#34c759); transition:width .2s ease; }
-.quality-fill.purple { background:linear-gradient(90deg,var(--accent-indigo),var(--accent-purple)); }
+.quality-metric small { font-size:.75rem; color:var(--ui-success); }
+.quality-metric.danger small { color:var(--ui-danger); }
+.quality-fill { height:100%; border-radius:inherit; background:var(--ui-success); transition:width .2s ease; }
+.quality-fill.purple { background:var(--ui-accent); }
 .ide-menu { position:absolute; right:0; z-index:30; margin-top:.4rem; min-width:11rem; border:1px solid color-mix(in srgb,var(--text-primary) 10%,transparent); border-radius:.9rem; background:color-mix(in srgb,var(--surface) 94%,transparent); padding:.3rem; box-shadow:0 14px 36px rgba(0,0,0,.14); backdrop-filter:blur(24px); }
 .ide-menu button { display:block; width:100%; border-radius:.65rem; padding:.5rem .65rem; text-align:left; font-size:.72rem; color:var(--text-secondary); }
 .ide-menu button:hover { background:color-mix(in srgb,var(--text-primary) 6%,transparent); color:var(--text-primary); }

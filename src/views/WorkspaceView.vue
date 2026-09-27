@@ -217,8 +217,8 @@ onBeforeUnmount(() => { loadGeneration += 1; });
 
 <style scoped>
 .workspace-route {
-  --workspace-content-max: 1640px;
-  --workspace-gutter: clamp(20px, 2.2vw, 38px);
+  --workspace-content-max: var(--ui-page-max);
+  --workspace-gutter: var(--ui-page-gutter);
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -244,7 +244,7 @@ onBeforeUnmount(() => { loadGeneration += 1; });
 }
 
 .workspace-content {
-  padding-bottom: 12px;
+  padding-bottom: 32px;
 }
 
 @container workspace-page (max-width: 760px) {

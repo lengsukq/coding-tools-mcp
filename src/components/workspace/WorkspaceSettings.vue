@@ -72,13 +72,13 @@ function requestSave() {
 <template>
   <div class="grid gap-4 animate-fade-in-up">
     <ChatGptSessionPrompt />
-    <GlassCard><div class="mb-4"><h2 class="text-sm font-semibold font-display">工作区信息</h2><p class="mt-1 text-[11px] text-[var(--text-muted)]">名称只影响桌面端显示；目录变化后运行中的 MCP 需要重启。</p></div><div class="grid gap-4"><TextField v-model="draft.name" label="工作区名称" /><div><TextField v-model="draft.path" label="项目目录" /><BaseButton class="mt-2" variant="secondary" size="sm" @click="choosePath"><FolderInput :size="13" />重新选择目录</BaseButton></div><div class="flex justify-end"><BaseButton :busy="saving" :disabled="!infoDirty" @click="requestSave"><Save :size="14" />保存修改</BaseButton></div></div></GlassCard>
+    <GlassCard><div class="mb-4"><h2 class="text-base font-semibold">工作区信息</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">名称只影响桌面端显示；目录变化后运行中的 MCP 需要重启。</p></div><div class="grid gap-4"><TextField v-model="draft.name" label="工作区名称" /><div><TextField v-model="draft.path" label="项目目录" /><BaseButton class="mt-2" variant="secondary" size="sm" @click="choosePath"><FolderInput :size="13" />重新选择目录</BaseButton></div><div class="flex justify-end"><BaseButton :busy="saving" :disabled="!infoDirty" @click="requestSave"><Save :size="14" />保存修改</BaseButton></div></div></GlassCard>
     <GlassCard>
       <div class="mb-4">
-        <h2 class="text-sm font-semibold font-display">仓库保护</h2>
-        <p class="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">默认保护 GitHub 配置，避免 AI 意外修改 Actions、Issue 模板和仓库配置。</p>
+        <h2 class="text-base font-semibold">仓库保护</h2>
+        <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">默认保护 GitHub 配置，避免 AI 意外修改 Actions、Issue 模板和仓库配置。</p>
       </div>
-      <div class="ios-glass ios-inset-surface p-3">
+      <div class="ui-inset p-3">
         <ToggleSwitch
           v-model="draft.allowHighRiskWrites"
           label="允许 AI 修改高风险文件"
@@ -87,7 +87,7 @@ function requestSave() {
       </div>
       <div class="mt-4 flex justify-end"><BaseButton :busy="saving" :disabled="!securityDirty" @click="requestSave"><Save :size="14" />保存设置</BaseButton></div>
     </GlassCard>
-    <GlassCard class="border-[#ff375f]/16 bg-[#ff375f]/[.045]"><div class="flex items-center gap-4"><div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#ff375f]/12 text-[#ff375f]"><Trash2 :size="17" /></div><div class="min-w-0 flex-1"><h2 class="text-sm font-semibold font-display">删除工作区</h2><p class="mt-1 text-[11px] leading-5 text-[var(--text-secondary)]">仅移除 Coding Tools MCP 中的配置，不会删除本地源码文件。</p></div><BaseButton variant="danger" @click="$emit('delete')"><Trash2 :size="14" />删除工作区</BaseButton></div></GlassCard>
+    <GlassCard class="border-[color-mix(in_srgb,var(--ui-danger)_22%,var(--ui-line))] bg-[var(--ui-danger-soft)]"><div class="flex items-center gap-4"><div class="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--ui-danger-soft)] text-[var(--ui-danger)]"><Trash2 :size="17" /></div><div class="min-w-0 flex-1"><h2 class="text-base font-semibold">删除工作区</h2><p class="mt-1 text-xs leading-5 text-[var(--ui-text-secondary)]">仅移除 Coding Tools MCP 中的配置，不会删除本地源码文件。</p></div><BaseButton variant="danger" @click="$emit('delete')"><Trash2 :size="14" />删除工作区</BaseButton></div></GlassCard>
 
     <ConfirmDialog
       :open="highRiskConfirmOpen"

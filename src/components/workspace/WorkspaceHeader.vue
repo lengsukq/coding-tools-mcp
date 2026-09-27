@@ -15,24 +15,24 @@ defineEmits<{
 </script>
 
 <template>
-  <header class="page-header wb-workspace-header pb-4">
+  <header class="workspace-page-header">
     <div class="workspace-header-layout">
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-3.5">
-          <div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-[image:var(--primary-gradient,var(--accent-gradient))] text-white shadow-[0_6px_20px_var(--coral-glow),inset_0_1px_0_rgba(255,255,255,0.45)]">
+          <div class="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]">
             <Folder :size="20" :stroke-width="2.2" />
           </div>
           <div class="min-w-0">
-            <h2 class="truncate text-[22px] font-[750] tracking-[-0.03em] font-display text-[var(--text-main)]">{{ profile.name }}</h2>
-            <div class="mt-0.5 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+            <h1 class="truncate text-2xl font-semibold tracking-[-0.025em] text-[var(--ui-text)]">{{ profile.name }}</h1>
+            <div class="mt-1 flex items-center gap-2 text-xs text-[var(--ui-text-muted)]">
               <span>Workspace Context</span><span>·</span><span>由 Global MCP 统一连接</span>
             </div>
           </div>
         </div>
 
         <div class="mt-3.5 flex flex-wrap items-center gap-2">
-          <div class="ios-glass ios-inset-surface inline-flex max-w-full items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs text-[var(--text-secondary)]">
-            <span class="truncate font-mono text-[11px] select-all">{{ profile.path }}</span>
+          <div class="ui-inset inline-flex max-w-full items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--ui-text-secondary)]">
+            <span class="truncate font-mono text-xs select-all">{{ profile.path }}</span>
           </div>
           <BaseButton variant="secondary" size="sm" @click="$emit('revealDirectory')"><FolderOpen :size="13" />打开目录</BaseButton>
           <BaseButton variant="secondary" size="sm" @click="$emit('copyPath')">
@@ -42,8 +42,8 @@ defineEmits<{
         </div>
       </div>
 
-      <div class="ios-glass ios-inset-surface flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-        <span class="h-2 w-2 rounded-full bg-[var(--primary)] shadow-[0_0_0_4px_var(--coral-soft)] animate-pulse-glow" />
+      <div class="ui-inset flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--ui-text-secondary)]">
+        <span class="h-2 w-2 rounded-full bg-[var(--ui-accent)]" />
         <span>项目级上下文</span>
       </div>
     </div>
@@ -51,23 +51,24 @@ defineEmits<{
 </template>
 
 <style scoped>
-.wb-workspace-header {
+.workspace-page-header {
   width: 100% !important;
   max-width: none !important;
   margin-inline: 0 !important;
-  padding-inline: 0 !important;
+  padding: 0 !important;
+  border-bottom: 1px solid var(--ui-line);
 }
 
 .workspace-header-layout {
   display: flex;
   width: 100%;
   min-width: 0;
-  max-width: var(--workspace-content-max, 1640px);
+  max-width: var(--workspace-content-max, var(--ui-page-max));
   margin-inline: auto;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding-inline: var(--workspace-gutter, 28px);
+  padding: 24px var(--workspace-gutter, var(--ui-page-gutter)) 18px;
   box-sizing: border-box;
 }
 

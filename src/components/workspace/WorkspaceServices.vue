@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ShieldCheck } from "@lucide/vue";
 import GlassCard from "../ui/GlassCard.vue";
 import SegmentedControl from "../ui/SegmentedControl.vue";
 import RuntimePolicyPanel from "./RuntimePolicyPanel.vue";
@@ -40,11 +39,8 @@ const policyModel = computed<RuntimePolicyDraft>(() => ({
 <template>
   <div class="grid gap-4 animate-fade-in-up">
     <GlassCard>
-      <div class="mb-5 flex flex-wrap items-center justify-between gap-4 border-b border-black/[.055] pb-4 dark:border-white/[.07]">
-        <div class="flex items-center gap-3">
-          <div class="grid h-10 w-10 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><ShieldCheck :size="18" /></div>
-          <div><h2 class="text-sm font-semibold font-display">运行与诊断</h2><p class="mt-0.5 text-[11px] text-[var(--text-muted)]">执行权限、History、健康检查和 Workspace 日志统一放在这里；全局连接和认证仍在应用设置中管理。</p></div>
-        </div>
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--ui-line)] pb-4">
+        <div><h2 class="text-base font-semibold">运行与诊断</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">执行权限、History、健康检查和 Workspace 日志统一放在这里；全局连接和认证在应用设置中管理。</p></div>
         <SegmentedControl :items="items" :model-value="section" @update:model-value="section = $event" />
       </div>
       <RuntimePolicyPanel v-if="section === 'policy'" :workspace-id="workspaceId" :model="policyModel" :on-save="onSavePolicy" />

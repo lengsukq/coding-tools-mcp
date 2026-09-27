@@ -109,27 +109,27 @@ onUnmounted(() => window.clearInterval(refreshTimer));
 
 <template>
   <div class="grid gap-4">
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/[.045] bg-white/55 px-3 py-2.5 shadow-[0_12px_34px_rgba(31,35,48,.04)] backdrop-blur-xl dark:border-white/[.055] dark:bg-white/[.035]">
+    <div class="ui-surface flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
       <div class="flex min-w-0 items-center gap-3">
         <SegmentedControl :items="modeItems" :model-value="state?.mode ?? 'direct'" @update:model-value="changeMode" />
         <div class="planning-toolbar-copy min-w-0">
-          <div class="flex items-center gap-1.5"><Target :size="14" class="text-[#bf5af2]" /><span class="text-xs font-semibold">Planning</span></div>
-          <p class="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">模式与焦点状态来自项目内 Planning State</p>
+          <div class="flex items-center gap-1.5"><Target :size="14" class="text-[var(--ui-accent)]" /><span class="text-sm font-semibold">Planning</span></div>
+          <p class="mt-0.5 truncate text-xs text-[var(--ui-text-muted)]">模式与焦点状态来自项目内 Planning State</p>
         </div>
       </div>
       <div class="flex items-center gap-1.5">
-        <span v-if="state" class="planning-revision rounded-full bg-black/[.035] px-2.5 py-1 text-[10px] text-[var(--text-muted)] dark:bg-white/[.05]">rev {{ state.revision }}</span>
+        <span v-if="state" class="planning-revision ui-inset px-2.5 py-1 text-xs text-[var(--ui-text-muted)]">rev {{ state.revision }}</span>
         <BaseButton variant="ghost" size="sm" :busy="busy" title="刷新 Planning" @click="load"><RefreshCw :size="13" /></BaseButton>
         <BaseButton variant="danger" size="sm" :busy="busy" @click="resetConfirmOpen = true"><RotateCcw :size="13" />重置</BaseButton>
       </div>
     </div>
 
     <div class="workspace-planning-focus-grid animate-fade-in-up">
-      <GlassCard hoverable class="min-h-[260px]">
+      <GlassCard class="min-h-[260px]">
         <div class="mb-3 flex items-center justify-between">
-          <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Goal</h3>
+          <h3 class="text-sm font-semibold text-[var(--ui-text)]">Focused Goal</h3>
           <div v-if="focusedGoal" class="flex items-center gap-2">
-            <span class="text-[10px] tabular-nums text-[var(--text-muted)]">{{ completedGoalCriteria }} / {{ focusedGoal.success_criteria.length }} 完成</span>
+            <span class="text-xs tabular-nums text-[var(--ui-text-muted)]">{{ completedGoalCriteria }} / {{ focusedGoal.success_criteria.length }} 完成</span>
             <StatusPill :status="focusedGoal.status" />
           </div>
         </div>
@@ -154,9 +154,9 @@ onUnmounted(() => window.clearInterval(refreshTimer));
         <p v-else class="py-5 text-center text-xs text-[var(--text-muted)]">当前没有 focused Goal</p>
       </GlassCard>
 
-      <GlassCard hoverable class="min-h-[260px]">
+      <GlassCard class="min-h-[260px]">
         <div class="mb-3 flex items-center justify-between">
-          <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Focused Plan</h3>
+          <h3 class="text-sm font-semibold text-[var(--ui-text)]">Focused Plan</h3>
           <StatusPill v-if="focusedPlan" :status="focusedPlan.status" />
         </div>
         <template v-if="focusedPlan">
@@ -185,21 +185,21 @@ onUnmounted(() => window.clearInterval(refreshTimer));
     <GlassCard v-if="state?.plans.length">
       <div class="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h3 class="text-xs font-semibold uppercase tracking-[.12em] text-[var(--text-muted)]">Plans</h3>
-          <p class="mt-1 text-[11px] text-[var(--text-muted)]">Plan 会自动刷新；可在这里删除单个计划，不影响源码和 History。</p>
+          <h3 class="text-sm font-semibold text-[var(--ui-text)]">Plans</h3>
+          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">Plan 会自动刷新；可在这里删除单个计划，不影响源码和 History。</p>
         </div>
-        <span class="text-[11px] text-[var(--text-muted)]">{{ state.plans.length }} 个</span>
+        <span class="text-xs text-[var(--ui-text-muted)]">{{ state.plans.length }} 个</span>
       </div>
       <div class="workspace-planning-list-grid">
-        <div v-for="plan in state.plans" :key="plan.id" class="flex min-h-[104px] items-start gap-3 rounded-2xl bg-black/[.022] px-3 py-3 dark:bg-white/[.035]">
+        <div v-for="plan in state.plans" :key="plan.id" class="ui-inset flex min-h-[104px] items-start gap-3 px-3 py-3">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <p class="truncate text-xs font-semibold">{{ plan.title }}</p>
               <StatusPill :status="plan.status" />
-              <span v-if="plan.id === state.focus_plan_id" class="rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[9px] font-semibold text-[var(--primary)]">Focused</span>
+              <span v-if="plan.id === state.focus_plan_id" class="rounded-md bg-[var(--ui-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--ui-accent)]">Focused</span>
             </div>
-            <p class="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--text-secondary)]">{{ plan.objective }}</p>
-            <p class="mt-1 text-[10px] text-[var(--text-muted)]">{{ plan.steps.length }} Steps · revision {{ plan.revision }}</p>
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-[var(--ui-text-secondary)]">{{ plan.objective }}</p>
+            <p class="mt-1 text-xs text-[var(--ui-text-muted)]">{{ plan.steps.length }} Steps · revision {{ plan.revision }}</p>
           </div>
           <BaseButton variant="ghost" size="sm" title="删除 Plan" @click="pendingDeletePlan = plan"><Trash2 :size="13" />删除</BaseButton>
         </div>
@@ -213,7 +213,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
       </div>
     </GlassCard>
 
-    <GlassCard v-if="reviewGoals.length || reviewPlans.length"><div class="mb-3 flex items-center gap-2"><Archive :size="16" class="text-[#ff9f0a]" /><h2 class="text-sm font-semibold">等待人工验收</h2></div><div class="space-y-2"><div v-for="goal in reviewGoals" :key="goal.id" class="flex items-center gap-3 rounded-2xl bg-[#ff9f0a]/7 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Goal · {{ goal.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ goal.review_summary || goal.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('goal', goal.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('goal', goal.id, true)">通过</BaseButton></div><div v-for="plan in reviewPlans" :key="plan.id" class="flex items-center gap-3 rounded-2xl bg-[var(--primary-soft)] p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Plan · {{ plan.title }}</p><p class="mt-1 line-clamp-2 text-[11px] text-[var(--text-secondary)]">{{ plan.review_summary || plan.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('plan', plan.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('plan', plan.id, true)">通过</BaseButton></div></div></GlassCard>
+    <GlassCard v-if="reviewGoals.length || reviewPlans.length" class="border-[color-mix(in_srgb,var(--ui-warning)_28%,var(--ui-line))] bg-[var(--ui-warning-soft)]"><div class="mb-3 flex items-center gap-2"><Archive :size="16" class="text-[var(--ui-warning)]" /><h2 class="text-sm font-semibold">等待人工验收</h2></div><div class="space-y-2"><div v-for="goal in reviewGoals" :key="goal.id" class="ui-inset flex items-center gap-3 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Goal · {{ goal.title }}</p><p class="mt-1 line-clamp-2 text-xs text-[var(--ui-text-secondary)]">{{ goal.review_summary || goal.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('goal', goal.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('goal', goal.id, true)">通过</BaseButton></div><div v-for="plan in reviewPlans" :key="plan.id" class="ui-inset flex items-center gap-3 p-3"><div class="min-w-0 flex-1"><p class="text-xs font-semibold">Plan · {{ plan.title }}</p><p class="mt-1 line-clamp-2 text-xs text-[var(--ui-text-secondary)]">{{ plan.review_summary || plan.objective }}</p></div><BaseButton variant="ghost" size="sm" @click="review('plan', plan.id, false)">退回</BaseButton><BaseButton size="sm" @click="review('plan', plan.id, true)">通过</BaseButton></div></div></GlassCard>
 
     <ConfirmDialog
       :open="resetConfirmOpen"
