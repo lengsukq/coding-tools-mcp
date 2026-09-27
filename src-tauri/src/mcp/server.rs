@@ -45,8 +45,8 @@ pub fn audit_workspace_hint(
             .map(|profile| profile.id);
     }
 
-    if let Some(workspace_id) = session_id
-        .and_then(|session_id| state.sessions.current(session_id).active_workspace_id)
+    if let Some(workspace_id) =
+        session_id.and_then(|session_id| state.sessions.current(session_id).active_workspace_id)
     {
         return state
             .registry
@@ -293,7 +293,8 @@ fn handle_gateway_tools_call(
     let request = resolve_tool_workspace(state, session_id, &mut args)?;
     let canonical_name = crate::tools::registry::canonical_tool_name(name);
     ensure_gateway_tool_allowed(&request, canonical_name)?;
-    let logical_session_id = params.get("_meta")
+    let logical_session_id = params
+        .get("_meta")
         .and_then(|meta| meta.get("openai/session"))
         .and_then(Value::as_str)
         .map(str::trim)
@@ -304,13 +305,18 @@ fn handle_gateway_tools_call(
         && args.get("scope").and_then(Value::as_str) == Some("session")
         && args.get("session_id").is_none()
     {
-        if !args.is_object() { args = json!({}); }
+        if !args.is_object() {
+            args = json!({});
+        }
         if let Some(value) = logical_session_id.as_deref() {
             args["_review_session_id"] = Value::String(value.to_string());
         }
     }
     let structured = call_tool(request.tools.as_ref(), canonical_name, &args);
-    if let (Some(session), Some(change)) = (logical_session_id.as_deref(), structured.get("change_id").and_then(Value::as_str)) {
+    if let (Some(session), Some(change)) = (
+        logical_session_id.as_deref(),
+        structured.get("change_id").and_then(Value::as_str),
+    ) {
         let _ = crate::review::attach_session(request.tools.workspace.root(), change, session);
     }
     let mut result = wrap_mcp_tool_result(canonical_name, &args, structured);
@@ -404,8 +410,11 @@ fn handle_workspace_tool(
             // The outer workspace_id is the authoritative scope for workspace_invoke.
             // Ignore a nested scope field so it can never redirect the request.
             remove_workspace_scope(&mut nested_args)?;
-            let logical_session_id = args.get("_host_session_key").and_then(Value::as_str)
-                .map(str::trim).filter(|value| !value.is_empty())
+            let logical_session_id = args
+                .get("_host_session_key")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
                 .unwrap_or(session_id);
             if canonical_name == "change_review"
                 && nested_args.get("scope").and_then(Value::as_str) == Some("session")
@@ -415,7 +424,11 @@ fn handle_workspace_tool(
             }
             let structured = call_tool(request.tools.as_ref(), canonical_name, &nested_args);
             if let Some(change) = structured.get("change_id").and_then(Value::as_str) {
-                let _ = crate::review::attach_session(request.tools.workspace.root(), change, logical_session_id);
+                let _ = crate::review::attach_session(
+                    request.tools.workspace.root(),
+                    change,
+                    logical_session_id,
+                );
             }
             let mut result = wrap_mcp_tool_result(canonical_name, &nested_args, structured);
             if let Some(object) = result
@@ -687,8 +700,9 @@ mod tests {
     use crate::tools::ToolContext;
 
     use super::{
-        audit_workspace_hint, handle_request, initialize_result, negotiate_protocol_version, tool_arguments,
-        DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS,
+        audit_workspace_hint, handle_request, initialize_result, negotiate_protocol_version,
+        tool_arguments, DEFAULT_PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION,
+        SUPPORTED_PROTOCOL_VERSIONS,
     };
 
     fn test_context() -> ToolContext {
@@ -714,13 +728,19 @@ mod tests {
         );
         let id_a = workspace_a.id.clone();
         let id_b = workspace_b.id.clone();
-        state.registry = crate::mcp::gateway_state::WorkspaceRegistry::from_profiles(vec![workspace_a, workspace_b]);
+        state.registry = crate::mcp::gateway_state::WorkspaceRegistry::from_profiles(vec![
+            workspace_a,
+            workspace_b,
+        ]);
 
         let explicit = json!({
             "method":"tools/call",
             "params":{"name":"workspace_invoke","arguments":{"workspace_id":id_b,"tool":"read_file"}}
         });
-        assert_eq!(audit_workspace_hint(&state, None, &explicit), Some(id_b.clone()));
+        assert_eq!(
+            audit_workspace_hint(&state, None, &explicit),
+            Some(id_b.clone())
+        );
 
         state.sessions.ensure_host_session("audit-session");
         assert!(state.sessions.select("audit-session", id_a.clone()));
@@ -728,13 +748,19 @@ mod tests {
             "method":"tools/call",
             "params":{"name":"read_file","arguments":{"path":"/tmp/file"}}
         });
-        assert_eq!(audit_workspace_hint(&state, Some("audit-session"), &selected), Some(id_a));
+        assert_eq!(
+            audit_workspace_hint(&state, Some("audit-session"), &selected),
+            Some(id_a)
+        );
 
         let global = json!({
             "method":"tools/call",
             "params":{"name":"workspace_list","arguments":{}}
         });
-        assert_eq!(audit_workspace_hint(&state, Some("audit-session"), &global), None);
+        assert_eq!(
+            audit_workspace_hint(&state, Some("audit-session"), &global),
+            None
+        );
     }
 
     #[test]

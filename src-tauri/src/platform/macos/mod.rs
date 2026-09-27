@@ -1,6 +1,6 @@
 mod net;
 mod paths;
-mod process;
+pub(crate) mod process;
 
 use std::path::{Path, PathBuf};
 

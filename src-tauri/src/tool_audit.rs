@@ -186,9 +186,8 @@ impl ToolAuditStore {
     ) -> std::io::Result<ToolAuditPage> {
         let now = unix_time_ms();
         if self.prune_expired(now, retention_days).is_err() {
-            self.last_write_error = Some(
-                "自动清理过期审计记录失败；请检查应用日志目录权限和磁盘空间。".into(),
-            );
+            self.last_write_error =
+                Some("自动清理过期审计记录失败；请检查应用日志目录权限和磁盘空间。".into());
         }
 
         let offset = filter.offset.unwrap_or(0).min(1_000_000);

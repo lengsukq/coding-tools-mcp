@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
 use crate::tools::workspace::{tool_err, tool_ok, WorkspaceError, WorkspaceResult};
-use crate::tools::{exec, file, git, history, image_tool, manage, patch, planning, review_tool, session, skill};
+use crate::tools::{
+    exec, file, git, history, image_tool, manage, patch, planning, review_tool, session, skill,
+};
 
 pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> WorkspaceResult<Value> {
     let ws = &ctx.workspace;

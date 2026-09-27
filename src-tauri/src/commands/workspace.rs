@@ -14,12 +14,30 @@ pub fn list_workspaces(state: State<'_, AppState>) -> AppResult<Vec<WorkspacePro
 }
 
 #[tauri::command]
-pub fn issue_workspace_review_url(state: State<'_, AppState>, workspace_id: String, review_id: String) -> AppResult<String> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned().ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
-    let link = crate::review::issue_token(&PathBuf::from(profile.path), &review_id).map_err(AppError::Message)?;
+pub fn issue_workspace_review_url(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    review_id: String,
+) -> AppResult<String> {
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
+    let link = crate::review::issue_token(&PathBuf::from(profile.path), &review_id)
+        .map_err(AppError::Message)?;
     let settings = crate::settings::AppSettings::load_or_default();
-    let base = settings.global_gateway.public_url.trim().trim_end_matches('/');
-    if base.is_empty() { return Err(AppError::Message("请先配置 Global Gateway Public URL".into())); }
+    let base = settings
+        .global_gateway
+        .public_url
+        .trim()
+        .trim_end_matches('/');
+    if base.is_empty() {
+        return Err(AppError::Message(
+            "请先配置 Global Gateway Public URL".into(),
+        ));
+    }
     Ok(format!("{base}/review/{}?t={}", link.change_id, link.token))
 }
 
@@ -34,11 +52,24 @@ pub struct ReviewLaunch {
     deletions: usize,
 }
 
-fn review_launch(root: &std::path::Path, link: crate::review::ReviewLink, scope: &str) -> AppResult<ReviewLaunch> {
+fn review_launch(
+    root: &std::path::Path,
+    link: crate::review::ReviewLink,
+    scope: &str,
+) -> AppResult<ReviewLaunch> {
     let settings = crate::settings::AppSettings::load_or_default();
-    let base = settings.global_gateway.public_url.trim().trim_end_matches('/');
-    if base.is_empty() { return Err(AppError::Message("请先配置 Global Gateway Public URL".into())); }
-    let review = crate::review::load_review(root, &link.change_id, &link.token).map_err(AppError::Message)?;
+    let base = settings
+        .global_gateway
+        .public_url
+        .trim()
+        .trim_end_matches('/');
+    if base.is_empty() {
+        return Err(AppError::Message(
+            "请先配置 Global Gateway Public URL".into(),
+        ));
+    }
+    let review = crate::review::load_review(root, &link.change_id, &link.token)
+        .map_err(AppError::Message)?;
     Ok(ReviewLaunch {
         change_id: link.change_id.clone(),
         url: format!("{base}/review/{}?t={}", link.change_id, link.token),
@@ -50,11 +81,20 @@ fn review_launch(root: &std::path::Path, link: crate::review::ReviewLink, scope:
 }
 
 #[tauri::command]
-pub fn create_workspace_review_url(state: State<'_, AppState>, workspace_id: String) -> AppResult<Option<ReviewLaunch>> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned()
-        .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
+pub fn create_workspace_review_url(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> AppResult<Option<ReviewLaunch>> {
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
     let root = PathBuf::from(profile.path);
-    let Some(link) = crate::review::create_workspace_review(&root, "Workspace changes vs HEAD").map_err(AppError::Message)? else {
+    let Some(link) = crate::review::create_workspace_review(&root, "Workspace changes vs HEAD")
+        .map_err(AppError::Message)?
+    else {
         return Ok(None);
     };
     review_launch(&root, link, "workspace").map(Some)
@@ -66,10 +106,17 @@ pub fn create_session_review_url(
     workspace_id: String,
     session_id: String,
 ) -> AppResult<Option<ReviewLaunch>> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned()
-        .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
     let root = PathBuf::from(profile.path);
-    let Some(link) = crate::review::create_session_review(&root, &session_id, "Session aggregate changes").map_err(AppError::Message)? else {
+    let Some(link) =
+        crate::review::create_session_review(&root, &session_id, "Session aggregate changes")
+            .map_err(AppError::Message)?
+    else {
         return Ok(None);
     };
     review_launch(&root, link, "session").map(Some)
@@ -116,8 +163,12 @@ pub fn get_workspace_activity_metrics(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> AppResult<WorkspaceActivityMetrics> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned()
-        .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
     let root = PathBuf::from(profile.path);
     crate::review::cleanup_expired(&root);
     let now = std::time::SystemTime::now()
@@ -125,7 +176,8 @@ pub fn get_workspace_activity_metrics(
         .unwrap_or_default()
         .as_secs();
     let since = now.saturating_sub(8 * 24 * 60 * 60);
-    let mut events = crate::review::list_reviews(&root).into_iter()
+    let mut events = crate::review::list_reviews(&root)
+        .into_iter()
         .filter(|review| review.scope == "operation" && review.created_at >= since)
         .map(|review| WorkspaceActivityEvent {
             created_at: review.created_at,
@@ -146,26 +198,51 @@ pub fn get_workspace_activity_metrics(
 }
 
 #[tauri::command]
-pub fn list_workspace_reviews(state: State<'_, AppState>, workspace_id: String) -> AppResult<Vec<WorkspaceReviewSummary>> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned()
-        .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
+pub fn list_workspace_reviews(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> AppResult<Vec<WorkspaceReviewSummary>> {
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
     let root = PathBuf::from(profile.path);
     crate::review::cleanup_expired(&root);
-    Ok(crate::review::list_reviews(&root).into_iter().take(20).map(|review| WorkspaceReviewSummary {
-        id: review.id, created_at: review.created_at, expires_at: review.expires_at, summary: review.summary,
-        files: review.stats.files, additions: review.stats.additions, deletions: review.stats.deletions,
-        operation_ids: review.operation_ids,
-        storage_bytes: crate::review::storage_bytes(&root),
-        session_id: review.session_id,
-        scope: review.scope,
-    }).collect())
+    Ok(crate::review::list_reviews(&root)
+        .into_iter()
+        .take(20)
+        .map(|review| WorkspaceReviewSummary {
+            id: review.id,
+            created_at: review.created_at,
+            expires_at: review.expires_at,
+            summary: review.summary,
+            files: review.stats.files,
+            additions: review.stats.additions,
+            deletions: review.stats.deletions,
+            operation_ids: review.operation_ids,
+            storage_bytes: crate::review::storage_bytes(&root),
+            session_id: review.session_id,
+            scope: review.scope,
+        })
+        .collect())
 }
 
 #[tauri::command]
-pub fn delete_workspace_review(state: State<'_, AppState>, workspace_id: String, review_id: String) -> AppResult<()> {
-    let profile = state.with_workspaces(|store| store.get(&workspace_id).cloned()
-        .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}"))))?;
-    crate::review::delete_review(&PathBuf::from(profile.path), &review_id).map_err(AppError::Message)
+pub fn delete_workspace_review(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    review_id: String,
+) -> AppResult<()> {
+    let profile = state.with_workspaces(|store| {
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+    })?;
+    crate::review::delete_review(&PathBuf::from(profile.path), &review_id)
+        .map_err(AppError::Message)
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -182,21 +259,63 @@ struct IdeDefinition {
 }
 
 const IDE_DEFINITIONS: &[IdeDefinition] = &[
-    IdeDefinition { id: "vscode", name: "Visual Studio Code", mac_app: "Visual Studio Code", cli: "code" },
-    IdeDefinition { id: "cursor", name: "Cursor", mac_app: "Cursor", cli: "cursor" },
-    IdeDefinition { id: "windsurf", name: "Windsurf", mac_app: "Windsurf", cli: "windsurf" },
-    IdeDefinition { id: "webstorm", name: "WebStorm", mac_app: "WebStorm", cli: "webstorm" },
-    IdeDefinition { id: "idea", name: "IntelliJ IDEA", mac_app: "IntelliJ IDEA", cli: "idea" },
-    IdeDefinition { id: "pycharm", name: "PyCharm", mac_app: "PyCharm", cli: "pycharm" },
-    IdeDefinition { id: "android-studio", name: "Android Studio", mac_app: "Android Studio", cli: "studio" },
-    IdeDefinition { id: "zed", name: "Zed", mac_app: "Zed", cli: "zed" },
+    IdeDefinition {
+        id: "vscode",
+        name: "Visual Studio Code",
+        mac_app: "Visual Studio Code",
+        cli: "code",
+    },
+    IdeDefinition {
+        id: "cursor",
+        name: "Cursor",
+        mac_app: "Cursor",
+        cli: "cursor",
+    },
+    IdeDefinition {
+        id: "windsurf",
+        name: "Windsurf",
+        mac_app: "Windsurf",
+        cli: "windsurf",
+    },
+    IdeDefinition {
+        id: "webstorm",
+        name: "WebStorm",
+        mac_app: "WebStorm",
+        cli: "webstorm",
+    },
+    IdeDefinition {
+        id: "idea",
+        name: "IntelliJ IDEA",
+        mac_app: "IntelliJ IDEA",
+        cli: "idea",
+    },
+    IdeDefinition {
+        id: "pycharm",
+        name: "PyCharm",
+        mac_app: "PyCharm",
+        cli: "pycharm",
+    },
+    IdeDefinition {
+        id: "android-studio",
+        name: "Android Studio",
+        mac_app: "Android Studio",
+        cli: "studio",
+    },
+    IdeDefinition {
+        id: "zed",
+        name: "Zed",
+        mac_app: "Zed",
+        cli: "zed",
+    },
 ];
 
 fn command_exists(command: &str) -> bool {
     #[cfg(target_os = "windows")]
     let probe = Command::new("where").arg(command).output();
     #[cfg(not(target_os = "windows"))]
-    let probe = Command::new("sh").args(["-lc", &format!("command -v {command}")]).output();
+    let probe = Command::new("sh")
+        .args(["-lc", &format!("command -v {command}")])
+        .output();
     probe.map(|output| output.status.success()).unwrap_or(false)
 }
 
@@ -206,15 +325,23 @@ fn ide_installed(ide: &IdeDefinition) -> bool {
         let app = format!("{}.app", ide.mac_app);
         if PathBuf::from("/Applications").join(&app).exists()
             || dirs::home_dir().is_some_and(|home| home.join("Applications").join(&app).exists())
-        { return true; }
+        {
+            return true;
+        }
     }
     command_exists(ide.cli)
 }
 
 #[tauri::command]
 pub fn detect_installed_ides() -> Vec<DetectedIde> {
-    IDE_DEFINITIONS.iter().filter(|ide| ide_installed(ide))
-        .map(|ide| DetectedIde { id: ide.id, name: ide.name }).collect()
+    IDE_DEFINITIONS
+        .iter()
+        .filter(|ide| ide_installed(ide))
+        .map(|ide| DetectedIde {
+            id: ide.id,
+            name: ide.name,
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -224,23 +351,48 @@ pub fn open_workspace_in_ide(
     ide_id: String,
 ) -> AppResult<()> {
     let profile = state.with_workspaces(|store| {
-        store.get(&workspace_id).cloned().ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
     })?;
     let root = PathBuf::from(profile.path);
-    if !root.is_dir() { return Err(AppError::Message(format!("工作区目录不存在: {}", root.display()))); }
-    let ide = IDE_DEFINITIONS.iter().find(|ide| ide.id == ide_id)
+    if !root.is_dir() {
+        return Err(AppError::Message(format!(
+            "工作区目录不存在: {}",
+            root.display()
+        )));
+    }
+    let ide = IDE_DEFINITIONS
+        .iter()
+        .find(|ide| ide.id == ide_id)
         .ok_or_else(|| AppError::Message(format!("不支持的 IDE: {ide_id}")))?;
-    if !ide_installed(ide) { return Err(AppError::Message(format!("未检测到 {}", ide.name))); }
+    if !ide_installed(ide) {
+        return Err(AppError::Message(format!("未检测到 {}", ide.name)));
+    }
 
     #[cfg(target_os = "macos")]
-    if PathBuf::from("/Applications").join(format!("{}.app", ide.mac_app)).exists()
-        || dirs::home_dir().is_some_and(|home| home.join("Applications").join(format!("{}.app", ide.mac_app)).exists())
+    if PathBuf::from("/Applications")
+        .join(format!("{}.app", ide.mac_app))
+        .exists()
+        || dirs::home_dir().is_some_and(|home| {
+            home.join("Applications")
+                .join(format!("{}.app", ide.mac_app))
+                .exists()
+        })
     {
-        return Command::new("open").args(["-a", ide.mac_app]).arg(&root).spawn()
-            .map(|_| ()).map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)));
+        return Command::new("open")
+            .args(["-a", ide.mac_app])
+            .arg(&root)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)));
     }
-    Command::new(ide.cli).arg(&root).spawn()
-        .map(|_| ()).map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)))
+    Command::new(ide.cli)
+        .arg(&root)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)))
 }
 
 #[derive(serde::Serialize)]
@@ -273,17 +425,28 @@ pub fn get_workspace_git_summary(
     workspace_id: String,
 ) -> AppResult<WorkspaceGitSummary> {
     let profile = state.with_workspaces(|store| {
-        store.get(&workspace_id).cloned().ok_or_else(|| {
-            AppError::Message(format!("workspace not found: {workspace_id}"))
-        })
+        store
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
     })?;
     let root = PathBuf::from(profile.path);
     let git_at = |cwd: &std::path::Path, args: &[&str]| -> Option<String> {
-        let output = Command::new("git").args(args).current_dir(cwd).output().ok()?;
-        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
     };
     let sync_counts = |cwd: &std::path::Path| {
-        git_at(cwd, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])
+        git_at(
+            cwd,
+            &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        )
         .and_then(|value| {
             let mut parts = value.split_whitespace();
             Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
@@ -291,19 +454,26 @@ pub fn get_workspace_git_summary(
         .unwrap_or((0, 0))
     };
     let sub_repositories = crate::review::direct_git_repositories(&root);
-    let sub_prefixes = sub_repositories.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
-    let sub_repositories = sub_repositories.into_iter().map(|(name, path)| {
-        let (behind, ahead) = sync_counts(&path);
-        WorkspaceSubGitSummary {
-            name,
-            path: path.to_string_lossy().to_string(),
-            branch: git_at(&path, &["branch", "--show-current"]).filter(|value| !value.is_empty()),
-            changed_files: crate::review::git_changed_file_count(&path, &[]),
-            ahead,
-            behind,
-            last_commit: git_at(&path, &["log", "-1", "--pretty=%h · %s"]),
-        }
-    }).collect::<Vec<_>>();
+    let sub_prefixes = sub_repositories
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    let sub_repositories = sub_repositories
+        .into_iter()
+        .map(|(name, path)| {
+            let (behind, ahead) = sync_counts(&path);
+            WorkspaceSubGitSummary {
+                name,
+                path: path.to_string_lossy().to_string(),
+                branch: git_at(&path, &["branch", "--show-current"])
+                    .filter(|value| !value.is_empty()),
+                changed_files: crate::review::git_changed_file_count(&path, &[]),
+                ahead,
+                behind,
+                last_commit: git_at(&path, &["log", "-1", "--pretty=%h · %s"]),
+            }
+        })
+        .collect::<Vec<_>>();
 
     let root_is_git = git_at(&root, &["rev-parse", "--show-toplevel"])
         .and_then(|path| PathBuf::from(path).canonicalize().ok())

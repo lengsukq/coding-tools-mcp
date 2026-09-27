@@ -56,7 +56,6 @@ defineEmits<{
   max-width: none !important;
   margin-inline: 0 !important;
   padding: 0 !important;
-  border-bottom: 1px solid var(--ui-line);
 }
 
 .workspace-header-layout {

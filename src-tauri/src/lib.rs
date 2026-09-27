@@ -13,8 +13,8 @@ mod local_network;
 mod mcp;
 pub mod planning;
 mod platform;
-mod runtime;
 mod review;
+mod runtime;
 mod secret;
 mod settings;
 mod tool_audit;
@@ -27,21 +27,23 @@ mod workspace;
 use app_state::AppState;
 use commands::{
     accept_goal_review, accept_plan_review, check_app_update, check_global_gateway_health,
-    create_session_review_url, create_workspace, create_workspace_review_url, delete_frp_profile, delete_plan, delete_workspace, detect_installed_ides, get_app_settings,
-    get_download_config, get_global_gateway_config, get_global_gateway_status,
-    get_global_mcp_overview, get_global_runtime_settings, get_last_workspace_id,
-    get_planning_state, get_proxy, get_runtime_status, get_service_usage_stats, get_shared_secret,
-    get_workspace_activity_metrics, get_workspace_git_summary, list_workspace_reviews, delete_workspace_review, issue_workspace_review_url, open_workspace_in_ide,
-    get_webview_memory_sample, hide_to_tray, install_software, list_frp_profiles,
-    list_history_sessions, list_software, list_workspaces, open_url, open_workspace_directory,
-    quit_app, read_workspace_logs, recreate_ui_webview, regenerate_shared_secret,
-    reject_goal_review, reject_plan_review, reset_planning_state, restart_runtime,
-    restore_runtime_state, run_global_health_checks, save_frp_profile, scan_agent_context,
-    scan_global_agent_context, set_download_config, set_global_gateway_config,
-    set_global_runtime_settings, set_last_workspace, set_planning_mode, set_proxy,
-    set_shared_secret, set_shared_secrets, show_main_window, start_global_gateway, start_runtime,
-    stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
-    clear_tool_audit_records, list_tool_audit_records, set_tool_audit_retention_days,
+    clear_tool_audit_records, create_session_review_url, create_workspace,
+    create_workspace_review_url, delete_frp_profile, delete_plan, delete_workspace,
+    delete_workspace_review, detect_installed_ides, get_app_settings, get_download_config,
+    get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
+    get_global_runtime_settings, get_last_workspace_id, get_planning_state, get_proxy,
+    get_runtime_status, get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
+    get_workspace_activity_metrics, get_workspace_git_summary, hide_to_tray, install_software,
+    issue_workspace_review_url, list_frp_profiles, list_history_sessions, list_software,
+    list_tool_audit_records, list_workspace_reviews, list_workspaces, open_url,
+    open_workspace_directory, open_workspace_in_ide, quit_app, read_workspace_logs,
+    recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
+    reset_planning_state, restart_runtime, restore_runtime_state, run_global_health_checks,
+    save_frp_profile, scan_agent_context, scan_global_agent_context, set_download_config,
+    set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode,
+    set_proxy, set_shared_secret, set_shared_secrets, set_tool_audit_retention_days,
+    show_main_window, start_global_gateway, start_runtime, stop_global_gateway, stop_runtime,
+    uninstall_software, update_workspace,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};

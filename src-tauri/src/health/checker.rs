@@ -16,17 +16,15 @@ pub fn run_global_health_checks(
     global_runtime: &RuntimeStatusDto,
     gateway_health: Vec<GatewayHealthItem>,
 ) -> Vec<HealthItem> {
-    let mut items = vec![
-        health_item(
-            "Global MCP Runtime",
-            global_runtime.state == "running",
-            format!(
-                "{} · {}",
-                global_runtime.state, global_runtime.local_endpoint
-            ),
-            "Global MCP 是所有 Workspace 共用的唯一连接，请在工作台或设置中启动它。",
+    let mut items = vec![health_item(
+        "Global MCP Runtime",
+        global_runtime.state == "running",
+        format!(
+            "{} · {}",
+            global_runtime.state, global_runtime.local_endpoint
         ),
-    ];
+        "Global MCP 是所有 Workspace 共用的唯一连接，请在工作台或设置中启动它。",
+    )];
 
     items.extend(gateway_health.into_iter().map(|item| HealthItem {
         label: item.label,

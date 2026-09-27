@@ -687,16 +687,22 @@ onMounted(() => {
               <!-- Workspace Select -->
               <div>
                 <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-1">所属工作区</label>
-                <select
-                  v-model="workspaceId"
-                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 text-xs text-[var(--text-main)] outline-none focus:border-[var(--primary)]"
-                  @change="applyFilters"
-                >
-                  <option value="">全部工作区与全局调用</option>
-                  <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
-                    {{ ws.name }}
-                  </option>
-                </select>
+                <div class="relative">
+                  <select
+                    v-model="workspaceId"
+                    class="w-full h-8 appearance-none rounded-lg border border-[var(--border)] bg-[var(--card-bg)] pl-3 pr-8 text-xs text-[var(--text-main)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15 cursor-pointer"
+                    @change="applyFilters"
+                  >
+                    <option value="">全部工作区与全局调用</option>
+                    <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
+                      {{ ws.name }}
+                    </option>
+                  </select>
+                  <ChevronDown
+                    :size="13"
+                    class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+                  />
+                </div>
               </div>
 
               <!-- Tool Name Input -->
@@ -706,7 +712,7 @@ onMounted(() => {
                   v-model="toolName"
                   type="text"
                   placeholder="如: edit_file, execute_command"
-                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none focus:border-[var(--primary)]"
+                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
                   @keydown.enter="applyFilters"
                 />
               </div>
@@ -718,7 +724,7 @@ onMounted(() => {
                   v-model="sessionId"
                   type="text"
                   placeholder="匹配会话会签标识"
-                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2.5 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none focus:border-[var(--primary)]"
+                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
                   @keydown.enter="applyFilters"
                 />
               </div>

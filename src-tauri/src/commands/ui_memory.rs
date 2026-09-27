@@ -44,7 +44,7 @@ pub struct WebviewMemorySample {
     pub supported: bool,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn bytes_to_mb(bytes: u64) -> f64 {
     (bytes as f64) / (1024.0 * 1024.0)
 }
@@ -64,14 +64,24 @@ pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
     #[cfg(windows)]
     {
         let sample = crate::platform::windows::process::sample_process_tree_memory()?;
-        return Ok(WebviewMemorySample {
+        Ok(WebviewMemorySample {
             main_mb: (bytes_to_mb(sample.main_bytes) * 10.0).round() / 10.0,
             webview_mb: (bytes_to_mb(sample.webview_bytes) * 10.0).round() / 10.0,
             webview_process_count: sample.webview_process_count,
             supported: true,
-        });
+        })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let sample = crate::platform::macos::process::sample_process_tree_memory()?;
+        Ok(WebviewMemorySample {
+            main_mb: (bytes_to_mb(sample.main_bytes) * 10.0).round() / 10.0,
+            webview_mb: (bytes_to_mb(sample.webview_bytes) * 10.0).round() / 10.0,
+            webview_process_count: sample.webview_process_count,
+            supported: true,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Ok(WebviewMemorySample {
             main_mb: 0.0,
@@ -216,4 +226,17 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     let _ = keepalive.destroy();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn get_webview_memory_sample_is_supported_and_reports_main_memory() {
+        let sample = get_webview_memory_sample().expect("采样界面内存不应失败");
+        assert!(sample.supported);
+        assert!(sample.main_mb > 0.0);
+    }
 }

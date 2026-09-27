@@ -51,6 +51,8 @@ pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
 pub use window_chrome::{hide_to_tray, quit_app, show_main_window};
 pub use workspace::{
-    create_session_review_url, create_workspace, create_workspace_review_url, delete_workspace, delete_workspace_review, detect_installed_ides, get_workspace_git_summary, issue_workspace_review_url, list_workspace_reviews,
-    get_workspace_activity_metrics, list_workspaces, open_workspace_directory, open_workspace_in_ide, update_workspace,
+    create_session_review_url, create_workspace, create_workspace_review_url, delete_workspace,
+    delete_workspace_review, detect_installed_ides, get_workspace_activity_metrics,
+    get_workspace_git_summary, issue_workspace_review_url, list_workspace_reviews, list_workspaces,
+    open_workspace_directory, open_workspace_in_ide, update_workspace,
 };

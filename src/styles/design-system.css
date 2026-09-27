@@ -379,7 +379,6 @@ body {
   justify-content: space-between;
   gap: 20px;
   padding-block: 28px 20px;
-  border-bottom: 1px solid var(--ui-line);
 }
 
 .ui-page-header__main {

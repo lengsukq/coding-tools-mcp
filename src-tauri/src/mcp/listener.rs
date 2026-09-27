@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{
-    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, REFERRER_POLICY, WWW_AUTHENTICATE, X_CONTENT_TYPE_OPTIONS},
+    header::{
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, REFERRER_POLICY, WWW_AUTHENTICATE,
+        X_CONTENT_TYPE_OPTIONS,
+    },
     HeaderMap, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
@@ -188,11 +191,22 @@ fn build_router(state: ListenerState) -> Router {
 }
 
 #[derive(serde::Deserialize)]
-struct ReviewQuery { t: String }
+struct ReviewQuery {
+    t: String,
+}
 
-fn review_from_request(state: &ListenerState, id: &str, token: &str) -> Result<crate::review::ChangeSet, StatusCode> {
-    let roots = state.gateway.registry.list().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter().map(|profile| std::path::PathBuf::from(profile.path));
+fn review_from_request(
+    state: &ListenerState,
+    id: &str,
+    token: &str,
+) -> Result<crate::review::ChangeSet, StatusCode> {
+    let roots = state
+        .gateway
+        .registry
+        .list()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|profile| std::path::PathBuf::from(profile.path));
     crate::review::find_review(roots, id, token).map_err(|message| match message.as_str() {
         "invalid review token" => StatusCode::UNAUTHORIZED,
         "review expired" => StatusCode::GONE,
@@ -200,17 +214,39 @@ fn review_from_request(state: &ListenerState, id: &str, token: &str) -> Result<c
     })
 }
 
-async fn review_api(State(state): State<ListenerState>, Path(id): Path<String>, Query(query): Query<ReviewQuery>) -> Response {
+async fn review_api(
+    State(state): State<ListenerState>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+) -> Response {
     match review_from_request(&state, &id, &query.t) {
-        Ok(review) => ([(CACHE_CONTROL, "no-store"),(X_CONTENT_TYPE_OPTIONS,"nosniff"),(REFERRER_POLICY,"no-referrer")], Json(review)).into_response(),
+        Ok(review) => (
+            [
+                (CACHE_CONTROL, "no-store"),
+                (X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (REFERRER_POLICY, "no-referrer"),
+            ],
+            Json(review),
+        )
+            .into_response(),
         Err(status) => status.into_response(),
     }
 }
 
-async fn review_page(State(state): State<ListenerState>, Path(id): Path<String>, Query(query): Query<ReviewQuery>) -> Response {
-    let review = match review_from_request(&state, &id, &query.t) { Ok(review) => review, Err(status) => return status.into_response() };
-    let data = serde_json::to_string(&review).unwrap_or_else(|_| "{}".into()).replace('<', "\\u003c");
-    let html = format!(r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Change Review</title><style>
+async fn review_page(
+    State(state): State<ListenerState>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+) -> Response {
+    let review = match review_from_request(&state, &id, &query.t) {
+        Ok(review) => review,
+        Err(status) => return status.into_response(),
+    };
+    let data = serde_json::to_string(&review)
+        .unwrap_or_else(|_| "{}".into())
+        .replace('<', "\\u003c");
+    let html = format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Change Review</title><style>
 :root{{color-scheme:light;--review-sticky-offset:154px;--page:#f3f4f8;--surface:rgba(255,255,255,.72);--surface-strong:rgba(255,255,255,.9);--border:rgba(60,60,67,.11);--border-soft:rgba(255,255,255,.78);--text:#17171a;--secondary:#63636b;--muted:#92929c;--primary:#0a84ff;--primary-soft:rgba(10,132,255,.11);--success:#30d158;--success-soft:rgba(48,209,88,.10);--danger:#ff453a;--danger-soft:rgba(255,69,58,.09);--purple:#af52de;--shadow:0 22px 70px rgba(31,35,48,.09),0 2px 10px rgba(31,35,48,.035);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",Inter,ui-sans-serif,system-ui,sans-serif}}
 *{{box-sizing:border-box}}html{{min-height:100%;background:var(--page)}}body{{min-height:100vh;margin:0;color:var(--text);letter-spacing:-.012em;background:radial-gradient(circle at 12% -8%,rgba(10,132,255,.14),transparent 31%),radial-gradient(circle at 94% 4%,rgba(175,82,222,.10),transparent 28%),var(--page)}}button,input,select{{font:inherit}}button{{cursor:pointer}}.shell{{width:min(1680px,100%);margin:auto;padding:22px 24px 42px}}
 .hero{{position:sticky;top:0;z-index:20;margin-bottom:16px;padding:17px 18px 14px;border:1px solid var(--border-soft);border-radius:24px;background:rgba(255,255,255,.74);box-shadow:var(--shadow);backdrop-filter:blur(30px) saturate(165%);-webkit-backdrop-filter:blur(30px) saturate(165%)}}
@@ -226,7 +262,8 @@ const hero=document.querySelector('.hero');const syncStickyOffset=()=>{{if(inner
 function parsed(lines){{let old=0,neu=0;return lines.map(l=>{{let m=l.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);if(m){{old=+m[1];neu=+m[2];return{{t:'h',s:l}}}}if(l.startsWith('---')||l.startsWith('+++'))return{{t:'m',s:l}};let t=l[0]==='+'?'a':l[0]==='-'?'d':'c',o=t==='a'?'':old++,n=t==='d'?'':neu++;return{{t,s:l.slice(1),o,n}}}})}}
 function rows(lines){{let p=parsed(lines),out=[];for(let i=0;i<p.length;i++){{let x=p[i];if(x.t==='d'){{let dels=[];while(p[i]?.t==='d')dels.push(p[i++]);let adds=[];while(p[i]?.t==='a')adds.push(p[i++]);i--;for(let j=0;j<Math.max(dels.length,adds.length);j++)out.push([dels[j],adds[j]])}}else if(x.t==='a')out.push([null,x]);else out.push([x,x])}}return out}}
 const cell=x=>x?'<span class="line '+(x.t==='a'?'add':x.t==='d'?'del':x.t==='h'?'hdr':'')+'"><i class="ln"><b>'+esc(String(x.o||''))+'</b><b>'+esc(String(x.n||''))+'</b></i><code>'+esc(x.s)+'</code></span>':'<span class="line"><i class="ln"><b></b><b></b></i><code></code></span>';
-function render(){{files.innerHTML='';diff.innerHTML='';unified.classList.toggle('active',mode==='unified');split.classList.toggle('active',mode==='split');const q=filter.value.toLowerCase();r.files.filter(f=>(!status.value||f.status===status.value)&&(f.path+' '+f.patch).toLowerCase().includes(q)).forEach((f,i)=>{{const key=f.path;const a=document.createElement('a');a.href='#f'+i;a.dataset.status=f.status;a.classList.toggle('viewed',viewed.has(key));a.textContent=f.path;files.appendChild(a);let lines=f.patch.split('\n');let rr=rows(lines);if(ws.checked)rr=rr.filter(x=>!(x[0]?.t==='d'&&x[1]?.t==='a'&&x[0].s.replace(/\s/g,'')===x[1].s.replace(/\s/g,'')));const article=document.createElement('article');article.id='f'+i;article.onclick=()=>{{viewed.add(key);localStorage.setItem('reviewViewed:'+r.id,JSON.stringify([...viewed]));a.classList.add('viewed')}};const body=(ws.checked?rr.flat().filter(Boolean):parsed(lines)).map(cell).join('');const splitBody=rr.map(x=>'<div>'+cell(x[0])+'</div><div>'+cell(x[1])+'</div>').join('');article.innerHTML='<div class="fh"><span>'+esc(f.path)+'</span><span class="meta">'+f.status+' · +'+f.additions+' -'+f.deletions+'</span></div>'+(mode==='split'?'<div class="split-grid">'+splitBody+'</div>':'<pre>'+body+'</pre>');diff.appendChild(article)}})}}unified.onclick=()=>{{mode='unified';localStorage.reviewMode=mode;render()}};split.onclick=()=>{{mode='split';localStorage.reviewMode=mode;render()}};filter.oninput=render;status.onchange=render;ws.onchange=render;collapse.onclick=()=>document.querySelectorAll('article').forEach(x=>x.style.display='none');let cur=-1;const jump=d=>{{let a=[...document.querySelectorAll('article')];if(!a.length)return;cur=(cur+d+a.length)%a.length;a[cur].scrollIntoView({{behavior:'smooth',block:'start'}})}};prev.onclick=()=>jump(-1);next.onclick=()=>jump(1);document.onkeydown=e=>{{if(e.key==='j'&&document.activeElement!==filter)jump(1);if(e.key==='k'&&document.activeElement!==filter)jump(-1)}};render();</script></body></html>"#);
+function render(){{files.innerHTML='';diff.innerHTML='';unified.classList.toggle('active',mode==='unified');split.classList.toggle('active',mode==='split');const q=filter.value.toLowerCase();r.files.filter(f=>(!status.value||f.status===status.value)&&(f.path+' '+f.patch).toLowerCase().includes(q)).forEach((f,i)=>{{const key=f.path;const a=document.createElement('a');a.href='#f'+i;a.dataset.status=f.status;a.classList.toggle('viewed',viewed.has(key));a.textContent=f.path;files.appendChild(a);let lines=f.patch.split('\n');let rr=rows(lines);if(ws.checked)rr=rr.filter(x=>!(x[0]?.t==='d'&&x[1]?.t==='a'&&x[0].s.replace(/\s/g,'')===x[1].s.replace(/\s/g,'')));const article=document.createElement('article');article.id='f'+i;article.onclick=()=>{{viewed.add(key);localStorage.setItem('reviewViewed:'+r.id,JSON.stringify([...viewed]));a.classList.add('viewed')}};const body=(ws.checked?rr.flat().filter(Boolean):parsed(lines)).map(cell).join('');const splitBody=rr.map(x=>'<div>'+cell(x[0])+'</div><div>'+cell(x[1])+'</div>').join('');article.innerHTML='<div class="fh"><span>'+esc(f.path)+'</span><span class="meta">'+f.status+' · +'+f.additions+' -'+f.deletions+'</span></div>'+(mode==='split'?'<div class="split-grid">'+splitBody+'</div>':'<pre>'+body+'</pre>');diff.appendChild(article)}})}}unified.onclick=()=>{{mode='unified';localStorage.reviewMode=mode;render()}};split.onclick=()=>{{mode='split';localStorage.reviewMode=mode;render()}};filter.oninput=render;status.onchange=render;ws.onchange=render;collapse.onclick=()=>document.querySelectorAll('article').forEach(x=>x.style.display='none');let cur=-1;const jump=d=>{{let a=[...document.querySelectorAll('article')];if(!a.length)return;cur=(cur+d+a.length)%a.length;a[cur].scrollIntoView({{behavior:'smooth',block:'start'}})}};prev.onclick=()=>jump(-1);next.onclick=()=>jump(1);document.onkeydown=e=>{{if(e.key==='j'&&document.activeElement!==filter)jump(1);if(e.key==='k'&&document.activeElement!==filter)jump(-1)}};render();</script></body></html>"#
+    );
     ([(CACHE_CONTROL, "no-store"),(X_CONTENT_TYPE_OPTIONS,"nosniff"),(REFERRER_POLICY,"no-referrer"),(CONTENT_SECURITY_POLICY,"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; frame-ancestors 'none'")], axum::response::Html(html)).into_response()
 }
 
@@ -388,7 +425,10 @@ async fn mcp_post(
     }
 }
 
-fn audit_auth_identity(state: &ListenerState, headers: &HeaderMap) -> (&'static str, Option<String>) {
+fn audit_auth_identity(
+    state: &ListenerState,
+    headers: &HeaderMap,
+) -> (&'static str, Option<String>) {
     if state.auth.bearer_enabled() {
         return ("shared_bearer", None);
     }
