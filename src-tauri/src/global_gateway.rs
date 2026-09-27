@@ -117,13 +117,16 @@ pub async fn status() -> GlobalGatewayStatusDto {
 }
 
 pub async fn health() -> Vec<GatewayHealthItem> {
+    let settings = AppSettings::load_or_default();
     let status = status().await;
     let client = reqwest::Client::builder()
         .timeout(HEALTH_TIMEOUT)
         .build()
         .expect("health client");
     let local = check_url(&client, &status.local_url).await;
-    let public = if status.public_url.trim().is_empty() {
+    let public = if !settings.global_gateway.enabled {
+        (true, "公网入口未启用（仅本地模式）".into())
+    } else if status.public_url.trim().is_empty() {
         (false, "公网 URL 未配置或尚未获取".into())
     } else {
         check_url(&client, &public_mcp_url(&status.public_url)).await
