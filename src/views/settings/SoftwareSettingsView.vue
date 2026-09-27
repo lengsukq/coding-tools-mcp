@@ -74,21 +74,21 @@ onMounted(() => void refresh());
     <ConnectionSettingsNav />
     <div class="grid gap-4 animate-fade-in-up delay-100">
       <GlassCard>
-        <div class="mb-4 flex items-center justify-between"><div><h2 class="text-sm font-semibold font-display">隧道客户端</h2><p class="mt-1 text-xs text-[var(--text-muted)]">应用托管的二进制会放在缓存目录，不覆盖系统安装。</p></div><BaseButton variant="ghost" size="sm" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
+        <div class="mb-4 flex items-center justify-between"><div><h2 class="text-base font-semibold">隧道客户端</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">应用托管的二进制会放在缓存目录，不覆盖系统安装。</p></div><BaseButton variant="ghost" size="sm" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
         <div class="software-grid">
-          <div v-for="item in software" :key="item.kind" class="ios-glass flex items-center gap-3 rounded-2xl p-3.5">
-            <div class="grid h-10 w-10 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><Package :size="18" /></div>
-            <div class="min-w-0 flex-1"><p class="text-xs font-semibold">{{ item.name }}</p><p class="mt-1 truncate font-mono text-[10px] text-[var(--text-muted)]">{{ item.installed ? item.path : "未安装" }} · {{ item.managed ? "应用托管" : "系统安装" }}</p></div>
+          <div v-for="item in software" :key="item.kind" class="ui-inset flex items-center gap-3 p-3.5">
+            <div class="grid h-10 w-10 place-items-center rounded-[var(--ui-radius-row)] bg-[var(--ui-surface-raised)] text-[var(--ui-text-secondary)]"><Package :size="18" /></div>
+            <div class="min-w-0 flex-1"><p class="text-sm font-medium">{{ item.name }}</p><p class="mt-1 truncate font-mono text-xs text-[var(--ui-text-muted)]">{{ item.installed ? item.path : "未安装" }} · {{ item.managed ? "应用托管" : "系统安装" }}</p></div>
             <BaseButton v-if="!item.installed" size="sm" :busy="installing === item.kind" @click="install(item.kind)"><Download :size="12" />安装</BaseButton>
             <BaseButton v-else-if="item.managed" variant="danger" size="sm" :busy="uninstalling === item.kind" @click="uninstall(item.kind)"><Trash2 :size="12" />卸载</BaseButton>
-            <span v-else class="text-[10px] text-[var(--text-muted)]">系统安装</span>
+            <span v-else class="text-xs text-[var(--ui-text-muted)]">系统安装</span>
           </div>
           <p v-if="!loading && software.length === 0" class="col-span-full py-6 text-center text-xs text-[var(--text-muted)]">暂无软件信息。</p>
         </div>
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-4"><h2 class="text-sm font-semibold font-display">下载设置</h2><p class="mt-1 text-xs text-[var(--text-muted)]">用于下载安装受管的隧道客户端。</p></div>
+        <div class="mb-4"><h2 class="text-base font-semibold">下载设置</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">用于下载安装受管的隧道客户端。</p></div>
         <div class="grid gap-3">
           <TextField v-model="config.githubMirror" label="GitHub 镜像" placeholder="https://gh-proxy.com" hint="留空则直连 GitHub。" />
           <SelectField v-model="config.proxyMode" label="代理模式" :options="proxyOptions" />

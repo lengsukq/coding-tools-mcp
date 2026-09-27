@@ -151,31 +151,28 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 56px;
+  min-height: 52px;
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: var(--ui-radius-row);
   background: transparent;
-  color: var(--text-main);
+  color: var(--ui-text);
   text-align: left;
   cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition: background 150ms ease-out, border-color 150ms ease-out;
 }
-.ios-workspace-nav.active { min-height: 64px; }
+.ios-workspace-nav.active { min-height: 58px; }
 
 .ios-workspace-nav:hover {
-  background: rgba(255, 255, 255, 0.58);
-  border-color: rgba(255, 255, 255, 0.72);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-line);
 }
 
-.ios-workspace-nav:active { transform: scale(.985); }
-
 .ios-workspace-nav.active {
-  background: linear-gradient(135deg, color-mix(in srgb,var(--ios-blue) 15%,transparent), color-mix(in srgb,var(--accent-indigo) 9%,transparent));
-  border-color: color-mix(in srgb,var(--ios-blue) 16%,transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 8px 22px color-mix(in srgb,var(--ios-blue) 8%,transparent);
+  background: var(--ui-accent-soft);
+  border-color: color-mix(in srgb, var(--ui-accent) 24%, transparent);
 }
 
 .ios-workspace-nav__icon {
@@ -184,15 +181,14 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   height: 30px;
   flex: 0 0 30px;
   place-items: center;
-  border-radius: 10px;
-  background: var(--primary-soft, rgba(var(--pal-rgb, 99, 102, 241), 0.1));
-  color: var(--primary, #5e5ce6);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
 }
 
 .active .ios-workspace-nav__icon {
-  background: var(--primary-gradient, linear-gradient(145deg, var(--ios-blue), var(--accent-indigo)));
+  background: var(--ui-accent);
   color: #fff;
-  box-shadow: 0 5px 14px color-mix(in srgb,var(--ios-blue) 24%,transparent);
 }
 
 .ios-workspace-nav__content {
@@ -211,17 +207,17 @@ onUnmounted(() => window.clearInterval(refreshTimer));
 }
 
 .ios-workspace-nav__name {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1.25;
   letter-spacing: -.01em;
 }
 
 .ios-workspace-nav__meta {
   margin-top: 3px;
-  color: var(--text-muted);
-  font-size: 9.5px;
-  line-height: 1;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
 }
 .ios-workspace-nav__focus {
   display: flex;
@@ -229,9 +225,9 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   align-items: center;
   gap: 5px;
   margin-top: 4px;
-  color: var(--text-secondary);
-  font-size: 9px;
-  line-height: 1.1;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 1.2;
 }
 .ios-workspace-nav__focus-title {
   min-width: 0;
@@ -239,15 +235,13 @@ onUnmounted(() => window.clearInterval(refreshTimer));
 }
 .ios-workspace-nav__focus-kind {
   flex: 0 0 auto;
-  color: var(--ios-blue);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+  color: var(--ui-accent);
+  font-size: 10px;
+  font-weight: 600;
 }
 .ios-workspace-nav__focus-progress {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--ui-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .ios-workspace-nav__progress {
@@ -262,7 +256,7 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg,var(--ios-blue),var(--accent-indigo));
+  background: var(--ui-accent);
   transition: width 180ms ease;
 }
 
@@ -274,20 +268,20 @@ onUnmounted(() => window.clearInterval(refreshTimer));
   background: rgba(100, 116, 139, .38);
 }
 
-.ios-workspace-nav__status.is-clean { background: var(--accent-success); box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent-success) 12%,transparent); }
-.ios-workspace-nav__status.is-dirty { background: var(--accent-warning); box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent-warning) 12%,transparent); }
-.ios-workspace-nav__status.is-running { background: var(--ios-blue); box-shadow: 0 0 0 3px color-mix(in srgb,var(--ios-blue) 13%,transparent); }
-.ios-workspace-nav__status.is-error { background: var(--accent-danger); box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent-danger) 13%,transparent); }
+.ios-workspace-nav__status.is-clean { background: var(--ui-success); }
+.ios-workspace-nav__status.is-dirty { background: var(--ui-warning); }
+.ios-workspace-nav__status.is-running { background: var(--ui-accent); }
+.ios-workspace-nav__status.is-error { background: var(--ui-danger); }
 .ios-workspace-nav__status.is-neutral { background: rgba(100, 116, 139, .38); }
 
 :global(.dark) .ios-workspace-nav:hover {
-  background: rgba(255,255,255,.055);
-  border-color: rgba(255,255,255,.07);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-line);
 }
 
 :global(.dark) .ios-workspace-nav.active {
-  background: linear-gradient(135deg, color-mix(in srgb,var(--ios-blue) 18%,transparent), color-mix(in srgb,var(--accent-indigo) 11%,transparent));
-  border-color: var(--card-border-active, color-mix(in srgb,var(--ios-blue) 28%,transparent));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 8px 22px rgba(0,0,0,.13);
+  background: var(--ui-accent-soft);
+  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  box-shadow: none;
 }
 </style>

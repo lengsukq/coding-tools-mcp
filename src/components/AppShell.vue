@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { ClipboardList, GitBranch, Plus, Settings } from "@lucide/vue";
+import { computed, onMounted, onUnmounted } from "vue";
+import { Activity, AlertTriangle, CheckCircle2, ClipboardList, GitBranch, Plus, Settings } from "@lucide/vue";
+import appIcon from "$src/assets/app-icon.png";
 import ThemeToggle from "$src/components/ThemeToggle.vue";
 import SegmentedControl from "$src/components/ui/SegmentedControl.vue";
 import { APP_VERSION } from "$lib/app-version";
 import { REPO_URL } from "$lib/app-links";
 import { openUrl } from "$lib/api/app-info";
+import {
+  globalHealthBusy,
+  globalHealthLastCheckedAt,
+  globalHealthSummary,
+  startGlobalHealthMonitor,
+  stopGlobalHealthMonitor,
+} from "$lib/stores/health";
 import { message } from "@tauri-apps/plugin-dialog";
 
 defineProps<{
@@ -28,6 +37,23 @@ const settingsNavItems = [
   { value: "connection", label: "连接" },
 ];
 
+const healthTone = computed(() => {
+  if (globalHealthSummary.value.state === "healthy") return "healthy";
+  if (globalHealthSummary.value.state === "warning" || globalHealthSummary.value.state === "error") return "warning";
+  return "neutral";
+});
+
+const healthTime = computed(() => {
+  if (!globalHealthLastCheckedAt.value) return "自动检查";
+  const seconds = Math.floor((Date.now() - globalHealthLastCheckedAt.value) / 1000);
+  if (seconds < 30) return "刚刚检查";
+  if (seconds < 60) return `${seconds} 秒前`;
+  return `${Math.floor(seconds / 60)} 分钟前`;
+});
+
+onMounted(() => startGlobalHealthMonitor());
+onUnmounted(() => stopGlobalHealthMonitor());
+
 async function openRepo() {
   try {
     await openUrl(REPO_URL);
@@ -49,7 +75,7 @@ async function openRepo() {
             title="返回工作台"
             @click="emit('openDashboard')"
           >
-            <div class="ios-brand__mark shadow-sm" aria-hidden="true">CT</div>
+            <img :src="appIcon" class="ios-brand__mark" alt="" aria-hidden="true" />
             <div class="min-w-0 text-left">
               <div class="flex items-center gap-1.5">
                 <p class="ios-brand__kicker font-display tracking-widest">CODING TOOLS</p>
@@ -83,6 +109,24 @@ async function openRepo() {
       </div>
 
       <div class="ios-sidebar__footer">
+        <button
+          type="button"
+          class="ios-sidebar__health"
+          :class="`is-${healthTone}`"
+          title="系统健康 · 点击返回工作台查看详情"
+          @click="emit('openDashboard')"
+        >
+          <span class="ios-sidebar__health-icon">
+            <Activity v-if="globalHealthBusy" :size="15" class="animate-pulse" />
+            <CheckCircle2 v-else-if="healthTone === 'healthy'" :size="15" />
+            <AlertTriangle v-else-if="healthTone === 'warning'" :size="15" />
+            <Activity v-else :size="15" />
+          </span>
+          <span class="ios-sidebar__health-copy">
+            <strong>系统健康 · {{ globalHealthSummary.label }}</strong>
+            <small>{{ healthTime }}</small>
+          </span>
+        </button>
         <button
           type="button"
           class="ios-sidebar__settings btn-hover"
@@ -130,16 +174,16 @@ async function openRepo() {
 .ios-sidebar {
   position: relative;
   z-index: 5;
-  width: 238px;
-  flex: 0 0 238px;
+  width: 224px;
+  flex: 0 0 224px;
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border-right: 1px solid var(--sidebar-border);
-  background: var(--sidebar-bg);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(34px) saturate(180%);
-  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  border-right: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturation));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturation));
 }
 
 .ios-sidebar__header { padding: 14px 12px 10px; user-select: none; }
@@ -151,30 +195,27 @@ async function openRepo() {
   gap: 10px;
   padding: 7px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: var(--ui-radius-row);
   background: transparent;
   color: inherit;
   cursor: pointer;
-  transition: background 180ms var(--ease-apple-spring), border-color 180ms var(--ease-apple-spring), transform 180ms var(--ease-apple-spring);
+  transition: background 150ms ease-out, border-color 150ms ease-out;
 }
-.ios-brand:hover { background: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.8); transform: scale(1.01); }
-.ios-brand:active { transform: scale(0.975); }
-.ios-brand.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); border-color: var(--card-border-active, rgba(var(--pal-rgb, 226, 87, 76), 0.25)); }
+.ios-brand:hover { background: var(--ui-surface-hover); border-color: var(--ui-line); }
+.ios-brand.active { background: var(--ui-accent-soft); border-color: color-mix(in srgb, var(--ui-accent) 24%, transparent); }
 .ios-brand__mark {
-  display: grid;
+  display: block;
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
-  place-items: center;
+  border: 1px solid var(--ui-line);
   border-radius: 10px;
-  background: var(--primary-gradient, var(--accent-gradient));
-  box-shadow: 0 5px 16px var(--coral-glow, rgba(226, 87, 76, 0.32)), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  color: white;
-  font-size: 11px;
-  font-weight: 780;
+  background: var(--ui-surface-subtle);
+  object-fit: cover;
+  box-shadow: var(--ui-shadow-subtle);
 }
-.ios-brand__kicker { color: var(--text-muted); font-size: 7.5px; font-weight: 700; letter-spacing: .18em; line-height: 1; }
-.ios-brand__title { margin-top: 4px; color: var(--text-main); font-size: 12.5px; font-weight: 700; line-height: 1; letter-spacing: -.02em; }
+.ios-brand__kicker { color: var(--ui-text-muted); font-size: 10px; font-weight: 600; letter-spacing: .08em; line-height: 1; }
+.ios-brand__title { margin-top: 4px; color: var(--ui-text); font-size: 13px; font-weight: 600; line-height: 1.15; letter-spacing: -.01em; }
 
 .ios-sidebar__body { min-height: 0; flex: 1; overflow-y: auto; padding: 8px 9px 12px; }
 .ios-sidebar__audit {
@@ -186,35 +227,95 @@ async function openRepo() {
   margin-bottom: 12px;
   padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-control);
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 11.5px;
-  font-weight: 560;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: all 180ms var(--ease-apple-spring);
+  transition: background 150ms ease-out, color 150ms ease-out;
 }
-.ios-sidebar__audit:hover { background: rgba(255, 255, 255, 0.65); color: var(--text-main); }
-.ios-sidebar__audit.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); color: var(--primary, #e2574c); font-weight: 600; }
+.ios-sidebar__audit:hover { background: var(--ui-surface-hover); color: var(--ui-text); }
+.ios-sidebar__audit.active { background: var(--ui-accent-soft); color: var(--ui-accent); font-weight: 600; }
 .ios-sidebar__section-head { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 0 5px; }
-.ios-sidebar__section-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.ios-sidebar__section-label { color: var(--ui-text-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 .ios-sidebar__add {
   display: grid;
   width: 25px;
   height: 25px;
   place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 180ms var(--ease-apple-spring), color 180ms var(--ease-apple-spring), transform 180ms var(--ease-apple-spring);
+  transition: background 150ms ease-out, color 150ms ease-out;
 }
-.ios-sidebar__add:hover { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.12)); color: var(--primary, #e2574c); transform: scale(1.08); }
-.ios-sidebar__add:active { transform: scale(0.92); }
+.ios-sidebar__add:hover { background: var(--ui-accent-soft); color: var(--ui-accent); }
 
 .ios-sidebar__footer { padding: 9px 10px 12px; }
+.ios-sidebar__health {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-row);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease-out, border-color 150ms ease-out;
+}
+.ios-sidebar__health:hover {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-hover);
+}
+.ios-sidebar__health.is-healthy {
+  border-color: color-mix(in srgb, var(--ui-success) 25%, var(--ui-line));
+}
+.ios-sidebar__health.is-warning {
+  border-color: color-mix(in srgb, var(--ui-warning) 32%, var(--ui-line));
+  background: color-mix(in srgb, var(--ui-warning-soft) 58%, var(--ui-surface-subtle));
+}
+.ios-sidebar__health-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-muted);
+}
+.ios-sidebar__health.is-healthy .ios-sidebar__health-icon { color: var(--ui-success); }
+.ios-sidebar__health.is-warning .ios-sidebar__health-icon { color: var(--ui-warning); }
+.ios-sidebar__health-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.ios-sidebar__health-copy strong {
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-sidebar__health-copy small {
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.ios-sidebar :focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
 .ios-sidebar__settings {
   display: flex;
   width: 100%;
@@ -223,17 +324,17 @@ async function openRepo() {
   gap: 9px;
   padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-control);
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 11.5px;
-  font-weight: 560;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 180ms var(--ease-apple-spring);
+  transition: background 150ms ease-out, color 150ms ease-out;
 }
-.ios-sidebar__settings:hover { background: rgba(255, 255, 255, 0.65); color: var(--text-main); }
-.ios-sidebar__settings.active { background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.1)); color: var(--primary, #e2574c); font-weight: 600; }
-.ios-sidebar__meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 0 7px; color: var(--text-muted); font-size: 9px; }
+.ios-sidebar__settings:hover { background: var(--ui-surface-hover); color: var(--ui-text); }
+.ios-sidebar__settings.active { background: var(--ui-accent-soft); color: var(--ui-accent); font-weight: 600; }
+.ios-sidebar__meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 0 7px; color: var(--ui-text-muted); font-size: 11px; }
 .ios-sidebar__repo { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .ios-sidebar__repo:hover { color: var(--text-secondary); }
 
@@ -266,11 +367,9 @@ async function openRepo() {
 :global([data-theme="dark"]) .ios-app-shell { background: transparent; }
 :global(.dark) .ios-sidebar,
 :global([data-theme="dark"]) .ios-sidebar {
-  border-right-color: var(--sidebar-border, rgba(255, 255, 255, 0.08));
-  background: var(--sidebar-bg, rgba(14, 14, 18, 0.72));
-  backdrop-filter: blur(28px) saturate(1.4);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset -1px 0 0 rgba(255, 255, 255, 0.04), 0 20px 60px rgba(0, 0, 0, 0.4);
+  border-right-color: var(--ui-line);
+  background: var(--ui-surface);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 :global(.dark) .ios-brand:hover,
 :global([data-theme="dark"]) .ios-brand:hover,
@@ -278,8 +377,8 @@ async function openRepo() {
 :global([data-theme="dark"]) .ios-sidebar__audit:hover,
 :global(.dark) .ios-sidebar__settings:hover,
 :global([data-theme="dark"]) .ios-sidebar__settings:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-line);
 }
 :global(.dark) .ios-brand.active,
 :global([data-theme="dark"]) .ios-brand.active,
@@ -287,9 +386,9 @@ async function openRepo() {
 :global([data-theme="dark"]) .ios-sidebar__audit.active,
 :global(.dark) .ios-sidebar__settings.active,
 :global([data-theme="dark"]) .ios-sidebar__settings.active {
-  background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.16));
-  border-color: var(--card-border-active, rgba(var(--pal-rgb, 226, 87, 76), 0.35));
-  box-shadow: 0 0 18px rgba(var(--pal-rgb, 226, 87, 76), 0.22);
+  background: var(--ui-accent-soft);
+  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  box-shadow: none;
 }
 :global(.dark) .ios-main,
 :global([data-theme="dark"]) .ios-main { background: transparent; }
@@ -327,6 +426,7 @@ async function openRepo() {
   .ios-sidebar__section-label,
   .ios-sidebar__audit span,
   .ios-sidebar__settings span,
+  .ios-sidebar__health-copy,
   .ios-sidebar__meta p,
   .ios-sidebar__repo span {
     display: none;
@@ -349,6 +449,12 @@ async function openRepo() {
   }
 
   .ios-sidebar__footer {
+    padding-inline: 7px;
+  }
+
+  .ios-sidebar__health {
+    min-height: 46px;
+    justify-content: center;
     padding-inline: 7px;
   }
 

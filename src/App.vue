@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import AppShell from "$src/components/AppShell.vue";
-import AmbientLiquidBackground from "$src/components/ui/AmbientLiquidBackground.vue";
 import CloseConfirmDialog from "$src/components/CloseConfirmDialog.vue";
 import ToastHost from "$src/components/ToastHost.vue";
 import WorkspaceNavItem from "$src/components/WorkspaceNavItem.vue";
@@ -124,7 +123,6 @@ onUnmounted(() => {
 
 <template>
   <div class="relative min-h-screen w-full font-body overflow-x-hidden">
-    <AmbientLiquidBackground />
     <AppShell
       :dashboard-active="dashboardActive"
       :settings-active="settingsActive"

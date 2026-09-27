@@ -71,9 +71,9 @@ onMounted(() => { void load(); });
       <div v-else class="grid gap-4">
         <div v-for="item in keys" :key="item.key" class="key-setting-row">
           <label class="block min-w-0">
-            <span class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)]">{{ item.label }}</span>
+            <span class="mb-1.5 block text-xs font-medium text-[var(--ui-text-secondary)]">{{ item.label }}</span>
             <SecretField v-model="secrets[item.key]" />
-            <span class="mt-1.5 block text-[11px] leading-4 text-[var(--text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
+            <span class="mt-1.5 block text-xs leading-4 text-[var(--ui-text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
           </label>
           <BaseButton variant="secondary" :busy="regenerating === item.key" @click="regenerate(item.key)"><RefreshCw :size="13" />重新生成</BaseButton>
         </div>

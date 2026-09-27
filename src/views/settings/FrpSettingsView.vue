@@ -98,8 +98,8 @@ onMounted(() => void refresh());
     <div class="frp-settings-grid animate-fade-in-up delay-100">
       <GlassCard>
         <div class="mb-5 flex items-center gap-3">
-          <div class="grid h-10 w-10 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><RadioTower :size="18" /></div>
-          <div><h2 class="text-sm font-semibold font-display">{{ editingId ? "编辑配置" : "新建配置" }}</h2><p class="mt-0.5 text-[11px] text-[var(--text-muted)]">Profile 可被多个 Workspace 复用。</p></div>
+          <div class="grid h-10 w-10 place-items-center rounded-[var(--ui-radius-row)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]"><RadioTower :size="18" /></div>
+          <div><h2 class="text-base font-semibold">{{ editingId ? "编辑配置" : "新建配置" }}</h2><p class="mt-0.5 text-xs text-[var(--ui-text-muted)]">Profile 可被多个 Workspace 复用。</p></div>
         </div>
         <form class="grid gap-3.5" @submit.prevent="save">
           <TextField v-model="name" label="名称" placeholder="公司 FRP / 家庭内网穿透" />
@@ -111,12 +111,12 @@ onMounted(() => void refresh());
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-4"><h2 class="text-sm font-semibold font-display">已保存的配置</h2><p class="mt-1 text-xs text-[var(--text-muted)]">删除 Profile 不会删除 Workspace，但依赖它的 FRP Tunnel 将无法连接。</p></div>
+        <div class="mb-4"><h2 class="text-base font-semibold">已保存的配置</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">删除 Profile 不会删除 Workspace，但依赖它的 FRP Tunnel 将无法连接。</p></div>
         <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
         <p v-else-if="profiles.length === 0" class="py-8 text-center text-xs text-[var(--text-muted)]">暂无 FRP 配置。</p>
         <div v-else class="space-y-2">
-          <div v-for="profile in profiles" :key="profile.id" class="frp-profile-row ios-glass rounded-2xl p-3.5">
-            <div class="min-w-0"><p class="truncate text-xs font-semibold">{{ profile.name }}</p><p class="mt-1 truncate font-mono text-[10px] text-[var(--text-muted)]">{{ profile.server }}:{{ profile.serverPort }} · Token {{ profile.hasToken ? "已配置" : "未配置" }}</p></div>
+          <div v-for="profile in profiles" :key="profile.id" class="frp-profile-row ui-inset p-3.5">
+            <div class="min-w-0"><p class="truncate text-sm font-medium">{{ profile.name }}</p><p class="mt-1 truncate font-mono text-xs text-[var(--ui-text-muted)]">{{ profile.server }}:{{ profile.serverPort }} · Token {{ profile.hasToken ? "已配置" : "未配置" }}</p></div>
             <div class="flex gap-1"><BaseButton variant="ghost" size="sm" @click="edit(profile)"><Edit3 :size="12" />编辑</BaseButton><BaseButton variant="danger" size="sm" @click="pendingDelete = profile"><Trash2 :size="12" />删除</BaseButton></div>
           </div>
         </div>

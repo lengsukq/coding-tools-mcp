@@ -15,14 +15,14 @@ const items = [{ value: "/settings/gateway", label: "Global Gateway" }, { value:
 <style scoped>
 .connection-subnav :deep(.ios-segmented) {
   padding: 2px;
-  border-color: color-mix(in srgb, var(--text-main) 5%, transparent);
-  background: color-mix(in srgb, var(--text-main) 5%, transparent);
+  border-color: var(--ui-line);
+  background: var(--ui-surface-subtle);
   box-shadow: none;
 }
 
 .connection-subnav :deep(.ios-segmented__item) {
-  min-height: 27px;
-  padding: 4px 10px;
-  font-size: 10.5px;
+  min-height: 32px;
+  padding: 5px 11px;
+  font-size: 12px;
 }
 </style>

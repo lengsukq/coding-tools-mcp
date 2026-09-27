@@ -119,7 +119,12 @@ async function runHealth() {
   finally { checking.value = false; }
 }
 
-onMounted(() => void refresh());
+onMounted(() => {
+  void (async () => {
+    await refresh();
+    await runHealth();
+  })();
+});
 </script>
 
 <template>
@@ -128,29 +133,29 @@ onMounted(() => void refresh());
     <ConnectionSettingsNav />
     <div class="grid gap-4 animate-fade-in-up delay-100">
       <GlassCard>
-        <div class="flex flex-wrap items-start justify-between gap-4"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><Globe2 :size="20" /></div><div><h2 class="text-sm font-semibold font-display">唯一 MCP Runtime</h2><p class="mt-1 text-xs text-[var(--text-muted)]">{{ running ? `${status?.sessionCount ?? 0} 个 Session · ${status?.workspaceCount ?? 0} 个 Workspace` : "当前未运行" }}</p></div></div><StatusPill :status="running ? 'running' : 'stopped'" /></div>
-        <div class="settings-two-col mt-4"><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">本地 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.localEndpoint ?? `http://127.0.0.1:${config.localPort}/mcp` }}</code></div><div class="ios-glass rounded-2xl p-3"><span class="text-[10px] text-[var(--text-muted)]">公网 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.publicEndpoint || (config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/mcp` : "尚未配置") }}</code></div></div>
+        <div class="flex flex-wrap items-start justify-between gap-4"><div class="flex items-center gap-3"><div class="grid h-11 w-11 place-items-center rounded-[var(--ui-radius-row)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]"><Globe2 :size="20" /></div><div><h2 class="text-base font-semibold">唯一 MCP Runtime</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">{{ running ? `${status?.sessionCount ?? 0} 个 Session · ${status?.workspaceCount ?? 0} 个 Workspace` : "当前未运行" }}</p></div></div><StatusPill :status="running ? 'running' : 'stopped'" /></div>
+        <div class="settings-two-col mt-4"><div class="ui-inset p-3"><span class="text-xs text-[var(--ui-text-muted)]">本地 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.localEndpoint ?? `http://127.0.0.1:${config.localPort}/mcp` }}</code></div><div class="ui-inset p-3"><span class="text-xs text-[var(--ui-text-muted)]">公网 MCP Endpoint</span><code class="mt-1 block break-all text-xs">{{ status?.publicEndpoint || (config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/mcp` : "尚未配置") }}</code></div></div>
         <div class="mt-4 flex flex-wrap gap-2"><BaseButton :busy="busy && !running" :disabled="running || loading" @click="start"><Play :size="13" />启动 Global MCP</BaseButton><BaseButton variant="secondary" :busy="busy && running" :disabled="!running" @click="stop"><Square :size="12" />停止</BaseButton><BaseButton variant="ghost" :busy="checking" @click="runHealth"><Activity :size="13" />健康检查</BaseButton><BaseButton variant="ghost" :busy="loading" @click="refresh"><RefreshCw :size="13" />刷新</BaseButton></div>
       </GlassCard>
 
       <GlassCard>
-        <div class="mb-4"><h2 class="text-sm font-semibold font-display">Endpoint 与公网 Tunnel</h2><p class="mt-1 text-xs text-[var(--text-muted)]">本地端口就是唯一 MCP Listener；FRP / Cloudflare 只负责把这个 Endpoint 暴露到公网。</p></div>
+        <div class="mb-4"><h2 class="text-base font-semibold">Endpoint 与公网 Tunnel</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">本地端口就是唯一 MCP Listener；FRP / Cloudflare 只负责把这个 Endpoint 暴露到公网。</p></div>
         <div class="grid gap-3">
-          <div class="ios-glass rounded-2xl p-3"><ToggleSwitch v-model="config.enabled" label="启用公网 Tunnel" description="关闭时仍可正常使用本地 Global MCP；只是不自动暴露公网入口。" /></div>
+          <div class="ui-inset p-3"><ToggleSwitch v-model="config.enabled" label="启用公网 Tunnel" description="关闭时仍可正常使用本地 Global MCP；只是不自动暴露公网入口。" /></div>
           <div class="settings-two-col"><TextField :model-value="String(config.localPort)" label="Global MCP 本地端口" type="number" @update:model-value="config.localPort = Number($event)" /><SelectField v-model="config.tunnelType" label="公网方式" :options="tunnelOptions" /></div>
           <template v-if="config.tunnelType === 'frp'">
             <SelectField v-model="config.frpProfileId" label="FRP 配置" :options="frpOptions" />
             <TextField v-model="config.frpSubdomain" label="子域名" placeholder="coding-tools" />
             <div v-if="!config.frpProfileId" class="settings-two-col"><TextField v-model="config.frpServer" label="FRP 服务器" placeholder="frp.example.com" /><TextField :model-value="String(config.frpServerPort)" label="端口" type="number" @update:model-value="config.frpServerPort = Number($event)" /></div>
           </template>
-          <div v-if="config.tunnelType === 'cloudflare'" class="rounded-2xl bg-[#64d2ff]/8 p-3 text-xs leading-5 text-[var(--text-secondary)]">Global Gateway 使用 Cloudflare Quick Tunnel；固定域名建议使用 FRP 或外部反代。</div>
+          <div v-if="config.tunnelType === 'cloudflare'" class="ui-banner text-xs leading-5">Global Gateway 使用 Cloudflare Quick Tunnel；固定域名建议使用 FRP 或外部反代。</div>
           <TextField v-if="config.tunnelType === 'none'" v-model="config.publicUrl" label="外部公网 URL（可选）" placeholder="https://gateway.example.com" />
-          <div v-if="config.tunnelType !== 'none'" class="ios-glass rounded-2xl p-3"><ToggleSwitch v-model="config.useProxy" label="使用全局代理" description="使用通用设置里的网络代理连接公网 Tunnel。" /></div>
+          <div v-if="config.tunnelType !== 'none'" class="ui-inset p-3"><ToggleSwitch v-model="config.useProxy" label="使用全局代理" description="使用通用设置里的网络代理连接公网 Tunnel。" /></div>
           <div class="flex justify-end"><BaseButton :busy="saving" :disabled="!dirty" @click="saveConfig"><Save :size="14" />保存连接配置</BaseButton></div>
         </div>
       </GlassCard>
 
-      <GlassCard><h2 class="text-sm font-semibold">健康检查</h2><p class="mt-1 text-xs text-[var(--text-muted)]">检查唯一 Global MCP 的本地与公网 Endpoint，不再存在 Workspace 路由前缀。</p><div class="mt-3 space-y-2"><div v-for="item in health" :key="item.label" class="ios-glass flex items-start justify-between gap-3 rounded-2xl p-3"><div><strong class="text-xs">{{ item.label }}</strong><p class="mt-1 break-all text-[10px] leading-4 text-[var(--text-muted)]">{{ item.detail }}</p></div><StatusPill :status="item.ok ? 'success' : 'error'" :label="item.ok ? '正常' : '失败'" /></div><p v-if="health.length === 0" class="py-4 text-center text-xs text-[var(--text-muted)]">尚未执行健康检查。</p></div></GlassCard>
+      <GlassCard><h2 class="text-base font-semibold">健康检查</h2><p class="mt-1 text-xs text-[var(--ui-text-muted)]">进入页面时自动检查唯一 Global MCP 的本地与公网 Endpoint；也可随时手动重试。</p><div class="mt-3 space-y-2"><div v-for="item in health" :key="item.label" class="ui-inset flex items-start justify-between gap-3 p-3"><div><strong class="text-xs">{{ item.label }}</strong><p class="mt-1 break-all text-xs leading-5 text-[var(--ui-text-muted)]">{{ item.detail }}</p></div><StatusPill :status="item.ok ? 'success' : 'error'" :label="item.ok ? '正常' : '失败'" /></div><p v-if="health.length === 0" class="py-4 text-center text-xs text-[var(--ui-text-muted)]">正在等待健康检查结果。</p></div></GlassCard>
     </div>
   </div>
 </template>

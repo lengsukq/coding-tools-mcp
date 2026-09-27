@@ -36,6 +36,7 @@ import {
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
 import ModalDialog from "$src/components/ui/ModalDialog.vue";
+import PageHeader from "$src/components/ui/PageHeader.vue";
 import SegmentedControl from "$src/components/ui/SegmentedControl.vue";
 import {
   clearToolAuditRecords,
@@ -96,7 +97,7 @@ const rangeEnd = computed(() => Math.min(offset.value + PAGE_SIZE, total.value))
 
 const successCount = computed(() => Math.max(0, total.value - errorCount.value));
 const successRate = computed(() => {
-  if (total.value === 0) return 100;
+  if (total.value === 0) return null;
   return Math.round((successCount.value / total.value) * 1000) / 10;
 });
 
@@ -445,37 +446,15 @@ onMounted(() => {
 
 <template>
   <section class="page-scroll flex-1 min-h-0">
-    <div class="mx-auto w-full max-w-[1480px] px-6 py-7 lg:px-9 space-y-6">
+    <div class="tool-audit-page ui-page space-y-6 pb-12">
 
       <!-- Header -->
-      <header class="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--border-light)] pb-5 animate-fade-in-up">
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--primary)]">
-              <ShieldCheck :size="12" /> 全局可观测与审计
-            </span>
-            <span
-              v-if="healthMessage"
-              class="inline-flex items-center gap-1 rounded-full bg-[#ff9f0a]/15 px-2.5 py-0.5 text-[11px] font-medium text-[#c77700] dark:text-[#ff9f0a]"
-            >
-              <AlertTriangle :size="12" /> 记录写入受限
-            </span>
-            <span
-              v-else
-              class="inline-flex items-center gap-1.5 rounded-full bg-[#30d158]/12 px-2.5 py-0.5 text-[11px] font-medium text-[#248a3d] dark:text-[#30d158]"
-            >
-              <span class="h-1.5 w-1.5 rounded-full bg-[#30d158] animate-pulse" /> 实时记录就绪
-            </span>
-          </div>
-          <h1 class="mt-2 text-2xl font-bold tracking-tight text-[var(--text-main)] sm:text-3xl font-display">
-            工具调用审计
-          </h1>
-          <p class="mt-1.5 max-w-2xl text-xs sm:text-sm leading-relaxed text-[var(--text-secondary)]">
-            追溯所有经过已认证 MCP 网关的工具调用、执行状态、响应耗时与数据变更。日志仅在本机持久化。
-          </p>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2.5 pt-1">
+      <PageHeader
+        kicker="全局可观测与审计"
+        title="工具调用审计"
+        description="追溯经过已认证 MCP 网关的工具调用、执行状态、响应耗时与数据变更。日志仅在本机持久化。"
+      >
+        <template #actions>
           <BaseButton variant="secondary" size="sm" :busy="loading" @click="loadAudit(0)">
             <RefreshCw :size="13" :class="{ 'animate-spin': loading }" /> 刷新数据
           </BaseButton>
@@ -496,28 +475,33 @@ onMounted(() => {
           <BaseButton variant="danger" size="sm" @click="clearRecords('all')">
             <Trash2 :size="13" /> 清空记录
           </BaseButton>
-        </div>
-      </header>
+        </template>
+      </PageHeader>
 
       <!-- Health Warning Banner -->
       <transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0 -translate-y-2" enter-to-class="opacity-100 translate-y-0">
         <div
           v-if="healthMessage"
-          class="flex items-start gap-3 rounded-xl border border-[#ff9f0a]/30 bg-[#ff9f0a]/10 px-4 py-3 text-sm text-[var(--text-main)] shadow-sm backdrop-blur-sm"
+          class="ui-banner ui-banner--warning text-sm"
           role="status"
         >
-          <AlertTriangle :size="18" class="mt-0.5 shrink-0 text-[#ff9f0a]" />
+          <AlertTriangle :size="18" class="mt-0.5 shrink-0 text-[var(--ui-warning)]" />
           <div class="min-w-0 flex-1">
-            <p class="font-semibold text-xs text-[#b36b00] dark:text-[#ffb340]">审计日志写入异常通知</p>
-            <p class="mt-0.5 text-xs leading-5 text-[var(--text-secondary)]">{{ healthMessage }} 提示：工具调用仍在继续正常执行，仅部分日志写盘被推迟。</p>
+            <p class="font-semibold text-xs text-[var(--ui-warning)]">审计日志写入异常通知</p>
+            <p class="mt-0.5 text-xs leading-5 text-[var(--ui-text-secondary)]">{{ healthMessage }} 提示：工具调用仍在继续正常执行，仅部分日志写盘被推迟。</p>
           </div>
         </div>
       </transition>
 
-      <!-- KPI Metrics Strip -->
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 animate-fade-in-up delay-100">
+      <!-- Secondary summary stays collapsed so filters and records remain in view. -->
+      <details class="audit-kpis">
+        <summary>
+          <span class="audit-kpis__title">审计概览</span>
+          <span class="audit-kpis__hint">{{ total.toLocaleString() }} 条匹配记录 · 成功率 {{ successRate === null ? '暂无' : `${successRate}%` }} · 保留 {{ retentionDays }} 天</span>
+        </summary>
+        <div class="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2 lg:grid-cols-4 animate-fade-in-up delay-100">
         <!-- 1. Total Calls -->
-        <GlassCard :padded="false" hoverable class="p-4 relative overflow-hidden">
+        <GlassCard :padded="false" class="p-3 relative overflow-hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-[var(--text-muted)]">匹配调用总数</span>
             <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
@@ -525,52 +509,53 @@ onMounted(() => {
             </div>
           </div>
           <div class="mt-3 flex items-baseline gap-2">
-            <span class="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
+            <span class="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
               {{ total.toLocaleString() }}
             </span>
-            <span class="text-xs text-[var(--text-muted)]">次调用</span>
+            <span class="text-xs text-[var(--text-muted)]">{{ total === 0 ? '暂无调用' : '次调用' }}</span>
           </div>
-          <div class="mt-2 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+          <div class="mt-2 flex items-center justify-between text-xs text-[var(--text-muted)]">
             <span>当前筛选范围</span>
-            <span class="font-medium text-[var(--text-secondary)]">第 {{ pageNumber }} / {{ pageCount }} 页</span>
+            <span class="font-medium text-[var(--text-secondary)]">{{ total === 0 ? '等待匹配记录' : `第 ${pageNumber} / ${pageCount} 页` }}</span>
           </div>
         </GlassCard>
 
         <!-- 2. Success Rate -->
-        <GlassCard :padded="false" hoverable class="p-4 relative overflow-hidden">
+        <GlassCard :padded="false" class="p-3 relative overflow-hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-[var(--text-muted)]">执行成功率</span>
             <div
               class="flex h-7 w-7 items-center justify-center rounded-lg"
-              :class="errorCount === 0 ? 'bg-[#30d158]/12 text-[#30d158]' : 'bg-[#ff9f0a]/12 text-[#ff9f0a]'"
+              :class="total === 0 ? 'bg-[var(--ui-surface-subtle)] text-[var(--ui-text-muted)]' : errorCount === 0 ? 'bg-[var(--ui-success-soft)] text-[var(--ui-success)]' : 'bg-[var(--ui-warning-soft)] text-[var(--ui-warning)]'"
             >
-              <CheckCircle2 v-if="errorCount === 0" :size="15" />
+              <Activity v-if="total === 0" :size="15" />
+              <CheckCircle2 v-else-if="errorCount === 0" :size="15" />
               <AlertCircle v-else :size="15" />
             </div>
           </div>
           <div class="mt-3 flex items-baseline gap-2">
             <span
-              class="text-2xl sm:text-3xl font-bold tracking-tight font-mono font-display"
-              :class="errorCount === 0 ? 'text-[#248a3d] dark:text-[#30d158]' : 'text-[#ff9f0a]'"
+              class="text-xl sm:text-2xl font-bold tracking-tight font-mono font-display"
+              :class="successRate === null ? 'text-[var(--ui-text-muted)]' : errorCount === 0 ? 'text-[var(--ui-success)]' : 'text-[var(--ui-warning)]'"
             >
-              {{ successRate }}%
+              {{ successRate === null ? '—' : `${successRate}%` }}
             </span>
             <span class="text-xs text-[var(--text-muted)]">
-              {{ errorCount > 0 ? `${errorCount} 次失败` : '全部通过' }}
+              {{ successRate === null ? '暂无数据' : errorCount > 0 ? `${errorCount} 次失败` : '全部通过' }}
             </span>
           </div>
           <!-- Progress bar -->
-          <div class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
+          <div v-if="successRate !== null" class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
             <div
               class="h-full rounded-full transition-all duration-500 ease-out"
-              :class="successRate >= 95 ? 'bg-[#30d158]' : successRate >= 80 ? 'bg-[#ff9f0a]' : 'bg-[#ff453a]'"
-              :style="{ width: `${successRate}%` }"
+              :class="successRate !== null && successRate >= 95 ? 'bg-[var(--ui-success)]' : successRate !== null && successRate >= 80 ? 'bg-[var(--ui-warning)]' : 'bg-[var(--ui-danger)]'"
+              :style="{ width: `${successRate ?? 0}%` }"
             />
           </div>
         </GlassCard>
 
         <!-- 3. Workspaces -->
-        <GlassCard :padded="false" hoverable class="p-4 relative overflow-hidden">
+        <GlassCard :padded="false" class="p-3 relative overflow-hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-[var(--text-muted)]">覆盖工作区</span>
             <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--primary-soft)] text-[var(--accent-indigo)]">
@@ -578,44 +563,45 @@ onMounted(() => {
             </div>
           </div>
           <div class="mt-3 flex items-baseline gap-2">
-            <span class="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
+            <span class="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
               {{ workspaceCount }}
             </span>
             <span class="text-xs text-[var(--text-muted)]">个活跃区域</span>
           </div>
-          <p class="mt-2 truncate text-[11px] text-[var(--text-muted)]" :title="selectedWorkspaceName">
+          <p class="mt-2 truncate text-xs text-[var(--text-muted)]" :title="selectedWorkspaceName">
             当前焦点: <span class="font-medium text-[var(--text-secondary)]">{{ selectedWorkspaceName }}</span>
           </p>
         </GlassCard>
 
         <!-- 4. Retention Policy -->
-        <GlassCard :padded="false" hoverable class="p-4 relative overflow-hidden">
+        <GlassCard :padded="false" class="p-3 relative overflow-hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-[var(--text-muted)]">日志生命周期</span>
-            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[#af52de]/10 text-[#af52de] dark:bg-[#bf5af2]/15 dark:text-[#bf5af2]">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ui-surface-subtle)] text-[var(--ui-text-secondary)]">
               <HardDrive :size="15" />
             </div>
           </div>
           <div class="mt-3 flex items-center justify-between">
             <div class="flex items-baseline gap-1.5">
-              <span class="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
+              <span class="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-main)] font-mono font-display">
                 {{ retentionDays }}
               </span>
               <span class="text-xs text-[var(--text-muted)]">天自动轮转</span>
             </div>
             <button
               type="button"
-              class="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[var(--primary-soft)]"
+              class="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--ui-accent)] transition hover:bg-[var(--ui-accent-soft)]"
               @click="openRetentionModal"
             >
               <Settings2 :size="12" /> 配置
             </button>
           </div>
-          <p class="mt-2 text-[11px] text-[var(--text-muted)]">
+          <p class="mt-2 text-xs text-[var(--text-muted)]">
             本地存储 · 启动时安全清理过期项
           </p>
         </GlassCard>
-      </div>
+        </div>
+      </details>
 
       <!-- Main Audit Explorer Console -->
       <GlassCard :padded="false" class="overflow-hidden border border-[var(--border)] shadow-sm animate-fade-in-up delay-200">
@@ -797,7 +783,7 @@ onMounted(() => {
         </div>
 
         <!-- Empty State -->
-        <div v-else-if="records.length === 0" class="flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
+        <div v-else-if="records.length === 0" class="flex min-h-[220px] flex-col items-center justify-center px-6 text-center sm:min-h-[320px]">
           <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-hover)] text-[var(--text-muted)] mb-3">
             <FilterX v-if="activeFilters.length > 0" :size="26" />
             <ShieldCheck v-else :size="26" />

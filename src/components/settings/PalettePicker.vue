@@ -43,6 +43,8 @@ function pick(id: string) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 10px;
+  min-width: 0;
+  padding: 0 !important;
 }
 
 .palette-card {
@@ -51,8 +53,8 @@ function pick(id: string) {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 16px;
-  border: 1px solid var(--border-light);
-  background: var(--card-bg);
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface-subtle);
   cursor: pointer;
   text-align: left;
   transition: transform var(--duration-fast, 0.15s) var(--ease-out, ease),
@@ -102,11 +104,18 @@ function pick(id: string) {
 }
 
 .palette-desc {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--ui-text-muted);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@container app-main (max-width: 640px) {
+  .palette-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .palette-card { gap: 8px; padding: 8px; border-radius: 12px; }
+  .palette-swatch { width: 28px; height: 28px; flex-basis: 28px; border-radius: 9px; }
+  .palette-desc { display: none; }
 }
 </style>

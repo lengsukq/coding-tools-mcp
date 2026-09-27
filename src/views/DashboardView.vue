@@ -30,7 +30,18 @@ import { useRouter } from "vue-router";
 import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
 import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
 import DashboardUsagePanel from "$src/components/dashboard/DashboardUsagePanel.vue";
-import { runGlobalHealthChecks, type HealthItem } from "$lib/api/health";
+import BaseButton from "$src/components/ui/BaseButton.vue";
+import MetricCard from "$src/components/ui/MetricCard.vue";
+import PageHeader from "$src/components/ui/PageHeader.vue";
+import PageShell from "$src/components/ui/PageShell.vue";
+import StatusPill from "$src/components/ui/StatusPill.vue";
+import {
+  globalHealthBusy,
+  globalHealthItems as globalHealth,
+  globalHealthLastCheckedAt,
+  globalHealthSummary,
+  refreshGlobalHealth,
+} from "$lib/stores/health";
 import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
 import type { PlanningStateDto } from "$lib/api/planning";
 import { getLastWorkspaceId } from "$lib/api/settings";
@@ -114,8 +125,6 @@ const historyByWorkspace = ref<Record<string, HistorySessionSummary[]>>({});
 const usageHistory = ref<UsagePoint[]>([]);
 const usageWorkspaceKey = ref("");
 const globalRuntimeBusy = ref(false);
-const globalHealth = ref<HealthItem[]>([]);
-const globalHealthBusy = ref(false);
 const gatewayConfig = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
 const globalOverview = ref<GlobalMcpOverviewDto>({
   state: "stopped",
@@ -136,19 +145,6 @@ let historyGeneration = 0;
 let planningTimer = 0;
 let usageTimer = 0;
 let historyTimer = 0;
-let healthTimer = 0;
-
-async function loadGlobalHealth() {
-  if (globalHealthBusy.value) return;
-  globalHealthBusy.value = true;
-  try {
-    globalHealth.value = await runGlobalHealthChecks();
-  } catch {
-    // Preserve the last successful snapshot so the dashboard does not flicker offline.
-  } finally {
-    globalHealthBusy.value = false;
-  }
-}
 
 const workspaceCount = computed(() => workspaces.value.length);
 const orderedWorkspaces = computed(() => {
@@ -159,6 +155,13 @@ const orderedWorkspaces = computed(() => {
 const mcpRunning = computed(() => globalMcpRuntimeState.value === "running" ? 1 : 0);
 const errorServices = computed(() => globalMcpRuntimeState.value === "error" ? 1 : 0);
 const serviceHealth = computed(() => globalMcpRuntimeState.value === "running" ? 100 : 0);
+const failedGlobalHealth = computed(() => globalHealth.value.filter((item) => !item.ok));
+const globalHealthTone = computed(() => {
+  if (globalHealthSummary.value.state === "healthy") return "success";
+  if (globalHealthSummary.value.state === "warning") return "warning";
+  if (globalHealthSummary.value.state === "error") return "error";
+  return "stopped";
+});
 const planningStats = computed(() => summarizePlanning(planningByWorkspace.value));
 const usageTotals = computed(() => summarizeUsage(usageByWorkspace.value));
 const executionStats = computed(() => {
@@ -514,9 +517,6 @@ onMounted(() => {
     void loadGlobalOverview();
   }, 5000);
   historyTimer = window.setInterval(() => void loadHistory(workspaces.value), 30_000);
-  healthTimer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void loadGlobalHealth();
-  }, 10_000);
   void getLastWorkspaceId().then((id) => {
     lastWorkspaceId.value = id ?? "";
   }).catch(() => {
@@ -529,7 +529,6 @@ onMounted(() => {
   });
   void getGlobalGatewayConfig().then((config) => Object.assign(gatewayConfig, config)).catch(() => undefined);
   void loadGlobalOverview();
-  void loadGlobalHealth();
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -537,54 +536,87 @@ onUnmounted(() => {
   window.clearInterval(planningTimer);
   window.clearInterval(usageTimer);
   window.clearInterval(historyTimer);
-  window.clearInterval(healthTimer);
   window.removeEventListener("keydown", handleKeydown);
 });
 </script>
 
 <template>
   <section class="page-scroll wb-dashboard" :data-density="dashboardPreferences.density">
-    <header class="page-header wb-dashboard-header">
-      <div>
-        <div class="wb-dashboard-title-row">
-          <div class="wb-dashboard-icon">
-            <LayoutDashboard :size="18" />
+    <PageShell>
+      <PageHeader
+        kicker="工作台"
+        title="AI 工作与运行状态"
+        description="先处理正在执行的工作和需要关注的风险，再查看 Workspace、运行状态与分析数据。"
+      >
+        <template #actions>
+          <BaseButton variant="secondary" size="sm" @click="commandOpen = true; commandQuery = ''">
+            <Command :size="14" />
+            <span>Quick Actions</span>
+            <span class="wb-kbd">⌘K</span>
+          </BaseButton>
+          <DashboardPreferencesPopover
+            :open="preferencesOpen"
+            :density="dashboardPreferences.density"
+            :hidden-modules="dashboardPreferences.hiddenModules"
+            @toggle-open="preferencesOpen = !preferencesOpen"
+            @toggle-density="updateDashboardPreferences((current) => ({ ...current, density: current.density === 'compact' ? 'comfortable' : 'compact' }))"
+            @toggle-module="toggleDashboardModule"
+          />
+        </template>
+      </PageHeader>
+
+      <section
+        class="dashboard-health-banner ui-surface"
+        :class="{
+          'is-warning': globalHealthSummary.state === 'warning',
+          'is-error': globalHealthSummary.state === 'error',
+          'is-healthy': globalHealthSummary.state === 'healthy',
+        }"
+      >
+        <div class="dashboard-health-banner__main">
+          <div class="dashboard-health-banner__icon">
+            <RotateCw v-if="globalHealthBusy" :size="18" class="animate-spin" />
+            <ShieldCheck v-else :size="18" />
           </div>
-          <div>
-            <h1 class="wb-dashboard-title font-display text-2xl tracking-tight">工作台</h1>
-            <p class="wb-dashboard-subtitle">查看正在执行的 AI 工作、进度、验证结果与需要你处理的风险。</p>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <strong class="text-sm font-semibold">系统健康</strong>
+              <StatusPill :status="globalHealthTone" :label="globalHealthSummary.label" />
+              <span v-if="globalHealthLastCheckedAt" class="text-xs text-[var(--ui-text-muted)]">
+                {{ formatRelativeTime(globalHealthLastCheckedAt) }}检查
+              </span>
+              <span v-else class="text-xs text-[var(--ui-text-muted)]">自动检查中</span>
+            </div>
+            <p class="mt-1 text-xs leading-5 text-[var(--ui-text-secondary)]">{{ globalHealthSummary.detail }}</p>
+            <div v-if="failedGlobalHealth.length" class="mt-2 flex flex-wrap gap-2">
+              <span
+                v-for="item in failedGlobalHealth.slice(0, 3)"
+                :key="item.label"
+                class="dashboard-health-failure"
+                :title="item.detail"
+              >
+                <AlertTriangle :size="12" /> {{ item.label }}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="wb-header-actions">
-        <button class="wb-command-button ios-glass btn-hover" type="button" @click="commandOpen = true; commandQuery = ''">
-          <Command :size="14" />
-          <span>Quick Actions</span>
-          <span class="wb-kbd">⌘K</span>
-        </button>
-        <DashboardPreferencesPopover
-          :open="preferencesOpen"
-          :density="dashboardPreferences.density"
-          :hidden-modules="dashboardPreferences.hiddenModules"
-          @toggle-open="preferencesOpen = !preferencesOpen"
-          @toggle-density="updateDashboardPreferences((current) => ({ ...current, density: current.density === 'compact' ? 'comfortable' : 'compact' }))"
-          @toggle-module="toggleDashboardModule"
-        />
-      </div>
-    </header>
+        <BaseButton variant="secondary" size="sm" :busy="globalHealthBusy" @click="refreshGlobalHealth">
+          <RotateCw :size="13" />立即检查
+        </BaseButton>
+      </section>
 
-    <div class="page-body wb-dashboard-main pb-14">
+      <div class="wb-dashboard-main pb-14">
       <div v-if="workspaceCount === 0" class="wb-empty-state wb-surface card-hover mx-auto mt-16 max-w-xl px-8 py-12 text-center animate-fade-in-up">
-        <div class="mx-auto grid h-16 w-16 place-items-center rounded-[24px] bg-[var(--accent-gradient)] text-white shadow-lg">
+        <div class="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]">
           <GitBranch :size="28" />
         </div>
         <h2 class="mt-5 text-lg font-semibold font-display">还没有工作区</h2>
         <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">添加本地项目后，ChatGPT 可通过同一个 Global MCP 连接选择并操作不同 Workspace。</p>
-        <button class="wb-primary-button btn-hover mt-5" type="button" @click="requestAddWorkspace">添加工作区</button>
+        <BaseButton class="mt-5" @click="requestAddWorkspace">添加工作区</BaseButton>
       </div>
 
       <template v-else>
-        <section v-if="moduleVisible('focus')" class="wb-hero wb-surface card-hover animate-fade-in-up delay-150">
+        <section v-if="moduleVisible('focus')" class="wb-hero ui-surface animate-fade-in-up delay-150">
           <div class="wb-focus">
             <div class="wb-eyebrow text-[var(--coral-primary,#e2574c)] font-display"><Sparkles :size="13" /> 当前执行</div>
             <template v-if="primaryFocus">
@@ -596,12 +628,12 @@ onUnmounted(() => {
                 <span>{{ primaryFocus.progressLabel }}</span><span>{{ planningByWorkspace[primaryFocus.workspace.id]?.execution.state ?? 'idle' }}</span>
               </div>
               <div class="wb-focus-actions">
-                <button class="wb-primary-button btn-hover" type="button" @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></button>
-                <button class="wb-soft-button btn-hover" type="button" @click="toggleGlobalMcp">
+                <BaseButton @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></BaseButton>
+                <BaseButton variant="secondary" @click="toggleGlobalMcp">
                   <RotateCw v-if="globalRuntimeBusy" :size="12" class="animate-spin" />
                   <template v-else-if="globalMcpRuntimeState === 'running'"><Square :size="11" /> 停止 Global MCP</template>
                   <template v-else><Play :size="11" /> 启动 Global MCP</template>
-                </button>
+                </BaseButton>
               </div>
             </template>
             <template v-else>
@@ -626,27 +658,15 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <div class="wb-stat-strip mt-5 animate-fade-in-up delay-300">
-          <div class="wb-stat wb-surface wb-stat--blue card-hover">
-            <div class="wb-stat-head"><span class="font-display">AI Executions</span><i><Boxes :size="16" /></i></div>
-            <strong class="font-display">{{ executionStats.running }}</strong><small><b>{{ executionStats.changedFiles }}</b> 个执行变更文件</small>
-          </div>
-          <div class="wb-stat wb-surface wb-stat--indigo card-hover">
-            <div class="wb-stat-head"><span class="font-display">MCP Tokens</span><i><Cpu :size="16" /></i></div>
-            <strong class="font-display">{{ formatCount(usageTotals.estimatedTokens) }}</strong><small><b>{{ formatCount(usageTotals.toolCallCount) }}</b> 次工具调用</small>
-          </div>
-          <div class="wb-stat wb-surface wb-stat--purple card-hover">
-            <div class="wb-stat-head"><span class="font-display">Active Goals</span><i><ListChecks :size="16" /></i></div>
-            <strong class="font-display">{{ planningStats.activeGoals }}</strong><small><b>{{ planningStats.activePlans }}</b> 个 Plan 进行中</small>
-          </div>
-          <div class="wb-stat wb-surface card-hover" :class="planningStats.pendingReview > 0 || errorServices > 0 ? 'wb-stat--orange' : 'wb-stat--green'">
-            <div class="wb-stat-head"><span class="font-display">Verification</span><i><ShieldCheck :size="16" /></i></div>
-            <strong class="font-display">{{ executionStats.verified }}</strong><small>{{ executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收` }}</small>
-          </div>
+        <div class="ui-metric-grid dashboard-status-metrics animate-fade-in-up delay-300">
+          <MetricCard label="正在执行" :value="executionStats.running" :detail="`${executionStats.changedFiles} 个执行变更文件`"><template #icon><Boxes :size="16" class="text-[var(--ui-accent)]" /></template></MetricCard>
+          <MetricCard label="Global MCP" :value="globalMcpRuntimeState === 'running' ? '运行中' : '已停止'" :detail="`${globalOverview.sessionCount} 个活跃 Session`"><template #icon><Cpu :size="16" class="text-[var(--ui-text-muted)]" /></template></MetricCard>
+          <MetricCard label="Active Goals" :value="planningStats.activeGoals" :detail="`${planningStats.activePlans} 个 Plan 进行中`"><template #icon><ListChecks :size="16" class="text-[var(--ui-text-muted)]" /></template></MetricCard>
+          <MetricCard label="验证通过" :value="executionStats.verified" :detail="executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收`"><template #icon><ShieldCheck :size="16" :class="executionStats.blocked > 0 ? 'text-[var(--ui-warning)]' : 'text-[var(--ui-success)]'" /></template></MetricCard>
         </div>
 
-        <section class="wb-visual-overview mt-5 animate-fade-in-up delay-500">
-          <article class="wb-overview-card wb-overview-card--flow wb-surface card-hover">
+        <section class="wb-visual-overview animate-fade-in-up delay-500">
+          <article class="wb-overview-card wb-overview-card--flow ui-surface">
             <div class="wb-overview-head">
               <div>
                 <span class="wb-overview-kicker"><Activity :size="12" /> 实时流量</span>
@@ -687,7 +707,7 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface card-hover">
+          <article class="wb-overview-card ui-surface">
             <div class="wb-overview-head">
               <div>
                 <span class="wb-overview-kicker font-display"><GitBranch :size="12" /> Session 路由</span>
@@ -713,7 +733,7 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface card-hover">
+          <article class="wb-overview-card ui-surface">
             <div class="wb-overview-head">
               <div>
                 <span class="wb-overview-kicker font-display"><ListChecks :size="12" /> Planning</span>
@@ -739,7 +759,7 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article class="wb-overview-card wb-surface card-hover">
+          <article class="wb-overview-card ui-surface">
             <div class="wb-overview-head">
               <div>
                 <span class="wb-overview-kicker font-display"><Boxes :size="12" /> Workspace 负载</span>
@@ -761,7 +781,7 @@ onUnmounted(() => {
           </article>
         </section>
 
-        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-surface card-hover animate-fade-in-up delay-700">
+        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-attention-priority ui-surface animate-fade-in-up delay-700">
           <div class="wb-section-heading"><div><h3 class="font-display">需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>
           <div class="wb-attention-list">
             <button v-for="item in attentionItems" :key="`${item.workspace.id}-${item.title}`" class="wb-attention-row" type="button" @click="openWorkspace(item.workspace.id)">
@@ -771,7 +791,7 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <section v-if="moduleVisible('workspaces')" class="wb-section wb-surface card-hover animate-fade-in-up delay-700">
+        <section v-if="moduleVisible('workspaces')" class="wb-section wb-workspaces-section ui-surface animate-fade-in-up delay-700">
           <div class="wb-section-heading"><div><h3 class="font-display">工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)] font-mono">{{ workspaceCount }} Workspaces</span></div>
           <div class="wb-workspace-list">
             <div class="wb-workspace-header"><span>Workspace</span><span>Context</span><span>Planning</span><span>Tokens</span><span /></div>
@@ -781,19 +801,19 @@ onUnmounted(() => {
               <div class="wb-mode-pill min-w-0"><GitBranch :size="11" /><span class="truncate" :title="planningSummary(workspace.id)">{{ planningSummary(workspace.id) }}</span></div>
               <div class="wb-workspace-token font-mono">{{ formatCount(workspaceUsageTokens(workspace.id)) }}</div>
               <div class="wb-workspace-actions">
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="togglePinnedWorkspace(workspace.id)"><PinOff v-if="dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)" :size="11" /><Pin v-else :size="11" /></button>
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))"><ChevronUp :size="11" /></button>
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="11" /></button>
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="revealDirectory(workspace.path)"><FolderOpen :size="11" /></button>
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="11" class="text-[var(--success)]" /><Copy v-else :size="11" /></button>
-                <button class="wb-icon-button btn-hover !h-7 !w-7 !min-h-7" type="button" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="11" /></button>
+                <BaseButton variant="icon" size="sm" title="固定工作区" @click="togglePinnedWorkspace(workspace.id)"><PinOff v-if="dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)" :size="12" /><Pin v-else :size="12" /></BaseButton>
+                <BaseButton variant="icon" size="sm" title="上移" @click="moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))"><ChevronUp :size="12" /></BaseButton>
+                <BaseButton variant="icon" size="sm" title="下移" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="12" /></BaseButton>
+                <BaseButton variant="icon" size="sm" title="打开目录" @click="revealDirectory(workspace.path)"><FolderOpen :size="12" /></BaseButton>
+                <BaseButton variant="icon" size="sm" title="复制路径" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="12" class="text-[var(--ui-success)]" /><Copy v-else :size="12" /></BaseButton>
+                <BaseButton variant="icon" size="sm" title="打开工作区" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="12" /></BaseButton>
               </div>
             </div>
           </div>
         </section>
 
-        <div class="wb-grid-two animate-fade-in-up delay-900">
-          <section v-if="moduleVisible('activity')" class="wb-section wb-surface card-hover">
+        <div class="wb-grid-two wb-dashboard-activity-grid animate-fade-in-up delay-900">
+          <section v-if="moduleVisible('activity')" class="wb-section ui-surface">
             <div class="wb-section-heading"><div><h3 class="font-display">最近活动</h3><p>汇总各工作区最近的 History Session。</p></div><Activity :size="14" /></div>
             <div v-if="recentActivities.length" class="wb-activity-list">
               <button
@@ -824,8 +844,8 @@ onUnmounted(() => {
             <div v-else class="wb-empty-inline">还没有可汇总的 History Session。</div>
           </section>
 
-          <section v-if="moduleVisible('health')" class="wb-section wb-surface card-hover">
-            <div class="wb-section-heading"><div><h3 class="font-display">系统健康</h3><p>Global MCP 与公网入口属于全局运行时，不绑定任何单个 Workspace。</p></div><Gauge :size="14" /></div>
+          <section v-if="moduleVisible('health')" class="wb-section ui-surface">
+            <div class="wb-section-heading"><div><h3 class="font-display">健康详情</h3><p>每 10 秒自动检查 Global MCP 与公网入口；窗口重新获得焦点时也会立即检查。</p></div><Gauge :size="14" /></div>
             <div v-if="globalHealth.length" class="wb-global-health-grid mb-3">
               <div
                 v-for="item in globalHealth"
@@ -834,18 +854,10 @@ onUnmounted(() => {
               >
                 <div class="flex items-center justify-between gap-3">
                   <strong class="text-xs font-semibold text-[var(--text-main)] font-display">{{ item.label }}</strong>
-                  <span
-                    class="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                    :class="item.ok
-                      ? 'bg-[#30d158]/15 text-[#30d158] border border-[#30d158]/30 shadow-[0_0_8px_rgba(48,209,88,0.25)]'
-                      : 'bg-[#ff453a]/15 text-[#ff453a] border border-[#ff453a]/30 shadow-[0_0_8px_rgba(255,69,58,0.25)]'"
-                  >
-                    <span class="h-1.5 w-1.5 rounded-full" :class="item.ok ? 'bg-[#30d158]' : 'bg-[#ff453a] animate-pulse'" />
-                    {{ item.ok ? '正常' : '异常' }}
-                  </span>
+                  <StatusPill :status="item.ok ? 'success' : 'error'" :label="item.ok ? '正常' : '异常'" />
                 </div>
-                <p class="mt-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">{{ item.detail }}</p>
-                <p v-if="item.hint" class="mt-1 text-[10px] leading-4 text-[var(--text-muted)] font-mono">{{ item.hint }}</p>
+                <p class="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">{{ item.detail }}</p>
+                <p v-if="item.hint" class="mt-1 text-xs leading-4 text-[var(--text-muted)] font-mono">{{ item.hint }}</p>
               </div>
             </div>
             <div class="wb-health-overview">
@@ -877,18 +889,18 @@ onUnmounted(() => {
               <div class="wb-mix-chart">
                 <div class="wb-mix-head"><span class="font-display">Chat Sessions</span><strong class="font-display">{{ globalOverview.sessionCount }}</strong></div>
                 <div v-if="globalOverview.sessions.length" class="mt-2 space-y-1.5">
-                  <div v-for="session in globalOverview.sessions.slice(0, 4)" :key="session.sessionId" class="flex items-center justify-between gap-3 text-[10px]">
+                  <div v-for="session in globalOverview.sessions.slice(0, 4)" :key="session.sessionId" class="flex items-center justify-between gap-3 text-xs">
                     <span class="min-w-0 truncate text-[var(--text-secondary)]">{{ session.workspaceName }}</span>
-                    <code class="shrink-0 text-[9px] text-[var(--text-muted)] font-mono">{{ session.sessionId.slice(0, 8) }}</code>
+                    <code class="shrink-0 text-xs text-[var(--text-muted)] font-mono">{{ session.sessionId.slice(0, 8) }}</code>
                   </div>
                 </div>
-                <div v-else class="mt-2 text-[10px] text-[var(--text-muted)]">尚无活跃 Chat Session</div>
+                <div v-else class="mt-2 text-xs text-[var(--text-muted)]">尚无活跃 Chat Session</div>
               </div>
             </div>
           </section>
         </div>
 
-        <section v-if="moduleVisible('usage')" class="wb-section wb-surface wb-analytics-section card-hover animate-fade-in-up delay-1100">
+        <section v-if="moduleVisible('usage')" class="wb-section ui-surface wb-analytics-section animate-fade-in-up delay-1100">
           <div class="wb-section-heading"><div><h3 class="font-display">Token Analytics</h3><p>MCP JSON 传输量估算，用于观察工具调用趋势。</p></div><Zap :size="14" /></div>
           <div class="wb-grid-two">
             <DashboardUsagePanel :totals="usageTotals" :average-tokens="averageTokens" :chart="usageChart" />
@@ -939,7 +951,8 @@ onUnmounted(() => {
           </div>
         </section>
       </template>
-    </div>
+      </div>
+    </PageShell>
   </section>
 
   <DashboardCommandPalette
