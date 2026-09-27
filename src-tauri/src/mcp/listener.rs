@@ -463,20 +463,14 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
     if state.auth.oauth_enabled() {
         if let Some(oauth) = state.oauth.as_ref() {
             let server_url = resolve_oauth_base(state, headers);
-            match verify_oauth_bearer_header(headers, oauth, &server_url) {
-                None => return None,
-                Some(mut response) => {
-                    if response.status() == StatusCode::UNAUTHORIZED {
-                        let metadata_url = protected_resource_metadata_url(&server_url);
-                        if let Ok(value) =
-                            format!("Bearer resource_metadata=\"{metadata_url}\"").parse()
-                        {
-                            response.headers_mut().insert(WWW_AUTHENTICATE, value);
-                        }
-                    }
-                    return Some(response);
+            let mut response = verify_oauth_bearer_header(headers, oauth, &server_url)?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                let metadata_url = protected_resource_metadata_url(&server_url);
+                if let Ok(value) = format!("Bearer resource_metadata=\"{metadata_url}\"").parse() {
+                    response.headers_mut().insert(WWW_AUTHENTICATE, value);
                 }
             }
+            return Some(response);
         }
     }
     if state.auth.auth_enabled() {

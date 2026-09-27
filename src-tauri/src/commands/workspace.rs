@@ -254,6 +254,7 @@ pub struct DetectedIde {
 struct IdeDefinition {
     id: &'static str,
     name: &'static str,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     mac_app: &'static str,
     cli: &'static str,
 }

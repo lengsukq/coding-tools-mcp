@@ -228,11 +228,10 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::*;
 
-    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn get_webview_memory_sample_is_supported_and_reports_main_memory() {
         let sample = get_webview_memory_sample().expect("采样界面内存不应失败");
