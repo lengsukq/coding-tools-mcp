@@ -1322,6 +1322,14 @@
   gap: 18px;
 }
 
+.wb-dashboard-activity-grid {
+  align-items: start;
+}
+
+.wb-dashboard-activity-grid > .wb-section {
+  align-content: start;
+}
+
 .wb-activity-list {
   display: flex;
   flex-direction: column;

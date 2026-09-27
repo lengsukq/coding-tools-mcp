@@ -48,10 +48,10 @@ function handleKeydown(event: KeyboardEvent, index: number) {
   overflow-x: auto;
   border: 1px solid var(--card-border, rgba(var(--pal-rgb, 226, 87, 76), 0.16));
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.65);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 8px rgba(var(--pal-rgb, 190, 120, 110), 0.06);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--ui-surface-subtle);
+  box-shadow: inset 0 1px 2px rgba(20, 27, 38, 0.06);
+  backdrop-filter: blur(var(--ui-glass-blur-subtle, 16px)) saturate(var(--ui-glass-saturation, 155%));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur-subtle, 16px)) saturate(var(--ui-glass-saturation, 155%));
   scrollbar-width: none;
 }
 
@@ -63,7 +63,7 @@ function handleKeydown(event: KeyboardEvent, index: number) {
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 560;
   line-height: 1;
@@ -73,34 +73,21 @@ function handleKeydown(event: KeyboardEvent, index: number) {
 }
 
 .ios-segmented__item:hover:not(.active) {
-  background: var(--primary-soft, rgba(var(--pal-rgb, 226, 87, 76), 0.08));
-  color: var(--text-main);
+  background: var(--ui-surface-hover);
+  color: var(--ui-text);
+}
+
+.ios-segmented__item:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 .ios-segmented__item:active { transform: scale(.96); }
 
 .ios-segmented__item.active {
-  background: var(--primary-gradient, var(--primary));
+  background: var(--ui-accent);
   color: #ffffff;
   font-weight: 650;
-  box-shadow: 0 4px 14px var(--coral-glow, rgba(var(--pal-rgb, 0, 113, 227), 0.28)), inset 0 1px 0 rgba(255, 255, 255, 0.35);
-}
-
-:global(.dark) .ios-segmented,
-:global([data-theme="dark"]) .ios-segmented {
-  border-color: var(--card-border, rgba(var(--pal-rgb, 253, 189, 180), 0.14));
-  background: rgba(20, 20, 24, 0.65);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-:global(.dark) .ios-segmented__item:hover:not(.active),
-:global([data-theme="dark"]) .ios-segmented__item:hover:not(.active) {
-  background: rgba(255, 255, 255, 0.08);
-}
-:global(.dark) .ios-segmented__item.active,
-:global([data-theme="dark"]) .ios-segmented__item.active {
-  background: var(--primary-gradient, var(--primary));
-  color: #ffffff;
-  box-shadow: 0 4px 14px var(--coral-glow, rgba(var(--pal-rgb, 0, 113, 227), 0.32)), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow: 0 1px 2px rgba(10, 25, 45, 0.16);
 }
 </style>

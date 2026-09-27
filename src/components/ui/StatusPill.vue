@@ -11,7 +11,7 @@ const tone = computed(() => {
 </script>
 
 <template>
-  <span :class="tone" class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold">
+  <span :class="tone" class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium">
     <span class="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
     {{ label || status }}
   </span>
@@ -19,44 +19,26 @@ const tone = computed(() => {
 
 <style scoped>
 .is-success {
-  background: rgba(52, 199, 89, 0.12);
-  color: #248a3d;
-  border: 1px solid rgba(52, 199, 89, 0.22);
-}
-:global([data-theme="dark"]) .is-success,
-:global(.dark) .is-success {
-  background: rgba(48, 209, 88, 0.16);
-  color: #30d158;
-  border-color: rgba(48, 209, 88, 0.26);
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+  border-color: color-mix(in srgb, var(--ui-success) 26%, transparent);
 }
 
 .is-warning {
-  background: rgba(255, 149, 0, 0.12);
-  color: #c97000;
-  border: 1px solid rgba(255, 149, 0, 0.22);
-}
-:global([data-theme="dark"]) .is-warning,
-:global(.dark) .is-warning {
-  background: rgba(255, 159, 10, 0.16);
-  color: #ff9f0a;
-  border-color: rgba(255, 159, 10, 0.26);
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
+  border-color: color-mix(in srgb, var(--ui-warning) 26%, transparent);
 }
 
 .is-danger {
-  background: rgba(255, 59, 48, 0.12);
-  color: #d70015;
-  border: 1px solid rgba(255, 59, 48, 0.22);
-}
-:global([data-theme="dark"]) .is-danger,
-:global(.dark) .is-danger {
-  background: rgba(255, 69, 58, 0.16);
-  color: #ff453a;
-  border-color: rgba(255, 69, 58, 0.26);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  border-color: color-mix(in srgb, var(--ui-danger) 26%, transparent);
 }
 
 .is-neutral {
-  background: color-mix(in srgb, var(--text-main) 5%, transparent);
-  color: var(--text-secondary);
-  border: 1px solid color-mix(in srgb, var(--text-main) 8%, transparent);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  border-color: var(--ui-line);
 }
 </style>

@@ -9,15 +9,15 @@ withDefaults(defineProps<{ label?: string; placeholder?: string; hint?: string; 
 
 <template>
   <label class="block min-w-0">
-    <span v-if="label" class="mb-1.5 block text-xs font-semibold text-[var(--text-secondary)] tracking-tight">{{ label }}</span>
+    <span v-if="label" class="mb-1.5 block text-xs font-medium text-[var(--ui-text-secondary)]">{{ label }}</span>
     <textarea
       v-model="model"
       :rows="rows"
       :placeholder="placeholder"
       :disabled="disabled"
-      class="w-full resize-y rounded-2xl border border-[var(--card-border)] bg-[var(--coral-50)]/80 px-3.5 py-2.5 text-sm leading-5 text-[var(--text-main)] outline-none transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] placeholder:text-[var(--text-muted)] focus:border-[var(--primary)]/50 focus:bg-white focus:ring-4 focus:ring-[var(--primary)]/15 dark:border-white/[0.07] dark:bg-white/[0.06] dark:focus:border-[var(--primary)]/60 dark:focus:bg-white/[0.11] dark:focus:ring-[var(--primary)]/20 disabled:cursor-not-allowed disabled:opacity-40"
+      class="w-full resize-y rounded-[var(--ui-radius-control)] border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] px-3 py-2.5 text-sm leading-5 text-[var(--ui-text)] outline-none transition-[background,border-color,box-shadow] duration-150 placeholder:text-[var(--ui-text-muted)] focus:border-[var(--ui-accent)] focus:bg-[var(--ui-surface-raised)] focus:shadow-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
       :class="mono ? 'font-mono text-xs' : ''"
     />
-    <span v-if="hint" class="mt-1.5 block text-[11px] leading-4 text-[var(--text-muted)]">{{ hint }}</span>
+    <span v-if="hint" class="mt-1.5 block text-xs leading-4 text-[var(--ui-text-muted)]">{{ hint }}</span>
   </label>
 </template>

@@ -6,6 +6,7 @@ import "./app.css";
 import "./styles/workbench.css";
 import "./styles/ios-vue.css";
 import "./palette.css";
+import "./styles/design-system.css";
 
 initPalette();
 
