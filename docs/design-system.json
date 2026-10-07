@@ -1,97 +1,27 @@
 {
-  "version": "4.0.0",
-  "name": "Coding Tools MCP iOS Glass",
-  "aesthetic": "ios-inspired-frosted-glass",
-  "principles": [
-    "information-first",
-    "translucent-frosted-surfaces",
-    "oversized-rounded-corners",
-    "semantic-status-colors",
-    "clear-interaction-affordances",
-    "progressive-disclosure-for-low-frequency-settings",
-    "single-source-design-tokens",
-    "restrained-ambient-light"
+  "style": "frosted-glass-desktop",
+  "purpose": "管理 AI 开发过程",
+  "source": "src/styles/design-system.css",
+  "fonts": {
+    "title": 26,
+    "section": 16,
+    "body": 14,
+    "auxiliary": 12
+  },
+  "spacingBase": 4,
+  "radius": {
+    "control": 12,
+    "panel": 24,
+    "overlay": 28
+  },
+  "buttonHeight": {
+    "default": 36,
+    "compact": 32
+  },
+  "breakpointsByContentWidth": [
+    1000,
+    700
   ],
-  "hierarchy": {
-    "L1": "current task, risk, primary action",
-    "L2": "status, progress, workspace and runtime objects",
-    "L3": "analytics, activity, history, reviews and audit summaries",
-    "L4": "technical metadata"
-  },
-  "typography": {
-    "family": "system-ui with platform Chinese fonts",
-    "mono": "ui-monospace",
-    "pageTitle": "24-28px",
-    "sectionTitle": "16px",
-    "body": "14px",
-    "dense": "12-13px",
-    "metadata": "12px",
-    "minimumRegularUiText": "12px"
-  },
-  "colorPolicy": {
-    "brand": "palette-controlled accent only",
-    "success": "fixed-semantic green",
-    "warning": "fixed-semantic amber",
-    "danger": "fixed-semantic red",
-    "neutralShareTarget": ">=90%",
-    "stateRequiresTextOrIcon": true
-  },
-  "surfaces": {
-    "canvas": "cool neutral with a faint palette-tinted ambient wash",
-    "surface": "translucent white in light theme and cool charcoal glass in dark theme",
-    "inset": "lighter translucent inset surface with a quiet hairline boundary",
-    "border": "1px translucent neutral line paired with backdrop blur",
-    "shadow": "soft layered highlight and depth on glass surfaces; stronger shadow only for overlays",
-    "backdropBlur": true,
-    "decorativeGradient": "restrained ambient light only; no rings or animated orbs"
-  },
-  "shape": {
-    "control": "16px",
-    "row": "20px",
-    "card": "26px",
-    "panel": "30px",
-    "overlay": "34px"
-  },
-  "spacing": {
-    "base": 4,
-    "scale": [4, 8, 12, 16, 24, 32, 48, 64],
-    "sectionGap": "24-32px",
-    "pageGutter": "clamp(20px, 2.4vw, 36px)"
-  },
-  "components": {
-    "page": ["PageShell", "PageHeader", "SectionHeader"],
-    "surface": ["GlassCard (compatibility name; standard surface)", "MetricCard", "ActionCard", "DataRow"],
-    "control": ["BaseButton", "TextField", "SelectField", "TextAreaField", "ToggleSwitch", "SegmentedControl"],
-    "feedback": ["StatusPill", "ToastHost", "ModalDialog", "ConfirmDialog"],
-    "disclosure": "Use native details/summary for advanced or low-frequency settings."
-  },
-  "affordance": {
-    "staticSurfaceHover": false,
-    "interactiveSurfaceHover": true,
-    "primaryActionsPerTaskRegion": 1,
-    "dangerActionIsolated": true,
-    "focusVisibleRequired": true
-  },
-  "responsive": {
-    "desktop": "stable sidebar and content width; multi-column only when it improves scanning",
-    "compact": "reduce columns and secondary metadata",
-    "narrow": "single-column task order, secondary controls collapse, no page-level horizontal scrolling"
-  },
-  "motion": {
-    "duration": "150-200ms",
-    "purpose": "direct interaction feedback only",
-    "reducedMotionRequired": true
-  },
-  "acceptance": {
-    "targetScore": 8.5,
-    "requiredViewports": ["1440x900", "390x844"],
-    "blockingFailures": [
-      "horizontal page scrolling",
-      "primary state conveyed by color only",
-      "static cards that look interactive",
-      "analytics visually outranking current tasks or risks",
-      "misleading success status when no records exist",
-      "low-frequency technical settings dominating the initial view"
-    ]
-  }
+  "colors": "semantic tokens; existing palette; independent success/warning/danger",
+  "motion": "150ms; reduced-motion supported"
 }

@@ -1,70 +1,31 @@
-# Coding Tools MCP UI Design System
+# 全应用设计规范
 
-> iOS Glass: a calm frosted-glass desktop with generous rounded corners, clear hierarchy, and readable controls.
+本轮保留毛玻璃风格，主要服务于查看 AI 工作、处理阻塞、追溯变更和人工验收。任务由 AI 会话发起，桌面端提供管理入口。
 
-## Visual direction
+## 唯一视觉来源
 
-Use an iOS-inspired desktop style with large rounded corners, translucent frosted surfaces, soft layered highlights, and one palette-controlled accent. Keep ambient light subtle and static; avoid rings, animated orbs, and strong gradients that compete with the content. Keep success, warning, and error colors semantic.
+`src/styles/design-system.css` 定义语义 token、公共布局和交互状态；`src/app.css` 只负责基础结构与字体，`src/palette.css` 只定义现有品牌色。页面 scoped 样式只处理局部布局。旧 workbench / ios-vue 样式层逐页迁移后删除。
 
-## Information hierarchy
+## 层次与尺寸
 
-1. Current work, risks, errors, and primary actions.
-2. Workspace, runtime, connection, and progress state.
-3. Activity, analytics, history, reviews, and audit summaries.
-4. Paths, IDs, revisions, and other technical metadata.
+- 侧栏使用半透明背景；内容面板使用 24px 模糊；浮层使用 32px 模糊。行、字段组和详情说明使用轻背景与分隔线。
+- 标题 26px，区块标题 16px，正文与标准控件 14px，辅助文字 12px。路径和 ID 使用系统等宽字体。
+- 间距以 4px 为基础；控件圆角 12px，面板 24px，浮层 28px；按钮默认 36px，紧凑 32px。
+- 品牌色用于主要动作与选中状态；成功、警告、异常使用独立语义 token，浅色和深色分别调整对比度。
+- 静态卡片没有点击动效；交互行有 hover；键盘 focus 清晰；禁用和 busy 显式；减少动态效果时关闭非必要动画。
 
-Keep lower-priority information visually quiet until it helps the current task.
+## 内容宽度适配
 
-## Layout and spacing
+内容区 ≥1000px 使用主辅列；700–999px 辅助列转为后续区块；<700px 单列。详情表格在区域内滚动。桌面应用保留现有 960px 最小窗口宽度，窄宽度通过本地 Web 测试壳验证。
 
-- Use `PageShell`, `PageHeader`, and `SectionHeader` for shared page rhythm.
-- Dashboard and Workspace use a wide canvas; Settings use a reading width.
-- Use a 4px spacing scale: 4, 8, 12, 16, 24, 32, 48, and 64px. Leave visible breathing room between glass surfaces.
-- Keep one clear primary action per task area. Isolate destructive actions.
-- Use native `details` / `summary` for advanced or low-frequency settings.
-- At narrow widths, keep the task order in one column and remove page-level horizontal scrolling.
+## 状态口径
 
-## Type and color
+同一份 `ui-model` 定义任务焦点、中文状态与进度。计划标题优先，关联目标为说明。完成和跳过分别计数，进度表示已处理步骤。无步骤不显示虚假完成度。
 
-- Use the platform UI font stack; use a system monospace font for paths, IDs, and endpoints.
-- Page titles: 24–28px. Section titles: 16px. Body: 14px. Regular UI text: at least 12px.
-- Neutral colors should cover at least 90% of the canvas.
-- Palette choices affect the accent only. They must not change status semantics.
-- Pair every status color with text or an icon.
+运行中、未结束、待验收、完成分别表达。存在验证记录仅说明“已有验证记录”，需要用户结合变更与验收条件判断结果。运行状态不代表连接健康；未知、请求失败和过期数据均有文字提示。
 
-## Surfaces and components
+## 公共组件
 
-| Component | Rule |
-| --- | --- |
-| `GlassCard` | Translucent surface with restrained backdrop blur, a soft highlight, and a large corner radius; static cards do not lift on hover. |
-| `MetricCard` | A supporting metric, not a primary action. No decorative color treatment. |
-| `ActionCard` | Use only when the whole surface is actionable. |
-| `DataRow` | Use for compact configuration, endpoint, profile, and list information. |
-| `BaseButton` | Primary, secondary, ghost, danger, or icon. Avoid multiple primary actions in one region. |
-| `StatusPill` | Fixed semantic colors and visible status text. |
-| Form controls | Persistent labels, clear disabled state, and errors beside the affected field. |
+PageHeader、PageShell、GlassCard、BaseButton、TextField、SelectField、TextAreaField、ToggleSwitch、StatusPill、PageTabs、SegmentedControl、EmptyState、SaveBar、ModalDialog、ConfirmDialog。页签使用 tab 语义；执行模式使用 radio 语义；两者支持方向键、Home、End。
 
-Use translucent borders and spacing to separate surfaces, with enough blur and fill opacity to keep text readable. Reserve stronger shadows for dialogs and popovers.
-
-## Page priorities
-
-- **Dashboard:** current work → needs attention → workspace/runtime status → activity → analytics.
-- **Workspace:** current plan and risks → Git/runtime/verification → review/history → technical details.
-- **Tool Audit:** filters and records → health and retention → compact summary metrics.
-- **Settings:** primary configuration → status and save action → collapsed advanced options → technical help.
-
-When there are no audit records, show an unavailable/empty success rate instead of `100%`.
-
-## Interaction and accessibility
-
-- Provide hover, active, focus-visible, and disabled styles for controls.
-- Keep keyboard focus visible and preserve native disclosure behavior.
-- Support `prefers-reduced-motion`; animate direct state changes only.
-- Keep touch targets practical and avoid hiding the only way to complete a task.
-
-## CSS ownership
-
-- `palette.css` defines brand accents only.
-- `styles/design-system.css` owns semantic tokens and the current surface/page overrides.
-- `styles/ios-vue.css` and `styles/workbench.css` remain compatibility layers; do not add new visual rules there.
-- Prefer `--ui-*` tokens and shared components in new UI.
+开发环境 `/dev/ui` 提供组件展示页；生产环境不注册该地址。完整目录见 `docs/ui/component-catalog.json`。

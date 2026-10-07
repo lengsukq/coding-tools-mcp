@@ -1,71 +1,96 @@
 {
-  "version": "1.0.0",
+  "principle": "标题与作用域 → 主要操作 → 核心内容 → 辅助信息",
   "dashboard": [
-    "page-header",
-    "current-focus",
-    "needs-attention",
-    "workspace-runtime-status",
-    "recent-activity",
-    "analytics-and-token"
+    "需要处理（不可隐藏）",
+    "当前工作",
+    "工作区列表",
+    "最近活动",
+    "用量与趋势（默认折叠，传输量估算）"
   ],
-  "workspace": [
-    "workspace-header",
-    "tabs",
-    "current-work-and-risk",
-    "git-runtime-verification",
-    "activity-review-history",
-    "technical-metadata"
-  ],
-  "audit": [
-    "page-header-and-health",
-    "filters-and-records",
-    "compact-supporting-metrics",
-    "retention-and-destructive-actions"
-  ],
-  "settingsGeneral": [
-    "page-header",
-    "global-runtime-and-primary-configuration",
-    "permissions-and-connection-defaults",
-    "collapsed-agent-context-advanced-options",
-    "proxy-settings",
-    "status-and-save-action",
-    "technical-help"
-  ],
-  "settingsKeys": [
-    "page-header",
-    "masked-credential-list",
-    "per-credential-regeneration",
-    "single-save-action"
-  ],
-  "settingsConnection": [
-    "runtime-state-and-primary-actions",
-    "endpoint-and-tunnel-configuration",
-    "conditional-provider-options",
-    "endpoint-health"
-  ],
-  "settingsFrp": [
-    "page-header",
-    "profile-create-form",
-    "saved-profile-list-and-impact-warning"
-  ],
-  "settingsSoftware": [
-    "page-header",
-    "managed-client-status",
-    "download-source-and-proxy-settings"
-  ],
-  "responsive": {
-    "wide": "multi-column where it improves scanning",
-    "compact": "secondary columns collapse",
-    "narrow": "single-column task order, no horizontal page scroll"
+  "workspace": {
+    "overview": [
+      "当前任务",
+      "待处理事项",
+      "Git/执行摘要",
+      "IDE 入口"
+    ],
+    "planning": [
+      "任务筛选与列表",
+      "目标/计划详情",
+      "步骤",
+      "执行与验证记录",
+      "验收或修改意见",
+      "低频管理"
+    ],
+    "changes": [
+      "工作区与会话 Diff",
+      "冻结快照（workspace/session/operation）",
+      "时间和关联信息"
+    ],
+    "history": [
+      "会话与摘要",
+      "关联变更",
+      "注入上下文选择"
+    ],
+    "diagnostics": [
+      "工作区日志",
+      "错误与重试",
+      "审计入口"
+    ],
+    "settings": [
+      "名称与目录",
+      "仓库保护",
+      "执行权限",
+      "指令与技能来源",
+      "历史记录",
+      "删除工作区"
+    ]
   },
-  "avoid": [
-    "equal-weight card wall",
-    "decorative KPI colors",
-    "nested cards",
-    "static hover lift",
-    "sub-12px regular UI copy",
-    "strong or animated full-page decoration such as rings or orbs",
-    "technical settings expanded by default",
-    "100% success rate when there are no audit records"
-  ]
+  "settings": {
+    "general": [
+      "外观",
+      "启动恢复"
+    ],
+    "connection": [
+      "服务启停",
+      "端点",
+      "公网方式",
+      "认证与密钥",
+      "局域网访问",
+      "FRP 配置",
+      "连接检查"
+    ],
+    "execution": [
+      "全局默认权限",
+      "白名单与路径",
+      "AI 指令与来源"
+    ],
+    "tools": [
+      "网络代理",
+      "软件状态",
+      "下载设置"
+    ],
+    "about": [
+      "版本与帮助",
+      "更新检查",
+      "高级界面内存维护"
+    ]
+  },
+  "audit": [
+    "筛选",
+    "记录与详情",
+    "折叠统计",
+    "保留与清理管理"
+  ],
+  "legacyRoutes": {
+    "/settings": "/settings/general",
+    "/settings/gateway": "/settings/connection?panel=gateway",
+    "/settings/keys": "/settings/connection?panel=keys",
+    "/settings/frp": "/settings/connection?panel=frp",
+    "/settings/software": "/settings/tools?panel=software",
+    "/workspace/:id/services": "/workspace/:id/settings"
+  },
+  "responsive": "内容宽度1000/700; 低于700单列;区域内表格滚动",
+  "data": "保留原 API、底层模式、记录、密钥和偏好；不迁移业务数据",
+  "selectionReason": "采用用户已确认的页面职责和验收流程，通用模板中不匹配的视觉/排列建议不采用"
 }

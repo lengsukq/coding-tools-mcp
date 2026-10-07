@@ -1,15 +1,223 @@
 {
-  "version": "1.0.0",
   "components": [
-    { "name": "PageShell", "category": "layout", "purpose": "统一页面宽度、gutter 与底部留白" },
-    { "name": "PageHeader", "category": "layout", "purpose": "统一页面标题、说明和页面级操作" },
-    { "name": "SectionHeader", "category": "layout", "purpose": "统一内容区块标题与辅助操作" },
-    { "name": "GlassCard", "category": "surface", "purpose": "兼容名；统一标准 Surface" },
-    { "name": "MetricCard", "category": "surface", "purpose": "静态指标，不默认可点击" },
-    { "name": "ActionCard", "category": "surface", "purpose": "明确可点击任务/风险入口" },
-    { "name": "DataRow", "category": "surface", "purpose": "配置、Endpoint、软件/Profile、列表信息" },
-    { "name": "BaseButton", "category": "control", "purpose": "统一 primary/secondary/ghost/danger/icon 操作层级" },
-    { "name": "StatusPill", "category": "feedback", "purpose": "固定语义的状态表达" },
-    { "name": "TextField/SelectField/TextAreaField/ToggleSwitch", "category": "control", "purpose": "统一表单交互" }
-  ]
+    {
+      "name": "BaseButton",
+      "path": "src/components/ui/BaseButton.vue",
+      "consumers": [
+        "src/App.vue",
+        "src/components/SecretField.vue",
+        "src/components/UnsavedChangesDialog.vue",
+        "src/components/CloseConfirmDialog.vue",
+        "src/views/WorkspaceView.vue",
+        "src/views/DashboardView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/KeysSettingsView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/ui/ConfirmDialog.vue",
+        "src/components/ui/SaveBar.vue",
+        "src/components/workspace/WorkspaceHeader.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/WorkspaceDiagnostics.vue",
+        "src/components/workspace/WorkspaceOverview.vue",
+        "src/components/workspace/ChatGptSessionPrompt.vue",
+        "src/components/workspace/HistoryContextPanel.vue",
+        "src/components/workspace/WorkspaceChanges.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue",
+        "src/components/workspace/WorkspacePlanning.vue",
+        "src/components/dashboard/DashboardPreferencesPopover.vue"
+      ],
+      "count": 25
+    },
+    {
+      "name": "ConfirmDialog",
+      "path": "src/components/ui/ConfirmDialog.vue",
+      "consumers": [
+        "src/views/settings/KeysSettingsView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/WorkspaceChanges.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 5
+    },
+    {
+      "name": "EmptyState",
+      "path": "src/components/ui/EmptyState.vue",
+      "consumers": [
+        "src/views/DashboardView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/components/workspace/WorkspaceOverview.vue",
+        "src/components/workspace/WorkspaceChanges.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 5
+    },
+    {
+      "name": "GlassCard",
+      "path": "src/components/ui/GlassCard.vue",
+      "consumers": [
+        "src/views/WorkspaceView.vue",
+        "src/views/DashboardView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/KeysSettingsView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceConfiguration.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/WorkspaceDiagnostics.vue",
+        "src/components/workspace/WorkspaceOverview.vue",
+        "src/components/workspace/HistoryContextPanel.vue",
+        "src/components/workspace/WorkspaceChanges.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 16
+    },
+    {
+      "name": "ModalDialog",
+      "path": "src/components/ui/ModalDialog.vue",
+      "consumers": [
+        "src/components/UnsavedChangesDialog.vue",
+        "src/components/CloseConfirmDialog.vue",
+        "src/views/WorkspaceView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/components/ui/ConfirmDialog.vue",
+        "src/components/dashboard/DashboardPreferencesPopover.vue",
+        "src/components/dashboard/DashboardCommandPalette.vue"
+      ],
+      "count": 8
+    },
+    {
+      "name": "PageHeader",
+      "path": "src/components/ui/PageHeader.vue",
+      "consumers": [
+        "src/views/DashboardView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/SettingsView.vue"
+      ],
+      "count": 4
+    },
+    {
+      "name": "PageShell",
+      "path": "src/components/ui/PageShell.vue",
+      "consumers": [
+        "src/views/DashboardView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/SettingsView.vue"
+      ],
+      "count": 3
+    },
+    {
+      "name": "PageTabs",
+      "path": "src/components/ui/PageTabs.vue",
+      "consumers": [
+        "src/views/WorkspaceView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/SettingsView.vue"
+      ],
+      "count": 3
+    },
+    {
+      "name": "SaveBar",
+      "path": "src/components/ui/SaveBar.vue",
+      "consumers": [
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/KeysSettingsView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceConfiguration.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/HistoryContextPanel.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue"
+      ],
+      "count": 10
+    },
+    {
+      "name": "SegmentedControl",
+      "path": "src/components/ui/SegmentedControl.vue",
+      "consumers": [
+        "src/views/ToolAuditView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 3
+    },
+    {
+      "name": "SelectField",
+      "path": "src/components/ui/SelectField.vue",
+      "consumers": [
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceChanges.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 7
+    },
+    {
+      "name": "StatusPill",
+      "path": "src/components/ui/StatusPill.vue",
+      "consumers": [
+        "src/views/DashboardView.vue",
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceOverview.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 5
+    },
+    {
+      "name": "TextAreaField",
+      "path": "src/components/ui/TextAreaField.vue",
+      "consumers": [
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue",
+        "src/components/workspace/WorkspacePlanning.vue"
+      ],
+      "count": 4
+    },
+    {
+      "name": "TextField",
+      "path": "src/components/ui/TextField.vue",
+      "consumers": [
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue",
+        "src/components/dashboard/DashboardCommandPalette.vue"
+      ],
+      "count": 8
+    },
+    {
+      "name": "ToggleSwitch",
+      "path": "src/components/ui/ToggleSwitch.vue",
+      "consumers": [
+        "src/views/ComponentGalleryView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/GatewaySettingsView.vue",
+        "src/components/workspace/WorkspaceConfiguration.vue",
+        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/workspace/HistoryContextPanel.vue",
+        "src/components/workspace/RuntimePolicyPanel.vue"
+      ],
+      "count": 7
+    }
+  ],
+  "developmentGallery": "/dev/ui"
 }
