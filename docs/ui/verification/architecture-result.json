@@ -1,0 +1,28 @@
+{
+  "mode": "drift",
+  "summary": "ARC-8 drift 已满足当前阶段门禁",
+  "arc8Status": {
+    "completedSteps": [
+      "arc-2",
+      "arc-7",
+      "arc-8"
+    ],
+    "blockedSteps": [],
+    "notInScopeSteps": [
+      "arc-1",
+      "arc-3",
+      "arc-4",
+      "arc-5",
+      "arc-6"
+    ],
+    "nextStep": null
+  },
+  "validation": {
+    "passed": true,
+    "gaps": [],
+    "driftFindings": []
+  },
+  "warnings": [
+    "baseline 为非结构化文本，仅按 inference 使用，不能单独满足设计门禁"
+  ]
+}

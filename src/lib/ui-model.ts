@@ -6,6 +6,8 @@ const labels: Record<string, string> = {
     ok: "正常", success: "成功", error: "异常", failed: "失败", blocked: "阻塞",
     pending: "待开始", active: "进行中", paused: "已暂停", draft: "草稿", completed: "已完成",
     awaiting_acceptance: "待验收", archived: "已归档", cancelled: "已取消", skipped: "已跳过", warning: "需关注",
+    compact: "精简开发", core: "兼容核心", advanced: "完整工具", "read-only": "只读工具", "compat-readonly-all": "兼容只读",
+    trusted: "受信任", safe: "安全受限", dangerous: "完全放开",
     verified: "已有验证记录", stale: "数据过期", direct: "直接执行", plan: "按计划执行", goal: "按目标执行",
 };
 export function statusPresentation(value?: string): {

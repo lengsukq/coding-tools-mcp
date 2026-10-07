@@ -1,0 +1,22 @@
+[
+  {
+    "minFont": 12,
+    "pageOverflow": false,
+    "width": 1440
+  },
+  {
+    "minFont": 12,
+    "pageOverflow": false,
+    "width": 1024
+  },
+  {
+    "minFont": 12,
+    "pageOverflow": false,
+    "width": 900
+  },
+  {
+    "minFont": 12,
+    "pageOverflow": false,
+    "width": 390
+  }
+]

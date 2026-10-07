@@ -54,7 +54,7 @@ onMounted(() => { void getCachedDetectedIdes().then(v => ides.value = v).catch((
 <strong>待验收 · {{item.title}}</strong>
 <span>查看任务 →</span>
 </button>
-<button v-if="planning?.execution.last_error" class="ui-list-action" @click="emit('navigate','planning')">
+<button v-if="planning?.execution.last_error" class="ui-list-action" @click="emit('navigate','diagnostics')">
 <span>
 <strong>最近执行异常</strong>
 <small>{{planning.execution.last_error}}</small>
@@ -135,11 +135,11 @@ onMounted(() => { void getCachedDetectedIdes().then(v => ides.value = v).catch((
 </div>
 <div class="ui-data-row">
 <span>工具档位</span>
-<strong>{{profile.runtime.tool_profile}}</strong>
+<strong>{{statusPresentation(profile.runtime.tool_profile).label}}</strong>
 </div>
 <div class="ui-data-row">
 <span>权限</span>
-<strong>{{profile.runtime.inherit_global_execution_policy?'继承全局':profile.runtime.permission_mode==='trusted'?'受信任':profile.runtime.permission_mode==='safe'?'安全受限':'完全放开'}}</strong>
+<strong>{{profile.runtime.inherit_global_execution_policy?'继承全局':statusPresentation(profile.runtime.permission_mode).label}}</strong>
 </div>
 <div class="ui-data-row">
 <span>历史记录</span>

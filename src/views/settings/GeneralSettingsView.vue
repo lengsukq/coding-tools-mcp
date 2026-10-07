@@ -11,6 +11,7 @@ import TextField from "../../components/ui/TextField.vue";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.vue";
 import SaveBar from "../../components/ui/SaveBar.vue";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
+import {SETTINGS_NAV} from "$lib/ui-model";
 import {enqueueRuntimeSettingsWrite} from "$lib/queued-writes";
 import { mergeOwnedChanges } from "$lib/runtime-settings-draft";
 import PalettePicker from "../../components/settings/PalettePicker.vue";
@@ -151,7 +152,7 @@ async function saveRuntime() {
         runtimeSaving.value = false;
     }
 }
-useUnsavedChanges("全局 " + props.section + " 设置", runtimeDirty, saveRuntime);
+useUnsavedChanges("应用设置 · " + (SETTINGS_NAV.find(item=>item.value===props.section)?.label ?? "通用"), runtimeDirty, saveRuntime);
 useUnsavedChanges("网络代理", proxyDirty, saveProxy);
 async function checkUpdate() {
     checkingUpdate.value = true;

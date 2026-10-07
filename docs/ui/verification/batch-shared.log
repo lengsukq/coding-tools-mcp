@@ -1,0 +1,18 @@
+
+> coding-tools-mcp-desktop@0.3.4 check
+> vue-tsc --noEmit
+
+
+> coding-tools-mcp-desktop@0.3.4 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2027 modules transformed.
+rendering chunks...
+computing gzip size...
+build/index.html                      1.18 kB │ gzip:   0.67 kB
+build/assets/app-icon-BmhhcKrV.png   74.80 kB
+build/assets/index-BMmUIBTi.css     237.69 kB │ gzip:  41.35 kB
+build/assets/index-tcBZHG5c.js      377.94 kB │ gzip: 117.64 kB
+✓ built in 2.35s

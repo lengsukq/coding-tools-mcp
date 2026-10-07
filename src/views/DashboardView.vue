@@ -49,7 +49,7 @@ const attention = computed(() => ordered.value.flatMap(row => {
     for (const item of [...(row.state?.plans ?? []), ...(row.state?.goals ?? [])].filter(i => i.status === 'awaiting_acceptance'))
         result.push({ key: id + item.id, title: row.workspace.name + ' · 待验收', detail: item.title, path: `/workspace/${id}/planning`, query: { item: item.id } });
     if (row.state?.execution.last_error || ['blocked', 'failed', 'error'].includes(row.state?.execution.state ?? ''))
-        result.push({ key: id + 'error', title: row.workspace.name + ' · 执行需要处理', detail: row.state?.execution.last_error || '执行已阻塞，请查看任务和诊断。', path: `/workspace/${id}/planning` });
+        result.push({ key: id + 'error', title: row.workspace.name + ' · 执行需要处理', detail: row.state?.execution.last_error || '执行已阻塞，请查看诊断。', path: `/workspace/${id}/diagnostics` });
     return result;
 }));
 const activities = computed(() => ordered.value.flatMap(row => (history.value[row.workspace.id] ?? []).map(session => ({ workspace: row.workspace, session }))).sort((a, b) => new Date(b.session.updated_at ?? b.session.created_at ?? 0).getTime() - new Date(a.session.updated_at ?? a.session.created_at ?? 0).getTime()).slice(0, 6));
@@ -134,7 +134,7 @@ onUnmounted(() => { generation++; window.clearInterval(timer); window.removeEven
 <strong>{{item.title}}</strong>
 <small>{{item.detail}}</small>
 </span>
-<span>查看任务 →</span>
+<span>{{item.path.endsWith('/diagnostics') ? '查看诊断' : '查看任务'}} →</span>
 </button>
   <EmptyState v-if="attention.length===0&&!['warning','error'].includes(globalHealthSummary.state)" title="暂无需要处理的事项" description="待验收和执行异常会集中显示在这里。"/>
  </GlassCard>

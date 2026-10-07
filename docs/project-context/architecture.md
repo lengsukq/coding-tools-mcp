@@ -43,6 +43,16 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | `docs/history-session/` | 项目内、可审计、无损 Markdown 会话档案 |
 | `.coding-tools/planning/state.json` | 项目本地 Goal / Plan / Execution Ledger 状态 |
 
+## 前端状态与界面边界
+
+工作台、侧栏及工作区使用 `ui-model.ts` 的展示口径：计划优先，目标作为关联说明，步骤完成和跳过分开，验证记录不代表验证通过。六个工作区页签和五个设置分类纳入 Hash 路由；旧设置入口映射到对应分类和区块。
+
+`async-resource.ts` 管理单个请求资源的去重、过期和代际失效；`workspace-status-cache.ts` 按工作区与资源类型持有共享缓存，并通过引用计数轮询刷新。晚返回请求只更新自己仍有效的资源代际。Rust DTO、持久化与 IPC 保持原有归属，前端缓存是可丢弃的展示投影。
+
+`queued-writes.ts` 持有模块级设置写入队列；各保存单元重新读取当前配置，只合并自己修改的字段，避免页面卸载或不同分类保存互相覆盖。`unsaved-changes.ts` 注册当前页面草稿，路由离开和关闭应用提供保存、放弃与取消；失败保留输入。
+
+`src/styles/design-system.css` 是语义 token 与通用视觉规则来源，页面负责布局。组件展示页仅在开发构建注册。验收依据与原生桌面待验收项见 [记录](../ui/verification/acceptance.md)。
+
 ## Tool Runtime
 
 所有 MCP 工具调用最终必须进入：

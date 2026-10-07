@@ -7,7 +7,7 @@
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.3.0` |
+| 版本 | `0.3.4` |
 | 桌面端 | Tauri 2 |
 | 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
@@ -38,6 +38,8 @@
 - [设计系统](./design-system.md)
 - [UI 页面结构](./ui/page-structure.json)
 - [UI 组件目录](./ui/component-catalog.json)
+- [全应用优化验收记录](./ui/verification/acceptance.md)
+- [UI 架构与代码审查](./ui/verification/architecture-review.md)
 
 ## 开发时的事实来源
 
@@ -48,9 +50,9 @@
 3. 当前功能对应的 `docs/specs/`；
 4. 带日期的历史规格、验证记录与 `docs/history-session/`，仅用于追溯，不作为当前 Runtime 实现依据。
 
-不要再使用已废弃的 `start_feature`、`add_feature`、`check_spec` 等旧 MCP Probe Kit 流程作为当前开发前置条件。
+Agent 的分析与交付前置要求以当前 `AGENTS.md` 和 `.agents/skills/mcp-probe-kit/SKILL.md` 为准。
 
 原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
-*当前事实更新: 2026-09-27*
+*当前事实更新: 2026-10-07*

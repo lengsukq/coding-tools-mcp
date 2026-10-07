@@ -1,0 +1,405 @@
+
+> coding-tools-mcp-desktop@0.3.4 test:release
+> npm run version:check && npm run check && npm run build && npm run test:ui && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked
+
+
+> coding-tools-mcp-desktop@0.3.4 version:check
+> node scripts/check-version.mjs
+
+Project version 0.3.4 is consistent
+
+> coding-tools-mcp-desktop@0.3.4 check
+> vue-tsc --noEmit
+
+
+> coding-tools-mcp-desktop@0.3.4 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2022 modules transformed.
+rendering chunks...
+computing gzip size...
+build/index.html                      1.18 kB │ gzip:   0.67 kB
+build/assets/app-icon-BmhhcKrV.png   74.80 kB
+build/assets/index-BXKm8vER.css      59.51 kB │ gzip:  12.01 kB
+build/assets/index-DdPIjHR4.js      346.85 kB │ gzip: 110.93 kB
+✓ built in 2.19s
+
+> coding-tools-mcp-desktop@0.3.4 test:ui
+> node --test tests/*.test.mjs
+
+✔ 会话启动提示词在工作区设置可找到且默认折叠，保留复制反馈 (1.809292ms)
+✔ 计划作为当前任务标题，关联目标提供说明，执行步骤准确定位 (0.392959ms)
+✔ 完成与跳过分别计数，零步骤不伪造进度 (0.281333ms)
+✔ 未知状态保持中性，执行中与待验收和完成分别表达 (0.064083ms)
+✔ 旧设置入口映射到唯一管理位置，导航具有完整六页与五分类 (0.070542ms)
+✔ 同一工作区请求去重，包括强制刷新；不同资源互不覆盖 (0.13575ms)
+✔ 缓存过期才重新请求；失败保留旧数据且标记过期；重试清除错误 (0.230708ms)
+✔ 缓存失效后的晚返回结果不能覆盖新请求，也不能结束新请求的 loading (0.075875ms)
+✔ 用户操作更新缓存后，旧后台错误不能覆盖验收成功结果 (0.075208ms)
+✔ 设置保存仅更新本分类中真正修改的字段，保留其他分类的新值 (0.087334ms)
+✔ 工作区不同保存分组串行读取最新配置，前一次失败不阻塞后续保存 (0.181208ms)
+✔ 草稿保护支持取消、失败保留、保存并离开与放弃；卸载移除登记 (1.869208ms)
+✔ 无明确目标关联时不猜测关系，其他计划的执行步骤不作为当前步骤 (0.040375ms)
+✔ 公网未启用和连接未检查保持中性，不表达为连接正常 (0.049167ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 180.828666
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (src-tauri/target/debug/deps/coding_tools_mcp_desktop_lib-ca05ba6dcf56e56d)
+
+running 212 tests
+test agent_context::tests::duplicate_instruction_files_are_injected_once ... ok
+test agent_context::tests::source_lists_are_normalized_and_deduplicated ... ok
+test agent_context::tests::workspace_auto_mode_overrides_global_provider_limits ... ok
+test agent_context::tests::workspace_disabled_mode_turns_off_inherited_scanning ... ok
+test agent_context::tests::workspace_manual_sources_override_global_auto_mode ... ok
+test agent_context::tests::cursor_only_loads_always_apply_rules_in_static_phase ... ok
+test agent_context::tests::empty_sources_enable_auto_instruction_discovery ... ok
+test auth::bearer::tests::rejects_missing_or_invalid_bearer_token ... ok
+test auth::bearer::tests::accepts_valid_bearer_token ... ok
+test auth::oauth::tests::authorization_metadata_includes_token_auth_methods ... ok
+test auth::oauth::tests::external_base_url_prefers_configured_url ... ok
+test auth::oauth::tests::external_base_url_uses_host_header ... ok
+test auth::oauth::tests::external_base_url_uses_forwarded_host ... ok
+test auth::oauth::tests::protected_resource_metadata_url_inserts_well_known_before_path ... ok
+test auth::oauth::tests::oauth_enabled_only_for_oauth_type ... ok
+test auth::oauth::tests::protected_resource_metadata_lists_authorization_servers ... ok
+test auth::oauth_flow::runtime::tests::registry_backup_rotation_keeps_at_most_three_slots ... ok
+test auth::oauth_flow::runtime::tests::corrupt_registry_is_backed_up_and_reset_without_valid_backup ... ok
+test auth::oauth_flow::runtime::tests::corrupt_registry_rotates_backups_and_restores_the_oldest_valid_slot ... ok
+test auth::oauth_flow::tests::login_page_posts_back_to_global_oauth_path ... ok
+test auth::oauth_flow::tests::pkce_round_trip ... ok
+test auth::oauth_flow::tests::dynamic_registration_restricts_redirect_uri ... ok
+test agent_context::tests::skills_are_progressively_disclosed_from_skill_md ... ok
+test commands::runtime::tests::global_auth_validation_fails_closed ... ok
+test auth::oauth_flow::tests::token_exchange_without_client_secret ... ok
+test data::migrate::tests::global_mcp_migration_collapses_restore_state_and_unanimous_auth ... ok
+test auth::oauth_flow::tests::refresh_token_cannot_authenticate_as_an_access_token ... ok
+test auth::oauth_flow::tests::refresh_token_issues_a_new_token_pair ... ok
+test data::migrate::tests::global_mcp_migration_fails_safe_on_conflicting_auth_and_tunnels ... ok
+test data::migrate::tests::global_mcp_migration_promotes_matching_workspace_bearer_secret ... ok
+test data::migrate::tests::global_runtime_defaults_are_applied_once ... ok
+test data::migrate::tests::global_mcp_migration_reports_conflicting_workspace_bearer_secrets ... ok
+test data::migrate::tests::legacy_restore_workspace_ids_are_not_written_after_migration ... ok
+test data::migrate::tests::migration_preserves_existing_custom_runtime_values ... ok
+test data::migrate::tests::migration_enables_global_policy_for_legacy_default_workspaces_only ... ok
+test data::store::tests::explicit_global_gateway_update_still_wins_over_runtime_snapshot ... ok
+test data::store::tests::obsolete_actions_data_is_detected_and_removed_without_touching_mcp_secrets ... ok
+test data::store::tests::settings_update_preserves_newer_global_oauth_registry ... ok
+test data::store::tests::shared_oauth_client_id_uses_client_id_format ... ok
+test data::store::tests::unrelated_settings_update_preserves_newer_global_gateway_state ... ok
+test global_gateway::tests::gateway_urls_point_directly_to_single_mcp_endpoint ... ok
+test local_network::tests::lan_access_binds_all_interfaces ... ok
+test local_network::tests::local_access_is_the_default ... ok
+test commands::ui_memory::tests::get_webview_memory_sample_is_supported_and_reports_main_memory ... ok
+test agent_context::tests::global_scan_detects_user_level_instruction_and_skill_sources ... ok
+test mcp::gateway::tests::invalid_session_ids_are_rejected_instead_of_persisted ... ok
+test data::migrate::tests::write_data_replaces_existing_file_without_leaving_temp_files ... ok
+test mcp::gateway::tests::project_tool_fails_closed_without_workspace_selection ... ok
+test auth::oauth_flow::tests::dynamic_registration_survives_runtime_restart ... ok
+test agent_context::tests::auto_skill_discovery_finds_unknown_skill_roots_and_skips_dependencies ... ok
+test mcp::gateway::tests::captured_request_context_does_not_change_when_session_switches_workspace ... ok
+test mcp::gateway::tests::request_scoped_workspace_id_survives_transport_session_churn ... ok
+test mcp::gateway::tests::session_id_prefers_mcp_header ... ok
+test mcp::gateway::tests::session_scopes_do_not_cross_talk ... ok
+test mcp::gateway::tests::stale_workspace_selection_is_cleared_without_invalidating_session ... ok
+test harness::state::tests::status_keeps_read_available_without_task ... ok
+test mcp::listener::tests::bind_listener_reports_port_conflict_synchronously ... ok
+test mcp::listener::tests::discovery_prevents_stale_tool_catalog_caching ... ok
+test mcp::gateway::tests::two_chat_sessions_read_only_their_selected_workspaces ... ok
+test mcp::gateway::tests::workspace_invoke_is_one_off_and_does_not_mutate_active_workspace ... ok
+test mcp::gateway::tests::server_info_reports_gateway_session_and_active_workspace ... ok
+test mcp::listener::tests::discovery_reports_the_current_package_version ... ok
+test mcp::gateway::tests::unknown_session_ids_fail_closed_without_creating_a_scope ... ok
+test harness::state::tests::starting_task_does_not_create_workspace_copies ... ok
+test mcp::listener::tests::mcp_auth_allows_a_valid_oauth_bearer ... ok
+test mcp::listener::tests::mcp_auth_fails_closed_for_missing_bearer_and_unknown_mode ... ok
+test mcp::server::tests::audit_workspace_attribution_follows_explicit_session_and_global_routes ... ok
+test mcp::server::tests::chatgpt_session_metadata_is_injected_only_for_history_tools ... ok
+test mcp::server::tests::compact_initialize_does_not_require_history_bootstrap ... ok
+test mcp::listener::tests::initialize_replaces_client_supplied_session_id ... ok
+test mcp::server::tests::initialize_appends_configured_agent_instructions ... ok
+test mcp::server::tests::initialize_does_not_claim_tool_catalog_notifications_without_a_stream ... ok
+test mcp::server::tests::initialize_echoes_the_negotiated_protocol_version ... ok
+test mcp::listener::tests::http_transport_issues_and_requires_server_owned_sessions ... ok
+test mcp::server::tests::legacy_grep_calls_are_mapped_to_the_public_grep_text_tool ... ok
+test mcp::server::tests::protocol_version_negotiation_matrix ... ok
+test mcp::server::tests::workspace_prompt_uses_lazy_history_workflow ... ok
+test mcp::server::tests::legacy_initialize_keeps_the_history_persistence_workflow ... ok
+test mcp::listener::tests::http_host_metadata_session_keeps_workspace_selection_without_transport_header ... ok
+test mcp::gateway::tests::request_scoped_workspace_id_cannot_be_redirected_by_absolute_path ... ok
+test mcp::gateway::tests::absolute_path_cannot_escape_selected_workspace ... ok
+test planning::service::tests::execution_ledger_converges_goal_plan_task_and_history_state ... ok
+test planning::service::tests::deleting_plan_cleans_focus_goal_links_and_execution_references ... ok
+test planning::service::tests::ai_review_request_waits_for_human_acceptance_and_archives_after_acceptance ... ok
+test planning::service::tests::planning_state_is_stored_inside_workspace ... ok
+test planning::service::tests::rejected_review_reactivates_work_and_preserves_human_feedback ... ok
+test planning::service::tests::updating_plan_progress_preserves_goal_link ... ok
+test platform::macos::process::tests::process_image_path_reads_current_process ... ok
+test platform::macos::process::tests::recognizes_webkit_xpc_helper_paths ... ok
+test planning::store::tests::legacy_string_success_criteria_are_loaded_and_normalized_on_save ... ok
+test platform::open::tests::allows_http_and_https ... ok
+test platform::macos::process::tests::sample_process_tree_memory_reads_current_process_footprint ... ok
+test harness::state::tests::real_workspace_change_still_invalidates_harness_baseline ... ok
+test platform::open::tests::rejects_non_http_schemes_and_junk ... ok
+test review::tests::patch_contains_only_changed_hunks_with_context ... ok
+test review::tests::sensitive_files_are_detected ... ok
+test review::tests::review_id_rejects_traversal ... ok
+test harness::state::tests::managed_history_does_not_invalidate_harness_baseline ... ok
+test harness::state::tests::planning_runtime_state_does_not_invalidate_harness_baseline ... ok
+test planning::store::tests::oxpecker_style_legacy_plan_is_migrated_without_losing_details ... ok
+test planning::store::tests::reset_recovers_even_when_existing_state_is_unreadable ... ok
+test runtime::supervisor::tests::refresh_ignores_starting_global_runtime ... ok
+test runtime::supervisor::tests::refresh_keeps_a_listening_global_runtime ... ok
+test runtime::supervisor::tests::refresh_marks_global_runtime_only_after_repeated_missing_port_checks ... ok
+test mcp::listener::tests::http_request_scoped_workspace_id_survives_transport_session_churn ... ok
+test settings::model::tests::accepts_frontend_camel_case_server_port ... ok
+test settings::model::tests::keeps_legacy_snake_case_server_port_compatible ... ok
+test mcp::listener::tests::http_sessions_keep_workspace_selection_isolated ... ok
+test tool_audit::tests::classifies_policy_tool_and_worker_failures_without_storing_messages ... ok
+test runtime::port::tests::recognizes_a_previous_coding_tools_macos_bundle ... ok
+test runtime::port::tests::rejects_a_different_macos_bundle_identifier ... ok
+test mcp::server::tests::host_session_key_takes_precedence_over_explicit_session_key ... ok
+test mcp::gateway::tests::command_output_ref_is_scoped_to_workspace_session_store ... ok
+test review::tests::reissuing_token_does_not_invalidate_existing_review_url ... ok
+test tools::context::tests::ai_instructions_merge_global_before_workspace ... ok
+test tools::context::tests::executable_paths_accept_native_path_list_syntax ... ok
+test tools::context::tests::workspace_paths_precede_global_paths_and_duplicates_are_removed ... ok
+test runtime::port::tests::rejects_a_matching_identifier_from_a_different_app_bundle ... ok
+test secret::keyring_store::tests::workspace_secret_roundtrip ... ok
+test tools::dispatch::planning_tests::default_managed_history_does_not_require_harness_baseline_tracking ... ok
+test tools::context::tests::context_audit_records_only_sizes_hashes_and_repetition ... ok
+test tool_audit::tests::writes_only_safe_metadata_and_reads_across_store_restarts ... ok
+test tools::dispatch::planning_tests::history_validation_is_mutating_only_when_repairing ... ok
+test tools::dispatch::planning_tests::goal_mode_blocks_mutation_while_goal_waits_for_human_acceptance ... ok
+test tools::dispatch::planning_tests::compact_normal_tool_response_omits_repeated_planning_context ... ok
+test tools::dispatch::planning_tests::goal_mode_requires_an_active_focused_goal ... ok
+test tool_audit::tests::retention_removes_old_day_partitions_and_keeps_recent_records ... ok
+test tools::exec::output::tests::reducer_classifies_cargo_test_and_keeps_failure_evidence ... ok
+test tools::exec::output::tests::reducer_falls_back_to_generic_command_without_losing_byte_evidence ... ok
+test tools::dispatch::planning_tests::plan_mode_allows_read_only_v2_actions_and_blocks_task_mutation ... ok
+test tools::exec::quality_gate::tests::discovers_only_known_package_quality_scripts ... ok
+test tools::exec::quality_gate::tests::explicit_filter_accepts_category_without_arbitrary_command ... ok
+test tools::dispatch::planning_tests::every_normal_tool_response_contains_current_planning_context ... ok
+test tools::dispatch::planning_tests::plan_mode_blocks_project_mutation_but_keeps_kill_session_available ... ok
+test tool_audit::tests::filters_and_clears_by_workspace_without_touching_global_events ... ok
+test tool_audit::tests::records_success_tool_policy_runtime_and_global_outcomes ... ok
+test tools::dispatch::planning_tests::plan_mode_allows_compact_planning_manager_writes ... ok
+test tools::dispatch::planning_tests::plan_mode_allows_direct_plan_create_and_update ... ok
+test tools::exec::quality_gate::tests::unsafe_build_script_body_is_not_discovered ... ok
+test tools::exec::quality_gate::tests::quality_gate_dry_run_never_includes_deploy_script ... ok
+test tools::exec::tests::resolves_an_arbitrarily_named_workspace_local_entry ... ok
+test tools::exec::tests::启动失败时返回统一执行结果 ... ok
+test tools::exec::tests::程序不存在时返回统一执行结果 ... ok
+test tools::exec::tests::configured_path_resolution_uses_declared_order ... ok
+test tools::exec::quality_gate::tests::quality_gate_surfaces_policy_refusal_as_failed_evidence ... ok
+test tools::manage::tests::managers_reject_unknown_actions ... ok
+test tools::exec::quality_gate::tests::quality_gate_passes_outer_exec_policy_without_cmd ... ok
+test tools::patch::tests::preserves_crlf_when_inserting_multiple_lines ... ok
+test tools::patch::tests::preserves_lf_when_inserting_multiple_lines ... ok
+test tools::manage::tests::planning_manager_routes_state_and_create_goal_actions ... ok
+test tools::patch::tests::patch_check_does_not_modify_workspace ... ok
+test tools::policy::tests::basic_diagnostic_commands_are_allowed ... ok
+test tools::patch::tests::validation_failure_in_later_file_keeps_all_files_unchanged ... ok
+test tools::policy::tests::inherited_execution_policy_uses_global_mode_and_commands ... ok
+test tools::policy::tests::legacy_workspace_keeps_explicit_execution_policy ... ok
+test tools::policy::tests::patch_size_uses_workspace_limit ... ok
+test tools::policy::tests::configured_commands_keep_basic_diagnostics ... ok
+test tools::policy::tests::quoted_python_code_is_not_treated_as_shell_chaining ... ok
+test tools::policy::tests::trusted_mode_accepts_any_configured_workspace_script_extension ... ok
+test tools::policy::tests::workspace_allowed_commands_override_defaults ... ok
+test tools::planning::tests::mcp_goal_and_plan_tools_share_project_local_state ... ok
+test tools::policy::tests::trusted_mode_accepts_an_extensionless_workspace_entry ... ok
+test tools::registry::tests::tool_definition_is_the_static_mutability_source ... ok
+test tools::registry::tests::compact_catalog_uses_stable_v2_aggregate_managers ... ok
+test tools::registry::tests::core_catalog_excludes_non_persistent_permission_tool ... ok
+test tools::session::output_store::tests::unavailable_cache_root_degrades_without_panicking ... ok
+test tools::runtime_info::tests::schema_hash_is_stable_for_same_profile ... ok
+test tools::session::tests::preview_keeps_tail_even_before_tail_retention_segment_is_used ... ok
+test tools::runtime_info::tests::schema_hash_changes_between_different_tool_profiles ... ok
+test tools::session::tests::retained_buffer_skips_an_evicted_offset_to_the_tail ... ok
+test tools::runtime_info::tests::known_schema_hash_drives_reconnect_hint ... ok
+test tools::skill::tests::get_skill_loads_body_on_demand ... ok
+test tools::tool_output::tests::budget_truncation_is_utf8_safe ... ok
+test tools::tool_output::tests::error_content_includes_recovery_guidance_for_agent ... ok
+test tools::tool_output::tests::exec_content_keeps_head_and_tail_preview_and_summary ... ok
+test tools::tool_output::tests::harness_conflict_recovery_tells_agent_when_retry_is_safe ... ok
+test tools::tool_output::tests::large_read_file_content_stays_within_budget ... ok
+test tools::tool_output::tests::search_content_renders_hits_without_metadata ... ok
+test tools::skill::tests::list_skills_refreshes_files_created_after_context_initialization ... ok
+test tools::tool_output::tests::view_image_branch_is_unchanged ... ok
+test tools::tool_output::tests::workspace_error_always_contains_recovery_contract ... ok
+test tunnel::cloudflare::tests::extracts_trycloudflare_url_from_log_line ... ok
+test tunnel::cloudflare::tests::ignores_invalid_hosts ... ok
+test tunnel::frp::client::tests::frp_not_found_html_is_classified_as_not_routed ... ok
+test tunnel::frp::client::tests::all_distinct_proxy_successes_are_counted ... ok
+test tunnel::frp::client::tests::login_success_alone_is_not_a_ready_proxy ... ok
+test tunnel::frp::client::tests::managed_config_paths_are_isolated_by_workspace ... ok
+test tunnel::frp::client::tests::managed_pid_paths_are_isolated_and_sanitize_workspace_ids ... ok
+test tunnel::frp::client::tests::reconnect_loop_is_detected_from_trailing_errors ... ok
+test tunnel::frp::client::tests::successful_relogin_clears_reconnect_loop ... ok
+test tunnel::frp::tests::global_frp_config_uses_global_endpoint_without_workspace_profile ... ok
+test tunnel::frp::tests::global_frpc_toml_contains_one_proxy_for_the_global_endpoint ... ok
+test tunnel::frp::tests::global_frp_url_points_to_the_single_mcp_proxy ... ok
+test update::tests::compare_versions_orders_semver ... ok
+test update::tests::normalize_strips_v_prefix ... ok
+test update::tests::parse_latest_detects_newer_release ... ok
+test update::tests::parse_latest_rejects_bad_tag ... ok
+test update::tests::parse_latest_reports_up_to_date ... ok
+test usage::tests::records_counts_and_json_sizes_without_retaining_content ... ok
+test usage::tests::token_estimation_rounds_up_each_payload ... ok
+test workspace::legacy_import::tests::legacy_home_points_under_user_home ... ok
+test workspace::model::tests::new_workspace_defaults_to_compact_agent_workflow ... ok
+test tools::session::tests::retained_buffer_keeps_head_and_tail_of_large_stream ... ok
+test tools::patch::tests::delete_then_add_same_path_replaces_instead_of_concatenating_old_content ... ok
+test review::tests::session_review_aggregates_operation_reviews_by_file ... ok
+test tools::manage::tests::task_manager_routes_read_only_status_action ... ok
+test tools::session::tests::full_output_ref_survives_without_an_active_session_and_searches_middle_content ... ok
+test tool_audit::tests::concurrent_appends_keep_every_record ... ok
+test review::tests::workspace_review_freezes_tracked_and_untracked_changes_vs_head ... ok
+test review::tests::workspace_review_detects_first_level_git_repositories ... ok
+test tools::exec::quality_gate::tests::quality_gate_executes_discovered_cargo_check_and_returns_evidence ... ok
+test tools::exec::tests::unix_workspace_scripts_preserve_space_paths_and_arguments ... ok
+
+test result: ok. 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running unittests src/main.rs (src-tauri/target/debug/deps/coding_tools_mcp_desktop-901f9fcda17ee5e0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/call_tool_contract.rs (src-tauri/target/debug/deps/call_tool_contract-16afdf8a7587c7ad)
+
+running 22 tests
+test core_profile_keeps_the_default_capabilities_and_adds_history_tools ... ok
+test advanced_profile_exposes_every_declared_tool ... ok
+test check_exec_environment_reports_policy_metadata ... ok
+test read_file_happy_path ... ok
+test list_files_accepts_glob_alias ... ok
+test grep_reuses_search_text_schema_and_behavior ... ok
+test exec_health_check_reports_worker_and_pipe_status ... ok
+test default_cwd_is_used_by_file_and_native_exec_tools ... ok
+test read_file_explicit_parent_path_is_rejected_by_workspace_isolation ... ok
+test request_permissions_is_hidden_from_clients_but_keeps_legacy_dangerous_mode_compatibility ... ok
+test native_diagnostics_support_pwd_and_ls_without_a_shell ... ok
+test search_text_filters_by_glob ... ok
+test direct_exec_uses_the_same_result_contract ... ok
+test search_text_stops_after_max_results ... ok
+test search_text_skips_binary_and_oversized_files ... ok
+test nonzero_command_exit_keeps_transport_ok_but_sets_command_ok_false ... ok
+test server_info_returns_workspace_and_tools ... ok
+test request_permissions_is_unsupported_not_silent_grant ... ok
+test killed_session_reports_command_failure_even_when_transport_succeeds ... ok
+test unknown_tool_is_validation_error ... ok
+test git_log_root_does_not_pass_empty_pathspec ... ok
+test retained_session_timeout_stops_the_process_after_deadline ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/call_tool_security.rs (src-tauri/target/debug/deps/call_tool_security-6ed712d5edb329df)
+
+running 28 tests
+test destructive_command_targeting_git_is_always_rejected ... ok
+test exec_command_rejects_disallowed_destructive_command ... ok
+test exec_command_rejects_shell_chaining ... ok
+test exec_command_rejects_workdir_escape_via_policy ... ok
+test dangerous_command_requires_explicit_confirmation ... ok
+test exec_command_allows_python_c_but_rejects_shell_escape ... ok
+test exec_command_rejects_host_scope_even_with_confirmation ... ok
+test exec_command_allows_workspace_child_process_during_transition ... ok
+test interpreter_command_cannot_delete_git_assets ... ok
+test interpreter_command_cannot_delete_github_assets ... ok
+test interpreter_command_cannot_write_git_files ... ok
+test interpreter_command_cannot_write_outside_workspace_scope ... ok
+test apply_patch_rejects_traversal_target ... ok
+test apply_patch_allows_deleting_a_normal_file ... ok
+test high_risk_github_patch_is_allowed_when_workspace_setting_is_enabled ... ok
+test apply_patch_allows_modifying_a_normal_file ... ok
+test safe_permission_mode_blocks_network_looking_command ... ok
+test high_risk_manifest_patch_is_allowed_when_workspace_setting_is_enabled ... ok
+test deleting_git_assets_is_always_rejected ... ok
+test deleting_readme_requires_explicit_confirmation ... ok
+test apply_patch_rejects_absolute_path_target ... ok
+test high_risk_manifest_patch_requires_workspace_setting ... ok
+test deleting_high_risk_file_still_requires_confirmation_when_enabled ... ok
+test read_file_rejects_explicit_external_path ... ok
+test read_file_rejects_symlink_escape ... ok
+test view_image_rejects_explicit_external_path ... ok
+test external_read_tools_reject_directory_listing_and_search ... ok
+test patch_check_rejects_all_git_and_github_writes ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/harness_state.rs (src-tauri/target/debug/deps/harness_state-ac2b7c48cdad0e8b)
+
+running 4 tests
+test 任务创建会捕获基线并在重启后恢复 ... ok
+test 同一工作区只允许一个可写任务且拒绝非法迁移 ... ok
+test project_state包含分支任务和脏状态摘要 ... ok
+test 外部文件变化会被识别且操作会留下事件 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/harness_tool_contract.rs (src-tauri/target/debug/deps/harness_tool_contract-86caca4baa432b40)
+
+running 11 tests
+test 工具清单包含项目状态和任务上下文能力 ... ok
+test 无任务时仍可执行_dry_run_预检 ... ok
+test workspace_allows_exec_during_transition ... ok
+test 无任务时_exec错误不应建议启动任务 ... ok
+test codex_patch格式支持新增文件dry_run和实际应用 ... ok
+test 无任务时普通_patch也可执行并保留撤销能力 ... ok
+test 无任务时_exec_command不返回任务门禁错误 ... ok
+test harness_tools_support_task_lifecycle ... ok
+test 外部修改会在写工具执行前被拒绝 ... ok
+test 默认history写入不应使harness基线失效 ... ok
+test planning状态更新后正常执行不应被误判为外部变化 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/history_session.rs (src-tauri/target/debug/deps/history_session-1f03e54a14583129)
+
+running 20 tests
+test disabled_recording_does_not_write_a_checkpoint ... ok
+test history_tools_are_exposed_with_public_schemas ... ok
+test bootstrap_reports_missing_initial_input_without_claiming_capture ... ok
+test real_history_fixture_preserves_archives_when_opted_in ... ok
+test bootstrap_uses_a_workspace_fallback_without_a_host_session_id ... ok
+test bootstrap_prefers_host_session_and_preserves_initial_input ... ok
+test compact_bootstrap_returns_index_metadata_without_workflow_prompt ... ok
+test read_without_max_bytes_uses_bounded_lossless_pages ... ok
+test search_and_read_return_precise_lossless_archive_pages ... ok
+test search_snippet_handles_unicode_case_expansion_without_invalid_utf8_slicing ... ok
+test concurrent_bootstrap_allocates_distinct_numbers ... ok
+test compact_checkpoint_lazily_creates_session_without_bootstrap ... ok
+test checkpoint_reports_missing_raw_user_input ... ok
+test checkpoint_rejects_a_path_from_another_session ... ok
+test bootstrap_retry_keeps_old_initial_input_and_appends_a_revision ... ok
+test workspace_root_and_history_paths_cannot_escape_workspace ... ok
+test rebuilds_derived_files_without_changing_existing_archives ... ok
+test selected_history_context_is_bounded_and_does_not_include_archive_body ... ok
+test checkpoint_preserves_raw_input_and_superseding_revision_evidence ... ok
+test bootstrap_response_stays_bounded_for_many_large_archives ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+     Running tests/workspace_e2e.rs (src-tauri/target/debug/deps/workspace_e2e-cf736215b11e6fb2)
+
+running 7 tests
+test legacy_planning_workspace_migrates_without_losing_plan_details ... ok
+test corrupt_planning_fails_closed_but_reset_restores_workspace_mutation ... ok
+test plan_and_goal_modes_keep_planning_writable_and_gate_project_mutation ... ok
+test running_command_is_shared_across_tool_contexts_for_the_same_workspace ... ok
+test harness_ignores_managed_planning_and_history_but_detects_real_external_change ... ok
+test large_command_output_keeps_head_and_tail_with_eviction_metadata ... ok
+test command_reconciles_natural_process_exit_across_contexts ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s

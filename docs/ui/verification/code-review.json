@@ -1,0 +1,28 @@
+{
+  "mode": "Agent semantic review supplemented by guidance-only MCP consistency checks",
+  "scope": "full UI optimization branch plus final staged cleanup",
+  "consistency": {
+    "missingArtifacts": [],
+    "outOfScopeFiles": [],
+    "potentialContractChanges": [
+      "package.json"
+    ]
+  },
+  "issues": [
+    {
+      "severity": "high",
+      "category": "verification",
+      "message": "Native Tauri acceptance remains blocked by macOS lock; browser fixture and build do not prove native flows.",
+      "suggestion": "Unlock Mac and complete native scenario/screenshots before full acceptance."
+    }
+  ],
+  "closedFindings": [
+    "Shared request generation and workspace ownership",
+    "Module-owned settings save queue and merge fields",
+    "Acceptance successful response applied before read retry",
+    "Button semantic foreground contrast",
+    "Audit keyboard expansion and focus semantics"
+  ],
+  "sourceReview": "architecture-review.md",
+  "finalNativeAttempt": "macOS locked again after final debug bundle; no native actions performed"
+}

@@ -1,0 +1,46 @@
+{
+  "index": {
+    "nodes": 6465,
+    "edges": 15068,
+    "clusters": 250,
+    "flows": 494
+  },
+  "p5Staged": {
+    "changed_count": 28,
+    "affected_count": 2,
+    "changed_files": 66,
+    "risk_level": "medium"
+  },
+  "baselineCompare": {
+    "changed_count": 430,
+    "affected_count": 101,
+    "changed_files": 122,
+    "risk_level": "critical"
+  },
+  "structuredDetection": {
+    "partial": false,
+    "truncated": false
+  },
+  "indexLimitations": {
+    "entryPointCandidatesDropped": 750,
+    "walksCutByBudget": 11,
+    "calleesDropped": 319,
+    "crossLanguageSitesNotLinked": 1109,
+    "callableCandidateCap": 32
+  },
+  "sourceSupplement": [
+    "Vue route registration and component imports",
+    "cache key/workspace/generation ownership",
+    "settings group merge and module queue",
+    "acceptance response application and refresh failures"
+  ],
+  "batchRisks": {
+    "P0": "LOW",
+    "shared": "CRITICAL",
+    "P1": "LOW",
+    "P2": "CRITICAL",
+    "P3": "CRITICAL",
+    "P4": "CRITICAL",
+    "P5": "MEDIUM"
+  }
+}

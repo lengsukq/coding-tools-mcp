@@ -1,6 +1,6 @@
 # 如何开发
 
-> 本文档描述当前 Coding Tools MCP 的开发流程。开发前置条件来自实际 Planning Mode 与仓库 Policy，不再依赖旧 MCP Probe Kit 工具。
+> 本文档描述当前 Coding Tools MCP 的开发流程。开发前置条件遵循当前 AGENTS、MCP Probe Kit Skill、实际 Planning Mode 与仓库 Policy。
 
 ## 开发入口
 
@@ -108,3 +108,9 @@ cargo test --all-targets --locked
 
 ---
 *返回索引: [../project-context.md](../project-context.md)*
+
+## UI 开发
+
+公共视觉使用 `design-system.css` 的语义变量；页面样式只安排布局。新增公共组件需有稳定消费者并同步 `docs/ui/component-catalog.json`。开发页 `/dev/ui` 用于检查主题、品牌色、控件和键盘状态，生产构建不注册该入口。
+
+不要在页面中另建任务焦点或独立状态轮询：使用 `ui-model.ts` 和共享资源；设置保存通过模块级队列读取并合并自身字段。

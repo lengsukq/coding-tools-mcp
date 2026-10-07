@@ -1,0 +1,134 @@
+[
+  {
+    "theme": "light",
+    "palette": "海蓝",
+    "background": "color(srgb 0 0.332353 0.667647)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 7.31
+  },
+  {
+    "theme": "light",
+    "palette": "珊瑚",
+    "background": "color(srgb 0.664706 0.255882 0.223529)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 5.97
+  },
+  {
+    "theme": "light",
+    "palette": "葡萄紫",
+    "background": "color(srgb 0.417647 0.229412 0.582353)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 7.88
+  },
+  {
+    "theme": "light",
+    "palette": "翡翠",
+    "background": "color(srgb 0.0382353 0.461765 0.317647)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 5.66
+  },
+  {
+    "theme": "light",
+    "palette": "琥珀",
+    "background": "color(srgb 0.65 0.367647 0.0294118)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 4.99
+  },
+  {
+    "theme": "light",
+    "palette": "樱粉",
+    "background": "color(srgb 0.629412 0.15 0.388235)",
+    "foreground": "rgb(255, 255, 255)",
+    "height": 36,
+    "danger": "#c82d3f",
+    "overflow": false,
+    "success": "#21823c",
+    "primaryButtonContrast": 7.08
+  },
+  {
+    "theme": "dark",
+    "palette": "海蓝",
+    "background": "rgb(56, 152, 255)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 5.14
+  },
+  {
+    "theme": "dark",
+    "palette": "珊瑚",
+    "background": "rgb(255, 116, 104)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 5.76
+  },
+  {
+    "theme": "dark",
+    "palette": "葡萄紫",
+    "background": "rgb(176, 127, 232)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 5.1
+  },
+  {
+    "theme": "dark",
+    "palette": "翡翠",
+    "background": "rgb(52, 211, 153)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 7.91
+  },
+  {
+    "theme": "dark",
+    "palette": "琥珀",
+    "background": "rgb(251, 191, 36)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 9.11
+  },
+  {
+    "theme": "dark",
+    "palette": "樱粉",
+    "background": "rgb(244, 114, 182)",
+    "foreground": "rgb(32, 38, 48)",
+    "height": 36,
+    "danger": "#ff8393",
+    "overflow": false,
+    "success": "#66d483",
+    "primaryButtonContrast": 5.74
+  }
+]

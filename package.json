@@ -20,10 +20,11 @@
     "preview": "vite preview",
     "check": "vue-tsc --noEmit",
     "test:workspace": "cargo test --manifest-path src-tauri/Cargo.toml --test workspace_e2e --locked",
-    "test:release": "npm run version:check && npm run check && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
+    "test:release": "npm run version:check && npm run check && npm run build && npm run test:ui && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked",
     "version:set": "node scripts/sync-version.mjs",
     "version:check": "node scripts/check-version.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:ui": "node --test tests/*.test.mjs"
   },
   "license": "Apache-2.0",
   "dependencies": {

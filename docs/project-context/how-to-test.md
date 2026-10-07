@@ -13,6 +13,7 @@
 | Harness | `cargo test --test harness_state --test harness_tool_contract` | `src-tauri/tests/` |
 | History Session | `cargo test --test history_session` | `src-tauri/tests/history_session.rs` |
 | Frontend 类型/组件检查 | `npm run check` | Vue 3 / `vue-tsc` / TypeScript |
+| Frontend 状态/并发/路由回归 | `npm run test:ui`，Node test runner | `tests/*.test.mjs` |
 | Frontend 生产构建 | `npm run build` | Vite 6 |
 
 当前仓库没有配置 vitest。历史 Python compliance suite 已退出当前代码路径；Rust contract/security 测试所需的最小 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
@@ -84,3 +85,11 @@ cargo test --all-targets --locked
 
 ---
 *返回索引: [../project-context.md](../project-context.md)*
+
+## UI 优化回归
+
+`npm run test:release` 包含版本一致性、前端类型检查、生产构建、14 项前端回归和 Rust 完整测试。前端测试覆盖状态映射、进度、未知健康、旧地址、缓存失效竞争、设置队列和草稿生命周期。
+
+`npm run dev` 后访问 `/tests/fixtures/ui.html#/` 可运行隔离测试入口，IPC 只读写内存模拟数据；此入口不进入生产构建。控制区可模拟无工作区、保存失败、验收失败及成功后刷新失败。不得用模拟数据验收替代真实 Tauri 的 IPC、窗口与平台交互。
+
+最新截图、实际执行日志、验证范围及未通过项见 [全应用优化验收记录](../ui/verification/acceptance.md)。

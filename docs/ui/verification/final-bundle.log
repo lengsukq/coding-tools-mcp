@@ -1,0 +1,46 @@
+
+> coding-tools-mcp-desktop@0.3.4 desktop:build
+> tauri build --debug --bundles app --config .scratch/ui-optimization/bundle-review.json
+
+        Info Looking up installed tauri packages to check mismatched versions...
+   Compiling objc2-exception-helper v0.1.1
+   Compiling ring v0.17.14
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling lzma-sys v0.1.20
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling objc2 v0.6.4
+   Compiling bzip2 v0.5.2
+   Compiling block2 v0.6.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling dispatch2 v0.3.1
+   Compiling objc2-foundation v0.3.2
+   Compiling rustls v0.23.41
+   Compiling objc2-core-graphics v0.3.2
+   Compiling zstd-safe v7.2.4
+   Compiling rustls-webpki v0.103.13
+   Compiling jsonwebtoken v9.3.1
+   Compiling zstd v0.13.3
+   Compiling xz2 v0.1.7
+   Compiling zip v2.4.2
+   Compiling objc2-app-kit v0.3.2
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling objc2-web-kit v0.3.2
+   Compiling muda v0.19.3
+   Compiling tao v0.35.3
+   Compiling window-vibrancy v0.6.0
+   Compiling rfd v0.16.0
+   Compiling wry v0.55.1
+   Compiling tauri-runtime v2.11.3
+   Compiling tray-icon v0.24.1
+   Compiling tauri-runtime-wry v2.11.4
+   Compiling tauri v2.11.5
+   Compiling tauri-plugin-fs v2.5.1
+   Compiling tauri-plugin-dialog v2.7.1
+   Compiling coding-tools-mcp-desktop v0.3.4 (/Users/leo/Documents/code/coding-tools-mcp/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.79s
+       Built application at: /Users/leo/Documents/code/coding-tools-mcp/src-tauri/target/debug/coding-tools-mcp-desktop
+    Bundling Coding Tools MCP.app (/Users/leo/Documents/code/coding-tools-mcp/src-tauri/target/debug/bundle/macos/Coding Tools MCP.app)
+    Finished 1 bundle at:
+        /Users/leo/Documents/code/coding-tools-mcp/src-tauri/target/debug/bundle/macos/Coding Tools MCP.app

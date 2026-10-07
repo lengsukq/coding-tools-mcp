@@ -21,7 +21,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
 
 const classes = computed(() => {
   const sizes = {
-    sm: props.variant === "icon" ? "h-8 w-8 rounded-[var(--ui-radius-control)]" : "h-8 px-3 text-xs rounded-[var(--ui-radius-control)]",
+    sm: props.variant === "icon" ? "h-8 w-8 rounded-[var(--ui-radius-control)]" : "h-8 px-3 text-sm rounded-[var(--ui-radius-control)]",
     md: props.variant === "icon" ? "h-9 w-9 rounded-[var(--ui-radius-control)]" : "h-9 px-3.5 text-sm font-medium rounded-[var(--ui-radius-control)]",
     lg: props.variant === "icon" ? "h-11 w-11 rounded-[var(--ui-radius-control)]" : "h-11 px-4 text-sm font-medium rounded-[var(--ui-radius-control)]",
   };

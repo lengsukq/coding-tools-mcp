@@ -1,16 +1,6 @@
-/**
- * 调色盘系统
- *
- * 通过 <html data-palette="xxx"> 切换整套强调色。具体的 CSS 变量覆盖定义在
- * src/app.css 末尾的 "Palette system" 章节，本文件只负责调色盘元数据
- * （名称 / 预览色）与应用、持久化逻辑。
- *
- * 每个调色盘覆盖的 CSS 变量：
- * --primary / --primary-dark / --primary-soft / --accent-gradient(+hover)
- * --ios-blue / --accent-indigo / --accent-purple
- * --sidebar-active-text / --sidebar-active-border / --sidebar-surface-active
- * --surface-active / --focus-ring / --focus-border
- * --color-accent / --color-accent-hover / --card-border
+/** Brand metadata and preference persistence. Visual brand anchors live in
+ * palette.css; semantic surfaces, controls and state colors live in design-system.css.
+ * The light/dark metadata below is retained for compatibility, not applied as styles.
  */
 
 export interface PaletteThemeVars {
