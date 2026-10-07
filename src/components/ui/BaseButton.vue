@@ -26,10 +26,10 @@ const classes = computed(() => {
     lg: props.variant === "icon" ? "h-11 w-11 rounded-[var(--ui-radius-control)]" : "h-11 px-4 text-sm font-medium rounded-[var(--ui-radius-control)]",
   };
   const variants = {
-    primary: "border border-transparent bg-[var(--ui-accent)] text-white hover:bg-[var(--ui-accent-strong)]",
+    primary: "border border-transparent bg-[var(--ui-solid-accent)] text-[var(--ui-on-accent)] hover:bg-[var(--ui-solid-accent-hover)]",
     secondary: "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-text)] backdrop-blur-xl hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-surface-raised)]",
     ghost: "border border-transparent bg-transparent text-[var(--ui-text-secondary)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]",
-    danger: "border border-transparent bg-[var(--ui-danger)] text-white hover:brightness-105",
+    danger: "border border-transparent bg-[var(--ui-danger)] text-[var(--ui-on-danger)] hover:brightness-105",
     icon: "border border-transparent bg-transparent text-[var(--ui-text-secondary)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]",
   };
   return [sizes[props.size], variants[props.variant]].join(" ");
@@ -40,6 +40,7 @@ const classes = computed(() => {
   <button
     :type="type"
     :disabled="disabled || busy"
+    :aria-busy="busy"
     :title="title"
     :class="classes"
     class="inline-flex shrink-0 cursor-pointer select-none items-center justify-center gap-2 tracking-tight outline-none transition-[background,border-color,color,opacity] duration-150 focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"

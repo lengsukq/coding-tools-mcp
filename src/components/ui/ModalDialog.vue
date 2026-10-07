@@ -67,8 +67,8 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <Transition name="ios-modal">
-      <div v-if="open" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 p-6 backdrop-blur-md" @click.self="dismissible && emit('close')">
+    <Transition name="ui-modal">
+      <div v-if="open" class="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--ui-overlay-backdrop)] p-6 backdrop-blur-md" @click.self="dismissible && emit('close')">
         <div
           ref="dialogRef"
           role="dialog"
@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
           :aria-labelledby="title ? titleId : undefined"
           :aria-describedby="description ? descriptionId : undefined"
           tabindex="-1"
-          class="ios-glass-strong ios-floating-surface w-full max-w-lg p-5 outline-none"
+          class="ui-overlay w-full max-w-lg p-5 outline-none"
         >
           <div v-if="title || description" class="mb-4">
             <h3 v-if="title" :id="titleId" class="text-lg font-semibold tracking-tight text-[var(--text-main)]">{{ title }}</h3>
@@ -91,5 +91,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ios-modal-enter-active,.ios-modal-leave-active{transition:opacity .18s ease}.ios-modal-enter-from,.ios-modal-leave-to{opacity:0}
+.ui-modal-enter-active,.ui-modal-leave-active{transition:opacity .18s ease}.ui-modal-enter-from,.ui-modal-leave-to{opacity:0}
 </style>

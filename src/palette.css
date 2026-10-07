@@ -119,19 +119,3 @@
   --pal-rgb: 244, 114, 182;
   --pal-accent-rgb: 192, 132, 252;
 }
-
-/* Compatibility aliases for legacy components during migration. */
-:root[data-palette] {
-  --primary-gradient: linear-gradient(135deg, var(--pal-primary), var(--pal-accent));
-  --accent-gradient: var(--primary-gradient);
-  --accent-gradient-hover: linear-gradient(135deg, var(--pal-primary-light), var(--pal-primary));
-  --ios-blue: var(--pal-primary);
-  --ios-blue-rgb: var(--pal-rgb);
-  --ios-indigo: var(--pal-accent);
-  --accent-indigo: var(--pal-accent);
-  --accent-purple: color-mix(in srgb, var(--pal-accent) 76%, var(--pal-primary));
-  --coral-primary: var(--pal-primary);
-  --coral-accent: var(--pal-accent);
-  --coral-soft: rgba(var(--pal-rgb), 0.1);
-  --coral-glow: rgba(var(--pal-rgb), 0.24);
-}

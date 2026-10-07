@@ -31,7 +31,7 @@ defineEmits<{ confirm: []; cancel: [] }>();
       <div class="min-w-0 flex-1">
         <h3 class="text-base font-semibold text-[var(--text-main)]">{{ title }}</h3>
         <p v-if="message" class="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{{ message }}</p>
-        <p v-if="detail" class="mt-2 break-all rounded-xl bg-black/4 px-3 py-2 font-mono text-[11px] text-[var(--text-muted)] dark:bg-white/5">{{ detail }}</p>
+        <p v-if="detail" class="mt-2 break-all rounded-xl bg-[var(--ui-surface-subtle)] px-3 py-2 font-mono text-xs text-[var(--text-muted)]">{{ detail }}</p>
         <slot />
       </div>
     </div>

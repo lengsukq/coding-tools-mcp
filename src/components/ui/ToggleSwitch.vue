@@ -13,13 +13,14 @@ defineProps<{ label?: string; description?: string; disabled?: boolean }>();
       type="button"
       role="switch"
       :aria-checked="model"
+      :aria-label="label"
       :disabled="disabled"
       class="relative h-7 w-12 shrink-0 rounded-full transition duration-150 focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]/30"
-      :class="model ? 'toggle-active' : 'bg-black/15 dark:bg-white/16'"
+      :class="model ? 'toggle-active' : 'bg-[var(--ui-line-strong)]'"
       @click.prevent="model = !model"
     >
       <span
-        class="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition duration-200"
+        class="absolute top-0.5 h-6 w-6 rounded-full bg-[var(--ui-knob)] shadow-md transition duration-200"
         :class="model ? 'left-[22px]' : 'left-0.5'"
       />
     </button>

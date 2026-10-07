@@ -9,16 +9,19 @@ function pick(id: string) {
   selected.value = id;
   applyPalette(id);
 }
+function move(e:KeyboardEvent,index:number){let next=index;if(["ArrowRight","ArrowDown"].includes(e.key))next=(index+1)%PALETTES.length;else if(["ArrowLeft","ArrowUp"].includes(e.key))next=(index-1+PALETTES.length)%PALETTES.length;else if(e.key==="Home")next=0;else if(e.key==="End")next=PALETTES.length-1;else return;e.preventDefault();pick(PALETTES[next].id);(e.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();}
 </script>
 
 <template>
   <div class="palette-grid" role="radiogroup" aria-label="主题调色盘">
     <button
-      v-for="p in PALETTES"
+      v-for="(p,index) in PALETTES"
       :key="p.id"
       type="button"
       role="radio"
       :aria-checked="selected === p.id"
+      :tabindex="selected===p.id?0:-1"
+      @keydown="move($event,index)"
       class="palette-card"
       :class="{ 'is-active': selected === p.id }"
       :title="p.desc"
@@ -85,7 +88,7 @@ function pick(id: string) {
 }
 
 .palette-check {
-  color: #fff;
+  color: var(--ui-knob);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
 }
 
@@ -97,7 +100,7 @@ function pick(id: string) {
 }
 
 .palette-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-main);
   line-height: 1.3;

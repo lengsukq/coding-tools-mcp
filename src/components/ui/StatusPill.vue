@@ -1,23 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
-const props = withDefaults(defineProps<{ status?: string; label?: string }>(), { status: "stopped" });
-const tone = computed(() => {
-  const value = props.status.toLowerCase();
-  if (["running", "ok", "success", "active", "completed"].includes(value)) return "is-success";
-  if (["starting", "stopping", "pending", "in_progress", "warning"].includes(value)) return "is-warning";
-  if (["error", "failed", "blocked", "danger"].includes(value)) return "is-danger";
-  return "is-neutral";
-});
+import {computed} from "vue";import {statusPresentation} from "$lib/ui-model";
+const props=withDefaults(defineProps<{status?:string;label?:string}>(),{status:"unknown"});
+const presentation=computed(()=>statusPresentation(props.status));
 </script>
-
-<template>
-  <span :class="tone" class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium">
-    <span class="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-    {{ label || status }}
-  </span>
-</template>
-
+<template><span :class="`is-${presentation.tone}`" class="ui-status"><span class="ui-status-dot" aria-hidden="true" />{{label || presentation.label}}</span></template>
 <style scoped>
+.is-info { background: var(--ui-accent-soft); color: var(--ui-accent); border-color: var(--ui-line); }
 .is-success {
   background: var(--ui-success-soft);
   color: var(--ui-success);

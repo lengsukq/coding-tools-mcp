@@ -8,15 +8,9 @@ withDefaults(defineProps<{ padded?: boolean; interactive?: boolean; hoverable?: 
 
 <template>
   <section
-    class="ui-surface min-w-0 max-w-full glass-card-refined"
+    class="ui-surface min-w-0 max-w-full"
     :class="[{ 'p-5': padded, 'ui-surface--interactive': interactive || hoverable }]"
   >
     <slot />
   </section>
 </template>
-
-<style scoped>
-.glass-card-refined {
-  overflow: hidden;
-}
-</style>

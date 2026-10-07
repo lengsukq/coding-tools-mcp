@@ -19,6 +19,7 @@ const router = createRouter({
     { path: "/settings/gateway", name: "settings-gateway", component: GatewaySettingsView },
     { path: "/settings/frp", name: "settings-frp", component: FrpSettingsView },
     { path: "/settings/software", name: "settings-software", component: SoftwareSettingsView },
+    ...(import.meta.env.DEV ? [{ path: "/dev/ui", component: () => import("./views/ComponentGalleryView.vue") }] : []),
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });
