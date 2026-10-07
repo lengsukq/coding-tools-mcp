@@ -1,3 +1,4 @@
+import {hasUnsavedChanges,confirmUnsavedChanges} from "./unsaved-changes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getWebviewMemorySample, recreateUiWebview } from "$lib/api/ui-memory";
 
@@ -28,6 +29,10 @@ let releasing = false;
  */
 export async function reloadUiOnly(reason: string): Promise<void> {
   if (releasing) return;
+  if (hasUnsavedChanges.value) {
+    if(reason.startsWith("auto-") || reason === "hidden-or-minimized") return;
+    if(!await confirmUnsavedChanges()) return;
+  }
   releasing = true;
   try {
     localStorage.setItem(LAST_RELOAD_KEY, String(Date.now()));

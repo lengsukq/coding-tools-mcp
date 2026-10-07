@@ -2,8 +2,11 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
+import BaseButton from "$src/components/ui/BaseButton.vue";
 import AppShell from "$src/components/AppShell.vue";
 import CloseConfirmDialog from "$src/components/CloseConfirmDialog.vue";
+import UnsavedChangesDialog from "./components/UnsavedChangesDialog.vue";
+import {confirmUnsavedChanges} from "$lib/unsaved-changes";
 import ToastHost from "$src/components/ToastHost.vue";
 import WorkspaceNavItem from "$src/components/WorkspaceNavItem.vue";
 import {
@@ -25,6 +28,7 @@ import {
 const router = useRouter();
 const route = useRoute();
 const closeConfirmOpen = ref(false);
+const workspaceLoadError=ref("");const workspaceLoadBusy=ref(false);
 
 const sidebarWorkspaces = computed(() => {
   const orderedIds = sortWorkspaceIds(
@@ -38,22 +42,14 @@ const sidebarWorkspaces = computed(() => {
 const settingsActive = computed(() => route.path.startsWith("/settings"));
 const dashboardActive = computed(() => route.path === "/");
 const auditActive = computed(() => route.path === "/audit");
-const activeSettingsNav = computed(() => {
-  if (route.path === "/settings/keys") return "keys";
-  if (["/settings/gateway", "/settings/frp", "/settings/software"].includes(route.path)) {
-    return "connection";
-  }
-  return "general";
-});
-
 async function refreshWorkspaces() {
-  const items = await listWorkspaces();
-  workspaces.value = items;
-  try {
-    globalMcpRuntimeState.value = (await getRuntimeStatus()).state;
-  } catch {
-    globalMcpRuntimeState.value = "stopped";
-  }
+  if(workspaceLoadBusy.value)return;
+  workspaceLoadBusy.value=true;
+  try{workspaces.value=await listWorkspaces();workspaceLoadError.value="";
+    try{globalMcpRuntimeState.value=(await getRuntimeStatus()).state;}catch{globalMcpRuntimeState.value="unknown";}
+  }catch(error){workspaceLoadError.value=String(error);throw error;}
+  finally{workspaceLoadBusy.value=false;}
+
 }
 
 async function addWorkspace() {
@@ -73,14 +69,8 @@ async function addWorkspace() {
 }
 
 function openWorkspace(id: string) {
-  if (route.path === `/workspace/${id}`) return;
+  if (route.params.id === id) return;
   void router.push(`/workspace/${id}`);
-}
-
-function handleSettingsNavChange(value: string) {
-  if (value === "keys") void router.push("/settings/keys");
-  else if (value === "connection") void router.push("/settings/gateway");
-  else void router.push("/settings/general");
 }
 
 let stopMemoryGuard: (() => void) | undefined;
@@ -92,7 +82,7 @@ onMounted(() => {
   loadDashboardPreferences();
   stopMemoryGuard = startUiMemoryGuard();
   stopCloseGuard = startCloseGuard(() => {
-    closeConfirmOpen.value = true;
+    void confirmUnsavedChanges().then(leave => { if(leave) closeConfirmOpen.value = true; });
   });
   window.addEventListener("coding-tools:add-workspace", handleAddWorkspace);
 
@@ -127,31 +117,32 @@ onUnmounted(() => {
       :dashboard-active="dashboardActive"
       :settings-active="settingsActive"
       :audit-active="auditActive"
-      :active-settings-nav="activeSettingsNav"
       @open-dashboard="router.push('/')"
       @open-audit="router.push('/audit')"
       @add-workspace="addWorkspace"
       @open-settings="router.push('/settings/general')"
-      @settings-nav-change="handleSettingsNavChange"
+      @open-health="router.push({path:'/settings/connection',query:{panel:'health'}})"
     >
       <template #sidebar>
-        <div class="ios-sidebar-workspaces">
+        <div class="ui-sidebar-workspaces">
           <WorkspaceNavItem
             v-for="workspace in sidebarWorkspaces"
             :key="workspace!.id"
             :workspace="workspace!"
-            :active="route.path === `/workspace/${workspace!.id}`"
+            :active="route.params.id === workspace!.id"
             @click="openWorkspace(workspace!.id)"
           />
         </div>
       </template>
 
+      <div class="flex h-full min-h-0 flex-col"><div v-if="workspaceLoadError" class="ui-banner ui-banner--warning m-4" role="alert"><span>工作区列表加载失败：{{workspaceLoadError}}</span><BaseButton variant="secondary" size="sm" :busy="workspaceLoadBusy" @click="refreshWorkspaces().catch(()=>{})">重试</BaseButton></div><div class="min-h-0 flex-1">
       <RouterView v-slot="{ Component }">
-        <component :is="Component" />
-      </RouterView>
+        <component :key="route.name === 'workspace' ? String(route.params.id) : undefined" :is="Component" />
+      </RouterView></div></div>
     </AppShell>
 
     <ToastHost />
+    <UnsavedChangesDialog />
     <CloseConfirmDialog v-model:open="closeConfirmOpen" />
   </div>
 </template>

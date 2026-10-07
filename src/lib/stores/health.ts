@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { runGlobalHealthChecks, type HealthItem } from "$lib/api/health";
 
+const healthClock = ref(Date.now());
 export const globalHealthItems = ref<HealthItem[]>([]);
 export const globalHealthBusy = ref(false);
 export const globalHealthLastCheckedAt = ref<number | null>(null);
@@ -27,6 +28,7 @@ export const globalHealthSummary = computed(() => {
       total,
     };
   }
+  if(globalHealthLastCheckedAt.value && healthClock.value-globalHealthLastCheckedAt.value>=30000){return {state:"unknown" as const,label:"检查已过期",detail:"连接状态待重新检查",failed,total};}
   if (failed.length > 0) {
     return {
       state: "warning" as const,
@@ -39,7 +41,7 @@ export const globalHealthSummary = computed(() => {
   if (total > 0) {
     return {
       state: "healthy" as const,
-      label: "运行正常",
+      label: "连接正常",
       detail: `${total} 项健康检查全部通过`,
       failed,
       total,
@@ -67,11 +69,13 @@ export async function refreshGlobalHealth() {
     globalHealthError.value = String(error);
   } finally {
     globalHealthLastCheckedAt.value = Date.now();
+    healthClock.value = Date.now();
     globalHealthBusy.value = false;
   }
 }
 
 function refreshWhenVisible() {
+  healthClock.value = Date.now();
   if (document.visibilityState === "visible") void refreshGlobalHealth();
 }
 

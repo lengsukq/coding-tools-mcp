@@ -1,965 +1,251 @@
 <script setup lang="ts">
-import {
-  Activity,
-  AlertTriangle,
-  ArrowUpRight,
-  Boxes,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Command,
-  Copy,
-  Cpu,
-  FolderOpen,
-  Gauge,
-  GitBranch,
-  LayoutDashboard,
-  ListChecks,
-  Pin,
-  PinOff,
-  Play,
-  RotateCw,
-  ShieldCheck,
-  Sparkles,
-  Square,
-  X,
-  Zap,
-} from "@lucide/vue";
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
-import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
-import DashboardUsagePanel from "$src/components/dashboard/DashboardUsagePanel.vue";
+import { ArrowUp, ArrowDown, Pin, FolderOpen, Copy, Command, RefreshCw } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
-import MetricCard from "$src/components/ui/MetricCard.vue";
 import PageHeader from "$src/components/ui/PageHeader.vue";
 import PageShell from "$src/components/ui/PageShell.vue";
+import GlassCard from "$src/components/ui/GlassCard.vue";
 import StatusPill from "$src/components/ui/StatusPill.vue";
-import {
-  globalHealthBusy,
-  globalHealthItems as globalHealth,
-  globalHealthLastCheckedAt,
-  globalHealthSummary,
-  refreshGlobalHealth,
-} from "$lib/stores/health";
-import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
-import type { PlanningStateDto } from "$lib/api/planning";
+import EmptyState from "$src/components/ui/EmptyState.vue";
+import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
+import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
+import { dashboardPreferences, loadDashboardPreferences, sortWorkspaceIds, moveWorkspace, togglePinnedWorkspace, toggleDashboardModule, updateDashboardPreferences } from "$lib/dashboard-preferences";
+import { workspaces } from "$lib/stores/app";
+import { globalHealthSummary } from "$lib/stores/health";
 import { getLastWorkspaceId } from "$lib/api/settings";
-import type { ServiceUsageStats } from "$lib/api/usage";
-import {
-  buildUsageChart,
-  buildUsagePoint,
-  formatCount,
-  loadPlanningByWorkspace,
-  loadUsageByWorkspace,
-  summarizePlanning,
-  summarizeUsage,
-  type UsagePoint,
-} from "$lib/dashboard";
-import {
-  dashboardPreferences,
-  loadDashboardPreferences,
-  moveWorkspace,
-  sortWorkspaceIds,
-  toggleDashboardModule,
-  togglePinnedWorkspace,
-  updateDashboardPreferences,
-  type DashboardModuleId,
-} from "$lib/dashboard-preferences";
-import {
-  getGlobalMcpOverview,
-  getRuntimeStatus,
-  openWorkspaceDirectory,
-  startRuntime,
-  stopRuntime,
-  type GlobalMcpOverviewDto,
-} from "$lib/api/workspaces";
-import { DEFAULT_GLOBAL_GATEWAY, getGlobalGatewayConfig, type GlobalGatewayConfigDto } from "$lib/api/global-gateway";
-import { runServiceToggle } from "$lib/runtime/service";
+import { openWorkspaceDirectory } from "$lib/api/workspaces";
+import { peekCachedPlanningState, peekCachedWorkspaceGitSummary, workspaceResourceState, statusRevision, getCachedPlanningState, getCachedWorkspaceGitSummary } from "$lib/workspace-status-cache";
+import { taskFocus, statusPresentation } from "$lib/ui-model";
+import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
+import { summarizeUsage, formatCount, buildUsagePoint, buildUsageChart, type UsagePoint } from "$lib/dashboard";
+import {getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
 import { showToast } from "$lib/stores/toast";
-import { globalMcpRuntimeState, workspaces } from "$lib/stores/app";
-import type { WorkspaceProfile } from "$lib/types";
-
-interface FocusItem {
-  workspace: WorkspaceProfile;
-  title: string;
-  detail: string;
-  progress: number;
-  progressLabel: string;
-  mode: string;
-}
-
-async function loadGlobalOverview() {
-  try {
-    const overview = await getGlobalMcpOverview();
-    globalOverview.value = overview;
-    globalMcpRuntimeState.value = overview.state;
-  } catch {
-    // Keep the last known state; App-level refresh still handles hard failures.
-  }
-}
-
-function requestAddWorkspace() {
-  window.dispatchEvent(new CustomEvent("coding-tools:add-workspace"));
-}
-
-interface AttentionItem {
-  workspace: WorkspaceProfile;
-  title: string;
-  detail: string;
-  level: "warning" | "error" | "info";
-}
-
-interface ActivityItem {
-  workspace: WorkspaceProfile;
-  title: string;
-  detail: string;
-  timestamp: number;
-}
-
 const router = useRouter();
-const lastWorkspaceId = ref("");
-const planningByWorkspace = ref<Record<string, PlanningStateDto | null>>({});
-const usageByWorkspace = ref<Record<string, ServiceUsageStats[]>>({});
-const historyByWorkspace = ref<Record<string, HistorySessionSummary[]>>({});
-const usageHistory = ref<UsagePoint[]>([]);
-const usageWorkspaceKey = ref("");
-const globalRuntimeBusy = ref(false);
-const gatewayConfig = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
-const globalOverview = ref<GlobalMcpOverviewDto>({
-  state: "stopped",
-  localEndpoint: "",
-  publicEndpoint: "",
-  workspaceCount: 0,
-  sessionCount: 0,
-  registryRevision: 0,
-  sessions: [],
-});
-const copiedPathId = ref<string | null>(null);
-const commandOpen = ref(false);
-const commandQuery = ref("");
+const lastId = ref('');
 const preferencesOpen = ref(false);
-let planningGeneration = 0;
-let usageGeneration = 0;
-let historyGeneration = 0;
-let planningTimer = 0;
-let usageTimer = 0;
-let historyTimer = 0;
-
-const workspaceCount = computed(() => workspaces.value.length);
-const orderedWorkspaces = computed(() => {
-  const ids = sortWorkspaceIds(workspaces.value.map((item) => item.id), dashboardPreferences.value);
-  const byId = new Map(workspaces.value.map((item) => [item.id, item]));
-  return ids.map((id) => byId.get(id)).filter((item): item is WorkspaceProfile => Boolean(item));
-});
-const mcpRunning = computed(() => globalMcpRuntimeState.value === "running" ? 1 : 0);
-const errorServices = computed(() => globalMcpRuntimeState.value === "error" ? 1 : 0);
-const serviceHealth = computed(() => globalMcpRuntimeState.value === "running" ? 100 : 0);
-const failedGlobalHealth = computed(() => globalHealth.value.filter((item) => !item.ok));
-const globalHealthTone = computed(() => {
-  if (globalHealthSummary.value.state === "healthy") return "success";
-  if (globalHealthSummary.value.state === "warning") return "warning";
-  if (globalHealthSummary.value.state === "error") return "error";
-  return "stopped";
-});
-const planningStats = computed(() => summarizePlanning(planningByWorkspace.value));
-const usageTotals = computed(() => summarizeUsage(usageByWorkspace.value));
-const executionStats = computed(() => {
-  let running = 0;
-  let blocked = 0;
-  let verified = 0;
-  let changedFiles = 0;
-  for (const planning of Object.values(planningByWorkspace.value)) {
-    if (!planning) continue;
-    const state = planning.execution.state.toLowerCase();
-    if (["running", "in_progress", "executing"].includes(state)) running += 1;
-    if (["blocked", "failed", "error"].includes(state) || planning.execution.last_error) blocked += 1;
-    if (planning.execution.verification.length > 0) verified += 1;
-    changedFiles += planning.execution.changed_files.length;
-  }
-  return { running, blocked, verified, changedFiles };
-});
-const averageTokens = computed(() => usageTotals.value.toolCallCount === 0 ? 0 : usageTotals.value.estimatedToolCallTokens / usageTotals.value.toolCallCount);
-const usageChart = computed(() => buildUsageChart(usageHistory.value));
-const runtimeMix = computed(() => [
-  { key: "running", label: "Running", value: mcpRunning.value },
-  { key: "offline", label: "Offline", value: globalMcpRuntimeState.value === "stopped" ? 1 : 0 },
-  { key: "error", label: "Error", value: errorServices.value },
-]);
-const connectionMix = computed(() => [
-  { key: "gateway", label: "FRP", value: gatewayConfig.tunnelType === "frp" ? 1 : 0 },
-  { key: "cloudflare", label: "Cloudflare", value: gatewayConfig.tunnelType === "cloudflare" ? 1 : 0 },
-  { key: "local", label: "Local", value: !gatewayConfig.enabled || gatewayConfig.tunnelType === "none" ? 1 : 0 },
-]);
-const planningModeMix = computed(() => [
-  { key: "direct", label: "Direct", value: planningStats.value.modes.direct },
-  { key: "plan", label: "Plan", value: planningStats.value.modes.plan },
-  { key: "goal", label: "Goal", value: planningStats.value.modes.goal },
-]);
-
-const focusItems = computed<FocusItem[]>(() => orderedWorkspaces.value.flatMap((workspace) => {
-  const planning = planningByWorkspace.value[workspace.id];
-  if (!planning) return [];
-  const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
-  const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
-  if (!goal && !plan) return [];
-  if (plan) {
-    const completed = plan.steps.filter((step) => ["completed", "skipped"].includes(step.status)).length;
-    const total = plan.steps.length;
-    return [{
-      workspace,
-      title: plan.title,
-      detail: goal?.title ?? plan.objective,
-      progress: total === 0 ? 0 : Math.round((completed / total) * 100),
-      progressLabel: `${completed} / ${total} Steps`,
-      mode: planning.mode.toUpperCase(),
-    }];
-  }
-  const completed = goal!.success_criteria.filter((criterion) => criterion.completed).length;
-  const total = goal!.success_criteria.length;
-  return [{
-    workspace,
-    title: goal!.title,
-    detail: goal!.objective,
-    progress: total === 0 ? 0 : Math.round((completed / total) * 100),
-    progressLabel: `${completed} / ${total} Criteria`,
-    mode: planning.mode.toUpperCase(),
-  }];
+const commandOpen = ref(false);
+const commandQuery = ref('');
+const history = ref<Record<string, HistorySessionSummary[]>>({});
+const usage = ref<Record<string, ServiceUsageStats[]>>({});
+const analyticsOpen = ref(false);
+const auxiliaryError = ref('');
+let timer = 0;
+let generation = 0;
+let inFlight = false;
+const ordered = computed(() => { statusRevision.value; const byId = new Map(workspaces.value.map(w => [w.id, w])); return sortWorkspaceIds([...byId.keys()], dashboardPreferences.value).map(id => { const workspace = byId.get(id)!; const state = peekCachedPlanningState(id); const git = peekCachedWorkspaceGitSummary(id); const query = workspaceResourceState(id); return { workspace, state, git, query, focus: taskFocus(state) }; }); });
+const focused = computed(() => ordered.value.find(w => w.workspace.id === lastId.value && (w.focus.plan || w.focus.goal)) ?? ordered.value.find(w => w.focus.plan || w.focus.goal));
+const attention = computed(() => ordered.value.flatMap(row => {
+    const result: Array<{
+        key: string;
+        title: string;
+        detail: string;
+        path: string;
+        query?: Record<string, string>;
+    }> = [];
+    const id = row.workspace.id;
+    if (row.query.error || row.query.stale)
+        result.push({ key: id + 'fetch', title: row.workspace.name + ' · 状态待更新', detail: row.query.error || '上次数据已过期，正在重新检查。', path: `/workspace/${id}/planning` });
+    for (const item of [...(row.state?.plans ?? []), ...(row.state?.goals ?? [])].filter(i => i.status === 'awaiting_acceptance'))
+        result.push({ key: id + item.id, title: row.workspace.name + ' · 待验收', detail: item.title, path: `/workspace/${id}/planning`, query: { item: item.id } });
+    if (row.state?.execution.last_error || ['blocked', 'failed', 'error'].includes(row.state?.execution.state ?? ''))
+        result.push({ key: id + 'error', title: row.workspace.name + ' · 执行需要处理', detail: row.state?.execution.last_error || '执行已阻塞，请查看任务和诊断。', path: `/workspace/${id}/planning` });
+    return result;
 }));
-
-const primaryFocus = computed(() => focusItems.value.find((item) => item.workspace.id === lastWorkspaceId.value) ?? focusItems.value[0] ?? null);
-
-const attentionItems = computed<AttentionItem[]>(() => {
-  const items: AttentionItem[] = [];
-  for (const workspace of orderedWorkspaces.value) {
-    const planning = planningByWorkspace.value[workspace.id];
-    const usage = usageByWorkspace.value[workspace.id] ?? [];
-    const reviews = planning
-      ? planning.goals.filter((goal) => goal.status === "awaiting_acceptance").length
-        + planning.plans.filter((plan) => plan.status === "awaiting_acceptance").length
-      : 0;
-    if (reviews > 0) items.push({ workspace, title: `${reviews} 项 Planning 等待验收`, detail: "完成后需要人工确认才能归档。", level: "warning" });
-    if (planning?.execution.last_error) items.push({ workspace, title: "最近执行存在错误", detail: planning.execution.last_error, level: "error" });
-    if (planning && ["blocked", "failed", "error"].includes(planning.execution.state.toLowerCase()) && !planning.execution.last_error) {
-      items.push({ workspace, title: `Execution ${planning.execution.state}`, detail: "执行链路需要恢复或重新验证。", level: "warning" });
+const activities = computed(() => ordered.value.flatMap(row => (history.value[row.workspace.id] ?? []).map(session => ({ workspace: row.workspace, session }))).sort((a, b) => new Date(b.session.updated_at ?? b.session.created_at ?? 0).getTime() - new Date(a.session.updated_at ?? a.session.created_at ?? 0).getTime()).slice(0, 6));
+const samples=ref<UsagePoint[]>([]);
+const chart=computed(()=>buildUsageChart(samples.value));
+const totals = computed(() => summarizeUsage(usage.value));
+const quickItems = computed(() => [{ label: '添加工作区', hint: '项目', run: () => addWorkspace() }, { label: 'MCP 连接设置', hint: '应用设置', run: () => router.push('/settings/connection') }, ...ordered.value.map(row => ({ label: '打开 ' + row.workspace.name, hint: '工作区', run: () => router.push(`/workspace/${row.workspace.id}`) }))]);
+const filteredCommands = computed(() => quickItems.value.filter(x => x.label.toLowerCase().includes(commandQuery.value.toLowerCase())));
+function addWorkspace() { window.dispatchEvent(new CustomEvent('coding-tools:add-workspace')); }
+function visible(id: string) { return !dashboardPreferences.value.hiddenModules.includes(id as any); }
+async function loadAuxiliary() { if (inFlight)
+    return; inFlight = true; const id = ++generation; const items = [...workspaces.value]; try {
+    const sessions = await Promise.all(items.map(async (w) => [w.id, (await listHistorySessions(w.id)).sessions] as const));
+    if (id === generation)
+        history.value = Object.fromEntries(sessions);
+    auxiliaryError.value = '';
+    if (analyticsOpen.value) {
+        const next=Object.fromEntries(await Promise.all(items.map(async w=>[w.id,await getServiceUsageStats(w.id)] as const)));
+        if (id === generation)
+            {usage.value=next;samples.value=[...samples.value,buildUsagePoint(next,samples.value.at(-1))].slice(-60);}
     }
-    const errors = usage.reduce((sum, item) => sum + item.errorCount, 0);
-    if (errors > 0) items.push({ workspace, title: `${formatCount(errors)} 次工具请求错误`, detail: "MCP 使用统计检测到失败请求。", level: "warning" });
-  }
-  return items.slice(0, 6);
-});
-
-const usageRanking = computed(() => {
-  const rows = orderedWorkspaces.value
-    .map((workspace) => ({
-      workspace,
-      tokens: (usageByWorkspace.value[workspace.id] ?? []).reduce((sum, item) => sum + item.estimatedTokens, 0),
-    }))
-    .sort((a, b) => b.tokens - a.tokens);
-  const max = Math.max(rows[0]?.tokens ?? 0, 1);
-  return rows.map((row) => ({ ...row, percentage: Math.round((row.tokens / max) * 100) }));
-});
-
-const requestSuccessRate = computed(() => {
-  if (usageTotals.value.requestCount === 0) return 100;
-  const successful = Math.max(0, usageTotals.value.requestCount - usageTotals.value.errorCount);
-  return Math.max(0, Math.min(100, (successful / usageTotals.value.requestCount) * 100));
-});
-
-const sessionRouting = computed(() => {
-  const total = globalOverview.value.sessionCount;
-  const bound = globalOverview.value.sessions.filter((session) => Boolean(session.workspaceId)).length;
-  const counts = new Map<string, { id: string; label: string; value: number }>();
-  for (const session of globalOverview.value.sessions) {
-    const id = session.workspaceId || "unbound";
-    const label = session.workspaceId ? session.workspaceName : "未选择 Workspace";
-    const current = counts.get(id) ?? { id, label, value: 0 };
-    current.value += 1;
-    counts.set(id, current);
-  }
-  const rows = [...counts.values()]
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 4)
-    .map((row) => ({
-      ...row,
-      percentage: total > 0 ? Math.round((row.value / total) * 100) : 0,
-    }));
-  return {
-    total,
-    bound,
-    unbound: Math.max(0, total - bound),
-    boundRate: total > 0 ? Math.round((bound / total) * 100) : 0,
-    rows,
-  };
-});
-
-const planningCompletion = computed(() => {
-  let completed = 0;
-  let total = 0;
-  for (const workspace of orderedWorkspaces.value) {
-    const planning = planningByWorkspace.value[workspace.id];
-    if (!planning) continue;
-    const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
-    if (plan) {
-      total += plan.steps.length;
-      completed += plan.steps.filter((step) => ["completed", "skipped"].includes(step.status)).length;
-      continue;
-    }
-    const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
-    if (!goal) continue;
-    total += goal.success_criteria.length;
-    completed += goal.success_criteria.filter((criterion) => criterion.completed).length;
-  }
-  return {
-    completed,
-    total,
-    percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
-  };
-});
-
-const planningModeRows = computed(() => {
-  const rows = [
-    { key: "direct", label: "Direct", value: planningStats.value.modes.direct },
-    { key: "plan", label: "Plan", value: planningStats.value.modes.plan },
-    { key: "goal", label: "Goal", value: planningStats.value.modes.goal },
-  ];
-  const total = Math.max(rows.reduce((sum, row) => sum + row.value, 0), 1);
-  return rows.map((row) => ({ ...row, percentage: Math.round((row.value / total) * 100) }));
-});
-
-const recentActivities = computed<ActivityItem[]>(() => {
-  const items: ActivityItem[] = [];
-  for (const workspace of orderedWorkspaces.value) {
-    for (const session of historyByWorkspace.value[workspace.id] ?? []) {
-      items.push({
-        workspace,
-        title: session.title || workspace.name,
-        detail: session.latest_focus || session.snippets.at(-1)?.text || "History session updated",
-        timestamp: parseTimestamp(session.updated_at ?? session.created_at),
-      });
-    }
-  }
-  return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 8);
-});
-
-const commandEntries = computed(() => {
-  const query = commandQuery.value.trim().toLowerCase();
-  const entries = [
-    { label: "添加工作区", hint: "Workspace", run: () => window.dispatchEvent(new CustomEvent("coding-tools:add-workspace")) },
-    { label: "打开通用设置", hint: "Settings", run: () => router.push("/settings/general") },
-    { label: "启动 Global MCP", hint: "Runtime", run: () => void setGlobalRuntime(true) },
-    { label: "停止 Global MCP", hint: "Runtime", run: () => void setGlobalRuntime(false) },
-    ...orderedWorkspaces.value.map((workspace) => ({ label: `打开 ${workspace.name}`, hint: "Workspace", run: () => openWorkspace(workspace.id) })),
-  ];
-  return query ? entries.filter((entry) => `${entry.label} ${entry.hint}`.toLowerCase().includes(query)) : entries;
-});
-
-function moduleVisible(moduleId: DashboardModuleId) {
-  return !dashboardPreferences.value.hiddenModules.includes(moduleId);
 }
-
-function parseTimestamp(value?: string | null): number {
-  if (!value) return 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
+catch (error) {
+    auxiliaryError.value = String(error);
 }
-
-function formatRelativeTime(timestamp: number): string {
-  if (!timestamp) return "—";
-  const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60_000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
-
-function workspaceUsageTokens(workspaceId: string) {
-  return (usageByWorkspace.value[workspaceId] ?? []).reduce((sum, item) => sum + item.estimatedTokens, 0);
-}
-
-function planningSummary(workspaceId: string): string {
-  const planning = planningByWorkspace.value[workspaceId];
-  if (!planning) return "—";
-  const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
-  const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
-  return goal?.title ?? plan?.title ?? planning.mode.toUpperCase();
-}
-
-async function loadPlanning(items: WorkspaceProfile[]) {
-  const generation = ++planningGeneration;
-  if (items.length === 0) {
-    planningByWorkspace.value = {};
-    return;
-  }
-  const next = await loadPlanningByWorkspace(items);
-  if (generation !== planningGeneration) return;
-  const current = planningByWorkspace.value;
-  const currentIds = Object.keys(current).sort();
-  const nextIds = Object.keys(next).sort();
-  const unchanged = currentIds.length === nextIds.length
-    && currentIds.every((id, index) => id === nextIds[index]
-      && current[id]?.revision === next[id]?.revision);
-  if (!unchanged) planningByWorkspace.value = next;
-}
-
-async function loadUsage(items: WorkspaceProfile[]) {
-  const generation = ++usageGeneration;
-  if (items.length === 0) {
-    usageByWorkspace.value = {};
-    usageHistory.value = [];
-    usageWorkspaceKey.value = "";
-    return;
-  }
-  const workspaceKey = items.map((item) => item.id).sort().join("|");
-  if (workspaceKey !== usageWorkspaceKey.value) {
-    usageWorkspaceKey.value = workspaceKey;
-    usageHistory.value = [];
-  }
-  const next = await loadUsageByWorkspace(items);
-  if (generation !== usageGeneration) return;
-  usageByWorkspace.value = next;
-  usageHistory.value = [...usageHistory.value, buildUsagePoint(next, usageHistory.value.at(-1))].slice(-24);
-}
-
-async function loadHistory(items: WorkspaceProfile[]) {
-  const generation = ++historyGeneration;
-  const entries = await Promise.all(items.map(async (workspace) => {
-    try {
-      const catalog = await listHistorySessions(workspace.id);
-      return [workspace.id, catalog.sessions.slice(0, 5)] as const;
-    } catch {
-      return [workspace.id, []] as const;
-    }
-  }));
-  if (generation === historyGeneration) historyByWorkspace.value = Object.fromEntries(entries);
-}
-
-function openWorkspace(id: string) {
-  commandOpen.value = false;
-  void router.push(`/workspace/${id}`);
-}
-
-async function toggleGlobalMcp() {
-  if (globalRuntimeBusy.value) return;
-  const wasRunning = globalMcpRuntimeState.value === "running";
-  globalRuntimeBusy.value = true;
-  try {
-    const status = await runServiceToggle(wasRunning, () => startRuntime(), () => stopRuntime(), "Global MCP");
-    if (status) globalMcpRuntimeState.value = status.state;
-  } finally {
-    globalRuntimeBusy.value = false;
-  }
-}
-
-async function setGlobalRuntime(start: boolean) {
-  commandOpen.value = false;
-  const running = globalMcpRuntimeState.value === "running";
-  if (start !== running) await toggleGlobalMcp();
-}
-
-async function copyWorkspacePath(id: string, path: string) {
-  try {
-    await navigator.clipboard.writeText(path);
-    copiedPathId.value = id;
-    window.setTimeout(() => {
-      if (copiedPathId.value === id) copiedPathId.value = null;
-    }, 1500);
-    showToast("工作区路径已复制", { kind: "success", duration: 1800 });
-  } catch {
-    showToast("复制路径失败", { kind: "error" });
-  }
-}
-
-async function revealDirectory(path: string) {
-  try {
+finally {
+    inFlight = false;
+} }
+async function refresh() { await Promise.allSettled(ordered.value.flatMap(row => [getCachedPlanningState(row.workspace.id, true), getCachedWorkspaceGitSummary(row.workspace.id, true)])); await loadAuxiliary(); }
+async function reveal(path: string) { try {
     await openWorkspaceDirectory(path);
-  } catch (error) {
-    showToast(`打开目录失败: ${error instanceof Error ? error.message : String(error)}`, { kind: "error" });
-  }
 }
-
-function runCommand(run: () => void | Promise<void>) {
-  commandOpen.value = false;
-  commandQuery.value = "";
-  void run();
+catch (e) {
+    showToast(String(e), { kind: 'error' });
+} }
+async function copy(path: string) { try {
+    await navigator.clipboard.writeText(path);
+    showToast('路径已复制', { kind: 'success' });
 }
-
-function handleKeydown(event: KeyboardEvent) {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
+catch (e) {
+    showToast(String(e), { kind: 'error' });
+} }
+function keys(e: KeyboardEvent) { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
     commandOpen.value = !commandOpen.value;
-    commandQuery.value = "";
-  } else if (event.key === "Escape") {
-    commandOpen.value = false;
-    preferencesOpen.value = false;
-  }
-}
-
-watch(
-  workspaces,
-  (items) => {
-    void loadPlanning(items);
-    void loadUsage(items);
-    void loadHistory(items);
-  },
-  { immediate: true, deep: true },
-);
-
-onMounted(() => {
-  loadDashboardPreferences();
-  planningTimer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void loadPlanning(workspaces.value);
-  }, 3000);
-  usageTimer = window.setInterval(() => {
-    void loadUsage(workspaces.value);
-    void loadGlobalOverview();
-  }, 5000);
-  historyTimer = window.setInterval(() => void loadHistory(workspaces.value), 30_000);
-  void getLastWorkspaceId().then((id) => {
-    lastWorkspaceId.value = id ?? "";
-  }).catch(() => {
-    lastWorkspaceId.value = "";
-  });
-  void getRuntimeStatus().then((status) => {
-    globalMcpRuntimeState.value = status.state;
-  }).catch(() => {
-    globalMcpRuntimeState.value = "stopped";
-  });
-  void getGlobalGatewayConfig().then((config) => Object.assign(gatewayConfig, config)).catch(() => undefined);
-  void loadGlobalOverview();
-  window.addEventListener("keydown", handleKeydown);
-});
-
-onUnmounted(() => {
-  window.clearInterval(planningTimer);
-  window.clearInterval(usageTimer);
-  window.clearInterval(historyTimer);
-  window.removeEventListener("keydown", handleKeydown);
-});
+} }
+watch(() => workspaces.value.map(w => w.id).join(','), () => void loadAuxiliary());
+watch(analyticsOpen, open => { if (open)
+    void loadAuxiliary(); });
+onMounted(() => { loadDashboardPreferences(); void getLastWorkspaceId().then(id => lastId.value = id).catch(() => { }); void loadAuxiliary(); timer = window.setInterval(() => { if (document.visibilityState === 'visible')
+    void loadAuxiliary(); }, 15000); window.addEventListener('keydown', keys); });
+onUnmounted(() => { generation++; window.clearInterval(timer); window.removeEventListener('keydown', keys); });
 </script>
-
-<template>
-  <section class="page-scroll wb-dashboard" :data-density="dashboardPreferences.density">
-    <PageShell>
-      <PageHeader
-        kicker="工作台"
-        title="AI 工作与运行状态"
-        description="先处理正在执行的工作和需要关注的风险，再查看 Workspace、运行状态与分析数据。"
-      >
-        <template #actions>
-          <BaseButton variant="secondary" size="sm" @click="commandOpen = true; commandQuery = ''">
-            <Command :size="14" />
-            <span>Quick Actions</span>
-            <span class="wb-kbd">⌘K</span>
-          </BaseButton>
-          <DashboardPreferencesPopover
-            :open="preferencesOpen"
-            :density="dashboardPreferences.density"
-            :hidden-modules="dashboardPreferences.hiddenModules"
-            @toggle-open="preferencesOpen = !preferencesOpen"
-            @toggle-density="updateDashboardPreferences((current) => ({ ...current, density: current.density === 'compact' ? 'comfortable' : 'compact' }))"
-            @toggle-module="toggleDashboardModule"
-          />
-        </template>
-      </PageHeader>
-
-      <section
-        class="dashboard-health-banner ui-surface"
-        :class="{
-          'is-warning': globalHealthSummary.state === 'warning',
-          'is-error': globalHealthSummary.state === 'error',
-          'is-healthy': globalHealthSummary.state === 'healthy',
-        }"
-      >
-        <div class="dashboard-health-banner__main">
-          <div class="dashboard-health-banner__icon">
-            <RotateCw v-if="globalHealthBusy" :size="18" class="animate-spin" />
-            <ShieldCheck v-else :size="18" />
-          </div>
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <strong class="text-sm font-semibold">系统健康</strong>
-              <StatusPill :status="globalHealthTone" :label="globalHealthSummary.label" />
-              <span v-if="globalHealthLastCheckedAt" class="text-xs text-[var(--ui-text-muted)]">
-                {{ formatRelativeTime(globalHealthLastCheckedAt) }}检查
-              </span>
-              <span v-else class="text-xs text-[var(--ui-text-muted)]">自动检查中</span>
-            </div>
-            <p class="mt-1 text-xs leading-5 text-[var(--ui-text-secondary)]">{{ globalHealthSummary.detail }}</p>
-            <div v-if="failedGlobalHealth.length" class="mt-2 flex flex-wrap gap-2">
-              <span
-                v-for="item in failedGlobalHealth.slice(0, 3)"
-                :key="item.label"
-                class="dashboard-health-failure"
-                :title="item.detail"
-              >
-                <AlertTriangle :size="12" /> {{ item.label }}
-              </span>
-            </div>
-          </div>
-        </div>
-        <BaseButton variant="secondary" size="sm" :busy="globalHealthBusy" @click="refreshGlobalHealth">
-          <RotateCw :size="13" />立即检查
-        </BaseButton>
-      </section>
-
-      <div class="wb-dashboard-main pb-14">
-      <div v-if="workspaceCount === 0" class="wb-empty-state wb-surface card-hover mx-auto mt-16 max-w-xl px-8 py-12 text-center animate-fade-in-up">
-        <div class="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]">
-          <GitBranch :size="28" />
-        </div>
-        <h2 class="mt-5 text-lg font-semibold font-display">还没有工作区</h2>
-        <p class="mt-2 text-xs leading-5 text-[var(--text-secondary)]">添加本地项目后，ChatGPT 可通过同一个 Global MCP 连接选择并操作不同 Workspace。</p>
-        <BaseButton class="mt-5" @click="requestAddWorkspace">添加工作区</BaseButton>
-      </div>
-
-      <template v-else>
-        <section v-if="moduleVisible('focus')" class="wb-hero ui-surface animate-fade-in-up delay-150">
-          <div class="wb-focus">
-            <div class="wb-eyebrow text-[var(--coral-primary,#e2574c)] font-display"><Sparkles :size="13" /> 当前执行</div>
-            <template v-if="primaryFocus">
-              <h2 class="font-display">{{ primaryFocus.title }}</h2>
-              <p>{{ primaryFocus.detail }}</p>
-              <div class="wb-progress"><span :style="{ width: `${primaryFocus.progress}%` }" /></div>
-              <div class="wb-focus-meta">
-                <span>{{ primaryFocus.workspace.name }}</span><span>{{ primaryFocus.mode }}</span>
-                <span>{{ primaryFocus.progressLabel }}</span><span>{{ planningByWorkspace[primaryFocus.workspace.id]?.execution.state ?? 'idle' }}</span>
-              </div>
-              <div class="wb-focus-actions">
-                <BaseButton @click="openWorkspace(primaryFocus.workspace.id)">继续工作 <ArrowUpRight :size="13" /></BaseButton>
-                <BaseButton variant="secondary" @click="toggleGlobalMcp">
-                  <RotateCw v-if="globalRuntimeBusy" :size="12" class="animate-spin" />
-                  <template v-else-if="globalMcpRuntimeState === 'running'"><Square :size="11" /> 停止 Global MCP</template>
-                  <template v-else><Play :size="11" /> 启动 Global MCP</template>
-                </BaseButton>
-              </div>
-            </template>
-            <template v-else>
-              <h2 class="font-display">选择一个工作区开始</h2>
-              <p>当前没有聚焦的 Goal 或 Plan。你仍然可以从下面的工作区继续工作。</p>
-            </template>
-          </div>
-          <div class="wb-health-panel">
-            <div class="wb-health-ring" :style="{ '--health-angle': `${serviceHealth * 3.6}deg` }">
-              <div class="wb-health-ring-content"><strong class="font-display">{{ serviceHealth }}%</strong><span>Global MCP</span><small>{{ globalMcpRuntimeState }}</small></div>
-            </div>
-            <div class="wb-health-summary">
-              <div><span>Executing</span><strong class="font-display">{{ executionStats.running }}</strong></div>
-              <div><span>Verified</span><strong class="font-display">{{ executionStats.verified }}</strong></div>
-              <div :class="{ alert: executionStats.blocked > 0 }"><span>Blocked</span><strong class="font-display">{{ executionStats.blocked }}</strong></div>
-            </div>
-            <div class="wb-health-connections">
-              <span :class="{ 'animate-pulse-glow': globalMcpRuntimeState === 'running' }">{{ globalMcpRuntimeState === 'running' ? 'MCP Online' : 'MCP Offline' }}</span>
-              <span>{{ globalOverview.sessionCount }} Sessions</span>
-              <span>{{ executionStats.changedFiles }} Changed Files</span>
-            </div>
-          </div>
-        </section>
-
-        <div class="ui-metric-grid dashboard-status-metrics animate-fade-in-up delay-300">
-          <MetricCard label="正在执行" :value="executionStats.running" :detail="`${executionStats.changedFiles} 个执行变更文件`"><template #icon><Boxes :size="16" class="text-[var(--ui-accent)]" /></template></MetricCard>
-          <MetricCard label="Global MCP" :value="globalMcpRuntimeState === 'running' ? '运行中' : '已停止'" :detail="`${globalOverview.sessionCount} 个活跃 Session`"><template #icon><Cpu :size="16" class="text-[var(--ui-text-muted)]" /></template></MetricCard>
-          <MetricCard label="Active Goals" :value="planningStats.activeGoals" :detail="`${planningStats.activePlans} 个 Plan 进行中`"><template #icon><ListChecks :size="16" class="text-[var(--ui-text-muted)]" /></template></MetricCard>
-          <MetricCard label="验证通过" :value="executionStats.verified" :detail="executionStats.blocked > 0 ? `${executionStats.blocked} 个执行需要处理` : `${planningStats.pendingReview} 项等待人工验收`"><template #icon><ShieldCheck :size="16" :class="executionStats.blocked > 0 ? 'text-[var(--ui-warning)]' : 'text-[var(--ui-success)]'" /></template></MetricCard>
-        </div>
-
-        <section class="wb-visual-overview animate-fade-in-up delay-500">
-          <article class="wb-overview-card wb-overview-card--flow ui-surface">
-            <div class="wb-overview-head">
-              <div>
-                <span class="wb-overview-kicker"><Activity :size="12" /> 实时流量</span>
-                <h3>Token Flow</h3>
-              </div>
-              <span class="wb-overview-live" :class="{ active: usageChart.latest > 0 }">
-                <i />{{ usageChart.latest > 0 ? 'LIVE' : 'IDLE' }}
-              </span>
-            </div>
-            <div class="wb-overview-flow-meta">
-              <div><strong>+{{ formatCount(usageChart.latest) }}</strong><span>最近 5 秒采样</span></div>
-              <div><strong>{{ usageTotals.requestCount > 0 ? `${requestSuccessRate.toFixed(requestSuccessRate >= 99 ? 1 : 0)}%` : '—' }}</strong><span>请求成功率</span></div>
-            </div>
-            <div class="wb-overview-spark-shell">
-              <svg v-if="usageChart.points.length > 1" viewBox="0 0 100 40" preserveAspectRatio="none" class="wb-overview-spark">
-                <defs>
-                  <linearGradient id="dashboardOverviewArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0" stop-color="var(--coral-accent, #E5665B)" stop-opacity=".35" />
-                    <stop offset="1" stop-color="var(--coral-primary, #e2574c)" stop-opacity="0" />
-                  </linearGradient>
-                  <linearGradient id="dashboardOverviewLine" x1="0" x2="1" y1="0" y2="0">
-                    <stop offset="0" stop-color="var(--coral-400)" />
-                    <stop offset=".55" stop-color="var(--coral-700)" />
-                    <stop offset="1" stop-color="var(--coral-600)" />
-                  </linearGradient>
-                </defs>
-                <line x1="0" x2="100" y1="27" y2="27" class="wb-overview-gridline" />
-                <line x1="0" x2="100" y1="16" y2="16" class="wb-overview-gridline" />
-                <path :d="usageChart.areaPath" fill="url(#dashboardOverviewArea)" />
-                <path :d="usageChart.path" fill="none" stroke="url(#dashboardOverviewLine)" class="wb-overview-spark-line" />
-              </svg>
-              <div v-else class="wb-overview-empty">等待更多实时采样…</div>
-            </div>
-            <div class="wb-overview-foot">
-              <span><b>{{ formatCount(usageTotals.estimatedTokens) }}</b> 总 Tokens</span>
-              <span><b>{{ formatCount(usageTotals.toolCallCount) }}</b> Tool Calls</span>
-              <span><b>{{ formatCount(usageTotals.errorCount) }}</b> Errors</span>
-            </div>
-          </article>
-
-          <article class="wb-overview-card ui-surface">
-            <div class="wb-overview-head">
-              <div>
-                <span class="wb-overview-kicker font-display"><GitBranch :size="12" /> Session 路由</span>
-                <h3 class="font-display">Chat → Workspace</h3>
-              </div>
-              <strong class="wb-overview-head-value font-display">{{ sessionRouting.total }}</strong>
-            </div>
-            <div class="wb-ring-layout">
-              <div class="wb-mini-ring" :style="{ '--ring-angle': `${sessionRouting.boundRate * 3.6}deg` }">
-                <div><strong class="font-display">{{ sessionRouting.boundRate }}%</strong><span>已绑定</span></div>
-              </div>
-              <div class="wb-overview-bars">
-                <div v-if="sessionRouting.rows.length === 0" class="wb-overview-empty">尚无活跃 Session</div>
-                <div v-for="row in sessionRouting.rows" v-else :key="row.id" class="wb-overview-bar-row">
-                  <div><span :title="row.label">{{ row.label }}</span><strong class="font-display">{{ row.value }}</strong></div>
-                  <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
-                </div>
-              </div>
-            </div>
-            <div class="wb-overview-foot">
-              <span><b>{{ sessionRouting.bound }}</b> 已选 Workspace</span>
-              <span :class="{ warning: sessionRouting.unbound > 0 }"><b>{{ sessionRouting.unbound }}</b> 未选择</span>
-            </div>
-          </article>
-
-          <article class="wb-overview-card ui-surface">
-            <div class="wb-overview-head">
-              <div>
-                <span class="wb-overview-kicker font-display"><ListChecks :size="12" /> Planning</span>
-                <h3 class="font-display">Focus 完成度</h3>
-              </div>
-              <strong class="wb-overview-head-value font-display">{{ planningCompletion.completed }}/{{ planningCompletion.total }}</strong>
-            </div>
-            <div class="wb-ring-layout">
-              <div class="wb-mini-ring wb-mini-ring--purple" :style="{ '--ring-angle': `${planningCompletion.percentage * 3.6}deg` }">
-                <div><strong class="font-display">{{ planningCompletion.percentage }}%</strong><span>Completed</span></div>
-              </div>
-              <div class="wb-overview-bars">
-                <div v-for="row in planningModeRows" :key="row.key" class="wb-overview-bar-row" :class="`is-${row.key}`">
-                  <div><span>{{ row.label }}</span><strong class="font-display">{{ row.value }}</strong></div>
-                  <div class="wb-overview-bar-track"><i :style="{ width: `${row.percentage}%` }" /></div>
-                </div>
-              </div>
-            </div>
-            <div class="wb-overview-foot">
-              <span><b>{{ planningStats.activeGoals }}</b> Active Goals</span>
-              <span><b>{{ planningStats.activePlans }}</b> Active Plans</span>
-              <span :class="{ warning: planningStats.pendingReview > 0 }"><b>{{ planningStats.pendingReview }}</b> Review</span>
-            </div>
-          </article>
-
-          <article class="wb-overview-card ui-surface">
-            <div class="wb-overview-head">
-              <div>
-                <span class="wb-overview-kicker font-display"><Boxes :size="12" /> Workspace 负载</span>
-                <h3 class="font-display">Token Distribution</h3>
-              </div>
-              <strong class="wb-overview-head-value font-display">{{ workspaceCount }}</strong>
-            </div>
-            <div class="wb-overview-workspace-bars">
-              <div v-if="usageRanking.length === 0" class="wb-overview-empty">暂无 Workspace 用量</div>
-              <div v-for="row in usageRanking.slice(0, 4)" v-else :key="row.workspace.id" class="wb-overview-workspace-row">
-                <div><span :title="row.workspace.name">{{ row.workspace.name }}</span><strong class="font-display">{{ formatCount(row.tokens) }}</strong></div>
-                <div class="wb-overview-workspace-track"><i :style="{ width: `${row.percentage}%` }" /></div>
-              </div>
-            </div>
-            <div class="wb-overview-foot">
-              <span><b>{{ usageRanking[0]?.workspace.name ?? '—' }}</b> Top Workspace</span>
-              <span><b>{{ formatCount(usageRanking[0]?.tokens ?? 0) }}</b> Tokens</span>
-            </div>
-          </article>
-        </section>
-
-        <section v-if="moduleVisible('attention') && attentionItems.length" class="wb-section wb-attention-priority ui-surface animate-fade-in-up delay-700">
-          <div class="wb-section-heading"><div><h3 class="font-display">需要关注</h3><p>只显示真正需要你处理的异常、错误和人工验收。</p></div><AlertTriangle :size="15" class="text-[var(--warning)]" /></div>
-          <div class="wb-attention-list">
-            <button v-for="item in attentionItems" :key="`${item.workspace.id}-${item.title}`" class="wb-attention-row" type="button" @click="openWorkspace(item.workspace.id)">
-              <X v-if="item.level === 'error'" :size="14" class="text-[var(--danger)]" /><AlertTriangle v-else :size="14" class="text-[var(--warning)]" />
-              <div class="min-w-0"><strong>{{ item.workspace.name }} · {{ item.title }}</strong><span class="truncate">{{ item.detail }}</span></div><ArrowUpRight :size="12" />
-            </button>
-          </div>
-        </section>
-
-        <section v-if="moduleVisible('workspaces')" class="wb-section wb-workspaces-section ui-surface animate-fade-in-up delay-700">
-          <div class="wb-section-heading"><div><h3 class="font-display">工作区</h3><p>所有项目共享同一个 MCP 连接；这里展示各自独立的项目策略、Planning 与用量。</p></div><span class="text-[10px] text-[var(--text-muted)] font-mono">{{ workspaceCount }} Workspaces</span></div>
-          <div class="wb-workspace-list">
-            <div class="wb-workspace-header"><span>Workspace</span><span>Context</span><span>Planning</span><span>Tokens</span><span /></div>
-            <div v-for="workspace in orderedWorkspaces" :key="workspace.id" class="wb-workspace-row card-hover" :class="{ 'is-pinned': dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id) }">
-              <div class="wb-workspace-name"><button type="button" class="truncate font-display font-medium" @click="openWorkspace(workspace.id)">{{ workspace.name }}</button><small :title="workspace.path" class="font-mono">{{ workspace.path }}</small></div>
-              <div class="wb-runtime-pill"><span class="wb-runtime-dot is-running" /><span>{{ workspace.runtime.tool_profile }}</span><span class="font-mono text-[9px]">isolated</span></div>
-              <div class="wb-mode-pill min-w-0"><GitBranch :size="11" /><span class="truncate" :title="planningSummary(workspace.id)">{{ planningSummary(workspace.id) }}</span></div>
-              <div class="wb-workspace-token font-mono">{{ formatCount(workspaceUsageTokens(workspace.id)) }}</div>
-              <div class="wb-workspace-actions">
-                <BaseButton variant="icon" size="sm" title="固定工作区" @click="togglePinnedWorkspace(workspace.id)"><PinOff v-if="dashboardPreferences.pinnedWorkspaceIds.includes(workspace.id)" :size="12" /><Pin v-else :size="12" /></BaseButton>
-                <BaseButton variant="icon" size="sm" title="上移" @click="moveWorkspace(workspace.id, -1, orderedWorkspaces.map((item) => item.id))"><ChevronUp :size="12" /></BaseButton>
-                <BaseButton variant="icon" size="sm" title="下移" @click="moveWorkspace(workspace.id, 1, orderedWorkspaces.map((item) => item.id))"><ChevronDown :size="12" /></BaseButton>
-                <BaseButton variant="icon" size="sm" title="打开目录" @click="revealDirectory(workspace.path)"><FolderOpen :size="12" /></BaseButton>
-                <BaseButton variant="icon" size="sm" title="复制路径" @click="copyWorkspacePath(workspace.id, workspace.path)"><Check v-if="copiedPathId === workspace.id" :size="12" class="text-[var(--ui-success)]" /><Copy v-else :size="12" /></BaseButton>
-                <BaseButton variant="icon" size="sm" title="打开工作区" @click="openWorkspace(workspace.id)"><ArrowUpRight :size="12" /></BaseButton>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <div class="wb-grid-two wb-dashboard-activity-grid animate-fade-in-up delay-900">
-          <section v-if="moduleVisible('activity')" class="wb-section ui-surface">
-            <div class="wb-section-heading"><div><h3 class="font-display">最近活动</h3><p>汇总各工作区最近的 History Session。</p></div><Activity :size="14" /></div>
-            <div v-if="recentActivities.length" class="wb-activity-list">
-              <button
-                v-for="item in recentActivities"
-                :key="`${item.workspace.id}-${item.timestamp}-${item.title}`"
-                class="wb-activity-row"
-                type="button"
-                @click="openWorkspace(item.workspace.id)"
-              >
-                <div class="wb-activity-icon">
-                  <Activity :size="13" />
-                </div>
-                <div class="min-w-0 flex-1">
-                  <div class="wb-activity-head">
-                    <span class="wb-activity-workspace-badge">{{ item.workspace.name }}</span>
-                    <strong class="wb-activity-title">{{ item.title }}</strong>
-                  </div>
-                  <p class="wb-activity-detail">{{ item.detail }}</p>
-                </div>
-                <div class="wb-activity-meta">
-                  <span v-if="formatRelativeTime(item.timestamp) !== '—'" class="wb-activity-time">
-                    {{ formatRelativeTime(item.timestamp) }}
-                  </span>
-                  <ArrowUpRight :size="12" class="wb-activity-arrow" />
-                </div>
-              </button>
-            </div>
-            <div v-else class="wb-empty-inline">还没有可汇总的 History Session。</div>
-          </section>
-
-          <section v-if="moduleVisible('health')" class="wb-section ui-surface">
-            <div class="wb-section-heading"><div><h3 class="font-display">健康详情</h3><p>每 10 秒自动检查 Global MCP 与公网入口；窗口重新获得焦点时也会立即检查。</p></div><Gauge :size="14" /></div>
-            <div v-if="globalHealth.length" class="wb-global-health-grid mb-3">
-              <div
-                v-for="item in globalHealth"
-                :key="item.label"
-                class="wb-health-tile"
-              >
-                <div class="flex items-center justify-between gap-3">
-                  <strong class="text-xs font-semibold text-[var(--text-main)] font-display">{{ item.label }}</strong>
-                  <StatusPill :status="item.ok ? 'success' : 'error'" :label="item.ok ? '正常' : '异常'" />
-                </div>
-                <p class="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">{{ item.detail }}</p>
-                <p v-if="item.hint" class="mt-1 text-xs leading-4 text-[var(--text-muted)] font-mono">{{ item.hint }}</p>
-              </div>
-            </div>
-            <div class="wb-health-overview">
-              <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span class="font-display">Global MCP</span><strong class="font-display">{{ globalMcpRuntimeState }}</strong></div>
-                <div class="wb-mix-track">
-                  <i v-for="item in runtimeMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
-                </div>
-                <div class="wb-mix-legend"><span v-for="item in runtimeMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
-              </div>
-              <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span class="font-display">唯一连接方式</span><strong class="font-display">1 Endpoint</strong></div>
-                <div class="wb-mix-track">
-                  <i v-for="item in connectionMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
-                </div>
-                <div class="wb-mix-legend"><span v-for="item in connectionMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
-              </div>
-              <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span class="font-display">Planning 模式</span><strong class="font-display">{{ planningStats.activeGoals }} Goals</strong></div>
-                <div class="wb-mix-track">
-                  <i v-for="item in planningModeMix" :key="item.key" :class="`mix-${item.key}`" :style="{ flexGrow: item.value }" />
-                </div>
-                <div class="wb-mix-legend"><span v-for="item in planningModeMix" :key="item.key"><i :class="`mix-${item.key}`" />{{ item.label }} <strong>{{ item.value }}</strong></span></div>
-              </div>
-              <div class="wb-health-signal" :class="errorServices === 0 && usageTotals.errorCount === 0 ? 'healthy' : 'warning'">
-                <div><span>Quality Signal</span><strong class="font-display">{{ errorServices === 0 && usageTotals.errorCount === 0 ? "Passed" : "Needs Attention" }}</strong></div>
-                <small>{{ formatCount(usageTotals.errorCount) }} Tool Errors · {{ planningStats.pendingReview }} Waiting Review</small>
-              </div>
-              <div class="wb-mix-chart">
-                <div class="wb-mix-head"><span class="font-display">Chat Sessions</span><strong class="font-display">{{ globalOverview.sessionCount }}</strong></div>
-                <div v-if="globalOverview.sessions.length" class="mt-2 space-y-1.5">
-                  <div v-for="session in globalOverview.sessions.slice(0, 4)" :key="session.sessionId" class="flex items-center justify-between gap-3 text-xs">
-                    <span class="min-w-0 truncate text-[var(--text-secondary)]">{{ session.workspaceName }}</span>
-                    <code class="shrink-0 text-xs text-[var(--text-muted)] font-mono">{{ session.sessionId.slice(0, 8) }}</code>
-                  </div>
-                </div>
-                <div v-else class="mt-2 text-xs text-[var(--text-muted)]">尚无活跃 Chat Session</div>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <section v-if="moduleVisible('usage')" class="wb-section ui-surface wb-analytics-section animate-fade-in-up delay-1100">
-          <div class="wb-section-heading"><div><h3 class="font-display">Token Analytics</h3><p>MCP JSON 传输量估算，用于观察工具调用趋势。</p></div><Zap :size="14" /></div>
-          <div class="wb-grid-two">
-            <DashboardUsagePanel :totals="usageTotals" :average-tokens="averageTokens" :chart="usageChart" />
-            <div class="wb-ranking">
-              <div class="wb-ranking-header">
-                <div>
-                  <span class="wb-ranking-title font-display">工作区消耗排行</span>
-                  <p class="wb-ranking-subtitle">各项目的 Token 占用量与相对比例</p>
-                </div>
-                <span class="wb-ranking-badge font-mono">{{ orderedWorkspaces.length }} Workspaces</span>
-              </div>
-
-              <div class="wb-ranking-list">
-                <div v-if="usageRanking.length === 0" class="wb-ranking-empty">
-                  暂无工作区用量数据
-                </div>
-                <div
-                  v-for="(row, index) in usageRanking"
-                  :key="row.workspace.id"
-                  class="wb-rank-row"
-                >
-                  <div class="wb-rank-meta">
-                    <span class="wb-rank-index" :class="{ 'is-top': index === 0 }">{{ index + 1 }}</span>
-                    <span class="wb-rank-name" :title="row.workspace.name">{{ row.workspace.name }}</span>
-                  </div>
-                  <div class="wb-rank-track">
-                    <i :style="{ width: `${row.percentage}%` }" />
-                  </div>
-                  <strong class="wb-rank-val">{{ formatCount(row.tokens) }}</strong>
-                </div>
-              </div>
-
-              <div class="wb-ranking-stats">
-                <div class="wb-stat-pill">
-                  <span class="wb-stat-pill-label">Input / Output</span>
-                  <strong class="wb-stat-pill-value">{{ formatCount(usageTotals.estimatedInputTokens) }} / {{ formatCount(usageTotals.estimatedOutputTokens) }}</strong>
-                </div>
-                <div class="wb-stat-pill">
-                  <span class="wb-stat-pill-label">Avg / Tool Call</span>
-                  <strong class="wb-stat-pill-value">{{ formatCount(averageTokens) }}</strong>
-                </div>
-                <div class="wb-stat-pill">
-                  <span class="wb-stat-pill-label">Requests / Calls</span>
-                  <strong class="wb-stat-pill-value">{{ formatCount(usageTotals.requestCount) }} / {{ formatCount(usageTotals.toolCallCount) }}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </template>
-      </div>
-    </PageShell>
-  </section>
-
-  <DashboardCommandPalette
-    v-model:query="commandQuery"
-    :open="commandOpen"
-    :entries="commandEntries"
-    @close="commandOpen = false"
-    @select="(index) => commandEntries[index] && runCommand(commandEntries[index].run)"
-  />
+<template><section class="page-scroll" :data-density="dashboardPreferences.density">
+<PageShell>
+ <PageHeader kicker="工作台" title="今天的开发工作" description="先处理阻塞与待验收，再查看当前任务和代码变更。">
+<template #actions>
+<BaseButton variant="secondary" size="sm" @click="commandOpen=true">
+<Command :size="15"/>快捷操作 ⌘K</BaseButton>
+<BaseButton variant="ghost" size="sm" @click="refresh">
+<RefreshCw :size="15"/>刷新</BaseButton>
+<DashboardPreferencesPopover :open="preferencesOpen" :density="dashboardPreferences.density" :hidden-modules="dashboardPreferences.hiddenModules" @toggle-open="preferencesOpen=!preferencesOpen" @toggle-density="updateDashboardPreferences(p=>({...p,density:p.density==='compact'?'comfortable':'compact'}))" @toggle-module="toggleDashboardModule" />
 </template>
+</PageHeader>
+ <GlassCard>
+<div class="ui-section-heading">
+<div>
+<h2>需要处理</h2>
+<p>待验收与异常始终可见。</p>
+</div>
+<span class="ui-muted">{{attention.length+(['warning','error'].includes(globalHealthSummary.state)?1:0)}} 项</span>
+</div>
+  <button v-if="globalHealthSummary.state==='warning'||globalHealthSummary.state==='error'" class="ui-list-action" @click="router.push('/settings/connection?panel=health')">
+<span>
+<strong>全局连接 · {{globalHealthSummary.label}}</strong>
+<small>{{globalHealthSummary.detail}}</small>
+</span>
+<span>查看连接 →</span>
+</button>
+  <button v-for="item in attention" :key="item.key" class="ui-list-action" @click="router.push({path:item.path,query:item.query})">
+<span>
+<strong>{{item.title}}</strong>
+<small>{{item.detail}}</small>
+</span>
+<span>查看任务 →</span>
+</button>
+  <EmptyState v-if="attention.length===0&&!['warning','error'].includes(globalHealthSummary.state)" title="暂无需要处理的事项" description="待验收和执行异常会集中显示在这里。"/>
+ </GlassCard>
+ <GlassCard v-if="visible('focus')" class="ui-focus-panel">
+<div class="ui-section-heading">
+<h2>当前工作</h2>
+<StatusPill v-if="focused" :status="focused?.query.error||focused?.query.stale?'unknown':focused?.focus.plan?.status??focused?.focus.goal?.status??focused?.state?.execution.state??'unknown'"/>
+</div>
+<template v-if="focused">
+<p class="ui-muted">{{focused.workspace.name}} · {{statusPresentation(focused.state?.mode).label}}</p>
+<h3 class="ui-focus-title">{{focused.focus.title}}</h3>
+<p class="ui-secondary line-clamp-2">{{focused.focus.detail}}</p>
+<p v-if="focused.focus.step" class="mt-3">当前步骤：{{focused.focus.step.title}}</p>
+<p class="ui-muted mt-3">{{focused.focus.progress.label}}</p>
+<div class="ui-progress" :aria-label="focused.focus.progress.label">
+<span :style="{width:focused.focus.progress.percent+'%'}"/>
+</div>
+<div class="ui-actions mt-4">
+<BaseButton @click="router.push(`/workspace/${focused.workspace.id}/planning`)">查看任务 →</BaseButton>
+<BaseButton variant="secondary" @click="router.push(`/workspace/${focused.workspace.id}/changes`)">查看变更</BaseButton>
+</div>
+</template>
+<EmptyState v-else title="暂无当前任务" description="通过 AI 会话发起目标或计划后，可以在这里跟踪进度和验收。"/>
+</GlassCard>
+ <GlassCard v-if="visible('workspaces')">
+<div class="ui-section-heading">
+<div>
+<h2>工作区</h2>
+<p>独立管理项目任务、变更与执行权限。</p>
+</div>
+<BaseButton variant="secondary" size="sm" @click="addWorkspace">添加工作区</BaseButton>
+</div>
+<EmptyState v-if="!ordered.length" title="还没有工作区" description="选择本地项目目录，开始管理 AI 开发过程。">
+<BaseButton @click="addWorkspace">添加工作区</BaseButton>
+</EmptyState>
+ <div v-else class="ui-workspace-table">
+<div class="ui-workspace-row ui-table-heading">
+<span>名称</span>
+<span>当前任务</span>
+<span>执行状态</span>
+<span>变更</span>
+<span>操作</span>
+</div>
+<div v-for="(row,index) in ordered" :key="row.workspace.id" class="ui-workspace-row">
+<button class="ui-text-link min-w-0" @click="router.push(`/workspace/${row.workspace.id}`)">{{row.workspace.name}}</button>
+<span class="ui-truncate" :title="row.focus.title">{{row.focus.title}}</span>
+<StatusPill :status="row.query.error?'error':row.query.stale?'unknown':row.state?.execution.state" :label="row.query.error?'更新失败':row.query.stale?'数据过期':undefined"/>
+<button class="ui-text-link" @click="router.push(`/workspace/${row.workspace.id}/changes`)">{{row.git?(row.git.available?row.git.changedFiles:0)+row.git.subRepositories.reduce((n,r)=>n+r.changedFiles,0):'—'}}</button>
+<details class="ui-row-menu">
+<summary>更多</summary>
+<div class="ui-menu">
+<BaseButton variant="ghost" size="sm" @click="togglePinnedWorkspace(row.workspace.id)">
+<Pin :size="14"/>{{dashboardPreferences.pinnedWorkspaceIds.includes(row.workspace.id)?'取消置顶':'置顶'}}</BaseButton>
+<BaseButton variant="ghost" size="sm" :disabled="index===0" @click="moveWorkspace(row.workspace.id,-1,ordered.map(w=>w.workspace.id))">
+<ArrowUp :size="14"/>上移</BaseButton>
+<BaseButton variant="ghost" size="sm" :disabled="index===ordered.length-1" @click="moveWorkspace(row.workspace.id,1,ordered.map(w=>w.workspace.id))">
+<ArrowDown :size="14"/>下移</BaseButton>
+<BaseButton variant="ghost" size="sm" @click="reveal(row.workspace.path)">
+<FolderOpen :size="14"/>打开目录</BaseButton>
+<BaseButton variant="ghost" size="sm" @click="copy(row.workspace.path)">
+<Copy :size="14"/>复制路径</BaseButton>
+<code>{{row.workspace.path}}</code>
+</div>
+</details>
+</div>
+</div>
+ </GlassCard>
+ <GlassCard v-if="visible('activity')">
+<div class="ui-section-heading">
+<h2>最近活动</h2>
+<span class="ui-muted">开发会话</span>
+</div>
+<p v-if="auxiliaryError" role="alert" class="ui-danger">历史加载失败：{{auxiliaryError}}</p>
+<button v-for="item in activities" :key="item.workspace.id+item.session.number" class="ui-list-action" @click="router.push(`/workspace/${item.workspace.id}/history`)">
+<span>
+<strong>{{item.workspace.name}} · {{item.session.title||'开发会话'}}</strong>
+<small class="line-clamp-2">{{item.session.latest_focus||'查看会话摘要与关联变更'}}</small>
+</span>
+<span>查看历史 →</span>
+</button>
+<EmptyState v-if="!activities.length&&!auxiliaryError" title="暂无最近活动" description="启用历史记录后的开发会话会显示在这里。"/>
+</GlassCard>
+ <details v-if="visible('usage')" class="ui-disclosure" @toggle="analyticsOpen=($event.target as HTMLDetailsElement).open">
+<summary>用量分析 <span class="ui-muted">JSON 传输量估算</span>
+</summary>
+<div class="ui-disclosure-body">
+<p v-if="auxiliaryError" class="ui-danger" role="alert">分析更新失败：{{auxiliaryError}}。保留上次数据。</p><p class="ui-secondary">以下 Token 根据 MCP 传输量估算，不代表模型账单。</p>
+<div class="ui-metric-grid">
+<div>
+<span>估算 Tokens</span>
+<strong>{{formatCount(totals.estimatedTokens)}}</strong>
+</div>
+<div>
+<span>工具调用</span>
+<strong>{{formatCount(totals.toolCallCount)}}</strong>
+</div>
+<div>
+<span>请求数</span>
+<strong>{{formatCount(totals.requestCount)}}</strong>
+</div>
+<div>
+<span>请求错误</span>
+<strong>{{formatCount(totals.errorCount)}}</strong>
+</div>
+</div>
+<div><h3>传输量估算趋势</h3><p class="ui-muted mt-2">本次打开后的采样增量，约每 15 秒更新。</p><svg v-if="samples.length>1" viewBox="0 0 100 40" preserveAspectRatio="none" class="ui-usage-chart" role="img" aria-label="估算 Token 传输增量趋势"><path :d="chart.path" fill="none" stroke="var(--ui-accent)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg><EmptyState v-else title="正在积累趋势样本" description="保持用量区域展开，下一次采样后显示趋势。"/><p class="ui-muted">估算输入 {{formatCount(totals.estimatedInputTokens)}} · 估算输出 {{formatCount(totals.estimatedOutputTokens)}} · 工具调用 {{formatCount(totals.estimatedToolCallTokens)}}</p></div><p v-for="row in ordered" :key="row.workspace.id" class="ui-data-row">
+<span>{{row.workspace.name}}</span>
+<strong>{{formatCount(summarizeUsage({[row.workspace.id]:usage[row.workspace.id]??[]}).estimatedTokens)}}</strong>
+</p>
+</div>
+</details>
+ <DashboardCommandPalette :open="commandOpen" :entries="filteredCommands" v-model:query="commandQuery" @close="commandOpen=false" @select="commandOpen=false;filteredCommands[$event]?.run()"/>
+ </PageShell>
+</section></template>

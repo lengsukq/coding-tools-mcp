@@ -6,14 +6,17 @@ import KeysSettingsView from "./views/settings/KeysSettingsView.vue";
 import GatewaySettingsView from "./views/settings/GatewaySettingsView.vue";
 import FrpSettingsView from "./views/settings/FrpSettingsView.vue";
 import SoftwareSettingsView from "./views/settings/SoftwareSettingsView.vue";
+import { confirmUnsavedChanges } from "./lib/unsaved-changes";
 import ToolAuditView from "./views/ToolAuditView.vue";
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", name: "dashboard", component: DashboardView },
-    { path: "/workspace/:id", name: "workspace", component: WorkspaceView },
+    { path: "/workspace/:id/services", redirect: to => `/workspace/${to.params.id}/settings` },
+    { path: "/workspace/:id/:tab(overview|planning|changes|history|diagnostics|settings)?", name: "workspace", component: WorkspaceView },
     { path: "/audit", name: "tool-audit", component: ToolAuditView },
+    { path: "/settings/connection", component: GatewaySettingsView },
     { path: "/settings/general", name: "settings-general", component: GeneralSettingsView },
     { path: "/settings/keys", name: "settings-keys", component: KeysSettingsView },
     { path: "/settings/gateway", name: "settings-gateway", component: GatewaySettingsView },
@@ -24,4 +27,5 @@ const router = createRouter({
   ],
 });
 
+router.beforeEach((to, from) => to.path === from.path ? true : confirmUnsavedChanges());
 export default router;
