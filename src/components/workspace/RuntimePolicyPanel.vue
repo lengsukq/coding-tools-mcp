@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import {useUnsavedChanges} from "$lib/unsaved-changes";
+import SaveBar from "../ui/SaveBar.vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import SelectField from "$src/components/ui/SelectField.vue";
 import TextAreaField from "$src/components/ui/TextAreaField.vue";
@@ -45,8 +47,9 @@ function syncModel() {
   baseline.value = JSON.stringify(draft);
 }
 
-watch(() => props.model, syncModel, { immediate: true, deep: true });
+syncModel();
 const dirty = computed(() => JSON.stringify(draft) !== baseline.value);
+watch(() => props.model, () => { if(!dirty.value) syncModel(); }, {deep:true});
 
 function toggleInstruction(value: string, checked: boolean) {
   draft.instructionSources = toggleSource(draft.instructionSources, value, checked);
@@ -93,21 +96,24 @@ async function persist() {
 }
 
 async function save() {
+  scanError.value="";
   try {
     if (await persist()) {
-      showToast("Workspace 执行策略已保存，将从下一次 MCP 工具调用起生效。", { kind: "success" });
+      showToast("工作区执行策略已保存，将从下一次工具调用起生效。", { kind: "success" });
     }
+    return true;
   } catch (error) {
-    showToast(String(error), { title: "保存执行策略失败", kind: "error" });
+    scanError.value=String(error);
+    return false;
   }
 }
 
 async function scan() {
   if (scanning.value) return;
+  if(dirty.value){scanError.value="请先保存策略，再扫描实际生效的来源。";return;}
   scanning.value = true;
   scanError.value = "";
   try {
-    if (dirty.value) await persist();
     scanResult.value = await scanAgentContext(props.workspaceId);
   } catch (error) {
     scanError.value = String(error);
@@ -115,15 +121,16 @@ async function scan() {
     scanning.value = false;
   }
 }
+useUnsavedChanges("工作区执行策略",dirty,save);
 </script>
 
 <template>
-  <form class="grid gap-4" @submit.prevent="save">
-    <div class="ios-glass ios-inset-surface p-3">
+  <fieldset :disabled="saving"><form class="grid gap-4" @submit.prevent="save">
+    <div class="ui-inset p-3">
       <ToggleSwitch
         v-model="draft.inheritGlobalExecutionPolicy"
         label="继承全局执行权限"
-        description="使用 设置 → 通用 中的全局权限模式和命令白名单；关闭后可为当前 Workspace 单独覆盖。"
+        description="使用 应用设置 → AI 执行 中的全局权限模式和命令白名单；关闭后可为当前 Workspace 单独覆盖。"
       />
     </div>
     <div class="runtime-two-col">
@@ -133,48 +140,49 @@ async function scan() {
     <TextField v-model="draft.allowedCommands" label="系统命令（逗号分隔）" placeholder="python,git,gh,aws,cargo,..." :disabled="draft.inheritGlobalExecutionPolicy" :hint="draft.inheritGlobalExecutionPolicy ? '当前继承全局命令白名单。' : undefined" />
     <TextAreaField v-model="draft.executablePaths" label="额外可执行 PATH" mono placeholder="/opt/homebrew/bin\n/usr/local/bin\n~/.cargo/bin" hint="Workspace PATH 优先于 Global PATH，再回退 System PATH；命令仍需加入白名单。" />
 
-    <div class="ios-glass ios-card-surface p-4">
-      <p class="text-sm font-semibold">Agent Context Sources</p>
+    <details class="ui-disclosure"><summary>AI 指令与技能来源</summary><div class="ui-disclosure-body">
+      <p class="text-sm font-semibold">AI 指令与技能来源</p>
       <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">Workspace 未选择来源时继承全局设置；compact 档位只常驻核心规则，其余按需读取。</p>
       <div class="runtime-two-col mt-4">
         <div>
-          <p class="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-[var(--text-muted)]">Instructions</p>
-          <label v-for="option in AGENT_SOURCE_OPTIONS" :key="option.value" class="mb-2 flex cursor-pointer gap-2.5 rounded-2xl bg-white/35 p-2.5 dark:bg-white/4">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-[.1em] text-[var(--text-muted)]">指令来源</p>
+          <label v-for="option in AGENT_SOURCE_OPTIONS" :key="option.value" class="mb-2 flex cursor-pointer gap-2.5 rounded-2xl bg-[var(--ui-surface-subtle)] p-2.5">
             <input type="checkbox" :checked="draft.instructionSources.includes(option.value)" @change="toggleInstruction(option.value, ($event.target as HTMLInputElement).checked)" />
-            <span><strong class="block text-xs">{{ option.label }}</strong><small class="text-[10px] text-[var(--text-muted)]">{{ option.detail }}</small></span>
+            <span><strong class="block text-xs">{{ option.label }}</strong><small class="text-xs text-[var(--text-muted)]">{{ option.detail }}</small></span>
           </label>
         </div>
         <div>
-          <p class="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-[var(--text-muted)]">Skills</p>
-          <label v-for="option in AGENT_SOURCE_OPTIONS" :key="option.value" class="mb-2 flex cursor-pointer gap-2.5 rounded-2xl bg-white/35 p-2.5 dark:bg-white/4">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-[.1em] text-[var(--text-muted)]">技能来源</p>
+          <label v-for="option in AGENT_SOURCE_OPTIONS" :key="option.value" class="mb-2 flex cursor-pointer gap-2.5 rounded-2xl bg-[var(--ui-surface-subtle)] p-2.5">
             <input type="checkbox" :checked="draft.skillSources.includes(option.value)" @change="toggleSkill(option.value, ($event.target as HTMLInputElement).checked)" />
-            <span><strong class="block text-xs">{{ option.label }}</strong><small class="text-[10px] text-[var(--text-muted)]">{{ option.detail }}</small></span>
+            <span><strong class="block text-xs">{{ option.label }}</strong><small class="text-xs text-[var(--text-muted)]">{{ option.detail }}</small></span>
           </label>
         </div>
       </div>
-      <div v-if="draft.instructionSources.includes('custom') || draft.skillSources.includes('custom')" class="runtime-two-col mt-3 border-t border-white/40 pt-3 dark:border-white/8">
+      <div v-if="draft.instructionSources.includes('custom') || draft.skillSources.includes('custom')" class="runtime-two-col mt-3 border-t border-[var(--ui-line)] pt-3 dark:border-[var(--ui-line)]">
         <TextAreaField v-if="draft.instructionSources.includes('custom')" v-model="draft.customInstructionPaths" label="自定义 Instructions 文件" mono placeholder="docs/AI_RULES.md" />
         <TextAreaField v-if="draft.skillSources.includes('custom')" v-model="draft.customSkillPaths" label="自定义 Skills 根目录" mono placeholder=".my-agent/skills" />
       </div>
-      <div class="mt-3 flex flex-wrap items-center gap-3 border-t border-white/40 pt-3 dark:border-white/8">
+      <div class="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3 dark:border-[var(--ui-line)]">
         <BaseButton variant="secondary" size="sm" :busy="scanning" @click="scan">立即重新扫描</BaseButton>
         <span v-if="scanResult" class="text-xs text-[var(--text-muted)]">已发现 {{ scanResult.instructions.length }} 个 Instructions · {{ scanResult.skills.length }} 个 Skills</span>
         <span v-if="scanError" class="text-xs text-[var(--danger)]">{{ scanError }}</span>
       </div>
       <details v-if="scanResult && (scanResult.instructions.length || scanResult.skills.length)" class="mt-3 text-xs">
         <summary class="cursor-pointer text-[var(--text-muted)]">查看发现结果</summary>
-        <div class="mt-2 rounded-2xl bg-black/4 p-3 font-mono text-[10px] dark:bg-white/4">
+        <div class="mt-2 rounded-2xl bg-[var(--ui-surface-subtle)] p-3 font-mono text-xs">
           <div v-for="item in scanResult.instructions" :key="item.path">[{{ item.provider }}] {{ item.path }}</div>
           <div v-for="skill in scanResult.skills" :key="skill.path">Skill · {{ skill.name }} · {{ skill.provider }} · {{ skill.path }}</div>
         </div>
       </details>
     </div>
 
-    <TextAreaField v-model="draft.aiInstructions" label="Workspace AI Instructions" :rows="5" placeholder="例如：修改代码必须遵循 Clean Code；运行测试后再确认完成。" />
-    <div class="ios-glass ios-inset-surface p-3"><ToggleSwitch v-model="draft.workspaceLocalEntries" label="允许执行 Workspace 内本地入口" description="允许通过本地相对路径直接执行工作区内部工具与脚本" /></div>
+    </details>
+    <TextAreaField v-model="draft.aiInstructions" label="工作区 AI 指令" :rows="5" placeholder="例如：修改代码必须遵循 Clean Code；运行测试后再确认完成。" />
+    <div class="ui-inset p-3"><ToggleSwitch v-model="draft.workspaceLocalEntries" label="允许执行 Workspace 内本地入口" description="允许通过本地相对路径直接执行工作区内部工具与脚本" /></div>
     <TextField v-model="draft.workspaceScriptExtensions" label="本地脚本扩展名（逗号分隔）" placeholder=".exe,.bat,.cmd,.ps1" :disabled="!draft.workspaceLocalEntries" />
-    <div class="flex justify-end"><BaseButton variant="primary" :busy="saving" :disabled="!dirty" @click="save">保存策略</BaseButton></div>
-  </form>
+    <SaveBar :dirty="dirty" :busy="saving" :error="scanError" label="保存策略" @save="save"/>
+  </form></fieldset>
 </template>
 
 <style scoped>

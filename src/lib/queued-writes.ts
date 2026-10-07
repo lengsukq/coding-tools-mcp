@@ -7,3 +7,7 @@ export function createWriteQueue() {
     return pending;
   };
 }
+
+// Module ownership survives page unmounts while a save is in flight.
+export const enqueueRuntimeSettingsWrite = createWriteQueue();
+export const enqueueWorkspaceSettingsWrite = createWriteQueue();

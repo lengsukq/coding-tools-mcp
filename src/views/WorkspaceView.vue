@@ -6,7 +6,7 @@ import BaseButton from "../components/ui/BaseButton.vue";
 import ModalDialog from "../components/ui/ModalDialog.vue";
 import PageTabs from "../components/ui/PageTabs.vue";
 import {invalidateWorkspaceStatus} from "$lib/workspace-status-cache";
-import {createWriteQueue} from "$lib/queued-writes";
+import {enqueueWorkspaceSettingsWrite} from "$lib/queued-writes";
 import GlassCard from "../components/ui/GlassCard.vue";
 import WorkspaceChanges from "../components/workspace/WorkspaceChanges.vue";
 import HistoryContextPanel from "../components/workspace/HistoryContextPanel.vue";
@@ -96,7 +96,7 @@ function copyPath() {
   setTimeout(() => { pathCopied.value = false; }, 1600);
 }
 
-const enqueueWorkspaceWrite=createWriteQueue();
+const enqueueWorkspaceWrite=enqueueWorkspaceSettingsWrite;
 function saveWorkspaceGroup(transform:(current:WorkspaceProfile)=>WorkspaceProfile){
   const id=workspaceId.value;
   return enqueueWorkspaceWrite(async()=>{
