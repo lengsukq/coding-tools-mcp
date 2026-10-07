@@ -459,22 +459,6 @@ onMounted(() => {
             <RefreshCw :size="13" :class="{ 'animate-spin': loading }" /> 刷新数据
           </BaseButton>
 
-          <BaseButton variant="ghost" size="sm" @click="openRetentionModal">
-            <Clock3 :size="13" /> 保留 {{ retentionDays }} 天
-          </BaseButton>
-
-          <BaseButton
-            v-if="workspaceId"
-            variant="ghost"
-            size="sm"
-            @click="clearRecords('workspace')"
-          >
-            <Trash2 :size="13" /> 清理当前工作区
-          </BaseButton>
-
-          <BaseButton variant="danger" size="sm" @click="clearRecords('all')">
-            <Trash2 :size="13" /> 清空记录
-          </BaseButton>
         </template>
       </PageHeader>
 
@@ -494,6 +478,521 @@ onMounted(() => {
       </transition>
 
       <!-- Secondary summary stays collapsed so filters and records remain in view. -->
+      <!-- Main Audit Explorer Console -->
+      <GlassCard :padded="false" class="overflow-hidden border border-[var(--border)] shadow-sm animate-fade-in-up delay-200">
+        <!-- Filter Toolbar -->
+        <div class="border-b border-[var(--border-light)] bg-[var(--ui-surface-subtle)] p-4 lg:p-5 space-y-3.5">
+          <!-- Top Row: Search + Outcome Segments + Time Range + Actions -->
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <!-- Search bar -->
+            <div class="relative flex-1 min-w-[240px] max-w-xl">
+              <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                v-model="query"
+                type="text"
+                aria-label="搜索审计记录" placeholder="搜索工具名称、Request ID、Session ID、客户端…"
+                class="w-full h-9 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] pl-9 pr-8 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
+                @keydown.enter="applyFilters"
+              />
+              <button
+                v-if="query"
+                type="button"
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                @click="query = ''; applyFilters()"
+              >
+                <X :size="13" />
+              </button>
+            </div>
+
+            <!-- Segments & Quick Presets -->
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- Outcome Segmented Control -->
+              <SegmentedControl
+                v-model="outcome"
+                :items="outcomeSegments"
+                aria-label="执行结果状态切换"
+                @update:model-value="applyFilters"
+              />
+
+              <!-- Advanced Filter Toggle -->
+              <button
+                type="button"
+                class="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--border)] px-3 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-main)]"
+                :class="{ 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-soft)]': showAdvancedFilters }"
+                @click="showAdvancedFilters = !showAdvancedFilters"
+              >
+                <Filter :size="13" />
+                <span>高级过滤</span>
+                <ChevronDown :size="12" class="transition-transform duration-200" :class="{ 'rotate-180': showAdvancedFilters }" />
+              </button>
+
+              <BaseButton variant="primary" size="sm" @click="applyFilters">
+                <Search :size="13" /> 检索
+              </BaseButton>
+            </div>
+          </div>
+
+          <!-- Time Presets Pills -->
+          <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <span class="text-xs font-medium text-[var(--text-muted)] mr-1">时间范围:</span>
+            <button
+              v-for="preset in timePresets"
+              :key="preset.value"
+              type="button"
+              class="rounded-full px-3 py-1 text-xs font-medium transition-all"
+              :class="timePreset === preset.value
+                ? 'bg-[var(--ui-solid-accent)] text-[var(--ui-on-accent)] shadow-sm'
+                : 'text-[var(--text-secondary)] border border-[var(--card-border)] hover:bg-[var(--primary-soft)] hover:text-[var(--text-main)]'"
+              @click="handleTimePresetChange(preset.value)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
+
+          <!-- Advanced Filters Drawer -->
+          <transition
+            enter-active-class="transition duration-200 ease-out"
+            enter-from-class="opacity-0 -translate-y-2 max-h-0"
+            enter-to-class="opacity-100 translate-y-0 max-h-96"
+            leave-active-class="transition duration-150 ease-in"
+            leave-from-class="opacity-100 translate-y-0 max-h-96"
+            leave-to-class="opacity-0 -translate-y-2 max-h-0"
+          >
+            <div v-if="showAdvancedFilters" class="grid gap-3 pt-2 border-t border-[var(--border-light)] sm:grid-cols-2 lg:grid-cols-4">
+              <!-- Workspace Select -->
+              <div>
+                <label for="audit-workspaceId" class="block text-xs font-medium text-[var(--text-muted)] mb-1">所属工作区</label>
+                <div class="relative">
+                  <select
+                    id="audit-workspaceId" v-model="workspaceId"
+                    class="w-full h-8 appearance-none rounded-lg border border-[var(--border)] bg-[var(--card-bg)] pl-3 pr-8 text-xs text-[var(--text-main)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15 cursor-pointer"
+                    @change="applyFilters"
+                  >
+                    <option value="">全部工作区与全局调用</option>
+                    <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
+                      {{ ws.name }}
+                    </option>
+                  </select>
+                  <ChevronDown
+                    :size="13"
+                    class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+                  />
+                </div>
+              </div>
+
+              <!-- Tool Name Input -->
+              <div>
+                <label for="audit-toolName" class="block text-xs font-medium text-[var(--text-muted)] mb-1">工具名称精确匹配</label>
+                <input
+                  id="audit-toolName" v-model="toolName"
+                  type="text"
+                  placeholder="如: edit_file, execute_command"
+                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
+                  @keydown.enter="applyFilters"
+                />
+              </div>
+
+              <!-- Session ID Input -->
+              <div>
+                <label for="audit-sessionId" class="block text-xs font-medium text-[var(--text-muted)] mb-1">Session ID 关联</label>
+                <input
+                  id="audit-sessionId" v-model="sessionId"
+                  type="text"
+                  placeholder="匹配会话会签标识"
+                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
+                  @keydown.enter="applyFilters"
+                />
+              </div>
+
+              <!-- Custom Date Range -->
+              <div v-if="timePreset === 'custom'" class="sm:col-span-2 lg:col-span-1">
+                <label class="block text-xs font-medium text-[var(--text-muted)] mb-1">自定义起止时间</label>
+                <div class="flex items-center gap-1.5">
+                  <input
+                    aria-label="起始时间" v-model="fromDate"
+                    type="datetime-local"
+                    class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2 text-xs text-[var(--text-main)] outline-none focus:border-[var(--primary)]"
+                    @change="applyFilters"
+                  />
+                  <span class="text-[var(--text-muted)] text-xs">至</span>
+                  <input
+                    aria-label="结束时间" v-model="toDate"
+                    type="datetime-local"
+                    class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2 text-xs text-[var(--text-main)] outline-none focus:border-[var(--primary)]"
+                    @change="applyFilters"
+                  />
+                </div>
+              </div>
+            </div>
+          </transition>
+
+          <!-- Active Filter Pills Bar -->
+          <div v-if="activeFilters.length > 0" class="flex flex-wrap items-center gap-1.5 pt-1">
+            <span class="text-xs font-medium text-[var(--text-muted)]">生效筛选:</span>
+            <span
+              v-for="filter in activeFilters"
+              :key="filter.id"
+              class="inline-flex items-center gap-1 rounded-md bg-[var(--surface-hover)] border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text-main)]"
+            >
+              {{ filter.label }}
+              <button
+                type="button"
+                class="text-[var(--text-muted)] hover:text-[var(--ui-danger)] transition-colors"
+                @click="filter.clear"
+              >
+                <X :size="11" />
+              </button>
+            </span>
+
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline ml-1"
+              @click="resetFilters"
+            >
+              <RotateCcw :size="11" /> 清空所有筛选
+            </button>
+          </div>
+        </div>
+
+        <!-- Records Feed Area -->
+        <!-- Loading State -->
+        <div v-if="loading && records.length === 0" class="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-[var(--text-muted)]">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--surface-hover)]">
+            <RefreshCw :size="22" class="animate-spin text-[var(--primary)]" />
+          </div>
+          <p class="font-medium">正在读取审计日志记录…</p>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else-if="records.length === 0" class="flex min-h-[220px] flex-col items-center justify-center px-6 text-center sm:min-h-[320px]">
+          <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-hover)] text-[var(--text-muted)] mb-3">
+            <FilterX v-if="activeFilters.length > 0" :size="26" />
+            <ShieldCheck v-else :size="26" />
+          </div>
+          <p class="text-sm font-semibold text-[var(--text-main)]">
+            {{ activeFilters.length > 0 ? '未匹配到符合条件的审计记录' : '暂无工具调用审计记录' }}
+          </p>
+          <p class="mt-1.5 max-w-md text-xs leading-relaxed text-[var(--text-muted)]">
+            {{ activeFilters.length > 0
+              ? '建议调整关键词、时间范围或放宽过滤条件重试。'
+              : '当已授权的 MCP 客户端调用工具时，调用记录将自动捕获并列于此处。' }}
+          </p>
+          <BaseButton
+            v-if="activeFilters.length > 0"
+            variant="secondary"
+            size="sm"
+            class="mt-4"
+            @click="resetFilters"
+          >
+            <RotateCcw :size="13" /> 重置所有筛选条件
+          </BaseButton>
+        </div>
+
+        <!-- Records List -->
+        <div v-else class="divide-y divide-[var(--border-light)]">
+          <article
+            v-for="record in records"
+            :key="getRecordKey(record)"
+            class="group px-4 py-3.5 transition-colors hover:bg-[var(--ui-surface-hover)] lg:px-5 cursor-pointer"
+            @click="toggleExpand(getRecordKey(record))"
+          >
+            <!-- Primary Row -->
+            <div role="button" tabindex="0" :aria-expanded="expandedKeys.has(getRecordKey(record))" :aria-label="`${record.toolName} · 查看调用详情`" @keydown.enter.prevent="toggleExpand(getRecordKey(record))" @keydown.space.prevent="toggleExpand(getRecordKey(record))" class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <!-- Left: Status + Tool + Wrapper + Tags -->
+              <div class="flex flex-wrap items-center gap-2.5 min-w-0">
+                <!-- Status icon badge -->
+                <div
+                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                  :class="record.outcome === 'success'
+                    ? 'bg-[var(--ui-success-soft)] text-[var(--ui-success)] '
+                    : 'bg-[var(--ui-danger-soft)] text-[var(--ui-danger)] '"
+                >
+                  <Check v-if="record.outcome === 'success'" :size="13" stroke-width="2.5" />
+                  <AlertCircle v-else :size="13" stroke-width="2.5" />
+                </div>
+
+                <!-- Tool Name Badge -->
+                <span class="font-mono text-xs font-semibold rounded-md bg-[var(--primary-soft)] text-[var(--primary)] px-2 py-0.5">
+                  {{ record.toolName }}
+                </span>
+
+                <!-- Wrapper indicator -->
+                <span v-if="record.wrapperToolName" class="text-xs text-[var(--text-muted)] font-mono">
+                  via {{ record.wrapperToolName }}
+                </span>
+
+                <!-- Error Category Pill -->
+                <span
+                  v-if="record.outcome !== 'success'"
+                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-danger-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--ui-danger)] "
+                >
+                  {{ errorLabel(record.errorCategory) }}
+                </span>
+
+                <!-- Change impact pill -->
+                <span
+                  v-if="record.changeId"
+                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--ui-accent)] "
+                  title="引发文件变更"
+                >
+                  <Zap :size="10" />
+                  变更 {{ record.changedFileCount ?? 0 }} 文件
+                </span>
+              </div>
+
+              <!-- Right: Duration + Time + Payload + Expand Arrow -->
+              <div class="flex items-center gap-3 shrink-0 ml-auto text-xs text-[var(--text-muted)]">
+                <!-- Payload size -->
+                <div class="hidden sm:flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
+                  <span class="inline-flex items-center gap-0.5" title="请求体积">
+                    <ArrowUp :size="10" class="text-[var(--primary)]" /> {{ formatBytes(record.requestBytes) }}
+                  </span>
+                  <span class="inline-flex items-center gap-0.5" title="响应体积">
+                    <ArrowDown :size="10" class="text-[var(--ui-success)]" /> {{ formatBytes(record.responseBytes) }}
+                  </span>
+                </div>
+
+                <!-- Execution Duration -->
+                <span
+                  class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-mono font-medium"
+                  :class="record.durationMs < 200
+                    ? 'bg-[var(--ui-surface-subtle)] text-[var(--ui-text-secondary)]'
+                    : record.durationMs < 1000
+                      ? 'bg-[var(--primary-soft)] text-[var(--primary)]'
+                      : 'bg-[var(--ui-warning-soft)] text-[var(--ui-warning)] '"
+                >
+                  {{ formatDuration(record.durationMs) }}
+                </span>
+
+                <!-- Relative time -->
+                <time
+                  class="text-xs text-[var(--text-muted)] min-w-[50px] text-right"
+                  :title="formatTime(record.timestampMs)"
+                >
+                  {{ formatRelativeTime(record.timestampMs) }}
+                </time>
+
+                <!-- Expand Chevron -->
+                <div
+                  class="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] transition-transform duration-200"
+                  :class="{ 'rotate-180': expandedKeys.has(getRecordKey(record)) }"
+                >
+                  <ChevronDown :size="14" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Secondary Subline: Workspace + Auth + Brief IDs -->
+            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-muted)] pl-8.5">
+              <span class="flex items-center gap-1 font-medium text-[var(--text-secondary)]">
+                <Layers :size="11" class="text-[var(--text-muted)]" />
+                {{ record.workspaceId ? workspaceNames.get(record.workspaceId) || record.workspaceId : '全局路由' }}
+              </span>
+
+              <span>•</span>
+
+              <span>{{ authLabel(record).text }}</span>
+
+              <template v-if="record.requestId">
+                <span>•</span>
+                <span class="font-mono text-xs text-[var(--text-muted)] truncate max-w-[200px]" :title="record.requestId">
+                  Req: {{ record.requestId.slice(0, 14) }}…
+                </span>
+              </template>
+
+              <template v-if="record.sessionId">
+                <span>•</span>
+                <span class="font-mono text-xs text-[var(--text-muted)] truncate max-w-[180px]" :title="record.sessionId">
+                  Sess: {{ record.sessionId.slice(0, 12) }}…
+                </span>
+              </template>
+            </div>
+
+            <!-- Expanded Details Drawer -->
+            <transition
+              enter-active-class="transition duration-200 ease-out"
+              enter-from-class="opacity-0 -translate-y-1"
+              enter-to-class="opacity-100 translate-y-0"
+              leave-active-class="transition duration-150 ease-in"
+              leave-from-class="opacity-100 translate-y-0"
+              leave-to-class="opacity-0 -translate-y-1"
+            >
+              <div
+                v-if="expandedKeys.has(getRecordKey(record))"
+                class="mt-3.5 rounded-xl border border-[var(--border)] bg-[var(--ui-surface-subtle)] p-4 text-xs space-y-3 cursor-default"
+                @click.stop
+              >
+                <!-- Detail Header / Quick Filter actions -->
+                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-light)] pb-2.5">
+                  <span class="font-semibold text-xs text-[var(--text-main)] flex items-center gap-1.5">
+                    <Sparkles :size="13" class="text-[var(--primary)]" /> 调用上下文与排查诊断
+                  </span>
+
+                  <!-- Quick Filter Actions -->
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <button
+                      v-if="record.sessionId"
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      @click="quickFilterBySession(record.sessionId)"
+                    >
+                      <Filter :size="10" /> 仅看此 Session
+                    </button>
+
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      @click="quickFilterByTool(record.toolName)"
+                    >
+                      <Filter :size="10" /> 仅看此工具
+                    </button>
+
+                    <button
+                      v-if="record.workspaceId"
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      @click="quickFilterByWorkspace(record.workspaceId)"
+                    >
+                      <Filter :size="10" /> 过滤当前工作区
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Structured Key-Value Grid -->
+                <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-xs">
+                  <!-- Request ID -->
+                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
+                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                      <span>Request ID</span>
+                      <button
+                        v-if="record.requestId"
+                        type="button"
+                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        title="复制完整 Request ID"
+                        @click="copyText(record.requestId, `req-${record.requestId}`, 'Request ID')"
+                      >
+                        <Check v-if="copiedKey === `req-${record.requestId}`" :size="12" class="text-[var(--ui-success)]" />
+                        <Copy v-else :size="12" />
+                      </button>
+                    </div>
+                    <span class="break-all select-all text-[var(--text-main)]">
+                      {{ record.requestId || '—' }}
+                    </span>
+                  </div>
+
+                  <!-- Session ID -->
+                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
+                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                      <span>Session ID</span>
+                      <button
+                        v-if="record.sessionId"
+                        type="button"
+                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        title="复制 Session ID"
+                        @click="copyText(record.sessionId, `sess-${record.sessionId}`, 'Session ID')"
+                      >
+                        <Check v-if="copiedKey === `sess-${record.sessionId}`" :size="12" class="text-[var(--ui-success)]" />
+                        <Copy v-else :size="12" />
+                      </button>
+                    </div>
+                    <span class="break-all select-all text-[var(--text-main)]">
+                      {{ record.sessionId || '—' }}
+                    </span>
+                  </div>
+
+                  <!-- Client ID / Auth Method -->
+                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
+                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                      <span>认证与客户端</span>
+                      <button
+                        v-if="record.clientId"
+                        type="button"
+                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        title="复制 Client ID"
+                        @click="copyText(record.clientId, `cli-${record.clientId}`, 'Client ID')"
+                      >
+                        <Check v-if="copiedKey === `cli-${record.clientId}`" :size="12" class="text-[var(--ui-success)]" />
+                        <Copy v-else :size="12" />
+                      </button>
+                    </div>
+                    <span class="break-all select-all text-[var(--text-main)]">
+                      {{ record.clientId ? `${record.authMethod}: ${record.clientId}` : record.authMethod }}
+                    </span>
+                  </div>
+
+                  <!-- Change ID -->
+                  <div v-if="record.changeId" class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 sm:col-span-2">
+                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                      <span class="flex items-center gap-1 text-[var(--ui-accent)]">
+                        <Zap :size="11" /> 状态变更摘要 (Change ID)
+                      </span>
+                      <button
+                        type="button"
+                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        title="复制 Change ID"
+                        @click="copyText(record.changeId!, `chg-${record.changeId}`, 'Change ID')"
+                      >
+                        <Check v-if="copiedKey === `chg-${record.changeId}`" :size="12" class="text-[var(--ui-success)]" />
+                        <Copy v-else :size="12" />
+                      </button>
+                    </div>
+                    <div class="flex items-baseline justify-between gap-2">
+                      <code class="break-all select-all text-[var(--ui-accent)]">{{ record.changeId }}</code>
+                      <span class="shrink-0 text-xs font-sans text-[var(--text-muted)]">
+                        涉及 {{ record.changedFileCount ?? 0 }} 个受影响文件
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Execution Timestamp & Payload Details -->
+                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 font-sans" :class="{ 'sm:col-span-2 lg:col-span-1': !record.changeId }">
+                    <div class="text-xs text-[var(--text-muted)] mb-1">执行绝对时间与体积</div>
+                    <div class="space-y-0.5 text-xs text-[var(--text-secondary)] font-mono">
+                      <p>时间戳: {{ formatTime(record.timestampMs) }}</p>
+                      <p>请求体: {{ formatBytes(record.requestBytes) }} ({{ record.requestBytes }} B)</p>
+                      <p>响应体: {{ formatBytes(record.responseBytes) }} ({{ record.responseBytes }} B)</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </transition>
+          </article>
+        </div>
+
+        <!-- Pagination Footer -->
+        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-light)] bg-[var(--ui-surface-subtle)] px-4 py-3 lg:px-5">
+          <div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span>显示第 <strong class="font-medium text-[var(--text-main)]">{{ rangeStart }}–{{ rangeEnd }}</strong> 条</span>
+            <span>/</span>
+            <span>共 <strong class="font-medium text-[var(--text-main)]">{{ total.toLocaleString() }}</strong> 条记录</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              :disabled="offset === 0 || loading"
+              @click="loadAudit(Math.max(0, offset - PAGE_SIZE))"
+            >
+              <ChevronLeft :size="14" /> 上一页
+            </BaseButton>
+
+            <span class="min-w-16 text-center text-xs font-mono font-medium text-[var(--text-secondary)]">
+              {{ pageNumber }} / {{ pageCount }}
+            </span>
+
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              :disabled="offset + PAGE_SIZE >= total || loading"
+              @click="loadAudit(offset + PAGE_SIZE)"
+            >
+              下一页 <ChevronRight :size="14" />
+            </BaseButton>
+          </div>
+        </footer>
+      </GlassCard>
+
       <details class="audit-kpis">
         <summary>
           <span class="audit-kpis__title">审计概览</span>
@@ -545,7 +1044,7 @@ onMounted(() => {
             </span>
           </div>
           <!-- Progress bar -->
-          <div v-if="successRate !== null" class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
+          <div v-if="successRate !== null" class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-surface-subtle)]">
             <div
               class="h-full rounded-full transition-all duration-500 ease-out"
               :class="successRate !== null && successRate >= 95 ? 'bg-[var(--ui-success)]' : successRate !== null && successRate >= 80 ? 'bg-[var(--ui-warning)]' : 'bg-[var(--ui-danger)]'"
@@ -603,527 +1102,29 @@ onMounted(() => {
         </div>
       </details>
 
-      <!-- Main Audit Explorer Console -->
-      <GlassCard :padded="false" class="overflow-hidden border border-[var(--border)] shadow-sm animate-fade-in-up delay-200">
-        <!-- Filter Toolbar -->
-        <div class="border-b border-[var(--border-light)] bg-black/[0.015] dark:bg-white/[0.015] p-4 lg:p-5 space-y-3.5">
-          <!-- Top Row: Search + Outcome Segments + Time Range + Actions -->
-          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <!-- Search bar -->
-            <div class="relative flex-1 min-w-[240px] max-w-xl">
-              <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-              <input
-                v-model="query"
-                type="text"
-                placeholder="搜索工具名称、Request ID、Session ID、客户端…"
-                class="w-full h-9 rounded-xl border border-[var(--border)] bg-[var(--card-bg)] pl-9 pr-8 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
-                @keydown.enter="applyFilters"
-              />
-              <button
-                v-if="query"
-                type="button"
-                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                @click="query = ''; applyFilters()"
-              >
-                <X :size="13" />
-              </button>
-            </div>
-
-            <!-- Segments & Quick Presets -->
-            <div class="flex flex-wrap items-center gap-2">
-              <!-- Outcome Segmented Control -->
-              <SegmentedControl
-                v-model="outcome"
-                :items="outcomeSegments"
-                aria-label="执行结果状态切换"
-                @update:model-value="applyFilters"
-              />
-
-              <!-- Advanced Filter Toggle -->
-              <button
-                type="button"
-                class="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--border)] px-3 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-main)]"
-                :class="{ 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-soft)]': showAdvancedFilters }"
-                @click="showAdvancedFilters = !showAdvancedFilters"
-              >
-                <Filter :size="13" />
-                <span>高级过滤</span>
-                <ChevronDown :size="12" class="transition-transform duration-200" :class="{ 'rotate-180': showAdvancedFilters }" />
-              </button>
-
-              <BaseButton variant="primary" size="sm" @click="applyFilters">
-                <Search :size="13" /> 检索
-              </BaseButton>
-            </div>
-          </div>
-
-          <!-- Time Presets Pills -->
-          <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
-            <span class="text-[11px] font-medium text-[var(--text-muted)] mr-1">时间范围:</span>
-            <button
-              v-for="preset in timePresets"
-              :key="preset.value"
-              type="button"
-              class="rounded-full px-3 py-1 text-[11px] font-medium transition-all"
-              :class="timePreset === preset.value
-                ? 'bg-[image:var(--primary-gradient,var(--accent-gradient))] text-white shadow-sm'
-                : 'text-[var(--text-secondary)] border border-[var(--card-border)] hover:bg-[var(--primary-soft)] hover:text-[var(--text-main)]'"
-              @click="handleTimePresetChange(preset.value)"
-            >
-              {{ preset.label }}
-            </button>
-          </div>
-
-          <!-- Advanced Filters Drawer -->
-          <transition
-            enter-active-class="transition duration-200 ease-out"
-            enter-from-class="opacity-0 -translate-y-2 max-h-0"
-            enter-to-class="opacity-100 translate-y-0 max-h-96"
-            leave-active-class="transition duration-150 ease-in"
-            leave-from-class="opacity-100 translate-y-0 max-h-96"
-            leave-to-class="opacity-0 -translate-y-2 max-h-0"
-          >
-            <div v-if="showAdvancedFilters" class="grid gap-3 pt-2 border-t border-[var(--border-light)] sm:grid-cols-2 lg:grid-cols-4">
-              <!-- Workspace Select -->
-              <div>
-                <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-1">所属工作区</label>
-                <div class="relative">
-                  <select
-                    v-model="workspaceId"
-                    class="w-full h-8 appearance-none rounded-lg border border-[var(--border)] bg-[var(--card-bg)] pl-3 pr-8 text-xs text-[var(--text-main)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15 cursor-pointer"
-                    @change="applyFilters"
-                  >
-                    <option value="">全部工作区与全局调用</option>
-                    <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
-                      {{ ws.name }}
-                    </option>
-                  </select>
-                  <ChevronDown
-                    :size="13"
-                    class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-                  />
-                </div>
-              </div>
-
-              <!-- Tool Name Input -->
-              <div>
-                <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-1">工具名称精确匹配</label>
-                <input
-                  v-model="toolName"
-                  type="text"
-                  placeholder="如: edit_file, execute_command"
-                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
-                  @keydown.enter="applyFilters"
-                />
-              </div>
-
-              <!-- Session ID Input -->
-              <div>
-                <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-1">Session ID 关联</label>
-                <input
-                  v-model="sessionId"
-                  type="text"
-                  placeholder="匹配会话会签标识"
-                  class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-3 text-xs text-[var(--text-main)] placeholder-[var(--text-muted)] outline-none transition-all focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/15"
-                  @keydown.enter="applyFilters"
-                />
-              </div>
-
-              <!-- Custom Date Range -->
-              <div v-if="timePreset === 'custom'" class="sm:col-span-2 lg:col-span-1">
-                <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-1">自定义起止时间</label>
-                <div class="flex items-center gap-1.5">
-                  <input
-                    v-model="fromDate"
-                    type="datetime-local"
-                    class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2 text-[10px] text-[var(--text-main)] outline-none focus:border-[var(--primary)]"
-                    @change="applyFilters"
-                  />
-                  <span class="text-[var(--text-muted)] text-xs">至</span>
-                  <input
-                    v-model="toDate"
-                    type="datetime-local"
-                    class="w-full h-8 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] px-2 text-[10px] text-[var(--text-main)] outline-none focus:border-[var(--primary)]"
-                    @change="applyFilters"
-                  />
-                </div>
-              </div>
-            </div>
-          </transition>
-
-          <!-- Active Filter Pills Bar -->
-          <div v-if="activeFilters.length > 0" class="flex flex-wrap items-center gap-1.5 pt-1">
-            <span class="text-[11px] font-medium text-[var(--text-muted)]">生效筛选:</span>
-            <span
-              v-for="filter in activeFilters"
-              :key="filter.id"
-              class="inline-flex items-center gap-1 rounded-md bg-[var(--surface-hover)] border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--text-main)]"
-            >
-              {{ filter.label }}
-              <button
-                type="button"
-                class="text-[var(--text-muted)] hover:text-[#ff453a] transition-colors"
-                @click="filter.clear"
-              >
-                <X :size="11" />
-              </button>
-            </span>
-
-            <button
-              type="button"
-              class="inline-flex items-center gap-1 text-[11px] text-[var(--primary)] hover:underline ml-1"
-              @click="resetFilters"
-            >
-              <RotateCcw :size="11" /> 清空所有筛选
-            </button>
-          </div>
-        </div>
-
-        <!-- Records Feed Area -->
-        <!-- Loading State -->
-        <div v-if="loading && records.length === 0" class="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-[var(--text-muted)]">
-          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--surface-hover)]">
-            <RefreshCw :size="22" class="animate-spin text-[var(--primary)]" />
-          </div>
-          <p class="font-medium">正在读取审计日志记录…</p>
-        </div>
-
-        <!-- Empty State -->
-        <div v-else-if="records.length === 0" class="flex min-h-[220px] flex-col items-center justify-center px-6 text-center sm:min-h-[320px]">
-          <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-hover)] text-[var(--text-muted)] mb-3">
-            <FilterX v-if="activeFilters.length > 0" :size="26" />
-            <ShieldCheck v-else :size="26" />
-          </div>
-          <p class="text-sm font-semibold text-[var(--text-main)]">
-            {{ activeFilters.length > 0 ? '未匹配到符合条件的审计记录' : '暂无工具调用审计记录' }}
-          </p>
-          <p class="mt-1.5 max-w-md text-xs leading-relaxed text-[var(--text-muted)]">
-            {{ activeFilters.length > 0
-              ? '建议调整关键词、时间范围或放宽过滤条件重试。'
-              : '当已授权的 MCP 客户端调用工具时，调用记录将自动捕获并列于此处。' }}
-          </p>
-          <BaseButton
-            v-if="activeFilters.length > 0"
-            variant="secondary"
-            size="sm"
-            class="mt-4"
-            @click="resetFilters"
-          >
-            <RotateCcw :size="13" /> 重置所有筛选条件
+<details class="ui-disclosure"><summary>审计管理</summary><div class="ui-disclosure-body"><p class="ui-muted">清理仅删除本地审计记录，不修改源码与计划；删除后无法恢复。</p><div class="ui-actions">          <BaseButton variant="ghost" size="sm" @click="openRetentionModal">
+            <Clock3 :size="13" /> 保留 {{ retentionDays }} 天
           </BaseButton>
-        </div>
 
-        <!-- Records List -->
-        <div v-else class="divide-y divide-[var(--border-light)]">
-          <article
-            v-for="record in records"
-            :key="getRecordKey(record)"
-            class="group px-4 py-3.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.02] lg:px-5 cursor-pointer"
-            @click="toggleExpand(getRecordKey(record))"
+          <BaseButton
+            v-if="workspaceId"
+            variant="ghost"
+            size="sm"
+            @click="clearRecords('workspace')"
           >
-            <!-- Primary Row -->
-            <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <!-- Left: Status + Tool + Wrapper + Tags -->
-              <div class="flex flex-wrap items-center gap-2.5 min-w-0">
-                <!-- Status icon badge -->
-                <div
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white"
-                  :class="record.outcome === 'success'
-                    ? 'bg-[#30d158]/15 text-[#248a3d] dark:text-[#30d158]'
-                    : 'bg-[#ff453a]/15 text-[#d70015] dark:text-[#ff453a]'"
-                >
-                  <Check v-if="record.outcome === 'success'" :size="13" stroke-width="2.5" />
-                  <AlertCircle v-else :size="13" stroke-width="2.5" />
-                </div>
+            <Trash2 :size="13" /> 清理当前工作区
+          </BaseButton>
 
-                <!-- Tool Name Badge -->
-                <span class="font-mono text-xs font-semibold rounded-md bg-[var(--primary-soft)] text-[var(--primary)] px-2 py-0.5">
-                  {{ record.toolName }}
-                </span>
-
-                <!-- Wrapper indicator -->
-                <span v-if="record.wrapperToolName" class="text-[11px] text-[var(--text-muted)] font-mono">
-                  via {{ record.wrapperToolName }}
-                </span>
-
-                <!-- Error Category Pill -->
-                <span
-                  v-if="record.outcome !== 'success'"
-                  class="inline-flex items-center gap-1 rounded-full bg-[#ff453a]/10 px-2 py-0.5 text-[10px] font-semibold text-[#d70015] dark:text-[#ff453a]"
-                >
-                  {{ errorLabel(record.errorCategory) }}
-                </span>
-
-                <!-- Change impact pill -->
-                <span
-                  v-if="record.changeId"
-                  class="inline-flex items-center gap-1 rounded-full bg-[#bf5af2]/12 px-2 py-0.5 text-[10px] font-medium text-[#8944ab] dark:text-[#da8fff]"
-                  title="引发文件变更"
-                >
-                  <Zap :size="10" />
-                  变更 {{ record.changedFileCount ?? 0 }} 文件
-                </span>
-              </div>
-
-              <!-- Right: Duration + Time + Payload + Expand Arrow -->
-              <div class="flex items-center gap-3 shrink-0 ml-auto text-xs text-[var(--text-muted)]">
-                <!-- Payload size -->
-                <div class="hidden sm:flex items-center gap-2 text-[11px] font-mono text-[var(--text-secondary)]">
-                  <span class="inline-flex items-center gap-0.5" title="请求体积">
-                    <ArrowUp :size="10" class="text-[var(--primary)]" /> {{ formatBytes(record.requestBytes) }}
-                  </span>
-                  <span class="inline-flex items-center gap-0.5" title="响应体积">
-                    <ArrowDown :size="10" class="text-[#30d158]" /> {{ formatBytes(record.responseBytes) }}
-                  </span>
-                </div>
-
-                <!-- Execution Duration -->
-                <span
-                  class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-mono font-medium"
-                  :class="record.durationMs < 200
-                    ? 'bg-black/[0.04] text-[var(--text-secondary)] dark:bg-white/[0.06]'
-                    : record.durationMs < 1000
-                      ? 'bg-[var(--primary-soft)] text-[var(--primary)]'
-                      : 'bg-[#ff9500]/15 text-[#b36b00] dark:text-[#ff9f0a]'"
-                >
-                  {{ formatDuration(record.durationMs) }}
-                </span>
-
-                <!-- Relative time -->
-                <time
-                  class="text-[11px] text-[var(--text-muted)] min-w-[50px] text-right"
-                  :title="formatTime(record.timestampMs)"
-                >
-                  {{ formatRelativeTime(record.timestampMs) }}
-                </time>
-
-                <!-- Expand Chevron -->
-                <div
-                  class="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] transition-transform duration-200"
-                  :class="{ 'rotate-180': expandedKeys.has(getRecordKey(record)) }"
-                >
-                  <ChevronDown :size="14" />
-                </div>
-              </div>
-            </div>
-
-            <!-- Secondary Subline: Workspace + Auth + Brief IDs -->
-            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--text-muted)] pl-8.5">
-              <span class="flex items-center gap-1 font-medium text-[var(--text-secondary)]">
-                <Layers :size="11" class="text-[var(--text-muted)]" />
-                {{ record.workspaceId ? workspaceNames.get(record.workspaceId) || record.workspaceId : '全局路由' }}
-              </span>
-
-              <span>•</span>
-
-              <span>{{ authLabel(record).text }}</span>
-
-              <template v-if="record.requestId">
-                <span>•</span>
-                <span class="font-mono text-[10px] text-[var(--text-muted)] truncate max-w-[200px]" :title="record.requestId">
-                  Req: {{ record.requestId.slice(0, 14) }}…
-                </span>
-              </template>
-
-              <template v-if="record.sessionId">
-                <span>•</span>
-                <span class="font-mono text-[10px] text-[var(--text-muted)] truncate max-w-[180px]" :title="record.sessionId">
-                  Sess: {{ record.sessionId.slice(0, 12) }}…
-                </span>
-              </template>
-            </div>
-
-            <!-- Expanded Details Drawer -->
-            <transition
-              enter-active-class="transition duration-200 ease-out"
-              enter-from-class="opacity-0 -translate-y-1"
-              enter-to-class="opacity-100 translate-y-0"
-              leave-active-class="transition duration-150 ease-in"
-              leave-from-class="opacity-100 translate-y-0"
-              leave-to-class="opacity-0 -translate-y-1"
-            >
-              <div
-                v-if="expandedKeys.has(getRecordKey(record))"
-                class="mt-3.5 rounded-xl border border-[var(--border)] bg-black/[0.025] dark:bg-white/[0.03] p-4 text-xs space-y-3 cursor-default"
-                @click.stop
-              >
-                <!-- Detail Header / Quick Filter actions -->
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-light)] pb-2.5">
-                  <span class="font-semibold text-xs text-[var(--text-main)] flex items-center gap-1.5">
-                    <Sparkles :size="13" class="text-[var(--primary)]" /> 调用上下文与排查诊断
-                  </span>
-
-                  <!-- Quick Filter Actions -->
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <button
-                      v-if="record.sessionId"
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
-                      @click="quickFilterBySession(record.sessionId)"
-                    >
-                      <Filter :size="10" /> 仅看此 Session
-                    </button>
-
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
-                      @click="quickFilterByTool(record.toolName)"
-                    >
-                      <Filter :size="10" /> 仅看此工具
-                    </button>
-
-                    <button
-                      v-if="record.workspaceId"
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
-                      @click="quickFilterByWorkspace(record.workspaceId)"
-                    >
-                      <Filter :size="10" /> 过滤当前工作区
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Structured Key-Value Grid -->
-                <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-[11px]">
-                  <!-- Request ID -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-[10px] font-sans text-[var(--text-muted)] mb-1">
-                      <span>Request ID</span>
-                      <button
-                        v-if="record.requestId"
-                        type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
-                        title="复制完整 Request ID"
-                        @click="copyText(record.requestId, `req-${record.requestId}`, 'Request ID')"
-                      >
-                        <Check v-if="copiedKey === `req-${record.requestId}`" :size="12" class="text-[#30d158]" />
-                        <Copy v-else :size="12" />
-                      </button>
-                    </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
-                      {{ record.requestId || '—' }}
-                    </span>
-                  </div>
-
-                  <!-- Session ID -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-[10px] font-sans text-[var(--text-muted)] mb-1">
-                      <span>Session ID</span>
-                      <button
-                        v-if="record.sessionId"
-                        type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
-                        title="复制 Session ID"
-                        @click="copyText(record.sessionId, `sess-${record.sessionId}`, 'Session ID')"
-                      >
-                        <Check v-if="copiedKey === `sess-${record.sessionId}`" :size="12" class="text-[#30d158]" />
-                        <Copy v-else :size="12" />
-                      </button>
-                    </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
-                      {{ record.sessionId || '—' }}
-                    </span>
-                  </div>
-
-                  <!-- Client ID / Auth Method -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-[10px] font-sans text-[var(--text-muted)] mb-1">
-                      <span>认证与客户端</span>
-                      <button
-                        v-if="record.clientId"
-                        type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
-                        title="复制 Client ID"
-                        @click="copyText(record.clientId, `cli-${record.clientId}`, 'Client ID')"
-                      >
-                        <Check v-if="copiedKey === `cli-${record.clientId}`" :size="12" class="text-[#30d158]" />
-                        <Copy v-else :size="12" />
-                      </button>
-                    </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
-                      {{ record.clientId ? `${record.authMethod}: ${record.clientId}` : record.authMethod }}
-                    </span>
-                  </div>
-
-                  <!-- Change ID -->
-                  <div v-if="record.changeId" class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 sm:col-span-2">
-                    <div class="flex items-center justify-between text-[10px] font-sans text-[var(--text-muted)] mb-1">
-                      <span class="flex items-center gap-1 text-[#bf5af2]">
-                        <Zap :size="11" /> 状态变更摘要 (Change ID)
-                      </span>
-                      <button
-                        type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
-                        title="复制 Change ID"
-                        @click="copyText(record.changeId!, `chg-${record.changeId}`, 'Change ID')"
-                      >
-                        <Check v-if="copiedKey === `chg-${record.changeId}`" :size="12" class="text-[#30d158]" />
-                        <Copy v-else :size="12" />
-                      </button>
-                    </div>
-                    <div class="flex items-baseline justify-between gap-2">
-                      <code class="break-all select-all text-[#bf5af2]">{{ record.changeId }}</code>
-                      <span class="shrink-0 text-[10px] font-sans text-[var(--text-muted)]">
-                        涉及 {{ record.changedFileCount ?? 0 }} 个受影响文件
-                      </span>
-                    </div>
-                  </div>
-
-                  <!-- Execution Timestamp & Payload Details -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 font-sans" :class="{ 'sm:col-span-2 lg:col-span-1': !record.changeId }">
-                    <div class="text-[10px] text-[var(--text-muted)] mb-1">执行绝对时间与体积</div>
-                    <div class="space-y-0.5 text-[11px] text-[var(--text-secondary)] font-mono">
-                      <p>时间戳: {{ formatTime(record.timestampMs) }}</p>
-                      <p>请求体: {{ formatBytes(record.requestBytes) }} ({{ record.requestBytes }} B)</p>
-                      <p>响应体: {{ formatBytes(record.responseBytes) }} ({{ record.responseBytes }} B)</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </transition>
-          </article>
-        </div>
-
-        <!-- Pagination Footer -->
-        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-light)] bg-black/[0.015] dark:bg-white/[0.015] px-4 py-3 lg:px-5">
-          <div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <span>显示第 <strong class="font-medium text-[var(--text-main)]">{{ rangeStart }}–{{ rangeEnd }}</strong> 条</span>
-            <span>/</span>
-            <span>共 <strong class="font-medium text-[var(--text-main)]">{{ total.toLocaleString() }}</strong> 条记录</span>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              :disabled="offset === 0 || loading"
-              @click="loadAudit(Math.max(0, offset - PAGE_SIZE))"
-            >
-              <ChevronLeft :size="14" /> 上一页
-            </BaseButton>
-
-            <span class="min-w-16 text-center text-xs font-mono font-medium text-[var(--text-secondary)]">
-              {{ pageNumber }} / {{ pageCount }}
-            </span>
-
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              :disabled="offset + PAGE_SIZE >= total || loading"
-              @click="loadAudit(offset + PAGE_SIZE)"
-            >
-              下一页 <ChevronRight :size="14" />
-            </BaseButton>
-          </div>
-        </footer>
-      </GlassCard>
-
+          <BaseButton variant="danger" size="sm" @click="clearRecords('all')">
+            <Trash2 :size="13" /> 清空记录
+          </BaseButton>
+</div></div></details>
       <!-- Bottom System Notes -->
-      <footer class="flex items-center justify-between px-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+      <footer class="flex items-center justify-between px-1 text-xs leading-relaxed text-[var(--text-muted)]">
         <p>
           💡 审计日志安全说明：记录保存在本机应用数据目录。为保护用户隐私，仅持久化工具名称、耗时与变更摘要，不保存请求提示词参数与完整模型输出内容。
         </p>
-        <span class="shrink-0 font-mono text-[10px]">MCP Audit v2.4</span>
+        <span class="shrink-0 font-mono text-xs">MCP Audit v2.4</span>
       </footer>
 
     </div>
@@ -1151,7 +1152,7 @@ onMounted(() => {
               @click="retentionInput = days"
             >
               <span class="block text-sm font-semibold">{{ days }} 天</span>
-              <span class="block text-[10px] text-[var(--text-muted)] mt-0.5">
+              <span class="block text-xs text-[var(--text-muted)] mt-0.5">
                 {{ days === 30 ? '默认推荐' : days === 365 ? '长期合规' : `${Math.round(days / 7)} 周` }}
               </span>
             </button>
