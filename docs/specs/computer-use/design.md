@@ -44,6 +44,19 @@ MCP computer_session(request)
 
 本机设置页使用 `CGPreflightScreenCaptureAccess` / `CGRequestScreenCaptureAccess` 检测/请求系统截图授权，以及 `AXIsProcessTrusted` / `AXIsProcessTrustedWithOptions` 检测/请求辅助功能授权。系统授权申请只由本机用户手势触发。
 
+### macOS 录屏权限开关已打开，但仍显示未授权
+
+系统设置中的「录屏与系统录音」开关，并不证明**当前正在运行的进程**已经通过 `CGPreflightScreenCaptureAccess()`。TCC 授权关联实际运行的应用签名/Bundle 身份；开发时的 `tauri dev` 可执行文件、构建目录里的 `.app`、安装到「应用程序」的 `.app`，不应仅凭相同显示名称视为同一个授权主体。
+
+排障顺序：
+
+1. 在 Computer Use 设置页的「查看当前运行进程的权限诊断」中检查实际 Bundle ID、应用路径、是否从 `.app` 启动，以及当前进程预检结果。正式发行版预期 Bundle ID 为 `com.codingtools.mcp.desktop`。此诊断由 Tauri 本机命令读取 `NSBundle.mainBundle` 与 `CGPreflightScreenCaptureAccess`，**不截屏、不读取其他应用窗口，也不通过 MCP 暴露**。
+2. 如果系统权限开关刚被打开，必须**完全退出进程**再启动。Coding Tools MCP 有托盘常驻功能；只关闭主窗口可能仅隐藏到托盘，无法刷新进程的 TCC 授权状态。应从菜单栏托盘选择「退出」，再启动系统设置里批准的那份 `.app`。
+3. 如果诊断显示从开发可执行文件启动，或实际 Bundle ID/路径与要授权的正式应用不一致，改为从「应用程序」启动同一正式应用。不要用修改显示名称的方式冒充系统许可。
+4. 完全退出后重新启动，点击「重新检测」。若仍失败，检查实际应用签名、安装位置和系统设置对应条目；**不能凭系统设置开关为真就绕过 TCC 预检或强行批准 MCP 屏幕访问**。
+
+诊断结果的 `screenRecordingGranted` 与展示的 `preflight_granted` 使用同一次原生预检值，避免前端一个轮询周期内显示矛盾状态。不会自动调用 `tccutil reset` 或修改系统隐私设置。
+
 **已知限制**：当前已有原生 ScreenCaptureKit 以及坐标映射元数据，仍需验证其在 Retina、多显示器负坐标、窗口/区域下的实际准确性；尚未确认锁屏、TCC 权限撤销及 ChatGPT 图片回包的端到端表现。高风险点击目前不能按实际 UI 语义自动判断，需另行实现独立确认。
 
 拟长期拆分：
