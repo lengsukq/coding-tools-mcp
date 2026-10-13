@@ -35,6 +35,6 @@
 - Computer Tools 不要求指定 workspace_id，且不应允许工作区工具假冒 Computer 权限。
 - Rust 安全/合同测试、前端类型检查、真实 macOS 手工 E2E 均须通过后才能声明正式完成。
 
-## 当前完成度（2026-10-13，首轮）
+## 当前完成度（2026-10-13，第二轮）
 
-原型已增加 `computer_session(request/status/stop)` 与 `computer_observe(screenshot)`，本机 Tauri 批准、过期和撤销；默认无授权。截图当前通过 macOS 系统 `screencapture` 临时文件读取，使用压缩 JPEG 的 MCP image 内容回传；本机真实桌面权限和图像回传仍待验收。此阶段**不等于**已完成 ScreenCaptureKit、窗口/区域截图、Accessibility、坐标映射或鼠标键盘操作。
+已实现 ScreenCaptureKit/ObjC 同进程截图（屏幕/窗口/区域及坐标元数据）、独立 observe/control 授权、应用白名单单选、AX 元素树和 CGEvent 基础交互。新增 `computer_action`。源码构建与单测通过后也**不得**直接宣称电脑控制正式可用：需真实 Mac 用户授予系统屏幕录制/辅助功能权限、验证窗口/Retina 坐标/鼠标键盘和 ChatGPT 图片回包，再核对 OAuth 客户端与 TCC 生命周期边界。
