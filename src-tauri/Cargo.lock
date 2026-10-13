@@ -453,6 +453,7 @@ version = "0.3.4"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "cc",
  "dirs",
  "flate2",
  "fs2",
