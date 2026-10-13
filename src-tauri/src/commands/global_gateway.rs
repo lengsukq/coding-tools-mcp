@@ -29,6 +29,11 @@ pub async fn start_global_gateway() -> AppResult<GlobalGatewayStatusDto> {
 }
 
 #[tauri::command]
+pub async fn restart_global_cloudflare_tunnel() -> AppResult<GlobalGatewayStatusDto> {
+    global_gateway::force_restart_cloudflare_tunnel().await
+}
+
+#[tauri::command]
 pub async fn stop_global_gateway() -> AppResult<()> {
     global_gateway::stop().await
 }

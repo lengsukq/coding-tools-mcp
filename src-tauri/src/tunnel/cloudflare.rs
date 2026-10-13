@@ -279,7 +279,9 @@ pub async fn spawn_cloudflare_tunnel(
     let pid = child.id();
 
     if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return Err(cleanup_spawned_child(child, pid, error.into()).await);
+        }
     }
 
     let (ready_tx, ready_rx) = oneshot::channel();
@@ -302,26 +304,33 @@ pub async fn spawn_cloudflare_tunnel(
         });
     }
 
-    let ready = time::timeout(READY_TIMEOUT, ready_rx)
-        .await
-        .map_err(|_| {
-            AppError::Message(format!(
-                "cloudflared 已启动，但在 {} 秒内没有返回 trycloudflare.com 公网地址。\n\
-                 请检查：1) MCP 服务是否已在本机端口 {port} 运行；2) 设置 → 通用 → 网络代理 是否配置为手动代理（如 http://127.0.0.1:7890）；\
-                 3) 查看日志 {log_hint}",
-                READY_TIMEOUT.as_secs(),
-                log_hint = log_path_for_error.display()
-            ))
-        })?
-        .map_err(|_| AppError::Message("cloudflared 输出流意外结束。".into()))?;
+    let ready_result = match time::timeout(READY_TIMEOUT, ready_rx).await {
+        Err(_) => Err(AppError::Message(format!(
+            "cloudflared 已启动，但在 {} 秒内没有返回 trycloudflare.com 公网地址。\n\
+             请检查：1) MCP 服务是否已在本机端口 {port} 运行；2) 设置 → 通用 → 网络代理 是否配置为手动代理（如 http://127.0.0.1:7890）；\
+             3) 查看日志 {log_hint}",
+            READY_TIMEOUT.as_secs(),
+            log_hint = log_path_for_error.display()
+        ))),
+        Ok(Err(_)) => Err(AppError::Message("cloudflared 输出流意外结束。".into())),
+        Ok(Ok(ready)) => Ok(ready),
+    };
+    let ready = match ready_result {
+        Ok(ready) => ready,
+        Err(error) => return Err(cleanup_spawned_child(child, pid, error).await),
+    };
 
     let public_url = if quick {
-        ready.public_url.ok_or_else(|| {
-            AppError::Message(format!(
-                "cloudflared 已启动，但没有解析到 trycloudflare.com 地址。请查看日志：{}",
-                log_path_for_error.display()
-            ))
-        })?
+        match ready.public_url {
+            Some(public_url) => public_url,
+            None => {
+                let error = AppError::Message(format!(
+                    "cloudflared 已启动，但没有解析到 trycloudflare.com 地址。请查看日志：{}",
+                    log_path_for_error.display()
+                ));
+                return Err(cleanup_spawned_child(child, pid, error).await);
+            }
+        }
     } else {
         named_public_url.trim_end_matches('/').to_string()
     };
@@ -331,6 +340,15 @@ pub async fn spawn_cloudflare_tunnel(
         public_url,
         pid,
     })
+}
+
+async fn cleanup_spawned_child(child: Child, pid: Option<u32>, start_error: AppError) -> AppError {
+    match force_stop_child(child, pid).await {
+        Ok(()) => start_error,
+        Err(cleanup_error) => AppError::Message(format!(
+            "{start_error}; 清理 cloudflared 子进程失败：{cleanup_error}"
+        )),
+    }
 }
 
 struct QuickTunnelReady {
@@ -436,6 +454,27 @@ pub async fn stop_child(mut child: Child, pid: Option<u32>) -> AppResult<()> {
 
     let _ = child.kill().await;
     let _ = time::timeout(Duration::from_secs(3), child.wait()).await;
+    Ok(())
+}
+
+pub async fn force_stop_child(mut child: Child, pid: Option<u32>) -> AppResult<()> {
+    let already_exited = child.try_wait().ok().flatten().is_some();
+    let process_tree_result = if already_exited {
+        Ok(())
+    } else if let Some(pid) = pid {
+        platform().terminate_process_tree(pid)
+    } else {
+        Ok(())
+    };
+
+    if !already_exited {
+        let _ = child.kill().await;
+    }
+    time::timeout(Duration::from_secs(3), child.wait())
+        .await
+        .map_err(|_| AppError::Message("等待 cloudflared 退出超时。".into()))??;
+    process_tree_result
+        .map_err(|error| AppError::Message(format!("终止 cloudflared 进程树失败：{error}")))?;
     Ok(())
 }
 

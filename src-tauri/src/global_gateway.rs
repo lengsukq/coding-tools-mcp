@@ -61,7 +61,7 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
         }
     }
     if let Some(runtime) = guard.take() {
-        stop_runtime(runtime).await;
+        stop_runtime(runtime, false).await?;
     }
 
     let tunnel_result = start_tunnel(&config, &settings).await;
@@ -88,10 +88,91 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
     Ok(status)
 }
 
+/// Force-restart the managed Cloudflare Quick Tunnel without touching the MCP runtime.
+pub async fn force_restart_cloudflare_tunnel() -> AppResult<GlobalGatewayStatusDto> {
+    let settings = AppSettings::load_or_default();
+    let config = settings.global_gateway.clone();
+    validate_cloudflare_quick_restart(&config)?;
+
+    let mut guard = RUNTIME.lock().await;
+    if let Some(runtime) = guard.take() {
+        stop_runtime(runtime, true).await?;
+    }
+
+    let (public_url, tunnel) = start_tunnel(&config, &settings).await?;
+    if public_url.trim().is_empty() {
+        let error = "Cloudflare Quick Tunnel 启动后没有返回公网 URL。";
+        if let Some(tunnel) = tunnel {
+            let runtime = GatewayRuntime {
+                config: config.clone(),
+                public_url,
+                running: true,
+                tunnel: Some(tunnel),
+            };
+            if let Err(cleanup_error) = stop_runtime(runtime, true).await {
+                return Err(AppError::Message(format!(
+                    "{error} 停止新 Tunnel 也失败：{cleanup_error}"
+                )));
+            }
+        }
+        return Err(AppError::Message(error.into()));
+    }
+
+    let mut effective_config = config.clone();
+    effective_config.public_url = public_url.clone();
+    let resolved = public_url.clone();
+    if let Err(error) = DataStore::update_file(|data| {
+        data.global_gateway.public_url = resolved;
+        Ok(())
+    }) {
+        if let Some(tunnel) = tunnel {
+            let runtime = GatewayRuntime {
+                config: config.clone(),
+                public_url: public_url.clone(),
+                running: true,
+                tunnel: Some(tunnel),
+            };
+            if let Err(cleanup_error) = stop_runtime(runtime, true).await {
+                return Err(AppError::Message(format!(
+                    "保存 Cloudflare Quick URL 失败：{error}；停止新 Tunnel 也失败：{cleanup_error}"
+                )));
+            }
+        }
+        return Err(error);
+    }
+
+    let runtime = GatewayRuntime {
+        config: effective_config,
+        public_url,
+        running: true,
+        tunnel,
+    };
+    let status = status_from_runtime(&runtime);
+    *guard = Some(runtime);
+    Ok(status)
+}
+
+fn validate_cloudflare_quick_restart(config: &GlobalGatewayConfig) -> AppResult<()> {
+    if !config.enabled {
+        return Err(AppError::Message("请先启用全局 MCP 公网连接。".into()));
+    }
+    if config.tunnel_type != "cloudflare" {
+        return Err(AppError::Message(
+            "强制重启仅适用于 Cloudflare Tunnel。".into(),
+        ));
+    }
+    if config.cloudflare_mode != "quick" {
+        return Err(AppError::Message(
+            "强制重启目前仅支持 Cloudflare Quick Tunnel。".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn stop() -> AppResult<()> {
     let mut guard = RUNTIME.lock().await;
     if let Some(runtime) = guard.take() {
-        stop_runtime(runtime).await;
+        stop_runtime(runtime, false).await?;
     }
     Ok(())
 }
@@ -170,11 +251,15 @@ fn status_from_runtime(runtime: &GatewayRuntime) -> GlobalGatewayStatusDto {
     }
 }
 
-async fn stop_runtime(mut runtime: GatewayRuntime) {
+async fn stop_runtime(mut runtime: GatewayRuntime, confirm_cloudflare_stop: bool) -> AppResult<()> {
     if let Some(tunnel) = runtime.tunnel.take() {
         match tunnel {
             TunnelChild::Cloudflare { child, pid } => {
-                let _ = cloudflare::stop_child(child, pid).await;
+                if confirm_cloudflare_stop {
+                    cloudflare::force_stop_child(child, pid).await?;
+                } else {
+                    let _ = cloudflare::stop_child(child, pid).await;
+                }
             }
             TunnelChild::Frp { mut child, pid } => {
                 if let Some(pid) = pid {
@@ -186,6 +271,7 @@ async fn stop_runtime(mut runtime: GatewayRuntime) {
             }
         }
     }
+    Ok(())
 }
 
 async fn start_tunnel(
@@ -258,6 +344,15 @@ fn public_mcp_url(public_url: &str) -> String {
 mod tests {
     use super::*;
 
+    fn quick_tunnel_config() -> GlobalGatewayConfig {
+        GlobalGatewayConfig {
+            enabled: true,
+            tunnel_type: "cloudflare".into(),
+            cloudflare_mode: "quick".into(),
+            ..GlobalGatewayConfig::default()
+        }
+    }
+
     #[test]
     fn gateway_urls_point_directly_to_single_mcp_endpoint() {
         assert_eq!(local_mcp_url(28765), "http://127.0.0.1:28765/mcp");
@@ -265,5 +360,22 @@ mod tests {
             public_mcp_url("https://example.com/"),
             "https://example.com/mcp"
         );
+    }
+
+    #[test]
+    fn force_restart_requires_enabled_cloudflare_quick_config() {
+        assert!(validate_cloudflare_quick_restart(&quick_tunnel_config()).is_ok());
+
+        let mut disabled = quick_tunnel_config();
+        disabled.enabled = false;
+        assert!(validate_cloudflare_quick_restart(&disabled).is_err());
+
+        let mut frp = quick_tunnel_config();
+        frp.tunnel_type = "frp".into();
+        assert!(validate_cloudflare_quick_restart(&frp).is_err());
+
+        let mut named = quick_tunnel_config();
+        named.cloudflare_mode = "named".into();
+        assert!(validate_cloudflare_quick_restart(&named).is_err());
     }
 }

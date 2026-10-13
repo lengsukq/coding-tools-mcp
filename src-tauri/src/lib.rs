@@ -38,12 +38,12 @@ use commands::{
     list_tool_audit_records, list_workspace_reviews, list_workspaces, open_url,
     open_workspace_directory, open_workspace_in_ide, quit_app, read_workspace_logs,
     recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
-    reset_planning_state, restart_runtime, restore_runtime_state, run_global_health_checks,
-    save_frp_profile, scan_agent_context, scan_global_agent_context, set_download_config,
-    set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode,
-    set_proxy, set_shared_secret, set_shared_secrets, set_tool_audit_retention_days,
-    show_main_window, start_global_gateway, start_runtime, stop_global_gateway, stop_runtime,
-    uninstall_software, update_workspace,
+    reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime, restore_runtime_state,
+    run_global_health_checks, save_frp_profile, scan_agent_context, scan_global_agent_context,
+    set_download_config, set_global_gateway_config, set_global_runtime_settings,
+    set_last_workspace, set_planning_mode, set_proxy, set_shared_secret, set_shared_secrets,
+    set_tool_audit_retention_days, show_main_window, start_global_gateway, start_runtime,
+    stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -239,6 +239,7 @@ pub fn run() {
             get_global_gateway_config,
             set_global_gateway_config,
             start_global_gateway,
+            restart_global_cloudflare_tunnel,
             stop_global_gateway,
             get_global_gateway_status,
             check_global_gateway_health,

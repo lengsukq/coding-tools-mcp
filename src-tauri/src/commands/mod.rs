@@ -24,7 +24,8 @@ pub use frp_profiles::{
 };
 pub use global_gateway::{
     check_global_gateway_health, get_global_gateway_config, get_global_gateway_status,
-    set_global_gateway_config, start_global_gateway, stop_global_gateway,
+    restart_global_cloudflare_tunnel, set_global_gateway_config, start_global_gateway,
+    stop_global_gateway,
 };
 pub use health::run_global_health_checks;
 pub use history::list_history_sessions;
