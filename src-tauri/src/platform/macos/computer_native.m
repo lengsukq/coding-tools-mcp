@@ -3,6 +3,7 @@
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <Security/Security.h>
 #import <dispatch/dispatch.h>
 
 // All public bridge results are malloc-owned UTF-8 JSON; Rust must call
@@ -60,7 +61,7 @@ char *computer_native_screen_diagnostics(void) {
         NSString *executable = bundle.executablePath ?: @"";
         NSString *bundleID = bundle.bundleIdentifier ?: @"";
         BOOL isApp = [bundlePath.pathExtension.lowercaseString isEqualToString:@"app"];
-        return reply(@{
+        NSMutableDictionary *diagnostics = [@{
             @"ok": @YES,
             @"bundle_id": bundleID,
             @"bundle_path": bundlePath,
@@ -70,7 +71,39 @@ char *computer_native_screen_diagnostics(void) {
             @"is_app_bundle": @(isApp),
             @"preflight_granted": @(CGPreflightScreenCaptureAccess()),
             @"expected_bundle_id": @"com.codingtools.mcp.desktop"
-        });
+        } mutableCopy];
+
+        // Public Security.framework code-signing APIs inspect only this app's
+        // own signature. No shell command, TCC database access or screen read.
+        SecStaticCodeRef staticCode = NULL;
+        OSStatus status = SecStaticCodeCreateWithPath((__bridge CFURLRef)bundle.bundleURL,
+                                                      kSecCSDefaultFlags, &staticCode);
+        if (status == errSecSuccess && staticCode) {
+            CFDictionaryRef signingInfo = NULL;
+            status = SecCodeCopySigningInformation(staticCode, kSecCSSigningInformation,
+                                                   &signingInfo);
+            if (status == errSecSuccess && signingInfo) {
+                NSDictionary *info = (__bridge NSDictionary *)signingInfo;
+                NSNumber *flags = info[(__bridge NSString *)kSecCodeInfoFlags];
+                NSArray *certificates = info[(__bridge NSString *)kSecCodeInfoCertificates];
+                NSString *team = info[(__bridge NSString *)kSecCodeInfoTeamIdentifier];
+                NSString *identifier = info[(__bridge NSString *)kSecCodeInfoIdentifier];
+                BOOL adHoc = flags && ((flags.unsignedIntValue & 0x00000002u) != 0);
+                BOOL certificateBacked = [certificates isKindOfClass:NSArray.class] &&
+                                         certificates.count > 0;
+                diagnostics[@"signature_type"] = adHoc ? @"ad_hoc" :
+                    (certificateBacked ? @"certificate" : @"unsigned_or_unknown");
+                diagnostics[@"signing_team_id"] = [team isKindOfClass:NSString.class] ? team : @"";
+                diagnostics[@"signing_identifier"] = [identifier isKindOfClass:NSString.class] ? identifier : @"";
+                CFRelease(signingInfo);
+            }
+            CFRelease(staticCode);
+        }
+        if (!diagnostics[@"signature_type"]) {
+            diagnostics[@"signature_type"] = @"unavailable";
+            diagnostics[@"signature_diagnostic_error"] = @(status);
+        }
+        return reply(diagnostics);
     }
 }
 
@@ -387,8 +420,10 @@ static char *failure(NSString *code, NSString *details) {
 
 void computer_native_free(char *p) { free(p); }
 
-// Avoid silently prompting for TCC access from a remote MCP request.
-static BOOL hasPermission(void) { return CGPreflightScreenCaptureAccess(); }
+// Screen Recording preflight is a diagnostic, not an authority boundary:
+// SCScreenshotManager and SCShareableContent enforce macOS TCC themselves.
+// Calling these requires a separate explicitly approved, scoped MCP lease
+// checked by the Rust gateway before entering this native bridge.
 
 static BOOL isScreenLocked(void) {
     CFDictionaryRef session = CGSessionCopyCurrentDictionary();
@@ -454,10 +489,9 @@ char *computer_native_windows(void) {
     @autoreleasepool {
         if (@available(macOS 14.0, *)) {
             if (isScreenLocked()) return failure(@"SCREEN_LOCKED", @"Unlock the current macOS desktop before observing");
-            if (!hasPermission()) return failure(@"SCREEN_PERMISSION_REQUIRED", @"Enable Screen Recording in macOS Settings");
             NSError *error = nil;
             SCShareableContent *content = shareableContent(&error);
-            if (!content) return failure(@"SCREEN_DISCOVERY_FAILED", error.localizedDescription);
+            if (!content) return failure(@"SCREEN_DISCOVERY_FAILED", error.localizedDescription ?: @"ScreenCaptureKit cannot enumerate screens; verify macOS Screen Recording permission and app signature");
             NSMutableArray *displays = [NSMutableArray array];
             for (SCDisplay *d in content.displays) {
                 CGRect frame = d.frame;
@@ -488,7 +522,6 @@ char *computer_native_capture(const char *request) {
     @autoreleasepool {
         if (@available(macOS 14.0, *)) {
             if (isScreenLocked()) return failure(@"SCREEN_LOCKED", @"Unlock the current macOS desktop before capturing");
-            if (!hasPermission()) return failure(@"SCREEN_PERMISSION_REQUIRED", @"Enable Screen Recording for Coding Tools MCP");
             NSData *bytes = [NSData dataWithBytes:request length:strlen(request)];
             NSDictionary *args = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
             if (![args isKindOfClass:NSDictionary.class]) return failure(@"INVALID_ARGUMENT", @"Invalid capture arguments");
@@ -500,7 +533,7 @@ char *computer_native_capture(const char *request) {
                 return failure(@"TARGET_WINDOW_REQUIRED", @"Control grants can capture only windows of the approved application; select window_id from computer_observe(windows)");
             NSError *error = nil;
             SCShareableContent *content = shareableContent(&error);
-            if (!content) return failure(@"SCREEN_DISCOVERY_FAILED", error.localizedDescription);
+            if (!content) return failure(@"SCREEN_DISCOVERY_FAILED", error.localizedDescription ?: @"ScreenCaptureKit denied discovery; verify macOS Screen Recording permission and app signature");
             SCContentFilter *filter = nil;
             CGRect logical = CGRectZero;
             if (windowID != 0) {
@@ -565,7 +598,7 @@ char *computer_native_capture(const char *request) {
                 }];
             if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC)) != 0)
                 return failure(@"SCREEN_CAPTURE_TIMEOUT", @"Native capture timed out");
-            if (!captured) return failure(@"SCREEN_CAPTURE_FAILED", capturedError.localizedDescription);
+            if (!captured) return failure(@"SCREEN_CAPTURE_FAILED", capturedError.localizedDescription ?: @"ScreenCaptureKit did not return an image; check macOS Screen Recording permission and app signature");
             NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:captured];
             size_t width = CGImageGetWidth(captured), height = CGImageGetHeight(captured);
             CGImageRelease(captured);

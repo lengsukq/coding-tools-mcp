@@ -11,6 +11,10 @@ export interface ComputerScreenPermissionDiagnostic {
   process_id?: number;
   is_app_bundle?: boolean;
   preflight_granted?: boolean;
+  signature_type?: "ad_hoc" | "certificate" | "unsigned_or_unknown" | "unavailable";
+  signing_team_id?: string;
+  signing_identifier?: string;
+  signature_diagnostic_error?: number;
   error?: string;
 }
 
@@ -27,6 +31,7 @@ export interface ComputerScreenStatus {
   expiresInSeconds: number | null;
   supported: boolean;
   screenRecordingGranted: boolean | null;
+  screenCaptureSucceededInSession: boolean;
   screenPermissionDiagnostic: ComputerScreenPermissionDiagnostic;
   accessibilityGranted: boolean | null;
   pendingScope: "observe" | "control" | null;

@@ -15,6 +15,7 @@
     "dev": "vite dev",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:build:signed": "node scripts/build-macos-signed.mjs",
     "start": "tauri dev",
     "build": "vite build",
     "preview": "vite preview",

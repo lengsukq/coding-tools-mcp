@@ -57,9 +57,9 @@ pub fn local_pause() -> Value {
 }
 
 pub fn local_resume() -> Result<Value, String> {
-    if screen_recording_permission() != Some(true) {
-        return Err("SCREEN_PERMISSION_REQUIRED: 屏幕录制权限已撤销".into());
-    }
+    // CGPreflightScreenCaptureAccess can disagree with ScreenCaptureKit for
+    // a correctly user-authorized app (notably across ad-hoc rebuilds).
+    // The approved, scoped ScreenCaptureKit call enforces macOS TCC itself.
     let _serialized = action_lock();
     let mut state = locked();
     state.expire();
@@ -114,6 +114,9 @@ struct Grant {
     app_bundle: Option<String>,
     until: Instant,
     actions_used: u16,
+    /// A native ScreenCaptureKit frame was returned during this grant.
+    /// This does not replace OS authorization checks on future captures.
+    capture_succeeded: bool,
     paused: bool,
 }
 
@@ -190,11 +193,13 @@ impl Controller {
             )
             .unwrap();
         let lease = state.lease_token("s").unwrap();
+        assert!(!state.grant.as_ref().unwrap().capture_succeeded);
         let geometry = json!({
             "origin_x": -1440.0, "origin_y": 0.0, "point_width": 1440.0,
             "point_height": 900.0, "pixel_width": 1920, "pixel_height": 1200
         });
         let snap = state.record_snapshot("s", &lease, &geometry).unwrap();
+        assert!(state.grant.as_ref().unwrap().capture_succeeded);
         assert!(state
             .prepare_action("s", &json!({"action":"click","x":20,"y":30}))
             .is_err());
@@ -285,6 +290,7 @@ impl Controller {
             app_bundle,
             until: Instant::now() + GRANT_TTL,
             actions_used: 0,
+            capture_succeeded: false,
             paused: false,
         });
         Ok(())
@@ -330,6 +336,9 @@ impl Controller {
             return Err("COMPUTER_REVOKED: 授权在截图期间失效".into());
         }
         let frame = CaptureFrame::from_metadata(metadata)?;
+        if let Some(grant) = self.grant.as_mut() {
+            grant.capture_succeeded = true;
+        }
         let id = uuid::Uuid::new_v4().to_string();
         self.snapshot = Some(Snapshot {
             id: id.clone(),
@@ -663,6 +672,7 @@ pub fn local_status() -> Value {
         "expiresInSeconds": state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()),
         "supported": cfg!(target_os = "macos"),
         "screenRecordingGranted": screen_granted,
+        "screenCaptureSucceededInSession": state.grant.as_ref().is_some_and(|grant| grant.capture_succeeded),
         "screenPermissionDiagnostic": diagnostics,
         "accessibilityGranted": accessibility_permission()
     })
@@ -723,9 +733,10 @@ pub fn local_approve(request_id: &str, target_bundle: Option<&str>) -> Result<Va
             .scope
             .clone()
     };
-    if screen_recording_permission() != Some(true) {
-        return Err("请先授予 macOS 屏幕录制权限".into());
-    }
+    // A false CGPreflightScreenCaptureAccess is diagnostic only. This function
+    // approves an in-memory MCP lease after a LOCAL user gesture; it does not
+    // grant macOS Screen Recording. The native ScreenCaptureKit API remains
+    // responsible for refusing any actual unauthorised observation.
     let app_bundle = if scope == "control" {
         if accessibility_permission() != Some(true) {
             return Err("请先授予 macOS 辅助功能权限".into());
@@ -1097,6 +1108,7 @@ mod tests {
                 app_bundle: Some("com.example".into()),
                 until: Instant::now() - Duration::from_secs(1),
                 actions_used: 0,
+                capture_succeeded: false,
                 paused: false,
             }),
             snapshot: None,

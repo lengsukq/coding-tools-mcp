@@ -12,6 +12,7 @@ fn main() {
             "CoreGraphics",
             "ScreenCaptureKit",
             "ApplicationServices",
+            "Security",
         ] {
             println!("cargo:rustc-link-lib=framework={framework}");
         }

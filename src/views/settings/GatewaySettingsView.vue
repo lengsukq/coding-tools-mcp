@@ -59,6 +59,10 @@ const screenPermissionTroubleshooting = computed(() => {
   if (!diagnostic?.ok) return "当前进程的权限诊断暂不可用；请先更新并重新打开桌面应用。";
   if (!diagnostic.is_app_bundle) return "检测到当前程序不是从 macOS .app 应用包运行。开发版与系统设置里的正式应用可能不是同一权限主体；请完全退出开发进程后，从「应用程序」启动已授权的正式 App。";
   if (diagnostic.bundle_id !== diagnostic.expected_bundle_id) return "当前运行进程的 Bundle ID 与项目正式应用不一致。请退出此版本，改从「应用程序」启动 Coding Tools MCP，并确认系统设置中授权的确实是同一份应用。";
+  if (diagnostic.signature_type === "ad_hoc")
+    return "已检测到当前应用使用 Ad-hoc 临时签名。这类签名的代码身份可能每次构建都会变化，macOS 旧的录屏授权无法沿用。请使用稳定的 Apple Development / Developer ID 证书重新签名构建，安装后对新签名的应用重新授权。重复安装未固定签名的 DMG 无法根治。";
+  if (diagnostic.signature_type === "unsigned_or_unknown")
+    return "当前应用没有可验证的证书签名身份。请先用稳定的 Apple 开发者证书签名构建，再针对新身份重新授权；仅重新打开权限开关可能无效。";
   return "macOS 当前进程仍未通过屏幕录制权限预检。即使系统设置的开关已开启，授权变更后也可能需要完全退出应用（含菜单栏常驻进程）并重新启动，然后点击「重新检测」。如仍失败，请检查当前应用路径是否就是已授权的版本。";
 });
 let computerPoll: ReturnType<typeof setInterval> | undefined;
@@ -402,8 +406,12 @@ async function approveComputer() {
   computerBusy.value = true;
   try {
     const control = computer.value?.pendingScope === "control";
+    const preflightFailed = computer.value?.screenRecordingGranted === false;
     computer.value = await approveComputerScreenRequest(requestId, control ? selectedComputerApp.value : undefined);
-    showToast(control ? "已授权当前会话控制选定应用 5 分钟。" : "已授权当前会话查看屏幕 5 分钟。", { kind: "success" });
+    showToast(preflightFailed
+      ? "已批准此 MCP 会话尝试使用 ScreenCaptureKit。macOS 是否允许实际截图仍由系统判断；若失败请查看 MCP 返回的系统错误。"
+      : (control ? "已授权当前会话控制选定应用 5 分钟。" : "已授权当前会话查看屏幕 5 分钟。"),
+    { kind: preflightFailed ? "info" : "success", duration: preflightFailed ? 8500 : 4000 });
   } catch (error) {
     showToast(String(error), { title: "屏幕授权失败", kind: "error" });
   } finally {
@@ -478,7 +486,9 @@ onUnmounted(() => {
       </div>
       <div v-else-if="computer?.screenRecordingGranted === false" class="ui-inset mt-3 flex flex-wrap items-start justify-between gap-3 p-3">
         <div class="min-w-0 flex-1">
-          <p class="text-xs font-semibold">当前运行进程未通过 macOS 屏幕录制权限检测</p>
+          <p class="text-xs font-semibold">{{ computer.screenCaptureSucceededInSession ? "当前授权会话已通过 ScreenCaptureKit 实际截图（预检仍未通过）" : "当前运行进程未通过 macOS 屏幕录制权限预检" }}</p>
+          <p v-if="computer.screenCaptureSucceededInSession" class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">本次会话已经收到真实截图，说明这次 ScreenCaptureKit 调用成功。后续每次截图仍由 macOS 独立检查权限。</p>
+          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">仅预检未通过不再阻断本机授权：可先让 MCP 客户端申请 Computer Use，在这里手动批准后，由 ScreenCaptureKit 实际截图结果判断是否可用。macOS 拒绝时不会返回屏幕图片；本机批准不等于授予系统权限。</p>
           <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">{{ screenPermissionTroubleshooting }}</p>
           <details class="mt-2 text-xs text-[var(--ui-text-muted)]">
             <summary class="cursor-pointer">查看当前运行进程的权限诊断</summary>
@@ -488,6 +498,9 @@ onUnmounted(() => {
               <p>启动形式：{{ computer.screenPermissionDiagnostic?.is_app_bundle ? ".app 应用包" : "独立可执行文件 / 开发版本" }}</p>
               <p>应用路径：{{ computer.screenPermissionDiagnostic?.bundle_path || "无法获取" }}</p>
               <p>可执行程序：{{ computer.screenPermissionDiagnostic?.executable_path || "无法获取" }}</p>
+              <p>代码签名：{{ computer.screenPermissionDiagnostic?.signature_type === "ad_hoc" ? "Ad-hoc 临时签名（权限可能随重新构建失效）" : computer.screenPermissionDiagnostic?.signature_type === "certificate" ? "证书签名" : computer.screenPermissionDiagnostic?.signature_type === "unsigned_or_unknown" ? "无证书签名 / 未知" : "诊断不可用" }}</p>
+              <p>签名 Team ID：{{ computer.screenPermissionDiagnostic?.signing_team_id || "未设置" }}</p>
+              <p>签名标识：{{ computer.screenPermissionDiagnostic?.signing_identifier || "无法获取" }}</p>
               <p>当前进程检测：{{ computer.screenPermissionDiagnostic?.preflight_granted ? "通过" : "未通过" }}</p>
             </div>
           </details>
@@ -505,7 +518,7 @@ onUnmounted(() => {
           </p>
           <SelectField v-if="computer.pendingScope === 'control'" v-model="selectedComputerApp" class="mt-2" label="允许控制的应用（须切换该应用到前台后才能操作）" :options="computerAppOptions" />
         </div>
-        <BaseButton :busy="computerBusy" :disabled="!computer.supported || !computer.screenRecordingGranted || (computer.pendingScope === 'control' && (!computer.accessibilityGranted || !selectedComputerApp))" @click="approveComputer">批准 5 分钟</BaseButton>
+        <BaseButton :busy="computerBusy" :disabled="!computer.supported || (computer.pendingScope === 'control' && (!computer.accessibilityGranted || !selectedComputerApp))" @click="approveComputer">{{ computer.screenRecordingGranted === false ? "批准并尝试系统截图" : "批准 5 分钟" }}</BaseButton>
         <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">拒绝</BaseButton>
       </div>
       <div v-else class="mt-3 flex flex-wrap items-center justify-between gap-3">
