@@ -20,8 +20,8 @@ mod workspace;
 pub use agent_context::{scan_agent_context, scan_global_agent_context};
 pub use app_info::{check_app_update, open_url};
 pub use computer::{
-    approve_computer_screen_request, get_computer_screen_status, list_computer_available_apps,
-    pause_computer_access, request_computer_accessibility_permission,
+    approve_computer_screen_request, decide_computer_sensitive_action, get_computer_screen_status,
+    list_computer_available_apps, pause_computer_access, request_computer_accessibility_permission,
     request_computer_screen_permission, resume_computer_access, revoke_computer_screen_access,
 };
 pub use frp_profiles::{

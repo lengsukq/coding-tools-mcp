@@ -1,13 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/** Identity of the current desktop process, not macOS Settings' app label. */
+export interface ComputerScreenPermissionDiagnostic {
+  ok: boolean;
+  bundle_id?: string;
+  expected_bundle_id?: string;
+  bundle_path?: string;
+  executable_path?: string;
+  process_name?: string;
+  process_id?: number;
+  is_app_bundle?: boolean;
+  preflight_granted?: boolean;
+  error?: string;
+}
+
 export interface ComputerScreenStatus {
   pendingRequestId: string | null;
   pendingExpiresInSeconds: number | null;
   active: boolean;
   paused: boolean;
+  pendingSensitiveActionId: string | null;
+  pendingSensitiveActionDescription: string | null;
+  pendingSensitiveActionApp: string | null;
+  pendingSensitiveActionApproved: boolean;
+  pendingSensitiveActionExpiresInSeconds: number | null;
   expiresInSeconds: number | null;
   supported: boolean;
   screenRecordingGranted: boolean | null;
+  screenPermissionDiagnostic: ComputerScreenPermissionDiagnostic;
   accessibilityGranted: boolean | null;
   pendingScope: "observe" | "control" | null;
   activeScope: "observe" | "control" | null;
@@ -37,6 +57,9 @@ export const pauseComputerAccess = () =>
 
 export const resumeComputerAccess = () =>
   invoke<ComputerScreenStatus>("resume_computer_access");
+
+export const decideComputerSensitiveAction = (confirmationId: string, approve: boolean) =>
+  invoke<ComputerScreenStatus>("decide_computer_sensitive_action", { confirmationId, approve });
 
 export const requestComputerScreenPermission = () =>
   invoke<ComputerScreenStatus>("request_computer_screen_permission");

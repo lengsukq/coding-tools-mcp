@@ -38,6 +38,14 @@ pub fn resume_computer_access() -> AppResult<Value> {
 }
 
 #[tauri::command]
+pub fn decide_computer_sensitive_action(
+    confirmation_id: String,
+    approve: bool,
+) -> AppResult<Value> {
+    computer::local_decide_sensitive_action(&confirmation_id, approve).map_err(AppError::Message)
+}
+
+#[tauri::command]
 pub fn request_computer_screen_permission() -> Value {
     computer::local_request_screen_permission()
 }

@@ -27,6 +27,7 @@ import { connectionHealthPresentation } from "$lib/ui-model";
 import { showToast } from "$lib/stores/toast";
 import {
   approveComputerScreenRequest,
+  decideComputerSensitiveAction,
   getComputerScreenStatus,
   listComputerAvailableApps,
   pauseComputerAccess,
@@ -53,6 +54,13 @@ const computerBusy = ref(false);
 const computerApps = ref<ComputerApplication[]>([]);
 const selectedComputerApp = ref("");
 const computerAppOptions = computed(() => computerApps.value.map((app) => ({ value: app.bundle_id, label: app.name })));
+const screenPermissionTroubleshooting = computed(() => {
+  const diagnostic = computer.value?.screenPermissionDiagnostic;
+  if (!diagnostic?.ok) return "当前进程的权限诊断暂不可用；请先更新并重新打开桌面应用。";
+  if (!diagnostic.is_app_bundle) return "检测到当前程序不是从 macOS .app 应用包运行。开发版与系统设置里的正式应用可能不是同一权限主体；请完全退出开发进程后，从「应用程序」启动已授权的正式 App。";
+  if (diagnostic.bundle_id !== diagnostic.expected_bundle_id) return "当前运行进程的 Bundle ID 与项目正式应用不一致。请退出此版本，改从「应用程序」启动 Coding Tools MCP，并确认系统设置中授权的确实是同一份应用。";
+  return "macOS 当前进程仍未通过屏幕录制权限预检。即使系统设置的开关已开启，授权变更后也可能需要完全退出应用（含菜单栏常驻进程）并重新启动，然后点击「重新检测」。如仍失败，请检查当前应用路径是否就是已授权的版本。";
+});
 let computerPoll: ReturnType<typeof setInterval> | undefined;
 const loading = ref(true);
 const saving = ref(false);
@@ -115,6 +123,23 @@ const frpOptions = computed(() => [{ value: "", label: "手动填写" }, ...frpP
 function applyRuntimeStatus(nextStatus: GlobalMcpOverviewDto) {
   status.value = nextStatus;
   globalMcpRuntimeState.value = nextStatus.state;
+}
+
+async function decideSensitiveAction(approve: boolean) {
+  const confirmationId = computer.value?.pendingSensitiveActionId;
+  if (!confirmationId || computerBusy.value) return;
+  computerBusy.value = true;
+  try {
+    computer.value = await decideComputerSensitiveAction(confirmationId, approve);
+    showToast(approve
+      ? "已批准一次敏感动作；AI 须在有效期内携带确认 ID 原样重试，批准本身不会执行动作。"
+      : "已拒绝本次敏感操作。",
+    { kind: "info" });
+  } catch (error) {
+    showToast(String(error), { title: "敏感操作审批失败", kind: "error" });
+  } finally {
+    computerBusy.value = false;
+  }
 }
 
 async function toggleComputerPause() {
@@ -431,6 +456,19 @@ onUnmounted(() => {
         </div>
         <StatusPill :status="computer?.active && !computer?.paused ? 'running' : 'stopped'" :label="computer?.paused ? '已暂停' : computer?.active ? '已授权' : '未授权'" />
       </div>
+      <div v-if="computer?.active && computer.pendingSensitiveActionId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
+        <div class="min-w-0 flex-1">
+          <strong class="text-xs">高风险操作需单独确认</strong>
+          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
+            目标应用：{{ computer.pendingSensitiveActionApp }} · {{ computer.pendingSensitiveActionDescription }}
+          </p>
+          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
+            {{ computer.pendingSensitiveActionApproved ? "已允许一次，等待原客户端重试执行；不可重复使用" : "审批本身不会执行操作" }} · 剩余 {{ computer.pendingSensitiveActionExpiresInSeconds ?? 0 }} 秒
+          </p>
+        </div>
+        <BaseButton v-if="!computer.pendingSensitiveActionApproved" :disabled="computerBusy || computer.paused" @click="decideSensitiveAction(true)">允许本次</BaseButton>
+        <BaseButton variant="secondary" :disabled="computerBusy" @click="decideSensitiveAction(false)">拒绝</BaseButton>
+      </div>
       <div v-if="computer?.accessibilityGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
         <p class="text-xs text-[var(--ui-text-muted)]">控制鼠标和键盘需要 macOS 辅助功能权限。</p>
         <BaseButton variant="secondary" :disabled="computerBusy" @click="requestAccessibilityPermission">请求辅助功能权限</BaseButton>
@@ -438,9 +476,26 @@ onUnmounted(() => {
       <div v-if="computer && !computer.supported" class="ui-banner ui-banner--warning mt-3 text-xs">
         首版仅支持 macOS。
       </div>
-      <div v-else-if="computer?.screenRecordingGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
-        <p class="text-xs text-[var(--ui-text-muted)]">macOS 尚未授予此应用屏幕录制权限；用户必须通过系统弹窗授权。</p>
-        <BaseButton variant="secondary" :disabled="computerBusy" @click="requestScreenPermission">请求系统权限</BaseButton>
+      <div v-else-if="computer?.screenRecordingGranted === false" class="ui-inset mt-3 flex flex-wrap items-start justify-between gap-3 p-3">
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-semibold">当前运行进程未通过 macOS 屏幕录制权限检测</p>
+          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">{{ screenPermissionTroubleshooting }}</p>
+          <details class="mt-2 text-xs text-[var(--ui-text-muted)]">
+            <summary class="cursor-pointer">查看当前运行进程的权限诊断</summary>
+            <div class="mt-2 grid gap-1 break-all">
+              <p>实际 Bundle ID：{{ computer.screenPermissionDiagnostic?.bundle_id || "无法获取" }}</p>
+              <p>预期 Bundle ID：{{ computer.screenPermissionDiagnostic?.expected_bundle_id || "com.codingtools.mcp.desktop" }}</p>
+              <p>启动形式：{{ computer.screenPermissionDiagnostic?.is_app_bundle ? ".app 应用包" : "独立可执行文件 / 开发版本" }}</p>
+              <p>应用路径：{{ computer.screenPermissionDiagnostic?.bundle_path || "无法获取" }}</p>
+              <p>可执行程序：{{ computer.screenPermissionDiagnostic?.executable_path || "无法获取" }}</p>
+              <p>当前进程检测：{{ computer.screenPermissionDiagnostic?.preflight_granted ? "通过" : "未通过" }}</p>
+            </div>
+          </details>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <BaseButton variant="secondary" :disabled="computerBusy" @click="refreshComputerScreen">重新检测</BaseButton>
+          <BaseButton variant="secondary" :disabled="computerBusy" @click="requestScreenPermission">请求系统权限</BaseButton>
+        </div>
       </div>
       <div v-if="computer?.pendingRequestId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
         <div class="min-w-0 flex-1">

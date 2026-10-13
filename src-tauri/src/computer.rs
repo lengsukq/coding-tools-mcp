@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 const REQUEST_TTL: Duration = Duration::from_secs(120);
 const GRANT_TTL: Duration = Duration::from_secs(300);
 const SNAPSHOT_TTL: Duration = Duration::from_secs(45);
+const SENSITIVE_ACTION_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 struct Pending {
@@ -18,6 +19,26 @@ struct Pending {
     session: String,
     scope: String,
     at: Instant,
+}
+
+/// Only the local desktop UI can approve a specific action. This does not
+/// execute anything: the originating MCP transport must retry the exact action.
+pub fn local_decide_sensitive_action(id: &str, approve: bool) -> Result<Value, String> {
+    let _serialized = action_lock();
+    locked().decide_sensitive_action(id, approve)?;
+    Ok(local_status())
+}
+
+#[derive(Debug)]
+struct PendingSensitiveAction {
+    id: String,
+    lease_id: String,
+    session: String,
+    target_app: String,
+    original_args: Value,
+    description: String,
+    created_at: Instant,
+    approved: bool,
 }
 
 /// Pausing is a local-only emergency gate. Resume requires a fresh screenshot
@@ -30,6 +51,7 @@ pub fn local_pause() -> Value {
         grant.paused = true;
         state.snapshot = None;
     }
+
     drop(state);
     local_status()
 }
@@ -100,6 +122,7 @@ struct Controller {
     pending: Option<Pending>,
     grant: Option<Grant>,
     snapshot: Option<Snapshot>,
+    sensitive_action: Option<PendingSensitiveAction>,
 }
 
 impl Controller {
@@ -125,6 +148,15 @@ impl Controller {
             .is_some_and(|s| s.created_at.elapsed() >= SNAPSHOT_TTL)
         {
             self.snapshot = None;
+        }
+        if self.sensitive_action.as_ref().is_some_and(|p| {
+            p.created_at.elapsed() >= SENSITIVE_ACTION_TTL
+                || self
+                    .grant
+                    .as_ref()
+                    .is_none_or(|g| g.id != p.lease_id || g.paused)
+        }) {
+            self.sensitive_action = None;
         }
     }
 
@@ -245,6 +277,7 @@ impl Controller {
         let scope = pending.scope.clone();
         self.pending = None;
         self.snapshot = None;
+        self.sensitive_action = None;
         self.grant = Some(Grant {
             id: uuid::Uuid::new_v4().to_string(),
             session,
@@ -276,6 +309,15 @@ impl Controller {
 
     fn lease_matches(&mut self, session: &str, token: &str) -> bool {
         self.lease_token(session).as_deref() == Some(token)
+    }
+
+    fn observation_context(&mut self, session: &str) -> Option<(String, Option<String>)> {
+        self.expire();
+        let grant = self
+            .grant
+            .as_ref()
+            .filter(|g| g.session == session && !g.paused)?;
+        Some((grant.id.clone(), grant.app_bundle.clone()))
     }
 
     fn record_snapshot(
@@ -313,7 +355,7 @@ impl Controller {
             )?;
         let target = grant.app_bundle.clone().ok_or("CONTROL_TARGET_REQUIRED")?;
         let action = args["action"].as_str().unwrap_or("");
-        let prepared = if matches!(
+        let mut prepared = if matches!(
             action,
             "click" | "double_click" | "right_click" | "move" | "drag"
         ) {
@@ -334,8 +376,153 @@ impl Controller {
         } else {
             args.clone()
         };
+        // Never forward untrusted values of these internal privileged fields
+        // to the Objective-C action bridge.
+        if let Some(object) = prepared.as_object_mut() {
+            object.remove("high_risk_confirmed");
+            object.remove("confirmation_id");
+            object.remove("bundle_id");
+        }
         self.grant.as_mut().expect("checked grant").actions_used += 1;
         Ok((target, prepared))
+    }
+
+    fn prepare_or_request_sensitive_action(
+        &mut self,
+        session: &str,
+        args: &Value,
+    ) -> Result<(String, Value), String> {
+        self.expire();
+        validate_action(args)?;
+        let Some(description) = sensitive_action_description(args) else {
+            return self.prepare_action(session, args);
+        };
+        let grant = self
+            .grant
+            .as_ref()
+            .filter(|g| {
+                g.session == session && g.scope == "control" && !g.paused && g.actions_used < 100
+            })
+            .ok_or("CONTROL_NOT_APPROVED: 请先在本机批准控制会话")?;
+        let target = grant
+            .app_bundle
+            .as_ref()
+            .ok_or("CONTROL_TARGET_REQUIRED")?
+            .clone();
+        let lease = grant.id.clone();
+        let mut canonical = args.clone();
+        if let Some(object) = canonical.as_object_mut() {
+            object.remove("confirmation_id");
+            object.remove("high_risk_confirmed");
+            object.remove("bundle_id");
+        }
+        let confirmation = args.get("confirmation_id").and_then(Value::as_str);
+        if let Some(existing) = &self.sensitive_action {
+            if existing.session != session
+                || existing.lease_id != lease
+                || existing.original_args != canonical
+                || confirmation.is_some_and(|id| id != existing.id)
+            {
+                return Err("CONFIRMATION_MISMATCH: 还有其他待确认动作或调用参数已改变".into());
+            }
+            if existing.approved && confirmation == Some(existing.id.as_str()) {
+                self.sensitive_action = None; // one-time permit, consumed before dispatch
+                let (target, mut prepared) = self.prepare_action(session, &canonical)?;
+                prepared["high_risk_confirmed"] = json!(true);
+                return Ok((target, prepared));
+            }
+            return Err(format!("CONFIRMATION_PENDING: 请在本机明确确认操作（ID: {}）后携带 confirmation_id 原样重试", existing.id));
+        }
+        if confirmation.is_some() {
+            return Err("CONFIRMATION_INVALID: 未找到对应待批准动作".into());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        self.sensitive_action = Some(PendingSensitiveAction {
+            id: id.clone(),
+            lease_id: lease,
+            session: session.to_owned(),
+            target_app: target,
+            original_args: canonical,
+            description,
+            created_at: Instant::now(),
+            approved: false,
+        });
+        Err(format!("CONFIRMATION_PENDING: 需要在本机确认敏感操作（ID: {id}），批准后携带 confirmation_id 原样重试"))
+    }
+
+    fn decide_sensitive_action(&mut self, id: &str, approve: bool) -> Result<(), String> {
+        self.expire();
+        let pending = self
+            .sensitive_action
+            .as_mut()
+            .filter(|p| p.id == id)
+            .ok_or("敏感操作确认不存在或已过期")?;
+        if !approve {
+            self.sensitive_action = None;
+            return Ok(());
+        }
+        let grant = self
+            .grant
+            .as_ref()
+            .filter(|g| g.id == pending.lease_id && !g.paused && g.scope == "control")
+            .ok_or("控制授权已失效或暂停")?;
+        if grant.app_bundle.as_deref() != Some(pending.target_app.as_str()) {
+            return Err("授权目标应用已改变".into());
+        }
+        pending.approved = true;
+        Ok(())
+    }
+}
+
+fn sensitive_action_description(args: &Value) -> Option<String> {
+    match args.get("action").and_then(Value::as_str)? {
+        "press_element" => {
+            let label = args["label"].as_str()?.trim();
+            let normalized = label.to_lowercase();
+            let sensitive = [
+                "delete",
+                "remove",
+                "pay",
+                "purchase",
+                "submit",
+                "send",
+                "erase",
+                "delete all",
+                "transfer",
+                "删除",
+                "支付",
+                "付款",
+                "购买",
+                "提交",
+                "发送",
+                "转账",
+                "移除",
+                "清空",
+                "确认订单",
+                "卸载",
+                "永久",
+            ];
+            sensitive
+                .iter()
+                .any(|needle| normalized.contains(needle))
+                .then(|| format!("语义按钮：{}", label.chars().take(100).collect::<String>()))
+        }
+        "key" => {
+            let modifiers = args.get("modifiers")?.as_array()?;
+            let command = modifiers.iter().any(|v| v == "command");
+            let control = modifiers.iter().any(|v| v == "control");
+            let key = args["key"].as_str()?.to_ascii_lowercase();
+            ((command && ["q", "w", "v", "delete", "backspace"].contains(&key.as_str()))
+                || (control && ["delete", "backspace"].contains(&key.as_str())))
+            .then(|| {
+                format!(
+                    "高风险快捷键：{} + {}",
+                    if command { "Command" } else { "Control" },
+                    key
+                )
+            })
+        }
+        _ => None,
     }
 }
 
@@ -408,8 +595,8 @@ fn native_apps() -> Result<Value, String> {
     native::apps()
 }
 #[cfg(target_os = "macos")]
-fn native_ui_tree() -> Result<Value, String> {
-    native::ui_tree()
+fn native_ui_tree(expected: Option<&str>) -> Result<Value, String> {
+    native::ui_tree(expected)
 }
 #[cfg(target_os = "macos")]
 fn native_action(target: &str, args: &Value) -> Result<Value, String> {
@@ -429,7 +616,7 @@ fn native_apps() -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM".into())
 }
 #[cfg(not(target_os = "macos"))]
-fn native_ui_tree() -> Result<Value, String> {
+fn native_ui_tree(_: Option<&str>) -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM".into())
 }
 #[cfg(not(target_os = "macos"))]
@@ -452,6 +639,12 @@ fn locked() -> std::sync::MutexGuard<'static, Controller> {
 pub fn local_status() -> Value {
     let mut state = locked();
     state.expire();
+    let diagnostics = screen_permission_diagnostics();
+    // Use the same native preflight result for the main status and the
+    // diagnostics; two separate checks in one UI poll can disagree.
+    let screen_granted = diagnostics["preflight_granted"]
+        .as_bool()
+        .or_else(screen_recording_permission);
     json!({
         "pendingRequestId": state.pending.as_ref().map(|p| p.id.as_str()),
         "pendingExpiresInSeconds": state.pending.as_ref().map(|p| REQUEST_TTL.saturating_sub(p.at.elapsed()).as_secs()),
@@ -459,13 +652,32 @@ pub fn local_status() -> Value {
         "pendingScope": state.pending.as_ref().map(|p| p.scope.as_str()),
         "activeScope": state.grant.as_ref().map(|p| p.scope.as_str()),
         "paused": state.grant.as_ref().is_some_and(|g| g.paused),
+        "pendingSensitiveActionId": state.sensitive_action.as_ref().map(|p| p.id.as_str()),
+        "pendingSensitiveActionDescription": state.sensitive_action.as_ref().map(|p| p.description.as_str()),
+        "pendingSensitiveActionApp": state.sensitive_action.as_ref().map(|p| p.target_app.as_str()),
+        "pendingSensitiveActionApproved": state.sensitive_action.as_ref().is_some_and(|p| p.approved),
+        "pendingSensitiveActionExpiresInSeconds": state.sensitive_action.as_ref().map(|p|
+            SENSITIVE_ACTION_TTL.saturating_sub(p.created_at.elapsed()).as_secs()),
         "remainingControlActions": state.grant.as_ref().filter(|p| p.scope == "control").map(|p| 100_u16.saturating_sub(p.actions_used)),
         "targetAppBundle": state.grant.as_ref().and_then(|p| p.app_bundle.as_deref()),
         "expiresInSeconds": state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()),
         "supported": cfg!(target_os = "macos"),
-        "screenRecordingGranted": screen_recording_permission(),
+        "screenRecordingGranted": screen_granted,
+        "screenPermissionDiagnostic": diagnostics,
         "accessibilityGranted": accessibility_permission()
     })
+}
+
+/// Read-only macOS TCC diagnostics. TCC permissions are tied to the running
+/// binary/bundle, not to the display name visible in System Settings.
+#[cfg(target_os = "macos")]
+fn screen_permission_diagnostics() -> Value {
+    native::screen_diagnostics().unwrap_or_else(|message| json!({"ok": false, "error": message}))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_permission_diagnostics() -> Value {
+    json!({"ok": false, "error": "UNSUPPORTED_PLATFORM"})
 }
 
 #[cfg(target_os = "macos")]
@@ -577,7 +789,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "computer_action",
             "title": "Control approved Mac application",
-            "description": "Execute one bounded mouse/keyboard action. Requires an explicit local CONTROL grant pinned to the currently foreground app. All inputs are global screen points. Password fields and risky shortcuts are blocked.",
+            "description": "Execute a mouse/keyboard action within a local CONTROL grant. Clicks require fresh snapshot_id; risky shortcuts and semantic send/delete/payment actions require a separate 60-second, one-time local confirmation, then retry with confirmation_id. No Workspace permission grants access.",
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press_element", "focus_app"] },
                 "x": { "type": "number" }, "y": { "type": "number" },
@@ -587,6 +799,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 "label": { "type": "string", "minLength": 1, "maxLength": 160 },
                 "role": { "type": "string", "maxLength": 80 },
                 "snapshot_id": { "type": "string", "description": "Required for all pointer actions; returned by computer_observe screenshot; valid for 45 seconds" },
+                "confirmation_id": { "type": "string", "description": "For locally approved sensitive actions only. After approval retry the exact same request with this ID; one-time consumption, 60 second TTL." },
                 "coordinate_space": { "type": "string", "enum": ["screen_points", "image_pixels"], "default": "screen_points" },
                 "key": { "type": "string", "minLength": 1, "maxLength": 12 },
                 "modifiers": { "type": "array", "uniqueItems": true, "maxItems": 4,
@@ -655,24 +868,35 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
             }
         }
         ("computer_observe", "windows" | "screenshot" | "ui_tree") => {
-            let Some(lease) = locked().lease_token(session) else {
+            let Some((lease, target_app)) = locked().observation_context(session) else {
                 return tool_error("COMPUTER_NOT_APPROVED: 请先通过 computer_session(request) 申请，并在本机桌面应用中批准");
             };
             if action == "windows" {
                 return match native_windows() {
-                    Ok(value) if locked().lease_matches(session, &lease) => tool_ok(value),
+                    Ok(mut value) if locked().lease_matches(session, &lease) => {
+                        if let Some(target) = target_app.as_deref() {
+                            if let Some(windows) = value["windows"].as_array_mut() {
+                                windows.retain(|w| {
+                                    w["bundle_id"].as_str() == Some(target)
+                                        && w["on_screen"] == true
+                                        && w["layer"] == 0
+                                });
+                            }
+                        }
+                        tool_ok(value)
+                    }
                     Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取窗口期间被撤销"),
                     Err(error) => tool_error(&error),
                 };
             }
             if action == "ui_tree" {
-                return match native_ui_tree() {
+                return match native_ui_tree(target_app.as_deref()) {
                     Ok(value) if locked().lease_matches(session, &lease) => tool_ok(value),
                     Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取控件期间被撤销"),
                     Err(error) => tool_error(&error),
                 };
             }
-            match native_capture(args) {
+            match native_capture(args, target_app.as_deref()) {
                 Ok(mut value) => {
                     if !locked().lease_matches(session, &lease) {
                         return tool_error(
@@ -710,10 +934,11 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
         }
         ("computer_action", _) => {
             let _serialized = action_lock();
-            let (target, prepared) = match locked().prepare_action(session, args) {
-                Ok(prepared) => prepared,
-                Err(error) => return tool_error(&error),
-            };
+            let (target, prepared) =
+                match locked().prepare_or_request_sensitive_action(session, args) {
+                    Ok(prepared) => prepared,
+                    Err(error) => return tool_error(&error),
+                };
             match native_action(&target, &prepared) {
                 Ok(result) => tool_ok(result),
                 Err(error) => tool_error(&error),
@@ -728,12 +953,13 @@ mod native {
     use serde_json::Value;
     use std::ffi::{c_char, CStr, CString};
     unsafe extern "C" {
+        fn computer_native_screen_diagnostics() -> *mut c_char;
         fn computer_native_windows() -> *mut c_char;
         fn computer_native_capture(input: *const c_char) -> *mut c_char;
         fn computer_native_free(pointer: *mut c_char);
         fn computer_native_frontmost() -> *mut c_char;
         fn computer_native_available_apps() -> *mut c_char;
-        fn computer_native_ui_tree() -> *mut c_char;
+        fn computer_native_ui_tree(expected_bundle: *const c_char) -> *mut c_char;
         fn computer_native_action(input: *const c_char) -> *mut c_char;
         fn computer_native_accessibility_granted() -> bool;
         fn computer_native_request_accessibility() -> bool;
@@ -759,6 +985,9 @@ mod native {
     pub(super) fn windows() -> Result<Value, String> {
         decode(unsafe { computer_native_windows() })
     }
+    pub(super) fn screen_diagnostics() -> Result<Value, String> {
+        decode(unsafe { computer_native_screen_diagnostics() })
+    }
     pub(super) fn capture(args: &Value) -> Result<Value, String> {
         let input = CString::new(args.to_string()).map_err(|e| e.to_string())?;
         decode(unsafe { computer_native_capture(input.as_ptr()) })
@@ -769,8 +998,14 @@ mod native {
     pub(super) fn apps() -> Result<Value, String> {
         decode(unsafe { computer_native_available_apps() })
     }
-    pub(super) fn ui_tree() -> Result<Value, String> {
-        decode(unsafe { computer_native_ui_tree() })
+    pub(super) fn ui_tree(expected: Option<&str>) -> Result<Value, String> {
+        let input = expected
+            .map(CString::new)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        decode(unsafe {
+            computer_native_ui_tree(input.as_ref().map_or(std::ptr::null(), |x| x.as_ptr()))
+        })
     }
     pub(super) fn action(args: &Value) -> Result<Value, String> {
         let input = CString::new(args.to_string()).map_err(|e| e.to_string())?;
@@ -791,8 +1026,17 @@ fn native_windows() -> Result<Value, String> {
     native::windows()
 }
 #[cfg(target_os = "macos")]
-fn native_capture(args: &Value) -> Result<Value, String> {
+fn native_capture(args: &Value, expected_bundle: Option<&str>) -> Result<Value, String> {
     let mut input = args.clone();
+    if let Some(obj) = input.as_object_mut() {
+        obj.remove("expected_bundle_id");
+    }
+    if let Some(bundle) = expected_bundle {
+        if args.get("window_id").and_then(Value::as_u64).is_none() {
+            return Err("TARGET_WINDOW_REQUIRED: control 模式必须指定授权应用的 window_id，先调用 computer_observe(windows)".into());
+        }
+        input["expected_bundle_id"] = json!(bundle);
+    }
     if args.get("window_id").is_none() && args.get("display_id").is_none() {
         let index = args
             .get("display_index")
@@ -815,7 +1059,7 @@ fn native_windows() -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM: macOS only".into())
 }
 #[cfg(not(target_os = "macos"))]
-fn native_capture(_: &Value) -> Result<Value, String> {
+fn native_capture(_: &Value, _: Option<&str>) -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM: macOS only".into())
 }
 
@@ -856,6 +1100,7 @@ mod tests {
                 paused: false,
             }),
             snapshot: None,
+            sensitive_action: None,
         };
         state.expire();
         assert!(state.pending.is_none());
@@ -941,5 +1186,125 @@ mod tests {
         assert!(state
             .prepare_action("client-a", &json!({"action": "focus_app"}))
             .is_ok());
+    }
+    fn control_session() -> Controller {
+        let mut state = Controller::default();
+        let req = state.request("client-a", "control").unwrap();
+        state
+            .approve(
+                req["request_id"].as_str().unwrap(),
+                Some("com.apple.Safari".into()),
+            )
+            .unwrap();
+        state
+    }
+
+    #[test]
+    fn high_risk_confirmation_is_local_exact_and_single_use() {
+        let mut state = control_session();
+        let action = json!({"action":"press_element","label":"Delete all"});
+        let pending = state
+            .prepare_or_request_sensitive_action("client-a", &action)
+            .unwrap_err();
+        assert!(pending.contains("CONFIRMATION_PENDING"));
+        assert_eq!(state.grant.as_ref().unwrap().actions_used, 0);
+        let id = state.sensitive_action.as_ref().unwrap().id.clone();
+        assert!(state
+            .prepare_or_request_sensitive_action("client-b", &action)
+            .is_err());
+        assert!(state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"press_element","label":"Pay now","confirmation_id":id
+                })
+            )
+            .is_err());
+        assert!(state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"press_element","label":"Delete all","confirmation_id":id
+                })
+            )
+            .is_err());
+        assert!(state.decide_sensitive_action("bad-id", true).is_err());
+        state.decide_sensitive_action(&id, true).unwrap();
+        let (_, prepared) = state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"press_element","label":"Delete all","confirmation_id":id
+                }),
+            )
+            .unwrap();
+        assert_eq!(prepared["high_risk_confirmed"], true);
+        assert!(prepared.get("confirmation_id").is_none());
+        assert!(state.sensitive_action.is_none());
+        assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
+        assert!(state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"press_element","label":"Delete all","confirmation_id":id
+                })
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn rejected_expired_or_paused_sensitive_action_never_executes() {
+        let action = json!({"action":"key","key":"q","modifiers":["command"]});
+        let mut state = control_session();
+        state
+            .prepare_or_request_sensitive_action("client-a", &action)
+            .unwrap_err();
+        let id = state.sensitive_action.as_ref().unwrap().id.clone();
+        state.decide_sensitive_action(&id, false).unwrap();
+        assert!(state.sensitive_action.is_none());
+        assert!(state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"key","key":"q","modifiers":["command"],"confirmation_id":id
+                })
+            )
+            .is_err());
+
+        state
+            .prepare_or_request_sensitive_action("client-a", &action)
+            .unwrap_err();
+        let id = state.sensitive_action.as_ref().unwrap().id.clone();
+        state.sensitive_action.as_mut().unwrap().created_at = Instant::now() - SENSITIVE_ACTION_TTL;
+        assert!(state.decide_sensitive_action(&id, true).is_err());
+        state
+            .prepare_or_request_sensitive_action("client-a", &action)
+            .unwrap_err();
+        let id = state.sensitive_action.as_ref().unwrap().id.clone();
+        state.grant.as_mut().unwrap().paused = true;
+        assert!(state.decide_sensitive_action(&id, true).is_err());
+        assert!(state.sensitive_action.is_none());
+    }
+
+    #[test]
+    fn remote_cannot_fake_native_high_risk_approval_flag() {
+        let mut state = control_session();
+        let (_, prepared) = state
+            .prepare_or_request_sensitive_action(
+                "client-a",
+                &json!({
+                    "action":"focus_app","high_risk_confirmed":true,"bundle_id":"attacker"
+                }),
+            )
+            .unwrap();
+        assert!(prepared.get("high_risk_confirmed").is_none());
+        assert!(prepared.get("bundle_id").is_none());
+        let forged = json!({
+            "action":"press_element", "label":"Pay now", "high_risk_confirmed":true
+        });
+        assert!(state
+            .prepare_or_request_sensitive_action("client-a", &forged)
+            .is_err());
+        assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
     }
 }

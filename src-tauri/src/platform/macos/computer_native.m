@@ -49,7 +49,30 @@ static void findPressTargets(AXUIElementRef element, NSString *wantedLabel, NSSt
 static char *failure(NSString *code, NSString *details);
 static BOOL isScreenLocked(void);
 static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID);
-static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID);
+
+// No capture or Accessibility traversal is performed here. This reports the
+// CURRENT process identity used by macOS TCC, which can differ between
+// "tauri dev", a build-folder .app and the app installed in /Applications.
+char *computer_native_screen_diagnostics(void) {
+    @autoreleasepool {
+        NSBundle *bundle = NSBundle.mainBundle;
+        NSString *bundlePath = bundle.bundlePath ?: @"";
+        NSString *executable = bundle.executablePath ?: @"";
+        NSString *bundleID = bundle.bundleIdentifier ?: @"";
+        BOOL isApp = [bundlePath.pathExtension.lowercaseString isEqualToString:@"app"];
+        return reply(@{
+            @"ok": @YES,
+            @"bundle_id": bundleID,
+            @"bundle_path": bundlePath,
+            @"executable_path": executable,
+            @"process_name": NSProcessInfo.processInfo.processName ?: @"",
+            @"process_id": @(NSProcessInfo.processInfo.processIdentifier),
+            @"is_app_bundle": @(isApp),
+            @"preflight_granted": @(CGPreflightScreenCaptureAccess()),
+            @"expected_bundle_id": @"com.codingtools.mcp.desktop"
+        });
+    }
+}
 
 char *computer_native_available_apps(void) {
     @autoreleasepool {
@@ -153,12 +176,14 @@ static NSMutableArray *treeForElement(AXUIElementRef element, NSUInteger depth, 
     return output;
 }
 
-char *computer_native_ui_tree(void) {
+char *computer_native_ui_tree(const char *expectedBundle) {
     @autoreleasepool {
         if (isScreenLocked()) return failure(@"SCREEN_LOCKED", @"Unlock the desktop before reading accessibility UI");
         if (!AXIsProcessTrusted()) return failure(@"ACCESSIBILITY_PERMISSION_REQUIRED", @"Enable Accessibility permission in macOS Settings");
         NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
         if (!app) return failure(@"NO_FRONTMOST_APP", @"No foreground application");
+        if (expectedBundle && ![app.bundleIdentifier isEqualToString:[NSString stringWithUTF8String:expectedBundle]])
+            return failure(@"TARGET_APP_MISMATCH", @"Only the locally approved application may expose its UI tree");
         AXUIElementRef root = AXUIElementCreateApplication(app.processIdentifier);
         if (!root) return failure(@"AX_UNAVAILABLE", @"Unable to access application UI");
         NSUInteger budget = 150;
@@ -233,11 +258,14 @@ char *computer_native_action(const char *request) {
             if (![label isKindOfClass:NSString.class] || label.length == 0 || label.length > 160)
                 return failure(@"INVALID_ARGUMENT", @"Element label must be 1–160 characters");
             if (role && ![role isKindOfClass:NSString.class]) return failure(@"INVALID_ARGUMENT", @"Invalid element role");
-            // Until explicit high-risk confirmation exists, block semantic
-            // activation of obvious destructive or financial controls.
+            // Explicit high-risk approval is supplied ONLY by the Rust lease
+            // manager after consuming a one-time locally approved permit.
+            BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
             NSString *normalized = label.lowercaseString;
-            for (NSString *dangerous in @[@"delete", @"remove", @"pay", @"purchase", @"submit payment", @"删除", @"支付", @"清空", @"移除"]) {
-                if ([normalized containsString:dangerous])
+            for (NSString *dangerous in @[@"delete", @"remove", @"pay", @"purchase", @"submit", @"send",
+                                           @"erase", @"transfer", @"删除", @"支付", @"付款", @"购买", @"提交",
+                                           @"发送", @"转账", @"移除", @"清空", @"确认订单", @"卸载", @"永久"]) {
+                if ([normalized containsString:dangerous] && !confirmed)
                     return failure(@"CONFIRMATION_REQUIRED", @"Potentially destructive or financial AX actions are not enabled");
             }
             AXUIElementRef root = AXUIElementCreateApplication(app.processIdentifier);
@@ -275,11 +303,13 @@ char *computer_native_action(const char *request) {
             NSArray *mods = args[@"modifiers"];
             if (![mods isKindOfClass:NSArray.class]) mods = @[];
             CGEventFlags flags = flagsFor(mods);
-            // Destructive/clipboard shortcuts require a future per-action
-            // confirmation layer; do not enable them as arbitrary shortcuts.
+            BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
             if (flags & kCGEventFlagMaskCommand &&
-                [@[@"q", @"w", @"v", @"delete", @"backspace"] containsObject:key.lowercaseString])
-                return failure(@"RESTRICTED_SHORTCUT", @"This shortcut is disabled until explicit high-risk confirmation is supported");
+                [@[@"q", @"w", @"v", @"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
+                return failure(@"CONFIRMATION_REQUIRED", @"This shortcut needs a one-time local confirmation");
+            if (flags & kCGEventFlagMaskControl &&
+                [@[@"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
+                return failure(@"CONFIRMATION_REQUIRED", @"This control shortcut needs a one-time local confirmation");
             CGEventRef down = CGEventCreateKeyboardEvent(NULL, keyCode, true);
             CGEventRef up = CGEventCreateKeyboardEvent(NULL, keyCode, false);
             if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return failure(@"EVENT_CREATE_FAILED", @"Cannot create key event"); }
@@ -441,6 +471,9 @@ char *computer_native_windows(void) {
                 CGRect f = w.frame;
                 [windows addObject:@{@"id": @(w.windowID),
                     @"app": w.owningApplication.applicationName ?: @"",
+                    @"bundle_id": w.owningApplication.bundleIdentifier ?: @"",
+                    @"on_screen": @(w.isOnScreen),
+                    @"layer": @(w.windowLayer),
                     @"title": w.title ?: @"",
                     @"x": @(f.origin.x), @"y": @(f.origin.y),
                     @"width": @(f.size.width), @"height": @(f.size.height)}];
@@ -461,6 +494,10 @@ char *computer_native_capture(const char *request) {
             if (![args isKindOfClass:NSDictionary.class]) return failure(@"INVALID_ARGUMENT", @"Invalid capture arguments");
             uint32_t displayID = [args[@"display_id"] unsignedIntValue];
             uint32_t windowID = [args[@"window_id"] unsignedIntValue];
+            NSString *expectedBundle = args[@"expected_bundle_id"];
+            if (![expectedBundle isKindOfClass:NSString.class]) expectedBundle = @"";
+            if (expectedBundle.length > 0 && windowID == 0)
+                return failure(@"TARGET_WINDOW_REQUIRED", @"Control grants can capture only windows of the approved application; select window_id from computer_observe(windows)");
             NSError *error = nil;
             SCShareableContent *content = shareableContent(&error);
             if (!content) return failure(@"SCREEN_DISCOVERY_FAILED", error.localizedDescription);
@@ -469,6 +506,9 @@ char *computer_native_capture(const char *request) {
             if (windowID != 0) {
                 for (SCWindow *window in content.windows) {
                     if (window.windowID == windowID) {
+                        if (expectedBundle.length > 0 &&
+                            ![window.owningApplication.bundleIdentifier isEqualToString:expectedBundle])
+                            return failure(@"TARGET_WINDOW_MISMATCH", @"Selected window does not belong to the locally approved app");
                         filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
                         logical = window.frame;
                         break;
