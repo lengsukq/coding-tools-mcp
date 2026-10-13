@@ -29,7 +29,7 @@ pub fn audit_workspace_hint(
     let tool_name = params.get("name").and_then(Value::as_str)?;
     if matches!(
         tool_name,
-        "workspace_list" | "computer_session" | "computer_observe"
+        "workspace_list" | "computer_session" | "computer_observe" | "computer_action"
     ) {
         return None;
     }
@@ -290,7 +290,10 @@ fn handle_gateway_tools_call(
         .ok_or_else(|| json!({ "code": -32602, "message": "Missing tool name" }))?;
     let mut args = tool_arguments(name, params);
 
-    if matches!(name, "computer_session" | "computer_observe") {
+    if matches!(
+        name,
+        "computer_session" | "computer_observe" | "computer_action"
+    ) {
         if !session_id.is_some_and(|id| state.sessions.is_server_issued(id)) {
             return Ok((
                 json!({

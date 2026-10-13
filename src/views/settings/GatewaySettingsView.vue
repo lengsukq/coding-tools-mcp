@@ -28,9 +28,12 @@ import { showToast } from "$lib/stores/toast";
 import {
   approveComputerScreenRequest,
   getComputerScreenStatus,
+  listComputerAvailableApps,
+  requestComputerAccessibilityPermission,
   requestComputerScreenPermission,
   revokeComputerScreenAccess,
   type ComputerScreenStatus,
+  type ComputerApplication,
 } from "$lib/api/computer";
 
 const config = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
@@ -45,6 +48,9 @@ const health = ref<GatewayHealthItemDto[]>([]);
 const frpProfiles = ref<FrpProfileDto[]>([]);
 const computer = ref<ComputerScreenStatus | null>(null);
 const computerBusy = ref(false);
+const computerApps = ref<ComputerApplication[]>([]);
+const selectedComputerApp = ref("");
+const computerAppOptions = computed(() => computerApps.value.map((app) => ({ value: app.bundle_id, label: app.name })));
 let computerPoll: ReturnType<typeof setInterval> | undefined;
 const loading = ref(true);
 const saving = ref(false);
@@ -107,6 +113,17 @@ const frpOptions = computed(() => [{ value: "", label: "手动填写" }, ...frpP
 function applyRuntimeStatus(nextStatus: GlobalMcpOverviewDto) {
   status.value = nextStatus;
   globalMcpRuntimeState.value = nextStatus.state;
+}
+
+async function requestAccessibilityPermission() {
+  try {
+    computer.value = await requestComputerAccessibilityPermission();
+    if (!computer.value.accessibilityGranted) {
+      showToast("请在 macOS 系统设置 → 隐私与安全性 → 辅助功能中允许 Coding Tools MCP。", { kind: "info", duration: 7000 });
+    }
+  } catch (error) {
+    showToast(String(error), { title: "无法请求辅助功能权限", kind: "error" });
+  }
 }
 
 async function requestScreenPermission() {
@@ -324,7 +341,13 @@ function shouldOfferTunnelRecovery(item: GatewayHealthItemDto) {
 
 async function refreshComputerScreen() {
   try {
+    const previous = computer.value?.pendingRequestId;
     computer.value = await getComputerScreenStatus();
+    if (computer.value.pendingScope === "control" && computer.value.pendingRequestId && computer.value.pendingRequestId !== previous) {
+      const result = await listComputerAvailableApps();
+      computerApps.value = result.applications || [];
+      selectedComputerApp.value = "";
+    }
   } catch {
     // MCP connection settings must remain functional if the desktop command
     // is unavailable in an older installed runtime.
@@ -336,8 +359,9 @@ async function approveComputer() {
   if (!requestId || computerBusy.value) return;
   computerBusy.value = true;
   try {
-    computer.value = await approveComputerScreenRequest(requestId);
-    showToast("仅当前 MCP 会话已获准临时读取屏幕，5 分钟后自动过期。", { kind: "success" });
+    const control = computer.value?.pendingScope === "control";
+    computer.value = await approveComputerScreenRequest(requestId, control ? selectedComputerApp.value : undefined);
+    showToast(control ? "已授权当前会话控制选定应用 5 分钟。" : "已授权当前会话查看屏幕 5 分钟。", { kind: "success" });
   } catch (error) {
     showToast(String(error), { title: "屏幕授权失败", kind: "error" });
   } finally {
@@ -384,11 +408,15 @@ onUnmounted(() => {
         <div>
           <h2 class="text-base font-semibold">Computer Use · 屏幕访问</h2>
           <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">
-            默认关闭。AI 先调用 computer_session 申请授权，你在本机批准后，指定 MCP 会话才可临时截图。
-            截图可能包含个人隐私；macOS 还需要单独授予屏幕录制权限。
+            默认关闭。“查看”权限只允许读取屏幕，“控制”权限可向你明确选择的目标应用发送鼠标与键盘事件。
+            仅当前 MCP 会话有效 5 分钟，随时可撤销。Mac 系统权限需由你手动授予。
           </p>
         </div>
         <StatusPill :status="computer?.active ? 'running' : 'stopped'" :label="computer?.active ? '已授权' : '未授权'" />
+      </div>
+      <div v-if="computer?.accessibilityGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
+        <p class="text-xs text-[var(--ui-text-muted)]">控制鼠标和键盘需要 macOS 辅助功能权限。</p>
+        <BaseButton variant="secondary" :disabled="computerBusy" @click="requestAccessibilityPermission">请求辅助功能权限</BaseButton>
       </div>
       <div v-if="computer && !computer.supported" class="ui-banner ui-banner--warning mt-3 text-xs">
         首版仅支持 macOS。
@@ -399,17 +427,18 @@ onUnmounted(() => {
       </div>
       <div v-if="computer?.pendingRequestId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
         <div class="min-w-0 flex-1">
-          <strong class="text-xs">有 AI 客户端申请读取屏幕</strong>
+          <strong class="text-xs">有 AI 客户端申请{{ computer.pendingScope === "control" ? "控制指定应用" : "查看屏幕" }}</strong>
           <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
             请求编号：{{ computer.pendingRequestId }} · {{ computer.pendingExpiresInSeconds ?? 0 }} 秒后失效
           </p>
+          <SelectField v-if="computer.pendingScope === 'control'" v-model="selectedComputerApp" class="mt-2" label="允许控制的应用（须切换该应用到前台后才能操作）" :options="computerAppOptions" />
         </div>
-        <BaseButton :busy="computerBusy" :disabled="!computer.supported" @click="approveComputer">批准 5 分钟</BaseButton>
+        <BaseButton :busy="computerBusy" :disabled="!computer.supported || !computer.screenRecordingGranted || (computer.pendingScope === 'control' && (!computer.accessibilityGranted || !selectedComputerApp))" @click="approveComputer">批准 5 分钟</BaseButton>
         <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">拒绝</BaseButton>
       </div>
       <div v-else class="mt-3 flex flex-wrap items-center justify-between gap-3">
         <span class="text-xs text-[var(--ui-text-muted)]">
-          {{ computer?.active ? `剩余授权时间：${computer.expiresInSeconds ?? 0} 秒` : "当前没有已批准的屏幕观察会话" }}
+          {{ computer?.active ? `${computer.activeScope === "control" ? "控制" : "查看"}授权 · 剩余 ${computer.expiresInSeconds ?? 0} 秒${computer.targetAppBundle ? " · " + computer.targetAppBundle : ""}${computer.remainingControlActions !== null ? " · 剩余操作 " + computer.remainingControlActions + " 次" : ""}` : "当前没有已批准的 Computer Use 会话" }}
         </span>
         <BaseButton v-if="computer?.active" variant="secondary" :disabled="computerBusy" @click="revokeComputer">立即撤销</BaseButton>
         <BaseButton v-else variant="ghost" :disabled="computerBusy" @click="refreshComputerScreen">刷新</BaseButton>

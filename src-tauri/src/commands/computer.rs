@@ -10,8 +10,16 @@ pub fn get_computer_screen_status() -> Value {
 }
 
 #[tauri::command]
-pub fn approve_computer_screen_request(request_id: String) -> AppResult<Value> {
-    computer::local_approve(&request_id).map_err(AppError::Message)
+pub fn approve_computer_screen_request(
+    request_id: String,
+    target_bundle: Option<String>,
+) -> AppResult<Value> {
+    computer::local_approve(&request_id, target_bundle.as_deref()).map_err(AppError::Message)
+}
+
+#[tauri::command]
+pub fn list_computer_available_apps() -> Value {
+    computer::local_apps()
 }
 
 #[tauri::command]
@@ -22,4 +30,9 @@ pub fn revoke_computer_screen_access() -> Value {
 #[tauri::command]
 pub fn request_computer_screen_permission() -> Value {
     computer::local_request_screen_permission()
+}
+
+#[tauri::command]
+pub fn request_computer_accessibility_permission() -> Value {
+    computer::local_request_accessibility_permission()
 }

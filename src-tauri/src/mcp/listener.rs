@@ -307,7 +307,7 @@ async fn mcp_post(
     if meta.method == "tools/call"
         && matches!(
             meta.tool_name.as_str(),
-            "computer_session" | "computer_observe"
+            "computer_session" | "computer_observe" | "computer_action"
         )
         && headers.get(MCP_SESSION_HEADER).is_none()
     {
