@@ -106,6 +106,11 @@ pub struct GatewaySessionScope {
     /// identities. Only sessions minted by initialize can access that surface.
     #[serde(skip)]
     pub issued_by_server: bool,
+    /// Only the authenticated principal that initialized the MCP transport
+    /// may reuse this session for host-level Computer Use access. Never accept
+    /// client-provided request metadata as this identity.
+    #[serde(skip)]
+    pub computer_owner: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -114,6 +119,18 @@ pub struct GatewaySessionStore {
 }
 
 impl GatewaySessionStore {
+    /// Compare a previously server-issued Computer Use session to the verified
+    /// HTTP auth identity; client-supplied metadata never confers host rights.
+    pub fn computer_owner_matches(&self, session_id: &str, owner: &str) -> bool {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Self::prune_expired(&mut sessions, unix_timestamp_seconds());
+        sessions.get(session_id).is_some_and(|scope| {
+            scope.issued_by_server && scope.computer_owner.as_deref() == Some(owner)
+        })
+    }
     fn prune_expired(sessions: &mut HashMap<String, GatewaySessionScope>, now: u64) {
         sessions.retain(|_, scope| {
             scope.last_seen_at == 0 || now.saturating_sub(scope.last_seen_at) <= SESSION_TTL_SECONDS
@@ -137,11 +154,17 @@ impl GatewaySessionStore {
                 active_workspace_id: None,
                 last_seen_at: now,
                 issued_by_server: false,
+                computer_owner: None,
             });
     }
 
     /// Issue an opaque server-owned session identifier.
+    #[cfg(test)]
     pub fn issue(&self) -> String {
+        self.issue_with_owner(None)
+    }
+
+    pub fn issue_with_owner(&self, computer_owner: Option<String>) -> String {
         let mut sessions = self
             .sessions
             .lock()
@@ -159,6 +182,7 @@ impl GatewaySessionStore {
                     active_workspace_id: None,
                     last_seen_at: now,
                     issued_by_server: true,
+                    computer_owner: computer_owner.clone(),
                 },
             );
             return session_id;
@@ -279,6 +303,7 @@ impl GatewaySessionStore {
                 active_workspace_id: None,
                 last_seen_at: unix_timestamp_seconds(),
                 issued_by_server: true,
+                computer_owner: None,
             });
     }
 }
@@ -501,4 +526,32 @@ fn merge_config_text(global: &str, workspace: &str) -> String {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod computer_owner_tests {
+    use super::*;
+
+    #[test]
+    fn authenticated_client_owns_only_its_issued_session() {
+        let store = GatewaySessionStore::default();
+        let first = store.issue_with_owner(Some("oauth:client-a".into()));
+        let second = store.issue_with_owner(Some("oauth:client-b".into()));
+        assert!(store.computer_owner_matches(&first, "oauth:client-a"));
+        assert!(store.computer_owner_matches(&second, "oauth:client-b"));
+        assert!(!store.computer_owner_matches(&first, "oauth:client-b"));
+        assert!(!store.computer_owner_matches(&second, "oauth:client-a"));
+        assert!(!store.computer_owner_matches(&first, "shared_bearer"));
+    }
+
+    #[test]
+    fn metadata_or_legacy_sessions_are_not_computer_credentials() {
+        let store = GatewaySessionStore::default();
+        store.ensure_host_session("client-chosen");
+        assert!(!store.computer_owner_matches("client-chosen", "oauth:client-a"));
+        let legacy = store.issue();
+        assert!(store.is_server_issued(&legacy));
+        assert!(!store.computer_owner_matches(&legacy, "oauth:client-a"));
+        assert!(!store.computer_owner_matches("unknown", "oauth:client-a"));
+    }
 }

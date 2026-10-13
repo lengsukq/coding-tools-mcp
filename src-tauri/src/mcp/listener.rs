@@ -42,6 +42,20 @@ pub struct GatewayListenerConfig {
     pub public_base_url: String,
 }
 
+/// Identity is sourced only from the verified auth layer, not RPC parameters.
+/// A shared bearer token inherently represents one shared identity; OAuth is
+/// bound to the authenticated client ID. Missing OAuth identity fails closed
+/// for host-level Computer Use while ordinary Workspace tools still work.
+fn computer_auth_principal(state: &ListenerState, headers: &HeaderMap) -> Option<String> {
+    let (method, client_id) = audit_auth_identity(state, headers);
+    match method {
+        "oauth" => client_id.map(|id| format!("oauth:{id}")),
+        "shared_bearer" => Some("shared_bearer".into()),
+        "none" => Some("local_unauthenticated".into()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ListenerSecrets {
     pub oauth_client_secret: Option<String>,
@@ -304,19 +318,29 @@ async fn mcp_post(
         return response;
     }
     let meta = RpcRequestMeta::from_body(&body);
+    let computer_principal = computer_auth_principal(&state, &headers);
     if meta.method == "tools/call"
         && matches!(
             meta.tool_name.as_str(),
             "computer_session" | "computer_observe" | "computer_action"
         )
-        && headers.get(MCP_SESSION_HEADER).is_none()
+        && !headers
+            .get(MCP_SESSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .zip(computer_principal.as_deref())
+            .is_some_and(|(session, owner)| {
+                state
+                    .gateway
+                    .sessions
+                    .computer_owner_matches(session, owner)
+            })
     {
         return Json(json!({
             "jsonrpc": "2.0",
             "id": meta.request_id,
             "result": {
                 "isError": true,
-                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 电脑观察须使用初始化时服务端签发的 MCP Session Header，不能使用客户端自填 _meta 会话 ID" }],
+                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 必须保留与当前认证客户端绑定的服务端 MCP Session Header；其他客户端或 _meta 会话不可复用授权" }],
                 "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
             }
         })).into_response();
@@ -335,10 +359,22 @@ async fn mcp_post(
     }
     let effective_session_id = if meta.method == "initialize" {
         match requested_session_id.as_deref() {
-            Some(session_id) if state.gateway.sessions.contains(session_id) => {
+            Some(session_id)
+                if computer_principal.as_deref().is_some_and(|owner| {
+                    state
+                        .gateway
+                        .sessions
+                        .computer_owner_matches(session_id, owner)
+                }) =>
+            {
                 Some(session_id.to_string())
             }
-            _ => Some(state.gateway.sessions.issue()),
+            _ => Some(
+                state
+                    .gateway
+                    .sessions
+                    .issue_with_owner(computer_principal.clone()),
+            ),
         }
     } else {
         requested_session_id
@@ -1079,6 +1115,67 @@ mod tests {
         assert_eq!(
             read_after_churn["result"]["structuredContent"]["content"],
             "ONLY-A"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn computer_http_tool_catalog_and_default_deny() {
+        let app = build_router(test_listener_state());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listen");
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        let session = initialize_session(&client, &url).await;
+
+        let tools: serde_json::Value = client
+            .post(&url)
+            .header(super::MCP_SESSION_HEADER, &session)
+            .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let catalog = tools["result"]["tools"].as_array().unwrap();
+        for name in ["computer_session", "computer_observe", "computer_action"] {
+            assert!(catalog.iter().any(|tool| tool["name"] == name));
+        }
+
+        for (name, args) in [
+            ("computer_observe", json!({"action":"screenshot"})),
+            ("computer_action", json!({"action":"click","x":100,"y":100})),
+        ] {
+            let result = call_tool(&client, &url, &session, 3, name, args).await;
+            assert_eq!(result["result"]["isError"], true);
+            assert!(result["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(if name == "computer_observe" {
+                    "COMPUTER_NOT_APPROVED"
+                } else {
+                    "CONTROL_NOT_APPROVED"
+                }));
+        }
+        let forged: serde_json::Value = client
+            .post(&url)
+            .json(&json!({
+                "jsonrpc":"2.0","id":5,"method":"tools/call",
+                "params":{"name":"computer_session","arguments":{"action":"request"},
+                          "_meta":{"openai/session":"untrusted-client"}}
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            forged["result"]["structuredContent"]["error"],
+            "COMPUTER_SESSION_REQUIRED"
         );
         server.abort();
     }
