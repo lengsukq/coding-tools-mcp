@@ -20,6 +20,38 @@ struct Pending {
     at: Instant,
 }
 
+/// Pausing is a local-only emergency gate. Resume requires a fresh screenshot
+/// for pointer actions; a paused lease cannot observe or inject events.
+pub fn local_pause() -> Value {
+    let _serialized = action_lock();
+    let mut state = locked();
+    state.expire();
+    if let Some(grant) = state.grant.as_mut() {
+        grant.paused = true;
+        state.snapshot = None;
+    }
+    drop(state);
+    local_status()
+}
+
+pub fn local_resume() -> Result<Value, String> {
+    if screen_recording_permission() != Some(true) {
+        return Err("SCREEN_PERMISSION_REQUIRED: 屏幕录制权限已撤销".into());
+    }
+    let _serialized = action_lock();
+    let mut state = locked();
+    state.expire();
+    if let Some(grant) = state.grant.as_mut() {
+        if grant.scope == "control" && accessibility_permission() != Some(true) {
+            return Err("ACCESSIBILITY_PERMISSION_REQUIRED: 辅助功能权限已撤销".into());
+        }
+        grant.paused = false;
+        state.snapshot = None;
+    }
+    drop(state);
+    Ok(local_status())
+}
+
 #[derive(Debug)]
 struct Snapshot {
     id: String,
@@ -60,6 +92,7 @@ struct Grant {
     app_bundle: Option<String>,
     until: Instant,
     actions_used: u16,
+    paused: bool,
 }
 
 #[derive(Debug, Default)]
@@ -157,7 +190,10 @@ impl Controller {
     fn action_target(&mut self, session: &str) -> Option<String> {
         self.expire();
         let grant = self.grant.as_mut().filter(|grant| {
-            grant.session == session && grant.scope == "control" && grant.actions_used < 100
+            grant.session == session
+                && grant.scope == "control"
+                && !grant.paused
+                && grant.actions_used < 100
         })?;
         let target = grant.app_bundle.clone()?;
         grant.actions_used += 1;
@@ -172,7 +208,8 @@ impl Controller {
                     return Err("切换读取/控制权限时请先撤销现有授权，再重新申请".into());
                 }
                 return Ok(
-                    json!({ "status": "approved", "expires_in_seconds": grant.until.saturating_duration_since(Instant::now()).as_secs() }),
+                    json!({ "status": if grant.paused { "paused" } else { "approved" },
+                        "expires_in_seconds": grant.until.saturating_duration_since(Instant::now()).as_secs() }),
                 );
             }
             return Err("另一 MCP 会话正在控制屏幕，请先在本机终止该会话".into());
@@ -215,6 +252,7 @@ impl Controller {
             app_bundle,
             until: Instant::now() + GRANT_TTL,
             actions_used: 0,
+            paused: false,
         });
         Ok(())
     }
@@ -223,7 +261,7 @@ impl Controller {
         self.expire();
         self.grant
             .as_ref()
-            .is_some_and(|grant| grant.session == session)
+            .is_some_and(|grant| grant.session == session && !grant.paused)
     }
 
     /// Snapshot the exact lease, not just the session identifier: a revoked
@@ -232,7 +270,7 @@ impl Controller {
         self.expire();
         self.grant
             .as_ref()
-            .filter(|grant| grant.session == session)
+            .filter(|grant| grant.session == session && !grant.paused)
             .map(|grant| grant.id.clone())
     }
 
@@ -267,7 +305,9 @@ impl Controller {
         let grant = self
             .grant
             .as_ref()
-            .filter(|g| g.session == session && g.scope == "control" && g.actions_used < 100)
+            .filter(|g| {
+                g.session == session && g.scope == "control" && !g.paused && g.actions_used < 100
+            })
             .ok_or(
                 "CONTROL_NOT_APPROVED: 请用户在本机以 control 模式授权此会话，或重新批准操作额度",
             )?;
@@ -418,6 +458,7 @@ pub fn local_status() -> Value {
         "active": state.grant.is_some(),
         "pendingScope": state.pending.as_ref().map(|p| p.scope.as_str()),
         "activeScope": state.grant.as_ref().map(|p| p.scope.as_str()),
+        "paused": state.grant.as_ref().is_some_and(|g| g.paused),
         "remainingControlActions": state.grant.as_ref().filter(|p| p.scope == "control").map(|p| 100_u16.saturating_sub(p.actions_used)),
         "targetAppBundle": state.grant.as_ref().and_then(|p| p.app_bundle.as_deref()),
         "expiresInSeconds": state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()),
@@ -591,8 +632,12 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
             let mut state = locked();
             let approved = state.allowed(session);
             let pending = state.pending.as_ref().is_some_and(|p| p.session == session);
+            let paused = state
+                .grant
+                .as_ref()
+                .is_some_and(|g| g.session == session && g.paused);
             tool_ok(
-                json!({ "status": if approved { "approved" } else if pending { "pending" } else { "disabled" },
+                json!({ "status": if paused { "paused" } else if approved { "approved" } else if pending { "pending" } else { "disabled" },
                     "scope": state.grant.as_ref().filter(|g| g.session == session).map(|g| g.scope.as_str()) }),
             )
         }
@@ -808,6 +853,7 @@ mod tests {
                 app_bundle: Some("com.example".into()),
                 until: Instant::now() - Duration::from_secs(1),
                 actions_used: 0,
+                paused: false,
             }),
             snapshot: None,
         };
@@ -868,5 +914,32 @@ mod tests {
     #[test]
     fn coordinate_actions_are_bound_to_recent_capture() {
         Controller::coordinate_actions_require_recent_matching_snapshot();
+    }
+
+    #[test]
+    fn paused_control_lease_denies_observe_and_input_until_resumed() {
+        let mut state = Controller::default();
+        let req = state.request("client-a", "control").unwrap();
+        state
+            .approve(
+                req["request_id"].as_str().unwrap(),
+                Some("com.apple.Safari".into()),
+            )
+            .unwrap();
+        assert!(state.lease_token("client-a").is_some());
+        state.grant.as_mut().unwrap().paused = true;
+        assert!(state.lease_token("client-a").is_none());
+        assert!(state
+            .prepare_action("client-a", &json!({"action": "focus_app"}))
+            .is_err());
+        assert_eq!(
+            state.request("client-a", "control").unwrap()["status"],
+            "paused"
+        );
+        state.grant.as_mut().unwrap().paused = false;
+        assert!(state.lease_token("client-a").is_some());
+        assert!(state
+            .prepare_action("client-a", &json!({"action": "focus_app"}))
+            .is_ok());
     }
 }

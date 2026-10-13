@@ -29,8 +29,10 @@ import {
   approveComputerScreenRequest,
   getComputerScreenStatus,
   listComputerAvailableApps,
+  pauseComputerAccess,
   requestComputerAccessibilityPermission,
   requestComputerScreenPermission,
+  resumeComputerAccess,
   revokeComputerScreenAccess,
   type ComputerScreenStatus,
   type ComputerApplication,
@@ -113,6 +115,21 @@ const frpOptions = computed(() => [{ value: "", label: "手动填写" }, ...frpP
 function applyRuntimeStatus(nextStatus: GlobalMcpOverviewDto) {
   status.value = nextStatus;
   globalMcpRuntimeState.value = nextStatus.state;
+}
+
+async function toggleComputerPause() {
+  if (computerBusy.value || !computer.value?.active) return;
+  computerBusy.value = true;
+  try {
+    computer.value = computer.value.paused
+      ? await resumeComputerAccess()
+      : await pauseComputerAccess();
+    showToast(computer.value.paused ? "Computer Use 已暂停，截图和输入均已阻止。" : "Computer Use 已恢复，请重新截图确认当前界面。", { kind: "info" });
+  } catch (error) {
+    showToast(String(error), { title: "切换 Computer Use 状态失败", kind: "error" });
+  } finally {
+    computerBusy.value = false;
+  }
 }
 
 async function requestAccessibilityPermission() {
@@ -412,7 +429,7 @@ onUnmounted(() => {
             仅当前 MCP 会话有效 5 分钟，随时可撤销。Mac 系统权限需由你手动授予。
           </p>
         </div>
-        <StatusPill :status="computer?.active ? 'running' : 'stopped'" :label="computer?.active ? '已授权' : '未授权'" />
+        <StatusPill :status="computer?.active && !computer?.paused ? 'running' : 'stopped'" :label="computer?.paused ? '已暂停' : computer?.active ? '已授权' : '未授权'" />
       </div>
       <div v-if="computer?.accessibilityGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
         <p class="text-xs text-[var(--ui-text-muted)]">控制鼠标和键盘需要 macOS 辅助功能权限。</p>
@@ -440,7 +457,10 @@ onUnmounted(() => {
         <span class="text-xs text-[var(--ui-text-muted)]">
           {{ computer?.active ? `${computer.activeScope === "control" ? "控制" : "查看"}授权 · 剩余 ${computer.expiresInSeconds ?? 0} 秒${computer.targetAppBundle ? " · " + computer.targetAppBundle : ""}${computer.remainingControlActions !== null ? " · 剩余操作 " + computer.remainingControlActions + " 次" : ""}` : "当前没有已批准的 Computer Use 会话" }}
         </span>
-        <BaseButton v-if="computer?.active" variant="secondary" :disabled="computerBusy" @click="revokeComputer">立即撤销</BaseButton>
+        <div v-if="computer?.active" class="flex flex-wrap items-center gap-2">
+          <BaseButton variant="secondary" :disabled="computerBusy" @click="toggleComputerPause">{{ computer.paused ? "恢复" : "紧急暂停" }}</BaseButton>
+          <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">立即撤销</BaseButton>
+        </div>
         <BaseButton v-else variant="ghost" :disabled="computerBusy" @click="refreshComputerScreen">刷新</BaseButton>
       </div>
     </GlassCard>

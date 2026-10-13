@@ -28,6 +28,16 @@ pub fn revoke_computer_screen_access() -> Value {
 }
 
 #[tauri::command]
+pub fn pause_computer_access() -> Value {
+    computer::local_pause()
+}
+
+#[tauri::command]
+pub fn resume_computer_access() -> AppResult<Value> {
+    computer::local_resume().map_err(AppError::Message)
+}
+
+#[tauri::command]
 pub fn request_computer_screen_permission() -> Value {
     computer::local_request_screen_permission()
 }

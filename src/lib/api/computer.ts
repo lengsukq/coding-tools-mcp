@@ -4,6 +4,7 @@ export interface ComputerScreenStatus {
   pendingRequestId: string | null;
   pendingExpiresInSeconds: number | null;
   active: boolean;
+  paused: boolean;
   expiresInSeconds: number | null;
   supported: boolean;
   screenRecordingGranted: boolean | null;
@@ -30,6 +31,12 @@ export const listComputerAvailableApps = () =>
 
 export const revokeComputerScreenAccess = () =>
   invoke<ComputerScreenStatus>("revoke_computer_screen_access");
+
+export const pauseComputerAccess = () =>
+  invoke<ComputerScreenStatus>("pause_computer_access");
+
+export const resumeComputerAccess = () =>
+  invoke<ComputerScreenStatus>("resume_computer_access");
 
 export const requestComputerScreenPermission = () =>
   invoke<ComputerScreenStatus>("request_computer_screen_permission");
