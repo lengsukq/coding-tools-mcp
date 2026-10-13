@@ -30,7 +30,7 @@ MCP computer_session(request)
 - 每次控制授权最多 100 个动作，跨 MCP 请求串行执行；密码输入框禁止通过 type 输入，明显破坏性 AX 按钮和部分危险快捷键默认禁用。这些限制**不能完全识别纯坐标点击的风险**。
 - 每次授权附带唯一 lease token。屏幕/窗口/AX 观察在执行结束、返回数据之前再次检查同一 token，以拒绝撤销或更换租约期间完成的旧观察。用户在本机撤销和客户端 stop 与控制动作串行化，保证撤销完成后不启动旧动作。已发送到系统的事件不能回滚。
 - 每次截图生成仅限当前 lease 的 `snapshot_id` 和坐标框（仅保存元数据，不缓存图像）；鼠标位置类动作必须在 **45 秒内**携带该 `snapshot_id`。老快照、跨会话快照、越界坐标都拒绝。不提供无限期复用截图坐标的能力。
-- 本机设置页支持紧急暂停与恢复：暂停会立即拒绝新的屏幕/AX 观察与输入，并失效之前的 `snapshot_id`；恢复需要本机重新核对屏幕录制权限，控制模式还需辅助功能权限，恢复后必须重新截图。暂停不会延长原有 5 分钟授权。
+- 本机设置页支持紧急暂停与恢复：暂停会立即拒绝新的屏幕/AX 观察与输入，并失效之前的 `snapshot_id`；恢复后的实际录屏权限由下一次 ScreenCaptureKit 请求检查，控制模式仍需辅助功能权限，恢复后必须重新截图。暂停不会延长原有 5 分钟授权。
 - 鼠标坐标进一步通过 CoreGraphics 按屏幕窗口 Z 序核对，只有命中本机批准应用的无遮挡普通窗口才发送输入；跨其他应用窗口或覆盖层的拖拽直接拒绝。若系统未提供可信的窗口归属信息则拒绝，而不是降级到仅检查前台 Bundle ID。
 - 不在 `structuredContent` 中复制截图 base64，避免日志和上下文重复暴露；截图仅在 MCP image `content` 中。
 
@@ -44,6 +44,10 @@ MCP computer_session(request)
 
 本机设置页使用 `CGPreflightScreenCaptureAccess` / `CGRequestScreenCaptureAccess` 检测/请求系统截图授权，以及 `AXIsProcessTrusted` / `AXIsProcessTrustedWithOptions` 检测/请求辅助功能授权。系统授权申请只由本机用户手势触发。
 
+**预检结果不作为截图调用的最终裁决。** `CGPreflightScreenCaptureAccess() == false` 现在仅显示在本机诊断栏；只要 MCP 客户端已通过原有本机显式批准（5 分钟/固定会话），就可继续向 ScreenCaptureKit 发起 `SCShareableContent` / `SCScreenshotManager` 请求。系统拒绝时会把原生错误回传给 MCP，不返回截图，不会修改 TCC 数据库或调用 `sudo`。没有本机 lease 时连窗口枚举也不得调用。控制模式仍要求 Accessibility 权限、选择目标应用；锁屏、撤销、暂停和应用窗口范围限制不变。这种“实际访问验证”不是绕过 macOS TCC，只是消除项目预检误判。
+
+可验收路径：客户端先发 `computer_session({"action":"request","scope":"observe"})`；即使本机面板显示预检未通过，也能手动批准；客户端在同一服务器签发会话下调用 `computer_observe({"action":"screenshot"})`。如果系统许可有效，返回 JPEG；如果仍被拒，记录 `SCREEN_DISCOVERY_FAILED` / `SCREEN_CAPTURE_FAILED` 及其系统说明，再考虑稳定证书签名。不要在没有用户本机批准时自动尝试截图。
+
 ### macOS 录屏权限开关已打开，但仍显示未授权
 
 系统设置中的「录屏与系统录音」开关，并不证明**当前正在运行的进程**已经通过 `CGPreflightScreenCaptureAccess()`。TCC 授权关联实际运行的应用签名/Bundle 身份；开发时的 `tauri dev` 可执行文件、构建目录里的 `.app`、安装到「应用程序」的 `.app`，不应仅凭相同显示名称视为同一个授权主体。
@@ -54,6 +58,18 @@ MCP computer_session(request)
 2. 如果系统权限开关刚被打开，必须**完全退出进程**再启动。Coding Tools MCP 有托盘常驻功能；只关闭主窗口可能仅隐藏到托盘，无法刷新进程的 TCC 授权状态。应从菜单栏托盘选择「退出」，再启动系统设置里批准的那份 `.app`。
 3. 如果诊断显示从开发可执行文件启动，或实际 Bundle ID/路径与要授权的正式应用不一致，改为从「应用程序」启动同一正式应用。不要用修改显示名称的方式冒充系统许可。
 4. 完全退出后重新启动，点击「重新检测」。若仍失败，检查实际应用签名、安装位置和系统设置对应条目；**不能凭系统设置开关为真就绕过 TCC 预检或强行批准 MCP 屏幕访问**。
+
+#### 开发安装包使用 Ad-hoc 临时签名导致 TCC 授权失效
+
+Apple 技术说明 [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) 指出：Ad-hoc 签名的 Designated Requirement 与当前代码版本绑定，重建后 macOS 无法可靠地识别为同一受信应用。Apple DTS 已[确认 ScreenCaptureKit 与 CGPreflight 在每次重建后丢失授权的案例](https://developer.apple.com/forums/thread/819406)。**应用名、Bundle ID、安装路径都正确，仍可能无法使用之前勾选的录屏权限。**
+
+- 现在的本机「权限诊断」同时显示 `signature_type`、`signing_team_id` 和签名标识：`ad_hoc`（或无证书签名）时，不要继续安装临时签名包测试录屏。这个只读信息通过 Apple Security.framework 查询当前 `.app` 签名，不执行外部命令、不枚举 TCC 数据库。
+- 在 Xcode 为你的 Apple ID 建立 **Apple Development** 签名证书（免费开发账号可用于本机开发）；正式分发使用合适的 **Developer ID Application** 签名与公证流程。查看本机已经安装的有效证书：`security find-identity -v -p codesigning`。无需将证书文件或私钥上传到仓库。
+- 在构建终端设置 `APPLE_SIGNING_IDENTITY="Apple Development: <证书名称> (<TEAM_ID>)"`，然后运行 `npm run desktop:build:signed`。此命令会构建 macOS ARM64 DMG，且无有效的身份环境变量、或指定 `-`（Ad-hoc）时**直接失败**，避免重复交付无法稳定保留录屏授权的包。Tauri 原生也支持通过 `bundle.macOS.signingIdentity` 配置该值，但为避免把个人开发者身份写入公开仓库，优先用环境变量。
+- 在退出旧进程后安装**由同一稳定证书签名**的新 `.app`。如果旧授权记录仍显示开关已打开但新签名尚未通过预检，在 macOS「隐私与安全性 → 录屏与系统录音」中由用户手动移除旧的授权项（如果系统提供移除控件），随后在新应用点「请求系统权限」并重新允许，按提示完整退出应用后再次打开。必要时检查系统是否要求注销或重启；不要自动清空其他程序的 TCC 授权。
+- 快速验证安装包签名（在**本机终端**运行，不改动系统权限）：`codesign -dv --verbose=4 "/Applications/Coding Tools MCP.app" 2>&1`。若显示 `Signature=adhoc` / `TeamIdentifier=not set`，则说明还没有完成稳定的证书签名。使用证书签名后再次重建时，尽量保持签名 Team ID、Bundle ID 与安装路径不变。
+
+常规 `npm run desktop:build` 依然保留供无需录屏 TCC 的测试使用，**不能将其输出自动视作已经满足持久录屏授权要求**。以上操作不等同于未经用户明确选择就重置系统授权。
 
 诊断结果的 `screenRecordingGranted` 与展示的 `preflight_granted` 使用同一次原生预检值，避免前端一个轮询周期内显示矛盾状态。不会自动调用 `tccutil reset` 或修改系统隐私设置。
 
