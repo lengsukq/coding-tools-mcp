@@ -5,6 +5,7 @@ mod app_state;
 mod auth;
 mod commands;
 mod computer;
+mod computer_geometry;
 mod data;
 mod error;
 mod global_gateway;

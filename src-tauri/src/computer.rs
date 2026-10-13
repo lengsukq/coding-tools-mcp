@@ -5,10 +5,12 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::computer_geometry::CaptureFrame;
 use serde_json::{json, Value};
 
 const REQUEST_TTL: Duration = Duration::from_secs(120);
 const GRANT_TTL: Duration = Duration::from_secs(300);
+const SNAPSHOT_TTL: Duration = Duration::from_secs(45);
 
 #[derive(Debug)]
 struct Pending {
@@ -16,6 +18,15 @@ struct Pending {
     session: String,
     scope: String,
     at: Instant,
+}
+
+#[derive(Debug)]
+struct Snapshot {
+    id: String,
+    lease_id: String,
+    session: String,
+    created_at: Instant,
+    frame: CaptureFrame,
 }
 
 fn action_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -43,6 +54,7 @@ fn accessibility_permission() -> Option<bool> {
 
 #[derive(Debug)]
 struct Grant {
+    id: String,
     session: String,
     scope: String,
     app_bundle: Option<String>,
@@ -54,6 +66,7 @@ struct Grant {
 struct Controller {
     pending: Option<Pending>,
     grant: Option<Grant>,
+    snapshot: Option<Snapshot>,
 }
 
 impl Controller {
@@ -71,8 +84,76 @@ impl Controller {
             .is_some_and(|g| Instant::now() >= g.until)
         {
             self.grant = None;
+            self.snapshot = None;
+        }
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.created_at.elapsed() >= SNAPSHOT_TTL)
+        {
+            self.snapshot = None;
         }
     }
+
+    #[cfg(test)]
+    fn revoked_or_replaced_grant_never_authorizes_in_flight_observation() {
+        let mut state = Controller::default();
+        let a = state.request("same-client", "observe").unwrap();
+        state
+            .approve(a["request_id"].as_str().unwrap(), None)
+            .unwrap();
+        let before = state.lease_token("same-client").unwrap();
+        assert!(state.lease_matches("same-client", &before));
+        state.grant = None;
+        assert!(!state.lease_matches("same-client", &before));
+        let b = state.request("same-client", "observe").unwrap();
+        state
+            .approve(b["request_id"].as_str().unwrap(), None)
+            .unwrap();
+        assert!(!state.lease_matches("same-client", &before));
+        assert!(state.lease_token("some-other-client").is_none());
+    }
+
+    #[cfg(test)]
+    fn coordinate_actions_require_recent_matching_snapshot() {
+        let mut state = Controller::default();
+        let req = state.request("s", "control").unwrap();
+        state
+            .approve(
+                req["request_id"].as_str().unwrap(),
+                Some("com.apple.Safari".into()),
+            )
+            .unwrap();
+        let lease = state.lease_token("s").unwrap();
+        let geometry = json!({
+            "origin_x": -1440.0, "origin_y": 0.0, "point_width": 1440.0,
+            "point_height": 900.0, "pixel_width": 1920, "pixel_height": 1200
+        });
+        let snap = state.record_snapshot("s", &lease, &geometry).unwrap();
+        assert!(state
+            .prepare_action("s", &json!({"action":"click","x":20,"y":30}))
+            .is_err());
+        assert!(state
+            .prepare_action(
+                "s",
+                &json!({"action":"click","x":20,"y":30,"snapshot_id":"forged"})
+            )
+            .is_err());
+        let (_, converted) = state.prepare_action("s", &json!({
+            "action":"click","x":960,"y":600,"coordinate_space":"image_pixels","snapshot_id":snap
+        })).unwrap();
+        assert!(converted["x"].as_f64().unwrap() < 0.0);
+        assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
+        state.snapshot.as_mut().unwrap().created_at = Instant::now() - SNAPSHOT_TTL;
+        assert!(state
+            .prepare_action(
+                "s",
+                &json!({"action":"click","x":1,"y":2,"snapshot_id":snap})
+            )
+            .is_err());
+    }
+
+    #[cfg(test)]
     fn action_target(&mut self, session: &str) -> Option<String> {
         self.expire();
         let grant = self.grant.as_mut().filter(|grant| {
@@ -126,7 +207,9 @@ impl Controller {
         let session = pending.session.clone();
         let scope = pending.scope.clone();
         self.pending = None;
+        self.snapshot = None;
         self.grant = Some(Grant {
+            id: uuid::Uuid::new_v4().to_string(),
             session,
             scope,
             app_bundle,
@@ -141,6 +224,78 @@ impl Controller {
         self.grant
             .as_ref()
             .is_some_and(|grant| grant.session == session)
+    }
+
+    /// Snapshot the exact lease, not just the session identifier: a revoked
+    /// lease must not release a screenshot after another grant is approved.
+    fn lease_token(&mut self, session: &str) -> Option<String> {
+        self.expire();
+        self.grant
+            .as_ref()
+            .filter(|grant| grant.session == session)
+            .map(|grant| grant.id.clone())
+    }
+
+    fn lease_matches(&mut self, session: &str, token: &str) -> bool {
+        self.lease_token(session).as_deref() == Some(token)
+    }
+
+    fn record_snapshot(
+        &mut self,
+        session: &str,
+        lease: &str,
+        metadata: &Value,
+    ) -> Result<String, String> {
+        if !self.lease_matches(session, lease) {
+            return Err("COMPUTER_REVOKED: 授权在截图期间失效".into());
+        }
+        let frame = CaptureFrame::from_metadata(metadata)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        self.snapshot = Some(Snapshot {
+            id: id.clone(),
+            lease_id: lease.to_owned(),
+            session: session.to_owned(),
+            created_at: Instant::now(),
+            frame,
+        });
+        Ok(id)
+    }
+
+    fn prepare_action(&mut self, session: &str, args: &Value) -> Result<(String, Value), String> {
+        self.expire();
+        validate_action(args)?;
+        let grant = self
+            .grant
+            .as_ref()
+            .filter(|g| g.session == session && g.scope == "control" && g.actions_used < 100)
+            .ok_or(
+                "CONTROL_NOT_APPROVED: 请用户在本机以 control 模式授权此会话，或重新批准操作额度",
+            )?;
+        let target = grant.app_bundle.clone().ok_or("CONTROL_TARGET_REQUIRED")?;
+        let action = args["action"].as_str().unwrap_or("");
+        let prepared = if matches!(
+            action,
+            "click" | "double_click" | "right_click" | "move" | "drag"
+        ) {
+            let frame = self
+                .snapshot
+                .as_ref()
+                .filter(|s| {
+                    s.session == session
+                        && s.lease_id == grant.id
+                        && s.created_at.elapsed() < SNAPSHOT_TTL
+                        && args["snapshot_id"].as_str() == Some(s.id.as_str())
+                })
+                .map(|s| &s.frame)
+                .ok_or(
+                    "STALE_SNAPSHOT: 坐标操作须引用当前控制会话 45 秒内的 screenshot snapshot_id",
+                )?;
+            frame.map_action(args)?
+        } else {
+            args.clone()
+        };
+        self.grant.as_mut().expect("checked grant").actions_used += 1;
+        Ok((target, prepared))
     }
 }
 
@@ -342,6 +497,9 @@ pub fn local_approve(request_id: &str, target_bundle: Option<&str>) -> Result<Va
 }
 
 pub fn local_revoke() -> Value {
+    // Serialize revocation with pointer and keyboard actions, so no previously
+    // authorized event can start after this command returns successfully.
+    let _serialized = action_lock();
     *locked() = Controller::default();
     local_status()
 }
@@ -387,6 +545,8 @@ pub fn tool_definitions() -> Vec<Value> {
                 "text": { "type": "string", "maxLength": 2000 },
                 "label": { "type": "string", "minLength": 1, "maxLength": 160 },
                 "role": { "type": "string", "maxLength": 80 },
+                "snapshot_id": { "type": "string", "description": "Required for all pointer actions; returned by computer_observe screenshot; valid for 45 seconds" },
+                "coordinate_space": { "type": "string", "enum": ["screen_points", "image_pixels"], "default": "screen_points" },
                 "key": { "type": "string", "minLength": 1, "maxLength": 12 },
                 "modifiers": { "type": "array", "uniqueItems": true, "maxItems": 4,
                     "items": { "type": "string", "enum": ["command", "shift", "control", "option"] } }
@@ -437,6 +597,7 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
             )
         }
         ("computer_session", "stop") => {
+            let _serialized = action_lock();
             let mut state = locked();
             state.expire();
             if state.grant.as_ref().is_some_and(|p| p.session == session)
@@ -449,23 +610,30 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
             }
         }
         ("computer_observe", "windows" | "screenshot" | "ui_tree") => {
-            if !locked().allowed(session) {
+            let Some(lease) = locked().lease_token(session) else {
                 return tool_error("COMPUTER_NOT_APPROVED: 请先通过 computer_session(request) 申请，并在本机桌面应用中批准");
-            }
+            };
             if action == "windows" {
                 return match native_windows() {
-                    Ok(value) => tool_ok(value),
+                    Ok(value) if locked().lease_matches(session, &lease) => tool_ok(value),
+                    Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取窗口期间被撤销"),
                     Err(error) => tool_error(&error),
                 };
             }
             if action == "ui_tree" {
                 return match native_ui_tree() {
-                    Ok(value) => tool_ok(value),
+                    Ok(value) if locked().lease_matches(session, &lease) => tool_ok(value),
+                    Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取控件期间被撤销"),
                     Err(error) => tool_error(&error),
                 };
             }
             match native_capture(args) {
                 Ok(mut value) => {
+                    if !locked().lease_matches(session, &lease) {
+                        return tool_error(
+                            "COMPUTER_REVOKED: 授权在截图期间被撤销，拒绝返回屏幕内容",
+                        );
+                    }
                     let encoded = value
                         .as_object_mut()
                         .and_then(|map| map.remove("base64"))
@@ -473,7 +641,11 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
                     let Some(encoded) = encoded else {
                         return tool_error("SCREEN_CAPTURE_FAILED: native capture omitted image");
                     };
-                    value["snapshot_id"] = json!(uuid::Uuid::new_v4().to_string());
+                    let snapshot_id = match locked().record_snapshot(session, &lease, &value) {
+                        Ok(id) => id,
+                        Err(error) => return tool_error(&error),
+                    };
+                    value["snapshot_id"] = json!(snapshot_id);
                     value["captured_at_unix_ms"] = json!(std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -493,13 +665,11 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
         }
         ("computer_action", _) => {
             let _serialized = action_lock();
-            let Some(target) = locked().action_target(session) else {
-                return tool_error("CONTROL_NOT_APPROVED: 请用户在本机以 control 模式授权此会话");
+            let (target, prepared) = match locked().prepare_action(session, args) {
+                Ok(prepared) => prepared,
+                Err(error) => return tool_error(&error),
             };
-            if let Err(error) = validate_action(args) {
-                return tool_error(&error);
-            }
-            match native_action(&target, args) {
+            match native_action(&target, &prepared) {
                 Ok(result) => tool_ok(result),
                 Err(error) => tool_error(&error),
             }
@@ -632,12 +802,14 @@ mod tests {
                 at: Instant::now() - REQUEST_TTL,
             }),
             grant: Some(Grant {
+                id: "old-grant".into(),
                 session: "b".into(),
                 scope: "control".into(),
                 app_bundle: Some("com.example".into()),
                 until: Instant::now() - Duration::from_secs(1),
                 actions_used: 0,
             }),
+            snapshot: None,
         };
         state.expire();
         assert!(state.pending.is_none());
@@ -686,5 +858,15 @@ mod tests {
         assert!(
             validate_action(&json!({"action":"drag","x":2,"y":2,"end_x":2,"end_y":12})).is_ok()
         );
+    }
+
+    #[test]
+    fn lease_invalidation_prevents_old_observation() {
+        Controller::revoked_or_replaced_grant_never_authorizes_in_flight_observation();
+    }
+
+    #[test]
+    fn coordinate_actions_are_bound_to_recent_capture() {
+        Controller::coordinate_actions_require_recent_matching_snapshot();
     }
 }

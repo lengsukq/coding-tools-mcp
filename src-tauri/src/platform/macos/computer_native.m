@@ -48,6 +48,8 @@ static void findPressTargets(AXUIElementRef element, NSString *wantedLabel, NSSt
 
 static char *failure(NSString *code, NSString *details);
 static BOOL isScreenLocked(void);
+static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID);
+static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID);
 
 char *computer_native_available_apps(void) {
     @autoreleasepool {
@@ -81,20 +83,30 @@ bool computer_native_request_accessibility(void) {
     return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES});
 }
 
+// Any inaccessible/unknown focused element is treated as protected: never
+// turn an Accessibility failure into permission to inject keyboard input.
 static BOOL isSecureFocusedField(pid_t pid) {
     AXUIElementRef application = AXUIElementCreateApplication(pid);
-    if (!application) return NO;
+    if (!application) return YES;
+    AXUIElementSetMessagingTimeout(application, 0.5);
     CFTypeRef focused = NULL;
-    BOOL secure = NO;
-    if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess && focused) {
-        CFTypeRef subrole = NULL;
-        if (AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSubroleAttribute, &subrole) == kAXErrorSuccess && subrole) {
-            secure = CFGetTypeID(subrole) == CFStringGetTypeID() &&
-                CFStringCompare((CFStringRef)subrole, CFSTR("AXSecureTextField"), 0) == kCFCompareEqualTo;
-            CFRelease(subrole);
+    BOOL secure = YES;
+    if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess
+        && focused && CFGetTypeID(focused) == AXUIElementGetTypeID()) {
+        CFTypeRef role = NULL, subrole = NULL;
+        BOOL gotRole = AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role) == kAXErrorSuccess;
+        BOOL gotSubrole = AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSubroleAttribute, &subrole) == kAXErrorSuccess;
+        if (gotRole && role && CFGetTypeID(role) == CFStringGetTypeID()) {
+            NSString *roleText = (__bridge NSString *)role;
+            NSString *subroleText = gotSubrole && subrole && CFGetTypeID(subrole) == CFStringGetTypeID()
+                ? (__bridge NSString *)subrole : @"";
+            secure = [roleText isEqualToString:@"AXSecureTextField"] ||
+                     [subroleText isEqualToString:@"AXSecureTextField"];
         }
-        CFRelease(focused);
+        if (role) CFRelease(role);
+        if (subrole) CFRelease(subrole);
     }
+    if (focused) CFRelease(focused);
     CFRelease(application);
     return secure;
 }
@@ -255,6 +267,8 @@ char *computer_native_action(const char *request) {
             CGEventPost(kCGHIDEventTap, up);
             CFRelease(down); CFRelease(up);
         } else if ([action isEqualToString:@"key"]) {
+            if (isSecureFocusedField(app.processIdentifier))
+                return failure(@"SECURE_INPUT_REJECTED", @"Keyboard actions are disabled for secure or inaccessible focused fields");
             NSString *key = args[@"key"];
             int keyCode = codeForKey(key ?: @"");
             if (keyCode < 0) return failure(@"UNSUPPORTED_KEY", @"Unsupported key code");
@@ -290,6 +304,8 @@ char *computer_native_action(const char *request) {
             }
             if (CGRectIsNull(bounds)) return failure(@"OUTSIDE_SCREEN", @"Coordinate is outside active displays");
             CGPoint location = CGPointMake(x, y);
+            if (!pointHitsApprovedWindow(location, app.processIdentifier))
+                return failure(@"TARGET_WINDOW_MISMATCH", @"Pointer coordinate does not hit an unobstructed window of the locally approved application");
             if ([action isEqualToString:@"move"]) {
                 postMouse(kCGEventMouseMoved, location, kCGMouseButtonLeft);
             } else if ([action isEqualToString:@"drag"]) {
@@ -300,6 +316,11 @@ char *computer_native_action(const char *request) {
                 }
                 if (!isfinite(endX) || !isfinite(endY) || !targetInside)
                     return failure(@"OUTSIDE_SCREEN", @"Drag endpoint is outside active displays");
+                for (int step = 0; step <= 10; step++) {
+                    CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
+                    if (!pointHitsApprovedWindow(next, app.processIdentifier))
+                        return failure(@"TARGET_WINDOW_MISMATCH", @"Drag path crosses another application's window or a protected overlay");
+                }
                 postMouse(kCGEventLeftMouseDown, location, kCGMouseButtonLeft);
                 for (int step = 1; step <= 10; step++) {
                     CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
@@ -348,6 +369,33 @@ static BOOL isScreenLocked(void) {
                   ![status[(__bridge NSString *)kCGSessionOnConsoleKey] boolValue]);
     CFRelease(session);
     return locked;
+}
+
+// CGWindowListCopyWindowInfo returns windows in front-to-back order. Only
+// deliver pointer events to a visible window owned by the app selected locally
+// for this grant. An unrelated overlay/window above it is a hard deny.
+static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID) {
+    CFArrayRef windowList = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID);
+    if (!windowList) return NO;
+    BOOL approved = NO;
+    for (NSDictionary *window in (__bridge NSArray *)windowList) {
+        NSNumber *layer = window[(__bridge NSString *)kCGWindowLayer];
+        if (!layer) continue;
+        NSDictionary *rect = window[(__bridge NSString *)kCGWindowBounds];
+        if (![rect isKindOfClass:NSDictionary.class]) continue;
+        CGRect bounds = CGRectZero;
+        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)rect, &bounds) ||
+            !CGRectContainsPoint(bounds, point)) continue;
+        // A surface above the app, including an overlay, must never be clicked
+        // under another app's authorization.
+        approved = layer.integerValue == 0 &&
+            [window[(__bridge NSString *)kCGWindowOwnerPID] intValue] == approvedPID;
+        break;
+    }
+    CFRelease(windowList);
+    return approved;
 }
 
 static SCShareableContent *shareableContent(NSError **failureOut) {
@@ -440,6 +488,10 @@ char *computer_native_capture(const char *request) {
             CGRect capture = logical;
             NSDictionary *area = args[@"region"];
             if ([area isKindOfClass:NSDictionary.class]) {
+                // ScreenCaptureKit ignores sourceRect for a single-window
+                // filter; rejecting this prevents incorrect click coordinates.
+                if (windowID != 0)
+                    return failure(@"UNSUPPORTED_REGION", @"Window and region capture cannot be combined");
                 capture = CGRectMake([area[@"x"] doubleValue], [area[@"y"] doubleValue],
                                     [area[@"width"] doubleValue], [area[@"height"] doubleValue]);
                 if (!isfinite(capture.origin.x) || !isfinite(capture.origin.y) ||
