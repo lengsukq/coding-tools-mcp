@@ -102,6 +102,10 @@ impl WorkspaceRegistry {
 pub struct GatewaySessionScope {
     pub active_workspace_id: Option<String>,
     pub last_seen_at: u64,
+    /// Host-provided metadata IDs are intentionally not valid Computer Use
+    /// identities. Only sessions minted by initialize can access that surface.
+    #[serde(skip)]
+    pub issued_by_server: bool,
 }
 
 #[derive(Debug, Default)]
@@ -132,6 +136,7 @@ impl GatewaySessionStore {
             .or_insert(GatewaySessionScope {
                 active_workspace_id: None,
                 last_seen_at: now,
+                issued_by_server: false,
             });
     }
 
@@ -153,6 +158,7 @@ impl GatewaySessionStore {
                 GatewaySessionScope {
                     active_workspace_id: None,
                     last_seen_at: now,
+                    issued_by_server: true,
                 },
             );
             return session_id;
@@ -166,6 +172,17 @@ impl GatewaySessionStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         Self::prune_expired(&mut sessions, unix_timestamp_seconds());
         sessions.contains_key(session_id)
+    }
+
+    pub fn is_server_issued(&self, session_id: &str) -> bool {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Self::prune_expired(&mut sessions, unix_timestamp_seconds());
+        sessions
+            .get(session_id)
+            .is_some_and(|scope| scope.issued_by_server)
     }
 
     pub fn touch_existing(&self, session_id: &str) -> bool {
@@ -261,6 +278,7 @@ impl GatewaySessionStore {
             .or_insert_with(|| GatewaySessionScope {
                 active_workspace_id: None,
                 last_seen_at: unix_timestamp_seconds(),
+                issued_by_server: true,
             });
     }
 }

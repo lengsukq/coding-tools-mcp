@@ -304,6 +304,23 @@ async fn mcp_post(
         return response;
     }
     let meta = RpcRequestMeta::from_body(&body);
+    if meta.method == "tools/call"
+        && matches!(
+            meta.tool_name.as_str(),
+            "computer_session" | "computer_observe"
+        )
+        && headers.get(MCP_SESSION_HEADER).is_none()
+    {
+        return Json(json!({
+            "jsonrpc": "2.0",
+            "id": meta.request_id,
+            "result": {
+                "isError": true,
+                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 电脑观察须使用初始化时服务端签发的 MCP Session Header，不能使用客户端自填 _meta 会话 ID" }],
+                "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
+            }
+        })).into_response();
+    }
 
     let requested_session_id = session_id_from_request(&headers, &body);
     let host_session_id = if headers.get(MCP_SESSION_HEADER).is_none() {

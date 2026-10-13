@@ -27,7 +27,10 @@ pub fn audit_workspace_hint(
     }
     let params = body.get("params")?;
     let tool_name = params.get("name").and_then(Value::as_str)?;
-    if tool_name == "workspace_list" {
+    if matches!(
+        tool_name,
+        "workspace_list" | "computer_session" | "computer_observe"
+    ) {
         return None;
     }
 
@@ -231,6 +234,7 @@ pub fn handle_gateway_request(
         "tools/list" => {
             let mut tools = gateway_scoped_tool_catalog();
             tools.extend(gateway_tool_definitions());
+            tools.extend(crate::computer::tool_definitions());
             Ok(json!({ "tools": tools }))
         }
         "tools/call" => match handle_gateway_tools_call(state, session_id, &params) {
@@ -285,6 +289,20 @@ fn handle_gateway_tools_call(
         .and_then(Value::as_str)
         .ok_or_else(|| json!({ "code": -32602, "message": "Missing tool name" }))?;
     let mut args = tool_arguments(name, params);
+
+    if matches!(name, "computer_session" | "computer_observe") {
+        if !session_id.is_some_and(|id| state.sessions.is_server_issued(id)) {
+            return Ok((
+                json!({
+                    "isError": true,
+                    "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: Computer Use 仅接受服务器签发的 MCP 会话。请重新 initialize 并保留 mcp-session-id 请求头。" }],
+                    "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
+                }),
+                None,
+            ));
+        }
+        return Ok((crate::computer::call_tool(name, session_id, &args), None));
+    }
 
     if is_gateway_tool(name) {
         return handle_workspace_tool(state, session_id, name, &args);

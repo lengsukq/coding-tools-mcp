@@ -4,6 +4,7 @@ mod agent_context;
 mod app_state;
 mod auth;
 mod commands;
+mod computer;
 mod data;
 mod error;
 mod global_gateway;
@@ -26,19 +27,21 @@ mod workspace;
 
 use app_state::AppState;
 use commands::{
-    accept_goal_review, accept_plan_review, check_app_update, check_global_gateway_health,
-    clear_tool_audit_records, create_session_review_url, create_workspace,
-    create_workspace_review_url, delete_frp_profile, delete_plan, delete_workspace,
-    delete_workspace_review, detect_installed_ides, get_app_settings, get_download_config,
-    get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
-    get_global_runtime_settings, get_last_workspace_id, get_planning_state, get_proxy,
-    get_runtime_status, get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
+    accept_goal_review, accept_plan_review, approve_computer_screen_request, check_app_update,
+    check_global_gateway_health, clear_tool_audit_records, create_session_review_url,
+    create_workspace, create_workspace_review_url, delete_frp_profile, delete_plan,
+    delete_workspace, delete_workspace_review, detect_installed_ides, get_app_settings,
+    get_computer_screen_status, get_download_config, get_global_gateway_config,
+    get_global_gateway_status, get_global_mcp_overview, get_global_runtime_settings,
+    get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
+    get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
     get_workspace_activity_metrics, get_workspace_git_summary, hide_to_tray, install_software,
     issue_workspace_review_url, list_frp_profiles, list_history_sessions, list_software,
     list_tool_audit_records, list_workspace_reviews, list_workspaces, open_url,
     open_workspace_directory, open_workspace_in_ide, quit_app, read_workspace_logs,
     recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
-    reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime, restore_runtime_state,
+    request_computer_screen_permission, reset_planning_state, restart_global_cloudflare_tunnel,
+    restart_runtime, restore_runtime_state, revoke_computer_screen_access,
     run_global_health_checks, save_frp_profile, scan_agent_context, scan_global_agent_context,
     set_download_config, set_global_gateway_config, set_global_runtime_settings,
     set_last_workspace, set_planning_mode, set_proxy, set_shared_secret, set_shared_secrets,
@@ -180,6 +183,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_computer_screen_status,
+            approve_computer_screen_request,
+            revoke_computer_screen_access,
+            request_computer_screen_permission,
             list_workspaces,
             get_workspace_activity_metrics,
             get_workspace_git_summary,

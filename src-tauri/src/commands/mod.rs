@@ -1,5 +1,6 @@
 mod agent_context;
 mod app_info;
+mod computer;
 mod frp_profiles;
 mod global_gateway;
 mod health;
@@ -18,6 +19,10 @@ mod workspace;
 
 pub use agent_context::{scan_agent_context, scan_global_agent_context};
 pub use app_info::{check_app_update, open_url};
+pub use computer::{
+    approve_computer_screen_request, get_computer_screen_status,
+    request_computer_screen_permission, revoke_computer_screen_access,
+};
 pub use frp_profiles::{
     delete_frp_profile, get_app_settings, get_last_workspace_id, get_proxy, list_frp_profiles,
     save_frp_profile, set_last_workspace, set_proxy,

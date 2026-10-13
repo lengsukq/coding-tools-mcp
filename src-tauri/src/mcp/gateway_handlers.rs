@@ -180,6 +180,50 @@ mod tests {
     }
 
     #[test]
+    fn computer_tools_have_no_workspace_fallback_and_deny_unapproved_capture() {
+        let (_first, _second, state) = gateway_fixture();
+        let listing = handle_gateway_request(
+            &state,
+            None,
+            &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} }),
+        )
+        .body;
+        let tools = listing["result"]["tools"].as_array().expect("tools");
+        assert!(tools.iter().any(|tool| tool["name"] == "computer_session"));
+        assert!(tools.iter().any(|tool| tool["name"] == "computer_observe"));
+
+        let rejected = rpc_tool(
+            &state,
+            "computer-test-unapproved",
+            "computer_observe",
+            json!({ "action": "screenshot" }),
+        );
+        assert_eq!(rejected["result"]["isError"], true);
+        assert!(rejected["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("COMPUTER_NOT_APPROVED"));
+        assert!(rejected["result"]["structuredContent"]
+            .get("base64")
+            .is_none());
+    }
+
+    #[test]
+    fn client_provided_metadata_session_cannot_authorize_computer() {
+        let (_first, _second, state) = gateway_fixture();
+        state.sessions.ensure_host_session("client-chosen-session");
+        let response = handle_gateway_request(
+            &state,
+            Some("client-chosen-session"),
+            &json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": { "name": "computer_session", "arguments": { "action": "request" } } }),
+        )
+        .body;
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(structured(&response)["error"], "COMPUTER_SESSION_REQUIRED");
+    }
+
+    #[test]
     fn session_scopes_do_not_cross_talk() {
         let sessions = GatewaySessionStore::default();
         sessions.register_for_test("chat-a");

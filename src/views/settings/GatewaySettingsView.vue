@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { Activity, Check, Copy, Globe2, Play, RefreshCw, RotateCw, Square } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
@@ -25,6 +25,13 @@ import SaveBar from "$src/components/ui/SaveBar.vue";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
 import { connectionHealthPresentation } from "$lib/ui-model";
 import { showToast } from "$lib/stores/toast";
+import {
+  approveComputerScreenRequest,
+  getComputerScreenStatus,
+  requestComputerScreenPermission,
+  revokeComputerScreenAccess,
+  type ComputerScreenStatus,
+} from "$lib/api/computer";
 
 const config = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
 const baseline = ref("");
@@ -36,6 +43,9 @@ const status = ref<GlobalMcpOverviewDto | null>(null);
 const gatewayStatus = ref<GlobalGatewayStatusDto | null>(null);
 const health = ref<GatewayHealthItemDto[]>([]);
 const frpProfiles = ref<FrpProfileDto[]>([]);
+const computer = ref<ComputerScreenStatus | null>(null);
+const computerBusy = ref(false);
+let computerPoll: ReturnType<typeof setInterval> | undefined;
 const loading = ref(true);
 const saving = ref(false);
 const busy = ref(false);
@@ -97,6 +107,17 @@ const frpOptions = computed(() => [{ value: "", label: "手动填写" }, ...frpP
 function applyRuntimeStatus(nextStatus: GlobalMcpOverviewDto) {
   status.value = nextStatus;
   globalMcpRuntimeState.value = nextStatus.state;
+}
+
+async function requestScreenPermission() {
+  try {
+    computer.value = await requestComputerScreenPermission();
+    if (!computer.value.screenRecordingGranted) {
+      showToast("请在 macOS 系统设置的屏幕录制权限中授权 Coding Tools MCP；授权后可能需要重启应用。", { kind: "info", duration: 7000 });
+    }
+  } catch (error) {
+    showToast(String(error), { title: "无法请求屏幕录制权限", kind: "error" });
+  }
 }
 
 async function refresh() {
@@ -301,12 +322,53 @@ function shouldOfferTunnelRecovery(item: GatewayHealthItemDto) {
   return canForceRestartCloudflare.value && item.label.includes("公网") && !item.ok;
 }
 
+async function refreshComputerScreen() {
+  try {
+    computer.value = await getComputerScreenStatus();
+  } catch {
+    // MCP connection settings must remain functional if the desktop command
+    // is unavailable in an older installed runtime.
+  }
+}
+
+async function approveComputer() {
+  const requestId = computer.value?.pendingRequestId;
+  if (!requestId || computerBusy.value) return;
+  computerBusy.value = true;
+  try {
+    computer.value = await approveComputerScreenRequest(requestId);
+    showToast("仅当前 MCP 会话已获准临时读取屏幕，5 分钟后自动过期。", { kind: "success" });
+  } catch (error) {
+    showToast(String(error), { title: "屏幕授权失败", kind: "error" });
+  } finally {
+    computerBusy.value = false;
+  }
+}
+
+async function revokeComputer() {
+  if (computerBusy.value) return;
+  computerBusy.value = true;
+  try {
+    computer.value = await revokeComputerScreenAccess();
+    showToast("Computer Use 屏幕访问已关闭", { kind: "info" });
+  } catch (error) {
+    showToast(String(error), { title: "撤销失败", kind: "error" });
+  } finally {
+    computerBusy.value = false;
+  }
+}
+
 useUnsavedChanges("MCP 端点与公网连接", dirty, saveConfig);
 onMounted(() => {
   void (async () => {
     await refresh();
     await runHealth();
   })();
+  void refreshComputerScreen();
+  computerPoll = setInterval(() => void refreshComputerScreen(), 3000);
+});
+onUnmounted(() => {
+  if (computerPoll) clearInterval(computerPoll);
 });
 </script>
 
@@ -316,6 +378,43 @@ onMounted(() => {
       <span>{{ loadError }}</span>
       <BaseButton variant="secondary" @click="refresh">重试</BaseButton>
     </div>
+
+    <GlassCard>
+      <div class="section-heading flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold">Computer Use · 屏幕访问</h2>
+          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">
+            默认关闭。AI 先调用 computer_session 申请授权，你在本机批准后，指定 MCP 会话才可临时截图。
+            截图可能包含个人隐私；macOS 还需要单独授予屏幕录制权限。
+          </p>
+        </div>
+        <StatusPill :status="computer?.active ? 'running' : 'stopped'" :label="computer?.active ? '已授权' : '未授权'" />
+      </div>
+      <div v-if="computer && !computer.supported" class="ui-banner ui-banner--warning mt-3 text-xs">
+        首版仅支持 macOS。
+      </div>
+      <div v-else-if="computer?.screenRecordingGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
+        <p class="text-xs text-[var(--ui-text-muted)]">macOS 尚未授予此应用屏幕录制权限；用户必须通过系统弹窗授权。</p>
+        <BaseButton variant="secondary" :disabled="computerBusy" @click="requestScreenPermission">请求系统权限</BaseButton>
+      </div>
+      <div v-if="computer?.pendingRequestId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
+        <div class="min-w-0 flex-1">
+          <strong class="text-xs">有 AI 客户端申请读取屏幕</strong>
+          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
+            请求编号：{{ computer.pendingRequestId }} · {{ computer.pendingExpiresInSeconds ?? 0 }} 秒后失效
+          </p>
+        </div>
+        <BaseButton :busy="computerBusy" :disabled="!computer.supported" @click="approveComputer">批准 5 分钟</BaseButton>
+        <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">拒绝</BaseButton>
+      </div>
+      <div v-else class="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <span class="text-xs text-[var(--ui-text-muted)]">
+          {{ computer?.active ? `剩余授权时间：${computer.expiresInSeconds ?? 0} 秒` : "当前没有已批准的屏幕观察会话" }}
+        </span>
+        <BaseButton v-if="computer?.active" variant="secondary" :disabled="computerBusy" @click="revokeComputer">立即撤销</BaseButton>
+        <BaseButton v-else variant="ghost" :disabled="computerBusy" @click="refreshComputerScreen">刷新</BaseButton>
+      </div>
+    </GlassCard>
 
     <GlassCard>
       <div class="section-heading flex flex-wrap items-start justify-between gap-4">
