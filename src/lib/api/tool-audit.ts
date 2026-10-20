@@ -7,6 +7,7 @@ export interface ToolAuditRecord {
   sessionId: string | null;
   workspaceId: string | null;
   toolName: string;
+  actionName?: string | null;
   wrapperToolName: string | null;
   authMethod: "oauth" | "shared_bearer" | "none" | string;
   clientId: string | null;

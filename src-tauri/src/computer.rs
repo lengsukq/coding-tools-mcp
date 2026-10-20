@@ -3,15 +3,110 @@
 //! This module is deliberately host-scoped, not Workspace-scoped. In particular,
 //! neither the Workspace "trusted" setting nor command execution can grant it.
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::computer_geometry::CaptureFrame;
+use crate::data::DataStore;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const REQUEST_TTL: Duration = Duration::from_secs(120);
 const GRANT_TTL: Duration = Duration::from_secs(300);
 const SNAPSHOT_TTL: Duration = Duration::from_secs(45);
 const SENSITIVE_ACTION_TTL: Duration = Duration::from_secs(60);
+
+/// Persisted opt-in from the local desktop UI. No MCP tool may modify it.
+/// None for expiry means the user explicitly chose permanent access.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct ManualComputerAccess {
+    pub scope: String,
+    pub app_bundle: Option<String>,
+    pub expires_at_ms: Option<u64>,
+    #[serde(default)]
+    pub paused: bool,
+}
+
+/// The listener may use this only AFTER authenticating the MCP request.
+/// An inactive, paused or expired opt-in never bypasses the old session flow.
+pub(crate) fn local_policy_present() -> bool {
+    let mut state = locked();
+    state.expire();
+    state
+        .manual
+        .as_ref()
+        .is_some_and(ManualComputerAccess::active)
+}
+
+/// Called only by a locally invoked Tauri command. No remote tool can change
+/// the policy. Duration 0 is an explicit permanent opt-in.
+pub fn local_enable(
+    scope: &str,
+    duration_minutes: u64,
+    target: Option<&str>,
+) -> Result<Value, String> {
+    if !matches!(scope, "observe" | "control") {
+        return Err("INVALID_SCOPE: 仅允许查看或控制".into());
+    }
+    if ![0, 5, 15, 60, 480, 1440].contains(&duration_minutes) {
+        return Err("INVALID_DURATION: 可选择 5/15/60 分钟、8/24 小时或永久".into());
+    }
+    let app_bundle = if scope == "control" {
+        if accessibility_permission() != Some(true) {
+            return Err("启用控制前，请先授予 macOS 辅助功能权限".into());
+        }
+        let target = target
+            .filter(|value| !value.is_empty())
+            .ok_or("启用控制必须在本机选择目标应用")?;
+        let apps = native_apps()?;
+        let exists = apps["applications"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item["bundle_id"].as_str() == Some(target))
+        });
+        if !exists {
+            return Err("选择的应用当前不可用，请刷新应用列表".into());
+        }
+        Some(target.to_owned())
+    } else {
+        None
+    };
+    let policy = ManualComputerAccess {
+        scope: scope.to_owned(),
+        app_bundle,
+        expires_at_ms: (duration_minutes != 0)
+            .then(|| now_ms().saturating_add(duration_minutes * 60_000)),
+        paused: false,
+    };
+    let _serialized = action_lock();
+    DataStore::update_file(|data| {
+        data.manual_computer_access = Some(policy.clone());
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
+    let mut state = locked();
+    *state = Controller {
+        manual: Some(policy),
+        ..Controller::default()
+    };
+    drop(state);
+    Ok(local_status())
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+impl ManualComputerAccess {
+    fn active(&self) -> bool {
+        self.expires_at_ms.is_none_or(|expiry| now_ms() < expiry)
+            && matches!(self.scope.as_str(), "observe" | "control")
+            && (self.scope == "observe"
+                || self.app_bundle.as_deref().is_some_and(|s| !s.is_empty()))
+    }
+}
 
 #[derive(Debug)]
 struct Pending {
@@ -43,17 +138,28 @@ struct PendingSensitiveAction {
 
 /// Pausing is a local-only emergency gate. Resume requires a fresh screenshot
 /// for pointer actions; a paused lease cannot observe or inject events.
-pub fn local_pause() -> Value {
+pub fn local_pause() -> Result<Value, String> {
     let _serialized = action_lock();
+    if let Some(mut policy) = locked().manual.clone() {
+        policy.paused = true;
+        DataStore::update_file(|data| {
+            data.manual_computer_access = Some(policy.clone());
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    }
     let mut state = locked();
     state.expire();
+    if let Some(policy) = state.manual.as_mut() {
+        policy.paused = true;
+    }
     if let Some(grant) = state.grant.as_mut() {
         grant.paused = true;
         state.snapshot = None;
     }
-
+    state.sensitive_action = None;
     drop(state);
-    local_status()
+    Ok(local_status())
 }
 
 pub fn local_resume() -> Result<Value, String> {
@@ -61,8 +167,25 @@ pub fn local_resume() -> Result<Value, String> {
     // a correctly user-authorized app (notably across ad-hoc rebuilds).
     // The approved, scoped ScreenCaptureKit call enforces macOS TCC itself.
     let _serialized = action_lock();
+    if let Some(mut policy) = locked().manual.clone() {
+        if !policy.active() {
+            return Err("Computer Use 授权已过期，需在本机重新开启".into());
+        }
+        if policy.scope == "control" && accessibility_permission() != Some(true) {
+            return Err("ACCESSIBILITY_PERMISSION_REQUIRED: 辅助功能权限已撤销".into());
+        }
+        policy.paused = false;
+        DataStore::update_file(|data| {
+            data.manual_computer_access = Some(policy.clone());
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    }
     let mut state = locked();
     state.expire();
+    if let Some(policy) = state.manual.as_mut() {
+        policy.paused = false;
+    }
     if let Some(grant) = state.grant.as_mut() {
         if grant.scope == "control" && accessibility_permission() != Some(true) {
             return Err("ACCESSIBILITY_PERMISSION_REQUIRED: 辅助功能权限已撤销".into());
@@ -126,10 +249,53 @@ struct Controller {
     grant: Option<Grant>,
     snapshot: Option<Snapshot>,
     sensitive_action: Option<PendingSensitiveAction>,
+    manual: Option<ManualComputerAccess>,
 }
 
 impl Controller {
+    /// Only authenticated, server-derived principal identities can enter this
+    /// path (listener.rs creates the computer-auto-* session after auth).
+    fn attach_manual_grant(&mut self, session: &str) {
+        if !session.starts_with("computer-auto-") {
+            return;
+        }
+        self.expire();
+        let Some(policy) = self.manual.as_ref().filter(|p| p.active() && !p.paused) else {
+            return;
+        };
+        if self
+            .grant
+            .as_ref()
+            .is_some_and(|g| g.session == session && !g.paused && g.actions_used < 100)
+        {
+            return;
+        }
+        // A principal switch invalidates any previously issued screenshot
+        // or sensitive action confirmation; never share them across clients.
+        let remaining = policy
+            .expires_at_ms
+            .map(|expiry| Duration::from_millis(expiry.saturating_sub(now_ms())))
+            .unwrap_or_else(|| Duration::from_secs(100 * 365 * 24 * 60 * 60));
+        self.grant = Some(Grant {
+            id: uuid::Uuid::new_v4().to_string(),
+            session: session.to_owned(),
+            scope: policy.scope.clone(),
+            app_bundle: policy.app_bundle.clone(),
+            until: Instant::now() + remaining,
+            actions_used: 0,
+            capture_succeeded: false,
+            paused: false,
+        });
+        self.snapshot = None;
+        self.sensitive_action = None;
+    }
     fn expire(&mut self) {
+        if self.manual.as_ref().is_some_and(|policy| !policy.active()) {
+            self.manual = None;
+            self.grant = None;
+            self.snapshot = None;
+            self.sensitive_action = None;
+        }
         if self
             .pending
             .as_ref()
@@ -542,6 +708,7 @@ fn validate_action(args: &Value) -> Result<(), String> {
         "drag" => &["x", "y", "end_x", "end_y"][..],
         "scroll" => &["amount"][..],
         "type" => &["text"][..],
+        "open_url" => &["url"][..],
         "key" | "focus_app" => {
             if action == "key" {
                 &["key"][..]
@@ -564,12 +731,22 @@ fn validate_action(args: &Value) -> Result<(), String> {
         if *field == "amount" && !value.as_i64().is_some_and(|n| (-15..=15).contains(&n)) {
             return Err("INVALID_SCROLL: amount out of range".into());
         }
-        if matches!(*field, "text" | "key" | "label") && !value.is_string() {
+        if matches!(*field, "text" | "key" | "label" | "url") && !value.is_string() {
             return Err(format!("INVALID_ARGUMENT: {field} must be string"));
         }
     }
     if action == "type" && args["text"].as_str().unwrap_or("").encode_utf16().count() > 2000 {
         return Err("INVALID_TEXT: too long".into());
+    }
+    if action == "open_url" {
+        let url = args["url"].as_str().unwrap_or("");
+        if url.len() > 2048
+            || url.chars().any(char::is_whitespace)
+            || url.chars().any(char::is_control)
+            || !(url.starts_with("https://") || url.starts_with("http://"))
+        {
+            return Err("INVALID_BROWSER_URL: only bounded HTTP(S) URLs are supported".into());
+        }
     }
     if action == "press_element"
         && !args["label"]
@@ -609,7 +786,9 @@ fn native_ui_tree(expected: Option<&str>) -> Result<Value, String> {
 }
 #[cfg(target_os = "macos")]
 fn native_action(target: &str, args: &Value) -> Result<Value, String> {
-    if args["action"] != "focus_app" && native_frontmost()?["bundle_id"].as_str() != Some(target) {
+    if !matches!(args["action"].as_str(), Some("focus_app" | "open_url"))
+        && native_frontmost()?["bundle_id"].as_str() != Some(target)
+    {
         return Err("FOREGROUND_APP_CHANGED: 请将本机批准的目标应用切换到前台".into());
     }
     let mut request = args.clone();
@@ -635,7 +814,15 @@ fn native_action(_: &str, _: &Value) -> Result<Value, String> {
 
 fn control() -> &'static Mutex<Controller> {
     static CONTROL: OnceLock<Mutex<Controller>> = OnceLock::new();
-    CONTROL.get_or_init(|| Mutex::new(Controller::default()))
+    CONTROL.get_or_init(|| {
+        let manual = DataStore::read_file(|data| Ok(data.manual_computer_access.clone()))
+            .unwrap_or_default()
+            .filter(ManualComputerAccess::active);
+        Mutex::new(Controller {
+            manual,
+            ..Controller::default()
+        })
+    })
 }
 
 fn locked() -> std::sync::MutexGuard<'static, Controller> {
@@ -648,6 +835,9 @@ fn locked() -> std::sync::MutexGuard<'static, Controller> {
 pub fn local_status() -> Value {
     let mut state = locked();
     state.expire();
+    let manual = state.manual.as_ref();
+    let manual_enabled = manual.is_some_and(ManualComputerAccess::active);
+    let manually_paused = manual.is_some_and(|p| p.paused);
     let diagnostics = screen_permission_diagnostics();
     // Use the same native preflight result for the main status and the
     // diagnostics; two separate checks in one UI poll can disagree.
@@ -657,10 +847,15 @@ pub fn local_status() -> Value {
     json!({
         "pendingRequestId": state.pending.as_ref().map(|p| p.id.as_str()),
         "pendingExpiresInSeconds": state.pending.as_ref().map(|p| REQUEST_TTL.saturating_sub(p.at.elapsed()).as_secs()),
-        "active": state.grant.is_some(),
+        "active": manual_enabled || state.grant.is_some(),
+        "manualEnabled": manual_enabled,
+        "manualScope": manual.map(|p| p.scope.as_str()),
+        "manualTargetApp": manual.and_then(|p| p.app_bundle.as_deref()),
+        "manualExpiresAtMs": manual.and_then(|p| p.expires_at_ms),
+        "manualPaused": manually_paused,
         "pendingScope": state.pending.as_ref().map(|p| p.scope.as_str()),
-        "activeScope": state.grant.as_ref().map(|p| p.scope.as_str()),
-        "paused": state.grant.as_ref().is_some_and(|g| g.paused),
+        "activeScope": manual.map(|p| p.scope.as_str()).or_else(|| state.grant.as_ref().map(|p| p.scope.as_str())),
+        "paused": manually_paused || state.grant.as_ref().is_some_and(|g| g.paused),
         "pendingSensitiveActionId": state.sensitive_action.as_ref().map(|p| p.id.as_str()),
         "pendingSensitiveActionDescription": state.sensitive_action.as_ref().map(|p| p.description.as_str()),
         "pendingSensitiveActionApp": state.sensitive_action.as_ref().map(|p| p.target_app.as_str()),
@@ -668,8 +863,8 @@ pub fn local_status() -> Value {
         "pendingSensitiveActionExpiresInSeconds": state.sensitive_action.as_ref().map(|p|
             SENSITIVE_ACTION_TTL.saturating_sub(p.created_at.elapsed()).as_secs()),
         "remainingControlActions": state.grant.as_ref().filter(|p| p.scope == "control").map(|p| 100_u16.saturating_sub(p.actions_used)),
-        "targetAppBundle": state.grant.as_ref().and_then(|p| p.app_bundle.as_deref()),
-        "expiresInSeconds": state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()),
+        "targetAppBundle": manual.and_then(|p| p.app_bundle.as_deref()).or_else(|| state.grant.as_ref().and_then(|p| p.app_bundle.as_deref())),
+        "expiresInSeconds": if manual_enabled { manual.and_then(|p| p.expires_at_ms).map(|ms| ms.saturating_sub(now_ms()) / 1000) } else { state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()) },
         "supported": cfg!(target_os = "macos"),
         "screenRecordingGranted": screen_granted,
         "screenCaptureSucceededInSession": state.grant.as_ref().is_some_and(|grant| grant.capture_succeeded),
@@ -760,12 +955,17 @@ pub fn local_approve(request_id: &str, target_bundle: Option<&str>) -> Result<Va
     Ok(local_status())
 }
 
-pub fn local_revoke() -> Value {
+pub fn local_revoke() -> Result<Value, String> {
     // Serialize revocation with pointer and keyboard actions, so no previously
     // authorized event can start after this command returns successfully.
     let _serialized = action_lock();
+    DataStore::update_file(|data| {
+        data.manual_computer_access = None;
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
     *locked() = Controller::default();
-    local_status()
+    Ok(local_status())
 }
 
 pub fn tool_definitions() -> Vec<Value> {
@@ -773,22 +973,25 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "computer_session",
             "title": "Computer session",
-            "description": "Request a temporary screen observation grant. Requires explicit approval in the local desktop app; no Workspace permission can authorize it.",
+            "description": "Legacy temporary Computer Use session (request/status/stop). If the Mac owner already enabled Computer Use in local settings, DO NOT request a session: use computer_observe / computer_action directly, without session_token. For legacy temporary approvals only, call request and retain the private session_token across calls. Never expose tokens. Only local desktop UI can enable persistent access.",
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["request", "status", "stop"] },
-                "scope": { "type": "string", "enum": ["observe", "control"], "default": "observe" }
+                "scope": { "type": "string", "enum": ["observe", "control"], "default": "observe" },
+                "session_token": { "type": "string", "description": "Needed only when using legacy per-session approval without a persistent MCP header; NOT required for locally enabled Computer Use." }
             }, "required": ["action"], "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
         }),
         json!({
             "name": "computer_observe",
             "title": "Observe computer screen",
-            "description": "Observe displays/windows or return a ScreenCaptureKit screenshot as an MCP image. Requires local approval. Coordinates are global macOS points, not image pixels.",
+            "description": "Read windows or a ScreenCaptureKit screenshot. If the Mac user manually enabled observe/control in Coding Tools MCP settings, call directly with NO computer_session(request) and NO session_token. Each OAuth/Bearer-authenticated request is bound to that client's identity and audited. If the user has not enabled it, use legacy per-session approval. Coordinates are global macOS points.",
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["screenshot", "windows", "ui_tree"] },
+                "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
                 "display_index": { "type": "integer", "minimum": 1, "maximum": 16, "default": 1 },
                 "display_id": { "type": "integer", "minimum": 1 },
                 "window_id": { "type": "integer", "minimum": 1 },
+                "quality": { "type": "string", "enum": ["fast", "detailed"], "default": "fast", "description": "Fast 1280x850 JPEG by default; detailed up to 1920x1200." },
                 "region": { "type": "object", "properties": {
                     "x": { "type": "number" }, "y": { "type": "number" },
                     "width": { "type": "number", "exclusiveMinimum": 0 },
@@ -800,13 +1003,15 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "computer_action",
             "title": "Control approved Mac application",
-            "description": "Execute a mouse/keyboard action within a local CONTROL grant. Clicks require fresh snapshot_id; risky shortcuts and semantic send/delete/payment actions require a separate 60-second, one-time local confirmation, then retry with confirmation_id. No Workspace permission grants access.",
+            "description": "Execute mouse/keyboard action ONLY while Mac owner enabled local CONTROL permission for one selected application. When local policy is enabled, call directly without computer_session(request) or session_token; requests are authenticated and audited. Otherwise legacy per-session approval applies. Pointer actions require a recent matching snapshot_id; sensitive shortcuts/semantic send/delete/payment require separate 60-second local one-time confirmation.",
             "inputSchema": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press_element", "focus_app"] },
+                "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press_element", "focus_app", "open_url"] },
+                "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
                 "x": { "type": "number" }, "y": { "type": "number" },
                 "end_x": { "type": "number" }, "end_y": { "type": "number" },
                 "amount": { "type": "integer", "minimum": -15, "maximum": 15 },
                 "text": { "type": "string", "maxLength": 2000 },
+                "url": { "type": "string", "maxLength": 2048, "description": "HTTP(S) navigation of the locally approved web browser; no file or script schemes." },
                 "label": { "type": "string", "minLength": 1, "maxLength": 160 },
                 "role": { "type": "string", "maxLength": 80 },
                 "snapshot_id": { "type": "string", "description": "Required for all pointer actions; returned by computer_observe screenshot; valid for 45 seconds" },
@@ -837,6 +1042,9 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
             "COMPUTER_SESSION_REQUIRED: 必须建立持久 MCP transport session 才能申请截图授权",
         );
     };
+    // Only verified principals received a server-created computer-auto-*
+    // session in listener.rs. The local policy controls the permission.
+    locked().attach_manual_grant(session);
     let action = args.get("action").and_then(Value::as_str).unwrap_or("");
     match (name, action) {
         ("computer_session", "request") => {
@@ -854,21 +1062,41 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
         }
         ("computer_session", "status") => {
             let mut state = locked();
+            state.expire();
             let approved = state.allowed(session);
             let pending = state.pending.as_ref().is_some_and(|p| p.session == session);
             let paused = state
                 .grant
                 .as_ref()
-                .is_some_and(|g| g.session == session && g.paused);
+                .is_some_and(|g| g.session == session && g.paused)
+                || state
+                    .manual
+                    .as_ref()
+                    .is_some_and(|policy| policy.paused && session.starts_with("computer-auto-"));
             tool_ok(
                 json!({ "status": if paused { "paused" } else if approved { "approved" } else if pending { "pending" } else { "disabled" },
-                    "scope": state.grant.as_ref().filter(|g| g.session == session).map(|g| g.scope.as_str()) }),
+                    "scope": state.grant.as_ref().filter(|g| g.session == session).map(|g| g.scope.as_str()),
+                    "authorization": if session.starts_with("computer-auto-") { "local_policy" } else { "session" } }),
             )
         }
         ("computer_session", "stop") => {
             let _serialized = action_lock();
             let mut state = locked();
             state.expire();
+            if session.starts_with("computer-auto-") {
+                if state
+                    .grant
+                    .as_ref()
+                    .is_some_and(|grant| grant.session == session)
+                {
+                    state.grant = None;
+                    state.snapshot = None;
+                    state.sensitive_action = None;
+                }
+                return tool_ok(
+                    json!({"status":"stopped", "note":"本机主动授权仍然开启，仅停止当前客户端操作；需在桌面设置中关闭全局授权"}),
+                );
+            }
             if state.grant.as_ref().is_some_and(|p| p.session == session)
                 || state.pending.as_ref().is_some_and(|p| p.session == session)
             {
@@ -1079,6 +1307,126 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fast_browser_navigation_validates_scheme_and_does_not_require_a_snapshot() {
+        let mut state = Controller {
+            manual: Some(ManualComputerAccess {
+                scope: "control".into(),
+                app_bundle: Some("com.microsoft.edgemac".into()),
+                expires_at_ms: None,
+                paused: false,
+            }),
+            ..Controller::default()
+        };
+        let client = "computer-auto-verified-client";
+        state.attach_manual_grant(client);
+        let (target, prepared) = state
+            .prepare_action(
+                client,
+                &json!({
+                    "action": "open_url", "url": "https://github.com"
+                }),
+            )
+            .expect("one-call navigation should not need a screenshot");
+        assert_eq!(target, "com.microsoft.edgemac");
+        assert_eq!(prepared["url"], "https://github.com");
+
+        for address in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "https://github.com\nunsafe",
+            "https://github.com space",
+            "https://github.com".repeat(150).as_str(),
+        ] {
+            assert!(validate_action(&json!({"action":"open_url","url":address})).is_err());
+        }
+        let mut observation_only = Controller {
+            manual: Some(ManualComputerAccess {
+                scope: "observe".into(),
+                app_bundle: None,
+                expires_at_ms: None,
+                paused: false,
+            }),
+            ..Controller::default()
+        };
+        observation_only.attach_manual_grant(client);
+        assert!(observation_only
+            .prepare_action(
+                client,
+                &json!({
+                    "action":"open_url", "url":"https://github.com"
+                })
+            )
+            .is_err());
+    }
+
+    fn manual_policy(scope: &str, expires_at_ms: Option<u64>) -> ManualComputerAccess {
+        ManualComputerAccess {
+            scope: scope.to_owned(),
+            app_bundle: (scope == "control").then(|| "com.apple.Safari".to_owned()),
+            expires_at_ms,
+            paused: false,
+        }
+    }
+
+    #[test]
+    fn manual_observe_allows_authenticated_principal_only_and_never_control() {
+        let mut state = Controller {
+            manual: Some(manual_policy("observe", Some(now_ms() + 30_000))),
+            ..Controller::default()
+        };
+        assert!(!state.allowed("computer-auto-client-a"));
+        state.attach_manual_grant("client-supplied-session");
+        assert!(!state.allowed("client-supplied-session"));
+        state.attach_manual_grant("computer-auto-client-a");
+        assert!(state.allowed("computer-auto-client-a"));
+        assert!(state
+            .observation_context("computer-auto-client-a")
+            .is_some());
+        assert!(state
+            .prepare_action("computer-auto-client-a", &json!({"action":"focus_app"}))
+            .is_err());
+        assert!(!state.allowed("computer-auto-client-b"));
+    }
+
+    #[test]
+    fn manual_permanent_survives_serialization_but_pause_and_expiry_deny() {
+        let permanent = manual_policy("observe", None);
+        let restored: ManualComputerAccess =
+            serde_json::from_str(&serde_json::to_string(&permanent).unwrap()).unwrap();
+        assert!(restored.active());
+        let mut state = Controller {
+            manual: Some(restored),
+            ..Controller::default()
+        };
+        state.attach_manual_grant("computer-auto-client");
+        let previous_lease = state.lease_token("computer-auto-client").unwrap();
+        state.manual.as_mut().unwrap().paused = true;
+        state.grant.as_mut().unwrap().paused = true;
+        assert!(state.lease_token("computer-auto-client").is_none());
+        state.manual.as_mut().unwrap().paused = false;
+        state.grant.as_mut().unwrap().paused = false;
+        assert!(state.lease_matches("computer-auto-client", &previous_lease));
+        state.manual.as_mut().unwrap().expires_at_ms = Some(now_ms().saturating_sub(1));
+        state.expire();
+        assert!(state.manual.is_none());
+        assert!(!state.allowed("computer-auto-client"));
+    }
+
+    #[test]
+    fn different_remote_principals_cannot_reuse_snapshots_or_action_lease() {
+        let mut state = Controller {
+            manual: Some(manual_policy("control", None)),
+            ..Controller::default()
+        };
+        state.attach_manual_grant("computer-auto-client-a");
+        let token_a = state.lease_token("computer-auto-client-a").unwrap();
+        state.attach_manual_grant("computer-auto-client-b");
+        assert!(!state.lease_matches("computer-auto-client-a", &token_a));
+        assert!(state.lease_token("computer-auto-client-b").is_some());
+        assert!(state.snapshot.is_none());
+    }
+
+    #[test]
     fn grant_is_opt_in_and_session_scoped() {
         let mut state = Controller::default();
         assert!(!state.allowed("a"));
@@ -1113,6 +1461,7 @@ mod tests {
             }),
             snapshot: None,
             sensitive_action: None,
+            manual: None,
         };
         state.expire();
         assert!(state.pending.is_none());

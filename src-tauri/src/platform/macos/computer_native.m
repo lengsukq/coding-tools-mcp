@@ -70,6 +70,7 @@ char *computer_native_screen_diagnostics(void) {
             @"process_id": @(NSProcessInfo.processInfo.processIdentifier),
             @"is_app_bundle": @(isApp),
             @"preflight_granted": @(CGPreflightScreenCaptureAccess()),
+            @"capture_usage_description_present": @([bundle objectForInfoDictionaryKey:@"NSScreenCaptureUsageDescription"] != nil),
             @"expected_bundle_id": @"com.codingtools.mcp.desktop"
         } mutableCopy];
 
@@ -249,7 +250,7 @@ static int codeForKey(NSString *key) {
             @"s": @1, @"t": @17, @"u": @32, @"v": @9, @"w": @13, @"x": @7,
             @"y": @16, @"z": @6, @"0": @29, @"1": @18, @"2": @19, @"3": @20,
             @"4": @21, @"5": @23, @"6": @22, @"7": @26, @"8": @28, @"9": @25,
-            @"enter": @36, @"escape": @53, @"tab": @48, @"space": @49,
+            @"enter": @36, @"return": @36, @"escape": @53, @"tab": @48, @"space": @49,
             @"backspace": @51, @"delete": @117, @"up": @126, @"down": @125,
             @"left": @123, @"right": @124, @"home": @115, @"end": @119};
     });
@@ -282,6 +283,57 @@ char *computer_native_action(const char *request) {
                 }
             }
             return failure(@"APP_NOT_FOUND", @"Approved application is not running");
+        }
+        if ([action isEqualToString:@"open_url"]) {
+            // Local CONTROL already limits the target bundle. This operation
+            // may only navigate an explicitly supported browser, never an
+            // arbitrary application, shell handler, file or custom scheme.
+            NSSet *browsers = [NSSet setWithArray:@[
+                @"com.microsoft.edgemac", @"com.google.Chrome", @"com.apple.Safari",
+                @"org.mozilla.firefox", @"com.brave.Browser", @"company.thebrowser.Browser",
+                @"com.vivaldi.Vivaldi", @"com.operasoftware.Opera"
+            ]];
+            if (![browsers containsObject:target])
+                return failure(@"BROWSER_ONLY", @"open_url requires locally approved browser control");
+            NSString *rawURL = args[@"url"];
+            if (![rawURL isKindOfClass:NSString.class] || rawURL.length == 0 ||
+                rawURL.length > 2048 || [rawURL rangeOfCharacterFromSet:
+                    NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound)
+                return failure(@"INVALID_BROWSER_URL", @"Expected a short HTTP(S) URL without whitespace");
+            NSURLComponents *parts = [NSURLComponents componentsWithString:rawURL];
+            if (!parts || ![@[@"https", @"http"] containsObject:parts.scheme.lowercaseString] ||
+                parts.host.length == 0 || parts.user.length > 0 || parts.password.length > 0)
+                return failure(@"INVALID_BROWSER_URL", @"Only HTTP(S) URLs without embedded credentials are accepted");
+            NSURL *url = parts.URL;
+            if (!url) return failure(@"INVALID_BROWSER_URL", @"Invalid URL");
+            NSRunningApplication *browser = nil;
+            for (NSRunningApplication *candidate in NSWorkspace.sharedWorkspace.runningApplications) {
+                if ([candidate.bundleIdentifier isEqualToString:target] &&
+                    candidate.activationPolicy == NSApplicationActivationPolicyRegular) {
+                    browser = candidate;
+                    break;
+                }
+            }
+            if (!browser.bundleURL)
+                return failure(@"BROWSER_NOT_RUNNING", @"The approved browser is not running");
+            dispatch_semaphore_t completion = dispatch_semaphore_create(0);
+            __block NSError *openError = nil;
+            NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+            configuration.activates = YES;
+            [NSWorkspace.sharedWorkspace openURLs:@[url]
+                             withApplicationAtURL:browser.bundleURL
+                                   configuration:configuration
+                               completionHandler:^(NSRunningApplication *openedApp, NSError *error) {
+                (void)openedApp;
+                openError = error;
+                dispatch_semaphore_signal(completion);
+            }];
+            if (dispatch_semaphore_wait(completion, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC)) != 0)
+                return failure(@"BROWSER_OPEN_TIMEOUT", @"Browser did not acknowledge URL navigation");
+            if (openError)
+                return failure(@"BROWSER_OPEN_FAILED", openError.localizedDescription ?: @"Browser refused URL");
+            return reply(@{@"ok": @YES, @"action": @"open_url", @"bundle_id": target,
+                           @"dispatched": @YES});
         }
         if (!app || !target || ![app.bundleIdentifier isEqualToString:target])
             return failure(@"FOREGROUND_APP_CHANGED", @"Foreground app differs from the one approved locally");
@@ -317,16 +369,40 @@ char *computer_native_action(const char *request) {
                 return failure(@"INVALID_ARGUMENT", @"Text must be under 2000 UTF-16 characters");
             if (isSecureFocusedField(app.processIdentifier))
                 return failure(@"SECURE_INPUT_REJECTED", @"Cannot type into a secure password field");
-            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
-            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
-            if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return failure(@"EVENT_CREATE_FAILED", @"Cannot create key event"); }
-            UniChar units[2000];
-            [value getCharacters:units range:NSMakeRange(0, value.length)];
-            CGEventKeyboardSetUnicodeString(down, value.length, units);
-            CGEventKeyboardSetUnicodeString(up, value.length, units);
-            CGEventPost(kCGHIDEventTap, down);
-            CGEventPost(kCGHIDEventTap, up);
-            CFRelease(down); CFRelease(up);
+            // Some Chromium text fields silently drop a single synthetic
+            // event containing the entire string. Emit each composed Unicode
+            // character as its own key down/up inside ONE native invocation.
+            // This preserves emoji/surrogate pairs and avoids MCP roundtrips
+            // per character. The secure-field check above remains mandatory.
+            __block BOOL failed = NO;
+            [value enumerateSubstringsInRange:NSMakeRange(0, value.length)
+                options:NSStringEnumerationByComposedCharacterSequences
+                usingBlock:^(NSString *substring, NSRange range, NSRange enclosingRange, BOOL *stop) {
+                    (void)range; (void)enclosingRange;
+                    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
+                    CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
+                    if (!down || !up) {
+                        if (down) CFRelease(down);
+                        if (up) CFRelease(up);
+                        failed = YES;
+                        *stop = YES;
+                        return;
+                    }
+                    UniChar units[16];
+                    if (substring.length > 16) {
+                        failed = YES;
+                        CFRelease(down); CFRelease(up);
+                        *stop = YES;
+                        return;
+                    }
+                    [substring getCharacters:units range:NSMakeRange(0, substring.length)];
+                    CGEventKeyboardSetUnicodeString(down, substring.length, units);
+                    CGEventKeyboardSetUnicodeString(up, substring.length, units);
+                    CGEventPost(kCGHIDEventTap, down);
+                    CGEventPost(kCGHIDEventTap, up);
+                    CFRelease(down); CFRelease(up);
+                }];
+            if (failed) return failure(@"EVENT_CREATE_FAILED", @"Unable to synthesize Unicode character");
         } else if ([action isEqualToString:@"key"]) {
             if (isSecureFocusedField(app.processIdentifier))
                 return failure(@"SECURE_INPUT_REJECTED", @"Keyboard actions are disabled for secure or inaccessible focused fields");
@@ -578,7 +654,14 @@ char *computer_native_capture(const char *request) {
             CGFloat nativeScale = MAX(1.0, filter.pointPixelScale);
             double requestedW = capture.size.width * nativeScale;
             double requestedH = capture.size.height * nativeScale;
-            double shrink = MIN(1.0, MIN(1920.0 / requestedW, 1200.0 / requestedH));
+            NSString *quality = args[@"quality"];
+            if (quality && (![quality isKindOfClass:NSString.class] ||
+                            ![@[@"fast", @"detailed"] containsObject:quality]))
+                return failure(@"INVALID_QUALITY", @"Supported screenshot quality: fast, detailed");
+            BOOL detailed = [quality isEqualToString:@"detailed"];
+            double maxWidth = detailed ? 1920.0 : 1280.0;
+            double maxHeight = detailed ? 1200.0 : 850.0;
+            double shrink = MIN(1.0, MIN(maxWidth / requestedW, maxHeight / requestedH));
             SCStreamConfiguration *config = [SCStreamConfiguration new];
             config.width = MAX(1, (size_t)round(requestedW * shrink));
             config.height = MAX(1, (size_t)round(requestedH * shrink));
@@ -604,7 +687,7 @@ char *computer_native_capture(const char *request) {
             CGImageRelease(captured);
             if (width == 0 || height == 0) return failure(@"EMPTY_SCREENSHOT", @"Native capture returned an empty frame");
             NSData *jpeg = [bitmap representationUsingType:NSBitmapImageFileTypeJPEG
-                                                properties:@{NSImageCompressionFactor: @0.72}];
+                                                properties:@{NSImageCompressionFactor: @(detailed ? 0.72 : 0.56)}];
             if (!jpeg || jpeg.length > 8 * 1024 * 1024) return failure(@"SCREEN_IMAGE_TOO_LARGE", @"JPEG screenshot exceeds 8 MiB");
             return reply(@{@"ok": @YES, @"mime_type": @"image/jpeg",
                 @"base64": [jpeg base64EncodedStringWithOptions:0],

@@ -29,6 +29,9 @@ pub(crate) struct ToolAuditRecord {
     pub session_id: Option<String>,
     pub workspace_id: Option<String>,
     pub tool_name: String,
+    /// Only a tool action enum, never text typed or captured screen content.
+    #[serde(default)]
+    pub action_name: Option<String>,
     pub wrapper_tool_name: Option<String>,
     pub auth_method: String,
     pub client_id: Option<String>,
@@ -73,6 +76,7 @@ pub(crate) struct ToolAuditCall {
     request_id: Option<String>,
     session_id: Option<String>,
     tool_name: String,
+    action_name: Option<String>,
     wrapper_tool_name: Option<String>,
     auth_method: String,
     client_id: Option<String>,
@@ -108,6 +112,36 @@ impl ToolAuditCall {
             tool_name: delegated_tool
                 .clone()
                 .unwrap_or_else(|| safe_label(tool_name)),
+            action_name: tool_name
+                .starts_with("computer_")
+                .then(|| {
+                    body.pointer("/params/arguments/action")
+                        .and_then(Value::as_str)
+                        .filter(|name| {
+                            matches!(
+                                *name,
+                                "request"
+                                    | "status"
+                                    | "stop"
+                                    | "screenshot"
+                                    | "windows"
+                                    | "ui_tree"
+                                    | "click"
+                                    | "double_click"
+                                    | "right_click"
+                                    | "move"
+                                    | "drag"
+                                    | "scroll"
+                                    | "type"
+                                    | "key"
+                                    | "press_element"
+                                    | "focus_app"
+                                    | "open_url"
+                            )
+                        })
+                        .map(str::to_string)
+                })
+                .flatten(),
             wrapper_tool_name: delegated_tool.map(|_| "workspace_invoke".to_string()),
             auth_method: safe_auth_method(auth_method),
             client_id: client_id.map(|value| bounded_visible_text(value, 128)),
@@ -140,6 +174,7 @@ impl ToolAuditCall {
             session_id: self.session_id,
             workspace_id,
             tool_name: self.tool_name,
+            action_name: self.action_name,
             wrapper_tool_name: self.wrapper_tool_name,
             auth_method: self.auth_method,
             client_id: self.client_id,
@@ -607,6 +642,38 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    #[test]
+    fn computer_audit_records_client_and_action_but_never_user_input_or_tokens() {
+        let secret_text = "SUPER_SECRET_TYPED_PASSWORD";
+        let private_token = "cu1_SUPER_SECRET_CAPABILITY";
+        let body = json!({
+            "params": {
+                "name": "computer_action",
+                "arguments": {
+                    "action": "type",
+                    "text": secret_text,
+                    "session_token": private_token
+                }
+            }
+        });
+        let record = ToolAuditCall::new(
+            &json!(42),
+            "computer_action",
+            Some("opaque-server-session"),
+            "oauth",
+            Some("chatgpt-oauth-client"),
+            1234,
+            &body,
+        )
+        .finish(None, &json!({"result": {"isError": false}}));
+        assert_eq!(record.tool_name, "computer_action");
+        assert_eq!(record.action_name.as_deref(), Some("type"));
+        assert_eq!(record.client_id.as_deref(), Some("chatgpt-oauth-client"));
+        let serialized = serde_json::to_string(&record).unwrap();
+        assert!(!serialized.contains(secret_text));
+        assert!(!serialized.contains(private_token));
+    }
+
     fn test_store() -> (tempfile::TempDir, ToolAuditStore) {
         let dir = tempfile::tempdir().expect("audit temp dir");
         let store = ToolAuditStore::new(dir.path().to_path_buf());
@@ -621,6 +688,7 @@ mod tests {
             session_id: Some("session-a".into()),
             workspace_id: workspace_id.map(str::to_string),
             tool_name: "read_file".into(),
+            action_name: None,
             wrapper_tool_name: None,
             auth_method: "shared_bearer".into(),
             client_id: None,

@@ -11,6 +11,7 @@ export interface ComputerScreenPermissionDiagnostic {
   process_id?: number;
   is_app_bundle?: boolean;
   preflight_granted?: boolean;
+  capture_usage_description_present?: boolean;
   signature_type?: "ad_hoc" | "certificate" | "unsigned_or_unknown" | "unavailable";
   signing_team_id?: string;
   signing_identifier?: string;
@@ -19,6 +20,11 @@ export interface ComputerScreenPermissionDiagnostic {
 }
 
 export interface ComputerScreenStatus {
+  manualEnabled: boolean;
+  manualScope: "observe" | "control" | null;
+  manualTargetApp: string | null;
+  manualExpiresAtMs: number | null;
+  manualPaused: boolean;
   pendingRequestId: string | null;
   pendingExpiresInSeconds: number | null;
   active: boolean;
@@ -42,6 +48,15 @@ export interface ComputerScreenStatus {
 
 export const getComputerScreenStatus = () =>
   invoke<ComputerScreenStatus>("get_computer_screen_status");
+
+/** Local Tauri webview only; no remote MCP tool can enable this policy. */
+export const enableComputerAccess = (
+  scope: "observe" | "control",
+  durationMinutes: number,
+  targetBundle?: string,
+) => invoke<ComputerScreenStatus>("enable_computer_access", {
+  scope, durationMinutes, targetBundle: targetBundle ?? null,
+});
 
 export const approveComputerScreenRequest = (requestId: string, targetBundle?: string) =>
   invoke<ComputerScreenStatus>("approve_computer_screen_request", { requestId, targetBundle: targetBundle || null });

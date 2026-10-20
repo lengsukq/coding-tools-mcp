@@ -6,6 +6,7 @@ import PageHeader from "$src/components/ui/PageHeader.vue";
 import PageTabs from "$src/components/ui/PageTabs.vue";
 import GeneralSettingsView from "./GeneralSettingsView.vue";
 import GatewaySettingsView from "./GatewaySettingsView.vue";
+import ComputerSettingsView from "./ComputerSettingsView.vue";
 import KeysSettingsView from "./KeysSettingsView.vue";
 import FrpSettingsView from "./FrpSettingsView.vue";
 import SoftwareSettingsView from "./SoftwareSettingsView.vue";
@@ -44,6 +45,7 @@ watch([section, () => route.query.panel], () => void reveal());
 <GeneralSettingsView section="tools"/>
 <SoftwareSettingsView/>
 </template>
+<ComputerSettingsView v-else-if="section==='computer'"/>
 <GeneralSettingsView v-else :section="section"/>
 </div>
 </PageTabs>

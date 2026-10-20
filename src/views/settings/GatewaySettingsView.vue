@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { Activity, Check, Copy, Globe2, Play, RefreshCw, RotateCw, Square } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
@@ -25,20 +25,6 @@ import SaveBar from "$src/components/ui/SaveBar.vue";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
 import { connectionHealthPresentation } from "$lib/ui-model";
 import { showToast } from "$lib/stores/toast";
-import {
-  approveComputerScreenRequest,
-  decideComputerSensitiveAction,
-  getComputerScreenStatus,
-  listComputerAvailableApps,
-  pauseComputerAccess,
-  requestComputerAccessibilityPermission,
-  requestComputerScreenPermission,
-  resumeComputerAccess,
-  revokeComputerScreenAccess,
-  type ComputerScreenStatus,
-  type ComputerApplication,
-} from "$lib/api/computer";
-
 const config = reactive<GlobalGatewayConfigDto>({ ...DEFAULT_GLOBAL_GATEWAY });
 const baseline = ref("");
 const error = ref("");
@@ -49,23 +35,6 @@ const status = ref<GlobalMcpOverviewDto | null>(null);
 const gatewayStatus = ref<GlobalGatewayStatusDto | null>(null);
 const health = ref<GatewayHealthItemDto[]>([]);
 const frpProfiles = ref<FrpProfileDto[]>([]);
-const computer = ref<ComputerScreenStatus | null>(null);
-const computerBusy = ref(false);
-const computerApps = ref<ComputerApplication[]>([]);
-const selectedComputerApp = ref("");
-const computerAppOptions = computed(() => computerApps.value.map((app) => ({ value: app.bundle_id, label: app.name })));
-const screenPermissionTroubleshooting = computed(() => {
-  const diagnostic = computer.value?.screenPermissionDiagnostic;
-  if (!diagnostic?.ok) return "当前进程的权限诊断暂不可用；请先更新并重新打开桌面应用。";
-  if (!diagnostic.is_app_bundle) return "检测到当前程序不是从 macOS .app 应用包运行。开发版与系统设置里的正式应用可能不是同一权限主体；请完全退出开发进程后，从「应用程序」启动已授权的正式 App。";
-  if (diagnostic.bundle_id !== diagnostic.expected_bundle_id) return "当前运行进程的 Bundle ID 与项目正式应用不一致。请退出此版本，改从「应用程序」启动 Coding Tools MCP，并确认系统设置中授权的确实是同一份应用。";
-  if (diagnostic.signature_type === "ad_hoc")
-    return "已检测到当前应用使用 Ad-hoc 临时签名。这类签名的代码身份可能每次构建都会变化，macOS 旧的录屏授权无法沿用。请使用稳定的 Apple Development / Developer ID 证书重新签名构建，安装后对新签名的应用重新授权。重复安装未固定签名的 DMG 无法根治。";
-  if (diagnostic.signature_type === "unsigned_or_unknown")
-    return "当前应用没有可验证的证书签名身份。请先用稳定的 Apple 开发者证书签名构建，再针对新身份重新授权；仅重新打开权限开关可能无效。";
-  return "macOS 当前进程仍未通过屏幕录制权限预检。即使系统设置的开关已开启，授权变更后也可能需要完全退出应用（含菜单栏常驻进程）并重新启动，然后点击「重新检测」。如仍失败，请检查当前应用路径是否就是已授权的版本。";
-});
-let computerPoll: ReturnType<typeof setInterval> | undefined;
 const loading = ref(true);
 const saving = ref(false);
 const busy = ref(false);
@@ -127,60 +96,6 @@ const frpOptions = computed(() => [{ value: "", label: "手动填写" }, ...frpP
 function applyRuntimeStatus(nextStatus: GlobalMcpOverviewDto) {
   status.value = nextStatus;
   globalMcpRuntimeState.value = nextStatus.state;
-}
-
-async function decideSensitiveAction(approve: boolean) {
-  const confirmationId = computer.value?.pendingSensitiveActionId;
-  if (!confirmationId || computerBusy.value) return;
-  computerBusy.value = true;
-  try {
-    computer.value = await decideComputerSensitiveAction(confirmationId, approve);
-    showToast(approve
-      ? "已批准一次敏感动作；AI 须在有效期内携带确认 ID 原样重试，批准本身不会执行动作。"
-      : "已拒绝本次敏感操作。",
-    { kind: "info" });
-  } catch (error) {
-    showToast(String(error), { title: "敏感操作审批失败", kind: "error" });
-  } finally {
-    computerBusy.value = false;
-  }
-}
-
-async function toggleComputerPause() {
-  if (computerBusy.value || !computer.value?.active) return;
-  computerBusy.value = true;
-  try {
-    computer.value = computer.value.paused
-      ? await resumeComputerAccess()
-      : await pauseComputerAccess();
-    showToast(computer.value.paused ? "Computer Use 已暂停，截图和输入均已阻止。" : "Computer Use 已恢复，请重新截图确认当前界面。", { kind: "info" });
-  } catch (error) {
-    showToast(String(error), { title: "切换 Computer Use 状态失败", kind: "error" });
-  } finally {
-    computerBusy.value = false;
-  }
-}
-
-async function requestAccessibilityPermission() {
-  try {
-    computer.value = await requestComputerAccessibilityPermission();
-    if (!computer.value.accessibilityGranted) {
-      showToast("请在 macOS 系统设置 → 隐私与安全性 → 辅助功能中允许 Coding Tools MCP。", { kind: "info", duration: 7000 });
-    }
-  } catch (error) {
-    showToast(String(error), { title: "无法请求辅助功能权限", kind: "error" });
-  }
-}
-
-async function requestScreenPermission() {
-  try {
-    computer.value = await requestComputerScreenPermission();
-    if (!computer.value.screenRecordingGranted) {
-      showToast("请在 macOS 系统设置的屏幕录制权限中授权 Coding Tools MCP；授权后可能需要重启应用。", { kind: "info", duration: 7000 });
-    }
-  } catch (error) {
-    showToast(String(error), { title: "无法请求屏幕录制权限", kind: "error" });
-  }
 }
 
 async function refresh() {
@@ -385,64 +300,12 @@ function shouldOfferTunnelRecovery(item: GatewayHealthItemDto) {
   return canForceRestartCloudflare.value && item.label.includes("公网") && !item.ok;
 }
 
-async function refreshComputerScreen() {
-  try {
-    const previous = computer.value?.pendingRequestId;
-    computer.value = await getComputerScreenStatus();
-    if (computer.value.pendingScope === "control" && computer.value.pendingRequestId && computer.value.pendingRequestId !== previous) {
-      const result = await listComputerAvailableApps();
-      computerApps.value = result.applications || [];
-      selectedComputerApp.value = "";
-    }
-  } catch {
-    // MCP connection settings must remain functional if the desktop command
-    // is unavailable in an older installed runtime.
-  }
-}
-
-async function approveComputer() {
-  const requestId = computer.value?.pendingRequestId;
-  if (!requestId || computerBusy.value) return;
-  computerBusy.value = true;
-  try {
-    const control = computer.value?.pendingScope === "control";
-    const preflightFailed = computer.value?.screenRecordingGranted === false;
-    computer.value = await approveComputerScreenRequest(requestId, control ? selectedComputerApp.value : undefined);
-    showToast(preflightFailed
-      ? "已批准此 MCP 会话尝试使用 ScreenCaptureKit。macOS 是否允许实际截图仍由系统判断；若失败请查看 MCP 返回的系统错误。"
-      : (control ? "已授权当前会话控制选定应用 5 分钟。" : "已授权当前会话查看屏幕 5 分钟。"),
-    { kind: preflightFailed ? "info" : "success", duration: preflightFailed ? 8500 : 4000 });
-  } catch (error) {
-    showToast(String(error), { title: "屏幕授权失败", kind: "error" });
-  } finally {
-    computerBusy.value = false;
-  }
-}
-
-async function revokeComputer() {
-  if (computerBusy.value) return;
-  computerBusy.value = true;
-  try {
-    computer.value = await revokeComputerScreenAccess();
-    showToast("Computer Use 屏幕访问已关闭", { kind: "info" });
-  } catch (error) {
-    showToast(String(error), { title: "撤销失败", kind: "error" });
-  } finally {
-    computerBusy.value = false;
-  }
-}
-
 useUnsavedChanges("MCP 端点与公网连接", dirty, saveConfig);
 onMounted(() => {
   void (async () => {
     await refresh();
     await runHealth();
   })();
-  void refreshComputerScreen();
-  computerPoll = setInterval(() => void refreshComputerScreen(), 3000);
-});
-onUnmounted(() => {
-  if (computerPoll) clearInterval(computerPoll);
 });
 </script>
 
@@ -452,86 +315,6 @@ onUnmounted(() => {
       <span>{{ loadError }}</span>
       <BaseButton variant="secondary" @click="refresh">重试</BaseButton>
     </div>
-
-    <GlassCard>
-      <div class="section-heading flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 class="text-base font-semibold">Computer Use · 屏幕访问</h2>
-          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">
-            默认关闭。“查看”权限只允许读取屏幕，“控制”权限可向你明确选择的目标应用发送鼠标与键盘事件。
-            仅当前 MCP 会话有效 5 分钟，随时可撤销。Mac 系统权限需由你手动授予。
-          </p>
-        </div>
-        <StatusPill :status="computer?.active && !computer?.paused ? 'running' : 'stopped'" :label="computer?.paused ? '已暂停' : computer?.active ? '已授权' : '未授权'" />
-      </div>
-      <div v-if="computer?.active && computer.pendingSensitiveActionId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
-        <div class="min-w-0 flex-1">
-          <strong class="text-xs">高风险操作需单独确认</strong>
-          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-            目标应用：{{ computer.pendingSensitiveActionApp }} · {{ computer.pendingSensitiveActionDescription }}
-          </p>
-          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-            {{ computer.pendingSensitiveActionApproved ? "已允许一次，等待原客户端重试执行；不可重复使用" : "审批本身不会执行操作" }} · 剩余 {{ computer.pendingSensitiveActionExpiresInSeconds ?? 0 }} 秒
-          </p>
-        </div>
-        <BaseButton v-if="!computer.pendingSensitiveActionApproved" :disabled="computerBusy || computer.paused" @click="decideSensitiveAction(true)">允许本次</BaseButton>
-        <BaseButton variant="secondary" :disabled="computerBusy" @click="decideSensitiveAction(false)">拒绝</BaseButton>
-      </div>
-      <div v-if="computer?.accessibilityGranted === false" class="ui-inset mt-3 flex flex-wrap items-center justify-between gap-3 p-3">
-        <p class="text-xs text-[var(--ui-text-muted)]">控制鼠标和键盘需要 macOS 辅助功能权限。</p>
-        <BaseButton variant="secondary" :disabled="computerBusy" @click="requestAccessibilityPermission">请求辅助功能权限</BaseButton>
-      </div>
-      <div v-if="computer && !computer.supported" class="ui-banner ui-banner--warning mt-3 text-xs">
-        首版仅支持 macOS。
-      </div>
-      <div v-else-if="computer?.screenRecordingGranted === false" class="ui-inset mt-3 flex flex-wrap items-start justify-between gap-3 p-3">
-        <div class="min-w-0 flex-1">
-          <p class="text-xs font-semibold">{{ computer.screenCaptureSucceededInSession ? "当前授权会话已通过 ScreenCaptureKit 实际截图（预检仍未通过）" : "当前运行进程未通过 macOS 屏幕录制权限预检" }}</p>
-          <p v-if="computer.screenCaptureSucceededInSession" class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">本次会话已经收到真实截图，说明这次 ScreenCaptureKit 调用成功。后续每次截图仍由 macOS 独立检查权限。</p>
-          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">仅预检未通过不再阻断本机授权：可先让 MCP 客户端申请 Computer Use，在这里手动批准后，由 ScreenCaptureKit 实际截图结果判断是否可用。macOS 拒绝时不会返回屏幕图片；本机批准不等于授予系统权限。</p>
-          <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">{{ screenPermissionTroubleshooting }}</p>
-          <details class="mt-2 text-xs text-[var(--ui-text-muted)]">
-            <summary class="cursor-pointer">查看当前运行进程的权限诊断</summary>
-            <div class="mt-2 grid gap-1 break-all">
-              <p>实际 Bundle ID：{{ computer.screenPermissionDiagnostic?.bundle_id || "无法获取" }}</p>
-              <p>预期 Bundle ID：{{ computer.screenPermissionDiagnostic?.expected_bundle_id || "com.codingtools.mcp.desktop" }}</p>
-              <p>启动形式：{{ computer.screenPermissionDiagnostic?.is_app_bundle ? ".app 应用包" : "独立可执行文件 / 开发版本" }}</p>
-              <p>应用路径：{{ computer.screenPermissionDiagnostic?.bundle_path || "无法获取" }}</p>
-              <p>可执行程序：{{ computer.screenPermissionDiagnostic?.executable_path || "无法获取" }}</p>
-              <p>代码签名：{{ computer.screenPermissionDiagnostic?.signature_type === "ad_hoc" ? "Ad-hoc 临时签名（权限可能随重新构建失效）" : computer.screenPermissionDiagnostic?.signature_type === "certificate" ? "证书签名" : computer.screenPermissionDiagnostic?.signature_type === "unsigned_or_unknown" ? "无证书签名 / 未知" : "诊断不可用" }}</p>
-              <p>签名 Team ID：{{ computer.screenPermissionDiagnostic?.signing_team_id || "未设置" }}</p>
-              <p>签名标识：{{ computer.screenPermissionDiagnostic?.signing_identifier || "无法获取" }}</p>
-              <p>当前进程检测：{{ computer.screenPermissionDiagnostic?.preflight_granted ? "通过" : "未通过" }}</p>
-            </div>
-          </details>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="refreshComputerScreen">重新检测</BaseButton>
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="requestScreenPermission">请求系统权限</BaseButton>
-        </div>
-      </div>
-      <div v-if="computer?.pendingRequestId" class="ui-inset mt-3 flex flex-wrap items-center gap-3 p-3">
-        <div class="min-w-0 flex-1">
-          <strong class="text-xs">有 AI 客户端申请{{ computer.pendingScope === "control" ? "控制指定应用" : "查看屏幕" }}</strong>
-          <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-            请求编号：{{ computer.pendingRequestId }} · {{ computer.pendingExpiresInSeconds ?? 0 }} 秒后失效
-          </p>
-          <SelectField v-if="computer.pendingScope === 'control'" v-model="selectedComputerApp" class="mt-2" label="允许控制的应用（须切换该应用到前台后才能操作）" :options="computerAppOptions" />
-        </div>
-        <BaseButton :busy="computerBusy" :disabled="!computer.supported || (computer.pendingScope === 'control' && (!computer.accessibilityGranted || !selectedComputerApp))" @click="approveComputer">{{ computer.screenRecordingGranted === false ? "批准并尝试系统截图" : "批准 5 分钟" }}</BaseButton>
-        <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">拒绝</BaseButton>
-      </div>
-      <div v-else class="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <span class="text-xs text-[var(--ui-text-muted)]">
-          {{ computer?.active ? `${computer.activeScope === "control" ? "控制" : "查看"}授权 · 剩余 ${computer.expiresInSeconds ?? 0} 秒${computer.targetAppBundle ? " · " + computer.targetAppBundle : ""}${computer.remainingControlActions !== null ? " · 剩余操作 " + computer.remainingControlActions + " 次" : ""}` : "当前没有已批准的 Computer Use 会话" }}
-        </span>
-        <div v-if="computer?.active" class="flex flex-wrap items-center gap-2">
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="toggleComputerPause">{{ computer.paused ? "恢复" : "紧急暂停" }}</BaseButton>
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">立即撤销</BaseButton>
-        </div>
-        <BaseButton v-else variant="ghost" :disabled="computerBusy" @click="refreshComputerScreen">刷新</BaseButton>
-      </div>
-    </GlassCard>
 
     <GlassCard>
       <div class="section-heading flex flex-wrap items-start justify-between gap-4">

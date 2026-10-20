@@ -40,6 +40,7 @@ export const WORKSPACE_NAV = [
 ] as const;
 export const SETTINGS_NAV = [
     { value: "general", label: "通用" }, { value: "connection", label: "MCP 连接" }, { value: "execution", label: "AI 执行" },
+    { value: "computer", label: "Computer Use" },
     { value: "tools", label: "网络与工具" }, { value: "about", label: "关于" },
 ] as const;
 export function legacySettingsSection(section: string) {

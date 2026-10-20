@@ -304,6 +304,11 @@ fn handle_gateway_tools_call(
                 None,
             ));
         }
+        // The listener has already validated the optional stateless bearer
+        // credential. Keep it out of the native Computer Use action payload.
+        if let Some(object) = args.as_object_mut() {
+            object.remove("session_token");
+        }
         return Ok((crate::computer::call_tool(name, session_id, &args), None));
     }
 

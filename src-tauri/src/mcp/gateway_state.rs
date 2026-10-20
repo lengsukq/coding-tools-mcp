@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::data::DataStore;
@@ -15,12 +16,108 @@ use crate::usage::ServiceUsage;
 use crate::workspace::{AuthConfig, WorkspaceProfile};
 
 const SESSION_TTL_SECONDS: u64 = 24 * 60 * 60;
+// Long enough to cover the two-minute local approval window and the five-minute grant.
+const COMPUTER_CAPABILITY_TTL_SECONDS: u64 = 10 * 60;
 
 fn unix_timestamp_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod computer_auto_session_tests {
+    use super::GatewaySessionStore;
+
+    #[test]
+    fn authenticated_computer_sessions_are_server_issued_and_reused_per_owner() {
+        let sessions = GatewaySessionStore::default();
+        let a = sessions.computer_auto_session("oauth:client-a");
+        assert!(a.starts_with("computer-auto-"));
+        assert!(sessions.is_server_issued(&a));
+        assert!(sessions.computer_owner_matches(&a, "oauth:client-a"));
+        assert_eq!(a, sessions.computer_auto_session("oauth:client-a"));
+
+        let b = sessions.computer_auto_session("oauth:client-b");
+        assert_ne!(a, b);
+        assert!(sessions.computer_owner_matches(&b, "oauth:client-b"));
+        assert!(!sessions.computer_owner_matches(&a, "oauth:client-b"));
+        assert!(!sessions.computer_owner_matches(&b, "oauth:client-a"));
+    }
+
+    #[test]
+    fn client_supplied_metadata_cannot_forge_a_computer_auto_session() {
+        let sessions = GatewaySessionStore::default();
+        sessions.ensure_host_session("computer-auto-forged-client-id");
+        assert!(!sessions.is_server_issued("computer-auto-forged-client-id"));
+        assert!(
+            !sessions.computer_owner_matches("computer-auto-forged-client-id", "oauth:client-a")
+        );
+
+        let valid = sessions.computer_auto_session("oauth:client-a");
+        assert!(sessions.is_server_issued(&valid));
+        sessions.ensure_host_session(&valid);
+        assert!(sessions.computer_owner_matches(&valid, "oauth:client-a"));
+    }
+}
+
+#[cfg(test)]
+mod computer_capability_tests {
+    use super::*;
+
+    #[test]
+    fn capability_is_secret_owner_bound_expiring_and_revocable() {
+        let sessions = GatewaySessionStore::default();
+        let issued = sessions.issue_with_owner(Some("oauth:client-a".into()));
+        let token = sessions
+            .issue_computer_capability(&issued, "oauth:client-a")
+            .unwrap();
+        assert_eq!(
+            sessions.resolve_computer_capability(&token, "oauth:client-a"),
+            Some(issued.clone())
+        );
+        assert_eq!(
+            sessions.resolve_computer_capability(&token, "oauth:client-b"),
+            None
+        );
+        assert_eq!(
+            sessions.resolve_computer_capability("cu1_invalid", "oauth:client-a"),
+            None
+        );
+        assert_eq!(
+            sessions.resolve_computer_capability(&format!("{token}x"), "oauth:client-a"),
+            None
+        );
+        sessions.revoke_computer_capabilities(&issued);
+        assert_eq!(
+            sessions.resolve_computer_capability(&token, "oauth:client-a"),
+            None
+        );
+
+        let expiring = sessions
+            .issue_computer_capability(&issued, "oauth:client-a")
+            .unwrap();
+        let key = computer_capability_hash(&expiring);
+        sessions
+            .computer_capabilities
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .created_at = unix_timestamp_seconds() - COMPUTER_CAPABILITY_TTL_SECONDS - 1;
+        assert_eq!(
+            sessions.resolve_computer_capability(&expiring, "oauth:client-a"),
+            None
+        );
+
+        let metadata = "untrusted-client-supplied-id";
+        sessions.ensure_host_session(metadata);
+        assert_eq!(
+            sessions.issue_computer_capability(metadata, "oauth:client-a"),
+            None
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -116,9 +213,116 @@ pub struct GatewaySessionScope {
 #[derive(Debug, Default)]
 pub struct GatewaySessionStore {
     sessions: Mutex<HashMap<String, GatewaySessionScope>>,
+    // Only hashes are stored. These bearer capabilities are never inferred from
+    // client-provided `_meta` IDs and never grant access without local approval.
+    computer_capabilities: Mutex<HashMap<String, ComputerCapability>>,
+}
+
+#[derive(Debug, Clone)]
+struct ComputerCapability {
+    session_id: String,
+    owner: String,
+    created_at: u64,
+}
+
+fn computer_capability_hash(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
 }
 
 impl GatewaySessionStore {
+    /// Return a server-minted, principal-bound session for locally enabled
+    /// Computer Use. Never accept an identifier supplied by the caller.
+    pub fn computer_auto_session(&self, owner: &str) -> String {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = unix_timestamp_seconds();
+        Self::prune_expired(&mut sessions, now);
+        if let Some((id, scope)) = sessions.iter_mut().find(|(id, scope)| {
+            id.starts_with("computer-auto-")
+                && scope.issued_by_server
+                && scope.computer_owner.as_deref() == Some(owner)
+        }) {
+            scope.last_seen_at = now;
+            return id.clone();
+        }
+        let id = format!("computer-auto-{}", uuid::Uuid::new_v4());
+        sessions.insert(
+            id.clone(),
+            GatewaySessionScope {
+                active_workspace_id: None,
+                last_seen_at: now,
+                issued_by_server: true,
+                computer_owner: Some(owner.to_owned()),
+            },
+        );
+        id
+    }
+    /// Create a short-lived, high-entropy capability for clients which drop
+    /// the MCP transport session header between calls. The caller must first
+    /// have a verified OAuth / bearer / local auth principal.
+    pub fn issue_computer_capability(&self, session_id: &str, owner: &str) -> Option<String> {
+        if !self.computer_owner_matches(session_id, owner) {
+            return None;
+        }
+        let token = format!(
+            "cu1_{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let mut capabilities = self
+            .computer_capabilities
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = unix_timestamp_seconds();
+        capabilities.retain(|_, entry| {
+            now.saturating_sub(entry.created_at) <= COMPUTER_CAPABILITY_TTL_SECONDS
+        });
+        capabilities.insert(
+            computer_capability_hash(&token),
+            ComputerCapability {
+                session_id: session_id.to_string(),
+                owner: owner.to_string(),
+                created_at: now,
+            },
+        );
+        Some(token)
+    }
+
+    pub fn resolve_computer_capability(&self, token: &str, owner: &str) -> Option<String> {
+        if token.len() != 68
+            || !token.starts_with("cu1_")
+            || !token[4..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        let now = unix_timestamp_seconds();
+        let capability = {
+            let mut capabilities = self
+                .computer_capabilities
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            capabilities.retain(|_, entry| {
+                now.saturating_sub(entry.created_at) <= COMPUTER_CAPABILITY_TTL_SECONDS
+            });
+            capabilities.get(&computer_capability_hash(token)).cloned()
+        }?;
+        if capability.owner != owner || !self.computer_owner_matches(&capability.session_id, owner)
+        {
+            return None;
+        }
+        Some(capability.session_id)
+    }
+
+    pub fn revoke_computer_capabilities(&self, session_id: &str) {
+        let mut capabilities = self
+            .computer_capabilities
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        capabilities.retain(|_, entry| entry.session_id != session_id);
+    }
+
     /// Compare a previously server-issued Computer Use session to the verified
     /// HTTP auth identity; client-supplied metadata never confers host rights.
     pub fn computer_owner_matches(&self, session_id: &str, owner: &str) -> bool {

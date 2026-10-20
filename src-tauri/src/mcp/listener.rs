@@ -51,6 +51,8 @@ fn computer_auth_principal(state: &ListenerState, headers: &HeaderMap) -> Option
     match method {
         "oauth" => client_id.map(|id| format!("oauth:{id}")),
         "shared_bearer" => Some("shared_bearer".into()),
+        // Preserve legacy per-session request flow for local/no-auth clients.
+        // An anonymous identity is NEVER eligible for the new local auto mode.
         "none" => Some("local_unauthenticated".into()),
         _ => None,
     }
@@ -319,31 +321,97 @@ async fn mcp_post(
     }
     let meta = RpcRequestMeta::from_body(&body);
     let computer_principal = computer_auth_principal(&state, &headers);
-    if meta.method == "tools/call"
+    let computer_tool = meta.method == "tools/call"
         && matches!(
             meta.tool_name.as_str(),
             "computer_session" | "computer_observe" | "computer_action"
-        )
-        && !headers
-            .get(MCP_SESSION_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .zip(computer_principal.as_deref())
-            .is_some_and(|(session, owner)| {
-                state
-                    .gateway
-                    .sessions
-                    .computer_owner_matches(session, owner)
-            })
-    {
-        return Json(json!({
+        );
+    let capability_arg = body
+        .pointer("/params/arguments/session_token")
+        .and_then(Value::as_str);
+    // A capability is an explicit, short-lived bearer secret for MCP clients
+    // that do not retain the transport header. Neither workspace_id nor _meta
+    // can become a Computer Use identity.
+    let mut newly_issued_capability: Option<(String, String)> = None;
+    let computer_session = if computer_tool {
+        match (computer_principal.as_deref(), capability_arg) {
+            (Some(owner), Some(token)) => state
+                .gateway
+                .sessions
+                .resolve_computer_capability(token, owner),
+            (Some(owner), None)
+                if audit_auth_identity(&state, &headers).0 != "none"
+                    && crate::computer::local_policy_present() =>
+            {
+                // Stable per-authenticated-principal identity: no ChatGPT
+                // transport header, request _meta, or session_token required.
+                // Only the local webview can enable this policy.
+                Some(state.gateway.sessions.computer_auto_session(owner))
+            }
+            (Some(owner), None) => {
+                let header_session = headers
+                    .get(MCP_SESSION_HEADER)
+                    .and_then(|value| value.to_str().ok());
+                if let Some(header_session) = header_session.filter(|session| {
+                    state
+                        .gateway
+                        .sessions
+                        .computer_owner_matches(session, owner)
+                }) {
+                    Some(header_session.to_string())
+                } else if meta.tool_name == "computer_session"
+                    && body
+                        .pointer("/params/arguments/action")
+                        .and_then(Value::as_str)
+                        == Some("request")
+                {
+                    let session = state
+                        .gateway
+                        .sessions
+                        .issue_with_owner(Some(owner.to_string()));
+                    let token = state
+                        .gateway
+                        .sessions
+                        .issue_computer_capability(&session, owner)
+                        .expect("newly issued Computer Use session has matching owner");
+                    newly_issued_capability = Some((session.clone(), token));
+                    Some(session)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if computer_tool && computer_session.is_none() {
+        let denied = json!({
             "jsonrpc": "2.0",
             "id": meta.request_id,
             "result": {
                 "isError": true,
-                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 必须保留与当前认证客户端绑定的服务端 MCP Session Header；其他客户端或 _meta 会话不可复用授权" }],
+                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 请先通过 computer_session(request) 获取短期 session_token 并在后续调用中传入，或保留服务端 MCP Session Header；_meta 不能用作电脑操作身份" }],
                 "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
             }
-        })).into_response();
+        });
+        let (auth_method, client_id) = audit_auth_identity(&state, &headers);
+        record_tool_call(
+            ToolAuditCall::new(
+                &meta.request_id,
+                &meta.tool_name,
+                None,
+                auth_method,
+                client_id.as_deref(),
+                serde_json::to_vec(&body)
+                    .map(|v| v.len())
+                    .unwrap_or_default(),
+                &body,
+            ),
+            None,
+            &denied,
+        );
+        return Json(denied).into_response();
     }
 
     let requested_session_id = session_id_from_request(&headers, &body);
@@ -352,12 +420,14 @@ async fn mcp_post(
     } else {
         None
     };
-    if meta.method != "initialize" {
+    if meta.method != "initialize" && !computer_tool {
         if let Some(session_id) = host_session_id.as_deref() {
             state.gateway.sessions.ensure_host_session(session_id);
         }
     }
-    let effective_session_id = if meta.method == "initialize" {
+    let effective_session_id = if computer_tool {
+        computer_session
+    } else if meta.method == "initialize" {
         match requested_session_id.as_deref() {
             Some(session_id)
                 if computer_principal.as_deref().is_some_and(|owner| {
@@ -381,7 +451,14 @@ async fn mcp_post(
     };
     let response_session_id = effective_session_id
         .as_deref()
-        .filter(|session_id| state.gateway.sessions.contains(session_id))
+        .filter(|session_id| {
+            (meta.method == "initialize"
+                || headers
+                    .get(MCP_SESSION_HEADER)
+                    .and_then(|header| header.to_str().ok())
+                    == Some(*session_id))
+                && state.gateway.sessions.contains(session_id)
+        })
         .map(str::to_string);
     log_request(&state.scope_id, effective_session_id.as_deref(), &meta);
 
@@ -419,7 +496,31 @@ async fn mcp_post(
     .await;
     match result {
         Ok(gateway_response) => {
-            let response = gateway_response.body;
+            let mut response = gateway_response.body;
+            let tool_succeeded = response["result"]["isError"] == false;
+            if let Some((session, token)) = newly_issued_capability {
+                if tool_succeeded {
+                    response["result"]["structuredContent"]["session_token"] = json!(token);
+                    let payload = response["result"]["structuredContent"].to_string();
+                    response["result"]["content"][0]["text"] = json!(payload);
+                } else {
+                    state
+                        .gateway
+                        .sessions
+                        .revoke_computer_capabilities(&session);
+                }
+            }
+            if tool_succeeded
+                && meta.tool_name == "computer_session"
+                && body
+                    .pointer("/params/arguments/action")
+                    .and_then(Value::as_str)
+                    == Some("stop")
+            {
+                if let Some(session) = effective_session_id.as_deref() {
+                    state.gateway.sessions.revoke_computer_capabilities(session);
+                }
+            }
             if let Some(workspace) = gateway_response.workspace.as_ref() {
                 record_response(
                     &workspace.tools,
@@ -882,6 +983,161 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stateless_computer_use_requires_capability_and_never_trusts_metadata() {
+        let app = build_router(test_listener_state());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listen");
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        let call = |id: u64, name: &str, arguments: serde_json::Value| {
+            client.post(&url).json(&json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": name, "arguments": arguments,
+                    "_meta": { "openai/session": "untrusted-client-supplied-id" } }
+            }))
+        };
+
+        let request: serde_json::Value = call(
+            1,
+            "computer_session",
+            json!({"action": "request", "scope": "observe"}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(request["result"]["isError"], false);
+        let token = request["result"]["structuredContent"]["session_token"]
+            .as_str()
+            .expect("secret returned to stateless client");
+        assert!(token.starts_with("cu1_") && token.len() == 68);
+        assert_ne!(token, "untrusted-client-supplied-id");
+
+        let status: serde_json::Value = call(
+            2,
+            "computer_session",
+            json!({"action":"status", "session_token":token}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(status["result"]["structuredContent"]["status"], "pending");
+
+        let denied: serde_json::Value = call(3, "computer_observe", json!({"action":"windows"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            denied["result"]["structuredContent"]["error"],
+            "COMPUTER_SESSION_REQUIRED"
+        );
+        let unapproved: serde_json::Value = call(
+            4,
+            "computer_observe",
+            json!({"action":"windows", "session_token":token}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(unapproved["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("COMPUTER_NOT_APPROVED"));
+        let invalid: serde_json::Value = call(
+            5,
+            "computer_session",
+            json!({"action":"status", "session_token":"cu1_invalid"}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(
+            invalid["result"]["structuredContent"]["error"],
+            "COMPUTER_SESSION_REQUIRED"
+        );
+
+        let stopped: serde_json::Value = call(
+            6,
+            "computer_session",
+            json!({"action":"stop", "session_token":token}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(stopped["result"]["structuredContent"]["status"], "stopped");
+        let revoked: serde_json::Value = call(
+            7,
+            "computer_session",
+            json!({"action":"status", "session_token":token}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(
+            revoked["result"]["structuredContent"]["error"],
+            "COMPUTER_SESSION_REQUIRED"
+        );
+
+        // A rotating/stale client header cannot authenticate an observation,
+        // but it must not prevent an explicit, newly approved request either.
+        let forged_header: serde_json::Value = client
+            .post(&url)
+            .header(super::MCP_SESSION_HEADER, "stale-client-session")
+            .json(&json!({
+                "jsonrpc":"2.0", "id":8, "method":"tools/call",
+                "params": { "name":"computer_session",
+                    "arguments":{"action":"request","scope":"observe"} }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let token = forged_header["result"]["structuredContent"]["session_token"]
+            .as_str()
+            .expect("stale header uses explicit stateless capability instead");
+        let stopped_again: serde_json::Value = call(
+            9,
+            "computer_session",
+            json!({"action":"stop", "session_token":token}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(
+            stopped_again["result"]["structuredContent"]["status"],
+            "stopped"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn http_host_metadata_session_keeps_workspace_selection_without_transport_header() {
         let first = tempfile::tempdir().expect("workspace a");
         let second = tempfile::tempdir().expect("workspace b");
@@ -1164,7 +1420,7 @@ mod tests {
             .post(&url)
             .json(&json!({
                 "jsonrpc":"2.0","id":5,"method":"tools/call",
-                "params":{"name":"computer_session","arguments":{"action":"request"},
+                "params":{"name":"computer_observe","arguments":{"action":"screenshot"},
                           "_meta":{"openai/session":"untrusted-client"}}
             }))
             .send()

@@ -13,7 +13,7 @@ const router = createRouter({ history: createWebHashHistory(), routes: [
         { path: "/settings", redirect: "/settings/general" },
         ...["keys", "gateway", "frp"].map(panel => ({ path: `/settings/${panel}`, redirect: { path: `/settings/${legacySettingsSection(panel)!.section}`, query: { panel } } })),
         { path: "/settings/software", redirect: { path: `/settings/${legacySettingsSection("software")!.section}`, query: { panel: "software" } } },
-        { path: "/settings/:section(general|connection|execution|tools|about)", name: "settings", component: SettingsView },
+        { path: "/settings/:section(general|connection|execution|computer|tools|about)", name: "settings", component: SettingsView },
         ...(import.meta.env.DEV ? [{ path: "/dev/ui", component: () => import("./views/ComponentGalleryView.vue") }] : []),
         { path: "/:pathMatch(.*)*", redirect: "/" },
     ] });

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::computer::ManualComputerAccess;
 use crate::settings::{DownloadConfig, FrpProfile, GlobalGatewayConfig, ProxyConfig};
 use crate::workspace::WorkspaceProfile;
 
@@ -52,6 +53,8 @@ pub struct AppData {
     pub global_gateway: GlobalGatewayConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_audit_retention_days: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) manual_computer_access: Option<ManualComputerAccess>,
     #[serde(default)]
     pub shared_secrets: HashMap<String, String>,
     #[serde(default)]
