@@ -30,7 +30,9 @@ test("fast Computer Use navigation and capture keep local browser-control bounda
 
 test("Computer Use has a dedicated settings component and does not poll on gateway tab", () => {
   assert.match(ui, /id="settings-computer"/);
-  assert.match(ui, /computerAuditPoll = setInterval/);
+  assert.match(ui, /void refreshComputerAudit\(\)/);
+  assert.doesNotMatch(ui, /computerAuditPoll = setInterval/);
+  assert.match(ui, /@click="refreshComputerAudit"/);
   assert.doesNotMatch(gatewayUi, /computerAuditPoll|enableComputerAccess|getComputerScreenStatus/);
   assert.match(gatewayUi, /id="settings-gateway"/);
 });

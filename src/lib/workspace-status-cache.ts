@@ -1,10 +1,13 @@
-import { computed, onUnmounted, ref, watch, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import { createResource } from "./async-resource";
 import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
 import { detectInstalledIdes, getGlobalMcpOverview, getWorkspaceActivityMetrics, getWorkspaceGitSummary, listWorkspaceReviews, type DetectedIdeDto, type GlobalMcpOverviewDto, type WorkspaceActivityMetricsDto, type WorkspaceGitSummaryDto, type WorkspaceReviewSummaryDto, } from "$lib/api/workspaces";
 const resources = new Map<string, { invalidate: () => void }>();
+// Git status starts several OS processes per repository, so don't run the
+// expensive scan at the same cadence as the lightweight planning read.
+const GIT_SUMMARY_TTL_MS = 15_000;
 export const statusRevision = ref(0);
-function resource<T>(key: string, ttl = 6000) {
+function resource<T>(key: string, ttl = key.startsWith("git:") ? GIT_SUMMARY_TTL_MS : 6000) {
     if (!resources.has(key))
         resources.set(key, createResource<T>(ttl, () => { statusRevision.value++; }));
     return resources.get(key)! as ReturnType<typeof createResource<T>>;
@@ -14,8 +17,8 @@ export function workspaceResourceState(workspaceId: string, kind = "planning") {
     const r = resource(`${kind}:${workspaceId}`);
     return { ...r.state, stale: r.stale() };
 }
-export function getCachedWorkspaceGitSummary(id: string, force = false) { return resource<WorkspaceGitSummaryDto>(`git:${id}`).get(() => getWorkspaceGitSummary(id), force); }
-export function peekCachedWorkspaceGitSummary(id: string) { statusRevision.value; return resource<WorkspaceGitSummaryDto>(`git:${id}`).state.value; }
+export function getCachedWorkspaceGitSummary(id: string, force = false) { return resource<WorkspaceGitSummaryDto>(`git:${id}`, GIT_SUMMARY_TTL_MS).get(() => getWorkspaceGitSummary(id), force); }
+export function peekCachedWorkspaceGitSummary(id: string) { statusRevision.value; return resource<WorkspaceGitSummaryDto>(`git:${id}`, GIT_SUMMARY_TTL_MS).state.value; }
 export function getCachedPlanningState(id: string, force = false) { return resource<PlanningStateDto>(`planning:${id}`, 6000).get(() => getPlanningState(id), force); }
 export function peekCachedPlanningState(id: string) { statusRevision.value; return resource<PlanningStateDto>(`planning:${id}`, 6000).state.value; }
 export function setCachedPlanningState(id: string, value: PlanningStateDto) { resource<PlanningStateDto>(`planning:${id}`, 6000).set(value); }
@@ -31,47 +34,22 @@ export function getCachedDetectedIdes(force = false) { return resource<DetectedI
 export function peekCachedDetectedIdes() { statusRevision.value; return resource<DetectedIdeDto[]>("ides", 60000).state.value; }
 export function invalidateWorkspaceStatus(id: string) { for (const kind of ["git", "planning", "activity", "reviews"])
     resources.get(`${kind}:${id}`)?.invalidate(); }
-const subscribers = new Map<string, number>();
-let timer: ReturnType<typeof setInterval> | null = null;
-function refreshShared() {
-    if (document.visibilityState === "hidden")
-        return;
-    statusRevision.value++;
-    for (const id of subscribers.keys()) {
-        void getCachedPlanningState(id).catch(() => { });
-        void getCachedWorkspaceGitSummary(id).catch(() => { });
-    }
-    void getCachedGlobalMcpOverview().catch(() => { });
-}
-function subscribe(id: string) {
-    subscribers.set(id, (subscribers.get(id) ?? 0) + 1);
-    if (!timer) {
-        timer = setInterval(refreshShared, 3000);
-        window.addEventListener("focus", refreshShared);
-    }
-    refreshShared();
-    return () => {
-        const count = (subscribers.get(id) ?? 1) - 1;
-        if (count)
-            subscribers.set(id, count);
-        else
-            subscribers.delete(id);
-        if (!subscribers.size && timer) {
-            clearInterval(timer);
-            timer = null;
-            window.removeEventListener("focus", refreshShared);
-        }
-    };
-}
-export function useWorkspaceStatus(id: Ref<string> | (() => string)) {
-    let release: (() => void) | undefined;
+/** Load on entry to a workspace tab. Never poll Git across inactive workspaces. */
+export function useWorkspaceStatus(id: Ref<string> | (() => string), options: { git?: boolean; global?: boolean } = {}) {
     const read = typeof id === "function" ? id : () => id.value;
-    watch(read, value => { release?.(); if (value)
-        release = subscribe(value); }, { immediate: true });
-    onUnmounted(() => release?.());
+    watch(read, value => {
+        if (!value) return;
+        void getCachedPlanningState(value).catch(() => { });
+        if (options.git) void getCachedWorkspaceGitSummary(value).catch(() => { });
+        if (options.global) void getCachedGlobalMcpOverview().catch(() => { });
+    }, { immediate: true });
     return {
         planning: computed(() => peekCachedPlanningState(read())), git: computed(() => peekCachedWorkspaceGitSummary(read())),
         query: computed(() => workspaceResourceState(read())), gitQuery: computed(() => workspaceResourceState(read(), "git")),
-        refresh: () => Promise.allSettled([getCachedPlanningState(read(), true), getCachedWorkspaceGitSummary(read(), true)]),
+        refresh: () => Promise.allSettled([
+            getCachedPlanningState(read(), true),
+            ...(options.git ? [getCachedWorkspaceGitSummary(read(), true)] : []),
+            ...(options.global ? [getCachedGlobalMcpOverview(true)] : []),
+        ]),
     };
 }

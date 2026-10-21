@@ -28,7 +28,7 @@ export const globalHealthSummary = computed(() => {
       total,
     };
   }
-  if(globalHealthLastCheckedAt.value && healthClock.value-globalHealthLastCheckedAt.value>=30000){return {state:"unknown" as const,label:"检查已过期",detail:"连接状态待重新检查",failed,total};}
+  if(globalHealthLastCheckedAt.value && healthClock.value-globalHealthLastCheckedAt.value>=90000){return {state:"unknown" as const,label:"检查已过期",detail:"连接状态待重新检查",failed,total};}
   if (failed.length > 0) {
     return {
       state: "warning" as const,
@@ -56,11 +56,13 @@ export const globalHealthSummary = computed(() => {
   };
 });
 
-let monitorTimer = 0;
-let monitorActive = false;
+const MIN_HEALTH_CHECK_INTERVAL_MS = 30_000;
 
-export async function refreshGlobalHealth() {
+/** Explicit, user-initiated diagnostics only. No app-wide health polling. */
+export async function refreshGlobalHealth(force = false) {
   if (globalHealthBusy.value) return;
+  if (!force && globalHealthLastCheckedAt.value !== null &&
+    Date.now() - globalHealthLastCheckedAt.value < MIN_HEALTH_CHECK_INTERVAL_MS) return;
   globalHealthBusy.value = true;
   try {
     globalHealthItems.value = await runGlobalHealthChecks();
@@ -74,25 +76,10 @@ export async function refreshGlobalHealth() {
   }
 }
 
-function refreshWhenVisible() {
+/** Reuse the connection page's diagnostic result instead of checking twice. */
+export function recordConnectionHealth(items: HealthItem[], error: string | null = null) {
+  globalHealthItems.value = items;
+  globalHealthError.value = error;
+  globalHealthLastCheckedAt.value = Date.now();
   healthClock.value = Date.now();
-  if (document.visibilityState === "visible") void refreshGlobalHealth();
-}
-
-export function startGlobalHealthMonitor(intervalMs = 10_000) {
-  if (monitorActive) return;
-  monitorActive = true;
-  void refreshGlobalHealth();
-  monitorTimer = window.setInterval(refreshWhenVisible, intervalMs);
-  document.addEventListener("visibilitychange", refreshWhenVisible);
-  window.addEventListener("focus", refreshWhenVisible);
-}
-
-export function stopGlobalHealthMonitor() {
-  if (!monitorActive) return;
-  monitorActive = false;
-  window.clearInterval(monitorTimer);
-  monitorTimer = 0;
-  document.removeEventListener("visibilitychange", refreshWhenVisible);
-  window.removeEventListener("focus", refreshWhenVisible);
 }

@@ -33,6 +33,8 @@ const auxiliaryError = ref('');
 let timer = 0;
 let generation = 0;
 let inFlight = false;
+let loadedHistoryKey = '';
+let rerunRequested = false;
 const ordered = computed(() => { statusRevision.value; const byId = new Map(workspaces.value.map(w => [w.id, w])); return sortWorkspaceIds([...byId.keys()], dashboardPreferences.value).map(id => { const workspace = byId.get(id)!; const state = peekCachedPlanningState(id); const git = peekCachedWorkspaceGitSummary(id); const query = workspaceResourceState(id); return { workspace, state, git, query, focus: taskFocus(state) }; }); });
 const focused = computed(() => ordered.value.find(w => w.workspace.id === lastId.value && (w.focus.plan || w.focus.goal)) ?? ordered.value.find(w => w.focus.plan || w.focus.goal));
 const attention = computed(() => ordered.value.flatMap(row => {
@@ -60,11 +62,17 @@ const quickItems = computed(() => [{ label: '添加工作区', hint: '项目', r
 const filteredCommands = computed(() => quickItems.value.filter(x => x.label.toLowerCase().includes(commandQuery.value.toLowerCase())));
 function addWorkspace() { window.dispatchEvent(new CustomEvent('coding-tools:add-workspace')); }
 function visible(id: string) { return !dashboardPreferences.value.hiddenModules.includes(id as any); }
-async function loadAuxiliary() { if (inFlight)
-    return; inFlight = true; const id = ++generation; const items = [...workspaces.value]; try {
-    const sessions = await Promise.all(items.map(async (w) => [w.id, (await listHistorySessions(w.id)).sessions] as const));
-    if (id === generation)
-        history.value = Object.fromEntries(sessions);
+async function loadAuxiliary(forceHistory = false) {
+    if (inFlight) { rerunRequested = true; return; }
+    inFlight = true; const id = ++generation; const items = [...workspaces.value]; const historyKey = items.map(w => w.id).join(',');
+    try {
+    if (visible('activity') && (forceHistory || loadedHistoryKey !== historyKey)) {
+        const sessions = await Promise.all(items.map(async (w) => [w.id, (await listHistorySessions(w.id)).sessions] as const));
+        if (id === generation) {
+            history.value = Object.fromEntries(sessions);
+            loadedHistoryKey = historyKey;
+        }
+    }
     auxiliaryError.value = '';
     if (analyticsOpen.value) {
         const next=Object.fromEntries(await Promise.all(items.map(async w=>[w.id,await getServiceUsageStats(w.id)] as const)));
@@ -77,8 +85,12 @@ catch (error) {
 }
 finally {
     inFlight = false;
+    if (rerunRequested && id === generation) {
+        rerunRequested = false;
+        void loadAuxiliary();
+    }
 } }
-async function refresh() { await Promise.allSettled(ordered.value.flatMap(row => [getCachedPlanningState(row.workspace.id, true), getCachedWorkspaceGitSummary(row.workspace.id, true)])); await loadAuxiliary(); }
+async function refresh() { await Promise.allSettled(ordered.value.flatMap(row => [getCachedPlanningState(row.workspace.id, true), getCachedWorkspaceGitSummary(row.workspace.id, true)])); await loadAuxiliary(true); }
 async function reveal(path: string) { try {
     await openWorkspaceDirectory(path);
 }
@@ -97,10 +109,16 @@ function keys(e: KeyboardEvent) { if ((e.metaKey || e.ctrlKey) && e.key.toLowerC
     commandOpen.value = !commandOpen.value;
 } }
 watch(() => workspaces.value.map(w => w.id).join(','), () => void loadAuxiliary());
-watch(analyticsOpen, open => { if (open)
-    void loadAuxiliary(); });
-onMounted(() => { loadDashboardPreferences(); void getLastWorkspaceId().then(id => lastId.value = id).catch(() => { }); void loadAuxiliary(); timer = window.setInterval(() => { if (document.visibilityState === 'visible')
-    void loadAuxiliary(); }, 15000); window.addEventListener('keydown', keys); });
+watch(() => visible('activity'), open => { if (open) void loadAuxiliary(); });
+watch(analyticsOpen, open => {
+    if (timer) window.clearInterval(timer);
+    timer = 0;
+    if (!open) return;
+    void loadAuxiliary();
+    // Sampling is useful only while the analytics panel is open.
+    timer = window.setInterval(() => { if (document.visibilityState === 'visible') void loadAuxiliary(); }, 30000);
+});
+onMounted(() => { loadDashboardPreferences(); void getLastWorkspaceId().then(id => { lastId.value = id; if (id) void getCachedPlanningState(id).catch(() => {}); }).catch(() => { }); void loadAuxiliary(); window.addEventListener('keydown', keys); });
 onUnmounted(() => { generation++; window.clearInterval(timer); window.removeEventListener('keydown', keys); });
 </script>
 <template><section class="page-scroll" :data-density="dashboardPreferences.density">
@@ -136,7 +154,7 @@ onUnmounted(() => { generation++; window.clearInterval(timer); window.removeEven
 </span>
 <span>{{item.path.endsWith('/diagnostics') ? '查看诊断' : '查看任务'}} →</span>
 </button>
-  <EmptyState v-if="attention.length===0&&!['warning','error'].includes(globalHealthSummary.state)" title="暂无需要处理的事项" description="待验收和执行异常会集中显示在这里。"/>
+  <EmptyState v-if="attention.length===0&&!['warning','error'].includes(globalHealthSummary.state)" title="当前没有已知待处理事项" description="尚未打开的工作区不会自动扫描。进入项目或点击刷新后可获得最新状态。"/>
  </GlassCard>
  <GlassCard v-if="visible('focus')" class="ui-focus-panel">
 <div class="ui-section-heading">

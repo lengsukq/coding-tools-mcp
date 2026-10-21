@@ -1,5 +1,7 @@
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use super::background_command;
 use crate::error::{AppError, AppResult};
 
 pub fn open_path_in_file_manager(path: &std::path::Path) -> AppResult<()> {
@@ -56,7 +58,7 @@ pub fn open_url(url: &str) -> AppResult<()> {
     #[cfg(target_os = "windows")]
     {
         // `start` needs an empty window title when the URL may contain `&`.
-        Command::new("cmd")
+        background_command("cmd")
             .args(["/C", "start", "", url])
             .spawn()
             .map_err(|err| AppError::Message(format!("无法打开链接: {err}")))

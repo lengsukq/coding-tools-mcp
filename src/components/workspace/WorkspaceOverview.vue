@@ -5,7 +5,7 @@ import BaseButton from "../ui/BaseButton.vue";
 import GlassCard from "../ui/GlassCard.vue";
 import StatusPill from "../ui/StatusPill.vue";
 import EmptyState from "../ui/EmptyState.vue";
-import { useWorkspaceStatus, getCachedDetectedIdes, getCachedGlobalMcpOverview, peekCachedGlobalMcpOverview,globalResourceState,getCachedWorkspaceActivityMetrics,peekCachedWorkspaceActivityMetrics } from "$lib/workspace-status-cache";
+import { useWorkspaceStatus, getCachedDetectedIdes, peekCachedGlobalMcpOverview,globalResourceState,getCachedWorkspaceActivityMetrics,peekCachedWorkspaceActivityMetrics } from "$lib/workspace-status-cache";
 import { openWorkspaceInIde, type DetectedIdeDto } from "$lib/api/workspaces";
 import { showToast } from "$lib/stores/toast";
 import { taskFocus, statusPresentation } from "$lib/ui-model";
@@ -23,7 +23,7 @@ const emit = defineEmits<{
     revealDirectory: [
     ];
 }>();
-const { planning, git, query, gitQuery, refresh } = useWorkspaceStatus(() => props.workspaceId);
+const { planning, git, query, gitQuery, refresh } = useWorkspaceStatus(() => props.workspaceId, { git: true, global: true });
 const focus = computed(() => taskFocus(planning.value));
 const ides = ref<DetectedIdeDto[]>([]);
 const globalQuery=computed(globalResourceState);
@@ -39,7 +39,7 @@ async function openIde(id: string) { try {
 catch (e) {
     showToast(String(e), { kind: 'error' });
 } }
-onMounted(() => { void getCachedDetectedIdes().then(v => ides.value = v).catch(() => { }); void getCachedGlobalMcpOverview().catch(() => { }); });
+onMounted(() => { void getCachedDetectedIdes().then(v => ides.value = v).catch(() => { }); });
 </script>
 <template><div class="ui-stack">
  <div v-if="query.error||query.stale||gitQuery.error" class="ui-banner ui-banner--warning" role="status">

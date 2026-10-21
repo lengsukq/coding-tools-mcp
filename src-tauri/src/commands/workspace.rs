@@ -1,11 +1,12 @@
 use std::path::PathBuf;
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
 use tauri::State;
 
 use crate::app_state::{teardown_workspace, AppState};
 use crate::error::{AppError, AppResult};
-use crate::platform::open_path_in_file_manager;
+use crate::platform::{background_command, open_path_in_file_manager};
 use crate::workspace::WorkspaceProfile;
 
 #[tauri::command]
@@ -81,7 +82,7 @@ fn review_launch(
 }
 
 #[tauri::command]
-pub fn create_workspace_review_url(
+pub async fn create_workspace_review_url(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> AppResult<Option<ReviewLaunch>> {
@@ -92,12 +93,16 @@ pub fn create_workspace_review_url(
             .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
     })?;
     let root = PathBuf::from(profile.path);
-    let Some(link) = crate::review::create_workspace_review(&root, "Workspace changes vs HEAD")
-        .map_err(AppError::Message)?
-    else {
-        return Ok(None);
-    };
-    review_launch(&root, link, "workspace").map(Some)
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(link) = crate::review::create_workspace_review(&root, "Workspace changes vs HEAD")
+            .map_err(AppError::Message)?
+        else {
+            return Ok(None);
+        };
+        review_launch(&root, link, "workspace").map(Some)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("生成变更审查失败: {err}")))?
 }
 
 #[tauri::command]
@@ -210,6 +215,7 @@ pub fn list_workspace_reviews(
     })?;
     let root = PathBuf::from(profile.path);
     crate::review::cleanup_expired(&root);
+    let storage_bytes = crate::review::storage_bytes(&root);
     Ok(crate::review::list_reviews(&root)
         .into_iter()
         .take(20)
@@ -222,7 +228,7 @@ pub fn list_workspace_reviews(
             additions: review.stats.additions,
             deletions: review.stats.deletions,
             operation_ids: review.operation_ids,
-            storage_bytes: crate::review::storage_bytes(&root),
+            storage_bytes,
             session_id: review.session_id,
             scope: review.scope,
         })
@@ -312,7 +318,7 @@ const IDE_DEFINITIONS: &[IdeDefinition] = &[
 
 fn command_exists(command: &str) -> bool {
     #[cfg(target_os = "windows")]
-    let probe = Command::new("where").arg(command).output();
+    let probe = background_command("where").arg(command).output();
     #[cfg(not(target_os = "windows"))]
     let probe = Command::new("sh")
         .args(["-lc", &format!("command -v {command}")])
@@ -334,15 +340,19 @@ fn ide_installed(ide: &IdeDefinition) -> bool {
 }
 
 #[tauri::command]
-pub fn detect_installed_ides() -> Vec<DetectedIde> {
-    IDE_DEFINITIONS
-        .iter()
-        .filter(|ide| ide_installed(ide))
-        .map(|ide| DetectedIde {
-            id: ide.id,
-            name: ide.name,
-        })
-        .collect()
+pub async fn detect_installed_ides() -> AppResult<Vec<DetectedIde>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        IDE_DEFINITIONS
+            .iter()
+            .filter(|ide| ide_installed(ide))
+            .map(|ide| DetectedIde {
+                id: ide.id,
+                name: ide.name,
+            })
+            .collect()
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("检测 IDE 失败: {err}")))
 }
 
 #[tauri::command]
@@ -389,7 +399,7 @@ pub fn open_workspace_in_ide(
             .map(|_| ())
             .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)));
     }
-    Command::new(ide.cli)
+    background_command(ide.cli)
         .arg(&root)
         .spawn()
         .map(|_| ())
@@ -421,7 +431,7 @@ pub struct WorkspaceGitSummary {
 }
 
 #[tauri::command]
-pub fn get_workspace_git_summary(
+pub async fn get_workspace_git_summary(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> AppResult<WorkspaceGitSummary> {
@@ -432,8 +442,14 @@ pub fn get_workspace_git_summary(
             .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
     })?;
     let root = PathBuf::from(profile.path);
+    tauri::async_runtime::spawn_blocking(move || compute_workspace_git_summary(root))
+        .await
+        .map_err(|err| AppError::Message(format!("读取 Git 状态失败: {err}")))
+}
+
+fn compute_workspace_git_summary(root: PathBuf) -> WorkspaceGitSummary {
     let git_at = |cwd: &std::path::Path, args: &[&str]| -> Option<String> {
-        let output = Command::new("git")
+        let output = background_command("git")
             .args(args)
             .current_dir(cwd)
             .output()
@@ -481,7 +497,7 @@ pub fn get_workspace_git_summary(
         .zip(root.canonicalize().ok())
         .is_some_and(|(reported, actual)| reported == actual);
     if !root_is_git {
-        return Ok(WorkspaceGitSummary {
+        return WorkspaceGitSummary {
             available: false,
             branch: None,
             changed_files: 0,
@@ -489,12 +505,12 @@ pub fn get_workspace_git_summary(
             behind: 0,
             last_commit: None,
             sub_repositories,
-        });
+        };
     }
     let branch = git_at(&root, &["branch", "--show-current"]).filter(|value| !value.is_empty());
     let changed_files = crate::review::git_changed_file_count(&root, &sub_prefixes);
     let (behind, ahead) = sync_counts(&root);
-    Ok(WorkspaceGitSummary {
+    WorkspaceGitSummary {
         available: true,
         branch,
         changed_files,
@@ -502,7 +518,7 @@ pub fn get_workspace_git_summary(
         behind,
         last_commit: git_at(&root, &["log", "-1", "--pretty=%h · %s"]),
         sub_repositories,
-    })
+    }
 }
 
 #[tauri::command]

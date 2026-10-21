@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
 import SelectField from "$src/components/ui/SelectField.vue";
@@ -117,7 +117,10 @@ const screenPermissionTroubleshooting = computed(() => {
   return "当前应用已使用正式 Bundle ID 和证书签名，但系统权限预检仍未通过。请先批准一次 MCP Computer Use 请求并尝试真实截图；若系统实际拒绝，可在完全退出应用后运行终端命令「tccutil reset ScreenCapture com.codingtools.mcp.desktop」，只清除本应用的录屏授权，再重新打开应用、点击「请求系统权限」、允许并完整重启。切勿使用 tccutil reset All。";
 });
 let computerPoll: ReturnType<typeof setInterval> | undefined;
-let computerAuditPoll: ReturnType<typeof setInterval> | undefined;
+watch(manualScope, scope => {
+  // Listing all running applications is only needed for control grants.
+  if (scope === "control" && !computerApps.value.length) void refreshComputerApps();
+});
 
 async function decideSensitiveAction(approve: boolean) {
   const confirmationId = computer.value?.pendingSensitiveActionId;
@@ -224,14 +227,17 @@ async function revokeComputer() {
 
 onMounted(() => {
   void refreshComputerScreen();
-  void refreshComputerApps();
   void refreshComputerAudit();
-  computerPoll = setInterval(() => void refreshComputerScreen(), 3000);
-  computerAuditPoll = setInterval(() => void refreshComputerAudit(), 10000);
+  // Approvals need timely updates while this page is open. Do not poll on
+  // unsupported Windows hosts or while the application is in the background.
+  computerPoll = setInterval(() => {
+    if (document.visibilityState === "visible" && computer.value?.supported !== false) {
+      void refreshComputerScreen();
+    }
+  }, 3000);
 });
 onUnmounted(() => {
   if (computerPoll) clearInterval(computerPoll);
-  if (computerAuditPoll) clearInterval(computerAuditPoll);
 });
 </script>
 

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { Activity, ClipboardList, LayoutDashboard, Plus, Settings, Menu } from "@lucide/vue";
 import appIcon from "$src/assets/app-icon.png";
 import ThemeToggle from "./ThemeToggle.vue";
 import { APP_VERSION } from "$lib/app-version";
-import { globalHealthSummary, startGlobalHealthMonitor, stopGlobalHealthMonitor } from "$lib/stores/health";
+import { globalHealthSummary } from "$lib/stores/health";
 defineProps<{
     dashboardActive?: boolean;
     auditActive?: boolean;
@@ -24,8 +24,6 @@ const emit = defineEmits<{
 }>();
 const navOpen = ref(false);
 const healthTone = computed(() => globalHealthSummary.value.state === 'error' ? 'danger' : globalHealthSummary.value.state === 'warning' ? 'warning' : globalHealthSummary.value.state === 'healthy' ? 'success' : 'neutral');
-onMounted(startGlobalHealthMonitor);
-onUnmounted(stopGlobalHealthMonitor);
 </script>
 <template><div class="ui-app-shell">
 <aside class="ui-sidebar" :class="{'is-open':navOpen}">
@@ -57,7 +55,7 @@ onUnmounted(stopGlobalHealthMonitor);
 <button type="button" class="ui-health-link" :class="`is-${healthTone}`" @click="emit('openHealth');navOpen=false">
 <Activity :size="17"/>
 <span>
-<strong>系统健康 · {{globalHealthSummary.label}}</strong>
+<strong>连接诊断 · {{globalHealthSummary.label}}</strong>
 <small>查看连接详情</small>
 </span>
 </button>

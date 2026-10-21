@@ -21,6 +21,7 @@ import {
 import { listFrpProfiles, type FrpProfileDto } from "$lib/api/settings";
 import { getGlobalMcpOverview, startRuntime, stopRuntime, type GlobalMcpOverviewDto } from "$lib/api/workspaces";
 import { globalMcpRuntimeState } from "$lib/stores/app";
+import { recordConnectionHealth } from "$lib/stores/health";
 import SaveBar from "$src/components/ui/SaveBar.vue";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
 import { connectionHealthPresentation } from "$lib/ui-model";
@@ -223,6 +224,7 @@ async function stop() {
     healthError.value = "";
     healthCheckFailed.value = false;
     lastCheckedAt.value = null;
+    recordConnectionHealth([]);
     showToast("Global MCP 已停止", { kind: "info" });
   } catch (error) {
     showToast(String(error), { title: "停止失败", kind: "error" });
@@ -265,6 +267,7 @@ async function runHealth() {
   healthError.value = "";
   try {
     health.value = await checkGlobalGatewayHealth();
+    recordConnectionHealth(health.value.map(item => ({ ...item, hint: "" })));
     healthCheckFailed.value = false;
     lastCheckedAt.value = Date.now();
     const [nextStatus, nextGateway] = await Promise.all([getGlobalMcpOverview(), getGlobalGatewayStatus()]);
@@ -273,6 +276,7 @@ async function runHealth() {
   } catch (e) {
     healthCheckFailed.value = true;
     healthError.value = String(e);
+    recordConnectionHealth(health.value.map(item => ({ ...item, hint: "" })), healthError.value);
     lastCheckedAt.value = Date.now();
   } finally {
     checking.value = false;

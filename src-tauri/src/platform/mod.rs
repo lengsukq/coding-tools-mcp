@@ -40,9 +40,11 @@ pub(crate) mod macos;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
 
+mod command;
 mod open;
 mod paths;
 
+pub(crate) use command::background_command;
 pub use open::{is_allowed_url, open_path_in_file_manager, open_url};
 
 #[cfg(target_os = "linux")]

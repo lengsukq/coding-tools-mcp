@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Folder } from "@lucide/vue";
 import type { WorkspaceProfile } from "$lib/types";
-import { useWorkspaceStatus } from "$lib/workspace-status-cache";
+import { peekCachedPlanningState, peekCachedWorkspaceGitSummary, statusRevision } from "$lib/workspace-status-cache";
 import { taskFocus, statusPresentation } from "$lib/ui-model";
 const props = defineProps<{
     workspace: WorkspaceProfile;
@@ -12,10 +12,13 @@ defineEmits<{
     click: [
     ];
 }>();
-const { planning, git, query, gitQuery } = useWorkspaceStatus(() => props.workspace.id);
+// The sidebar is always mounted. Never start one Git/Planning poller per item.
+// It shows last known data and lets the active page refresh on demand.
+const planning = computed(() => { statusRevision.value; return peekCachedPlanningState(props.workspace.id); });
+const git = computed(() => { statusRevision.value; return peekCachedWorkspaceGitSummary(props.workspace.id); });
 const focus = computed(() => taskFocus(planning.value));
-const state = computed(() => query.value.error ? '数据更新失败' : query.value.stale ? '数据已过期' : planning.value ? statusPresentation(planning.value.execution.state).label : '加载中');
-const meta = computed(() => gitQuery.value.error ? 'Git 更新失败' : !git.value ? 'Git 加载中' : gitQuery.value.stale ? 'Git 数据过期' : git.value?.available ? `${git.value.branch || '分离 HEAD'} · ${git.value.changedFiles} 个变更` : git.value?.subRepositories.length ? `${git.value.subRepositories.length} 个子仓库` : '非 Git 项目');
+const state = computed(() => planning.value ? statusPresentation(planning.value.execution.state).label : '打开后加载状态');
+const meta = computed(() => !git.value ? '打开后加载 Git 状态' : git.value.available ? `${git.value.branch || '分离 HEAD'} · ${git.value.changedFiles} 个变更` : git.value.subRepositories.length ? `${git.value.subRepositories.length} 个子仓库` : '非 Git 项目');
 </script>
 <template><button type="button" class="ui-workspace-nav" :class="{active}" :aria-current="active?'page':undefined" :title="`${workspace.path}\n${focus.title}\n${state}`" @click="$emit('click')">
 <Folder :size="17"/>

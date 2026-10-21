@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use uuid::Uuid;
 
+use crate::platform::background_command;
+
 const REVIEW_DIR: &str = ".coding-tools/reviews";
 const MAX_FILE_BYTES: usize = 512 * 1024;
 const MAX_WORKSPACE_REVIEW_FILES: usize = 500;
@@ -55,7 +57,7 @@ fn git_repo_changes(
     repo_root: &Path,
     ignored_prefixes: &[String],
 ) -> Result<Vec<(String, String, String)>, String> {
-    let output = std::process::Command::new("git")
+    let output = background_command("git")
         .args(["diff", "--name-status", "-z", "-M", "HEAD", "--", "."])
         .current_dir(repo_root)
         .output()
@@ -90,7 +92,7 @@ fn git_repo_changes(
             changes.push((status, path.clone(), path));
         }
     }
-    let untracked = std::process::Command::new("git")
+    let untracked = background_command("git")
         .args(["ls-files", "--others", "--exclude-standard", "-z"])
         .current_dir(repo_root)
         .output()
@@ -129,7 +131,16 @@ fn prefixed_review_path(prefix: &str, path: &str) -> String {
 }
 
 fn is_git_repository_root(path: &Path) -> bool {
-    let output = std::process::Command::new("git")
+    // Most first-level directories are NOT Git repositories. Avoid spawning a
+    // Git process for each of them on every workspace status refresh.
+    // Linked worktrees use a .git file, and bare repositories have HEAD and
+    // objects directly at the root. Both should remain discoverable.
+    if !(path.join(".git").exists()
+        || (path.join("HEAD").is_file() && path.join("objects").is_dir()))
+    {
+        return false;
+    }
+    let output = background_command("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(path)
         .output();
@@ -391,17 +402,18 @@ pub fn create_workspace_review(
     if is_git_repository_root(workspace_root) {
         repositories.push((String::new(), workspace_root.to_path_buf()));
     }
-    repositories.extend(direct_git_repositories(workspace_root));
+    let nested_repositories = direct_git_repositories(workspace_root);
+    let nested_repo_prefixes = nested_repositories
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    repositories.extend(nested_repositories);
     if repositories.is_empty() {
         return Err(
             "workspace diff requires a Git repository or a first-level Git repository".into(),
         );
     }
 
-    let nested_repo_prefixes = direct_git_repositories(workspace_root)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect::<Vec<_>>();
     let mut files = Vec::new();
     let mut base_revisions = Vec::new();
     for (prefix, repo_root) in repositories {
@@ -659,7 +671,7 @@ fn change_file_from_bytes(path: &str, status: &str, before: &[u8], after: &[u8])
 }
 
 fn git_blob_at_head(root: &Path, path: &str) -> Vec<u8> {
-    std::process::Command::new("git")
+    background_command("git")
         .args(["show", &format!("HEAD:{path}")])
         .current_dir(root)
         .output()
@@ -805,7 +817,7 @@ pub fn storage_bytes(workspace_root: &Path) -> u64 {
 }
 
 fn git_head(root: &Path) -> Option<String> {
-    std::process::Command::new("git")
+    background_command("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(root)
         .output()
@@ -973,6 +985,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let child = dir.path().join("service-a");
         fs::create_dir_all(&child).unwrap();
+        for i in 0..20 {
+            fs::create_dir(dir.path().join(format!("ordinary-{i}"))).unwrap();
+        }
         let git = |cwd: &Path, args: &[&str]| {
             let output = std::process::Command::new("git")
                 .args(args)
