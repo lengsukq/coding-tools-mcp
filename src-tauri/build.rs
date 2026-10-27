@@ -5,6 +5,7 @@ fn main() {
             .file("src/platform/macos/computer_native.m")
             .flag("-fobjc-arc")
             .flag("-fblocks")
+            .flag("-Wno-unguarded-availability-new")
             .compile("computer_native");
         for framework in [
             "Foundation",
