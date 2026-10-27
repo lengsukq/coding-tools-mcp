@@ -57,7 +57,7 @@ pub use tool_audit::{
 };
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
-pub use window_chrome::{hide_to_tray, quit_app, show_main_window};
+pub use window_chrome::{enter_compact_mode, hide_to_tray, quit_app, show_main_window};
 pub use workspace::{
     create_session_review_url, create_workspace, create_workspace_review_url, delete_workspace,
     delete_workspace_review, detect_installed_ides, get_workspace_activity_metrics,

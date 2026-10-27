@@ -79,6 +79,8 @@ Dashboard 还会持续刷新 MCP Token 估算，并提供 Token Flow、请求成
 - MCP session 在全局连接内选择 Workspace，规划状态和历史会话仍围绕所选工作区组织。
 - 侧边栏直接展示当前分支、clean / changed、当前 Goal / Plan、完成进度和执行状态。
 - Workspace Overview 支持主仓库与一级子 Git 状态、7 天修改趋势、执行质量、整个工作区 Diff / Review 和 IDE 快速打开。
+- 后台空闲内存自动维护每 5 分钟执行：MCP Session 空闲 30 分钟过期（进行中的 RPC 受保护）；完成并且 30 分钟未访问的命令从内存回收，但完整输出仍按原磁盘缓存规则保留。运行中命令、MCP 服务和隧道不会被清理。菜单栏显示定时回收的累计会话数。
+- 远程 AI Change Review 支持 Unified / Split 切换；Split 使用左右独立横向滚动的代码栏、单侧行号、对齐的差异行和自动截断的文件标题，避免长代码覆盖相邻栏位。
 
 **优势**
 
@@ -183,6 +185,8 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 ![通用设置与 Agent Runtime](docs/images/settings-general.png)
 
 *通用设置把更新入口、WebView 内存管理、运行状态恢复、局域网访问和全局可执行 PATH 放在同一处。*
+
+**macOS 轻量驻留（菜单栏）**：主界面侧栏点击「轻量驻留」，或关闭窗口时选择「轻量驻留」，会卸载主 WebView、隐藏 Dock 图标（仅保留右上角菜单栏入口），降低界面内存占用，同时保持全局 MCP、工作区会话及已启动的隧道继续运行。点击 macOS 右上角菜单栏图标可查看约每 15 秒更新的主进程/界面内存估算、WebView 进程数、MCP 状态、工作区与活跃会话，并可恢复主窗口、刷新信息或完全退出。恢复界面时 Dock 图标也会恢复；页面重新加载并保留窗口尺寸与位置。未保存的表单修改会在进入轻量模式前要求确认。Windows 暂保留原有托盘隐藏模式，不声称释放 WebView 内存。
 
 **特点**
 

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import AppShell from "$src/components/AppShell.vue";
 import CloseConfirmDialog from "$src/components/CloseConfirmDialog.vue";
@@ -19,6 +20,7 @@ import { globalMcpRuntimeState, workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import { startUiMemoryGuard } from "$lib/ui-memory-guard";
 import { startCloseGuard } from "$lib/close-guard";
+import { enterCompactMode } from "$lib/api/window-chrome";
 import {
   dashboardPreferences,
   loadDashboardPreferences,
@@ -52,6 +54,12 @@ async function refreshWorkspaces() {
 
 }
 
+async function compactUi() {
+  if (!await confirmUnsavedChanges()) return;
+  try { await enterCompactMode(); }
+  catch (error) { showToast(String(error), { title: "进入轻量模式失败", kind: "error" }); }
+}
+
 async function addWorkspace() {
   try {
     const selected = await open({ directory: true, multiple: false });
@@ -75,9 +83,16 @@ function openWorkspace(id: string) {
 
 let stopMemoryGuard: (() => void) | undefined;
 let stopCloseGuard: (() => void) | undefined;
+let stopCompactRequest: (() => void) | undefined;
+let compactListenerDisposed = false;
 const handleAddWorkspace = () => void addWorkspace();
 
 onMounted(() => {
+  compactListenerDisposed = false;
+  void listen("compact-requested", () => { void compactUi(); }).then(stop => {
+    if (compactListenerDisposed) stop();
+    else stopCompactRequest = stop;
+  }).catch(() => {});
   document.title = "Coding Tools MCP";
   loadDashboardPreferences();
   stopMemoryGuard = startUiMemoryGuard();
@@ -105,6 +120,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  compactListenerDisposed = true;
+  stopCompactRequest?.();
   stopMemoryGuard?.();
   stopCloseGuard?.();
   window.removeEventListener("coding-tools:add-workspace", handleAddWorkspace);
@@ -122,6 +139,7 @@ onUnmounted(() => {
       @add-workspace="addWorkspace"
       @open-settings="router.push('/settings/general')"
       @open-health="router.push({path:'/settings/connection',query:{panel:'health'}})"
+      @compact-ui="compactUi"
     >
       <template #sidebar>
         <div class="ui-sidebar-workspaces">

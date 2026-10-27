@@ -14,7 +14,9 @@ static UI_RECREATING: AtomicBool = AtomicBool::new(false);
 const KEEPALIVE_LABEL: &str = "__ui_recreate_keepalive__";
 
 pub fn should_prevent_exit() -> bool {
-    UI_RECREATING.load(Ordering::SeqCst)
+    !crate::commands::window_chrome::is_exit_armed()
+        && (UI_RECREATING.load(Ordering::SeqCst)
+            || crate::commands::window_chrome::is_compact_mode())
 }
 
 struct RecreateGuard;

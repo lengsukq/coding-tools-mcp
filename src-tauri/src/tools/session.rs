@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
@@ -29,6 +29,7 @@ const SESSION_BUFFER_BYTES: usize = 1_048_576;
 const SESSION_HEAD_BYTES: usize = 128 * 1024;
 const SESSION_TAIL_BYTES: usize = SESSION_BUFFER_BYTES - SESSION_HEAD_BYTES;
 const MAX_EVICTED_TOMBSTONES: usize = 256;
+const FINISHED_COMMAND_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// One command runtime per workspace for the lifetime of the desktop process.
 ///
@@ -43,6 +44,27 @@ pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<ExecSession>>>,
     evicted: Mutex<HashMap<String, EvictedCommand>>,
     output_store: Arc<output_store::CommandOutputStore>,
+}
+
+/// Drop only completed, unreferenced command sessions. A live child is
+/// intentionally never killed, even if its MCP connection is gone.
+pub async fn reap_idle_command_sessions() -> usize {
+    let stores = WORKSPACE_SESSION_STORES
+        .get()
+        .map(|registry| {
+            registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut removed = 0;
+    for store in stores {
+        removed += store.reap_idle_completed().await;
+    }
+    removed
 }
 
 fn unix_timestamp() -> String {
@@ -70,6 +92,40 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn idle_completed_commands_reap_but_running_commands_are_preserved() {
+        let workspace = tempdir().expect("workspace");
+        let store = SessionStore::for_workspace(workspace.path());
+        let mut completed = tokio::process::Command::new("git");
+        completed.arg("--version");
+        let finished = store.insert(ExecSession::new(completed.spawn().expect("git")));
+        let finished_id = finished.session_id.clone();
+        drop(finished);
+        let mut running = tokio::process::Command::new("sleep");
+        running.arg("20");
+        let active = store.insert(ExecSession::new(running.spawn().expect("sleep")));
+        let active_id = active.session_id.clone();
+        drop(active);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(store.reap_idle_completed_with_ttl(Duration::ZERO).await, 1);
+        assert_eq!(
+            store
+                .get(&finished_id)
+                .err()
+                .map(|e| e.to_string())
+                .is_some(),
+            true
+        );
+        assert!(
+            store.get(&active_id).is_ok(),
+            "running command must not be killed"
+        );
+        let active = store.get(&active_id).unwrap();
+        active.kill_and_wait().await;
+        store.remove(&active_id);
+    }
 
     #[test]
     fn retained_buffer_keeps_head_and_tail_of_large_stream() {

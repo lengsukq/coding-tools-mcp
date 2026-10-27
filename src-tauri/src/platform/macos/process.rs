@@ -116,7 +116,6 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
         .as_ref()
         .map(|info| info.ri_proc_start_abstime)
         .unwrap_or(0);
-    let root_responsible = responsible_pid(root).unwrap_or(root);
     let descendants: std::collections::HashSet<u32> =
         collect_child_pids(root)?.into_iter().collect();
 
@@ -132,8 +131,12 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
             continue;
         }
         let is_descendant = descendants.contains(&pid);
-        let shares_responsibility = responsible_pid(pid) == Some(root_responsible);
-        if !is_descendant && !shares_responsibility {
+        // A process can have the same "responsible process" as this app while
+        // belonging to a different application (for example when both are
+        // launched from the same terminal / launcher). Require the current
+        // app's exact PID rather than comparing inherited responsibility.
+        let belongs_to_this_app = responsible_pid(pid) == Some(root);
+        if !is_descendant && !belongs_to_this_app {
             continue;
         }
         let Ok(Some(path)) = process_image_path(pid) else {

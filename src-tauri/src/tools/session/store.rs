@@ -84,11 +84,56 @@ impl SessionStore {
     }
 
     fn active_session(&self, session_id: &str) -> Option<Arc<ExecSession>> {
-        self.sessions
+        let session = self
+            .sessions
             .lock()
             .expect("sessions lock")
             .get(session_id)
+            .cloned();
+        if let Some(session) = session.as_ref() {
+            session.touch_access();
+        }
+        session
+    }
+
+    pub(super) async fn reap_idle_completed(&self) -> usize {
+        self.reap_idle_completed_with_ttl(FINISHED_COMMAND_IDLE_TTL)
+            .await
+    }
+
+    pub(super) async fn reap_idle_completed_with_ttl(&self, idle_ttl: Duration) -> usize {
+        // Snapshot references without locking the store during process I/O.
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
             .cloned()
+            .collect::<Vec<_>>();
+        let mut to_remove = Vec::new();
+        for session in &sessions {
+            session.refresh_status().await;
+            if session.completed_idle_for(idle_ttl) && Arc::strong_count(session) == 2 {
+                to_remove.push(session.session_id.clone());
+            }
+        }
+        let mut reaped = 0;
+        for id in to_remove {
+            // Recheck under lock: a concurrent reader may have touched or
+            // claimed an Arc since we took our snapshot.
+            let removed = {
+                let mut registry = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+                let removable = registry.get(&id).is_some_and(|entry| {
+                    entry.completed_idle_for(idle_ttl) && Arc::strong_count(entry) == 2
+                });
+                removable.then(|| registry.remove(&id)).flatten()
+            };
+            if let Some(session) = removed {
+                self.remember_evicted(&id, &session);
+                reaped += 1;
+            }
+        }
+        reaped
     }
 
     fn evicted_command(&self, session_id: &str) -> Option<EvictedCommand> {
@@ -106,28 +151,32 @@ impl SessionStore {
             .expect("sessions lock")
             .remove(session_id);
         if let Some(session) = removed {
-            let mut evicted = self.evicted.lock().expect("evicted commands lock");
-            if evicted.len() >= MAX_EVICTED_TOMBSTONES {
-                if let Some(oldest) = evicted.keys().next().cloned() {
-                    evicted.remove(&oldest);
-                }
-            }
-            evicted.insert(
-                session_id.to_string(),
-                EvictedCommand {
-                    command_id: session_id.to_string(),
-                    evicted_at: unix_timestamp(),
-                    termination_reason: session
-                        .termination_reason
-                        .lock()
-                        .expect("termination lock")
-                        .clone()
-                        .unwrap_or_else(|| "evicted".into()),
-                    exit_code: *session.exit_code.lock().expect("exit_code lock"),
-                },
-            );
+            self.remember_evicted(session_id, &session);
         }
         self.output_store.cleanup_best_effort();
+    }
+
+    fn remember_evicted(&self, session_id: &str, session: &ExecSession) {
+        let mut evicted = self.evicted.lock().expect("evicted commands lock");
+        if evicted.len() >= MAX_EVICTED_TOMBSTONES {
+            if let Some(oldest) = evicted.keys().next().cloned() {
+                evicted.remove(&oldest);
+            }
+        }
+        evicted.insert(
+            session_id.to_string(),
+            EvictedCommand {
+                command_id: session_id.to_string(),
+                evicted_at: unix_timestamp(),
+                termination_reason: session
+                    .termination_reason
+                    .lock()
+                    .expect("termination lock")
+                    .clone()
+                    .unwrap_or_else(|| "evicted".into()),
+                exit_code: *session.exit_code.lock().expect("exit_code lock"),
+            },
+        );
     }
 
     pub(super) fn full_output_page(

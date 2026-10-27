@@ -79,6 +79,8 @@ A Workspace is the basic project context of Coding Tools MCP. It binds a local p
 - MCP requests select a workspace inside the global session; planning state and conversation history remain organized around that workspace.
 - The sidebar shows branch, clean / changed state, the focused Goal / Plan, progress, and execution status.
 - Workspace Overview covers the main repository and first-level nested Git repositories, 7-day activity, execution quality, whole-workspace Diff / Review, and IDE shortcuts.
+- Idle resource maintenance runs every five minutes: MCP sessions expire after 30 minutes of inactivity, with active RPCs protected by leases. Completed commands are released from memory after 30 minutes without access while full output remains subject to its existing disk retention. Running commands, MCP and tunnels are never stopped by cleanup. The menubar shows the number of sessions reclaimed by periodic sweeps.
+- Remote AI Change Review supports Unified / Split diff modes. Split uses side-by-side panes with independent horizontal scrolling, one line-number gutter per side, aligned changed rows, and ellipsized file headers to prevent long lines from overlapping the opposite pane.
 
 **Advantages**
 
@@ -183,6 +185,8 @@ Global settings also bring together the application version and Releases links, 
 ![General settings and Agent Runtime](docs/images/settings-general.png)
 
 *General settings combine update links, WebView memory management, runtime-state restoration, LAN access, and the global executable PATH.*
+
+**macOS lightweight menubar mode:** Use **Lightweight Mode** from the sidebar or the close dialog to destroy the main WebView and remove the Dock icon while keeping the MCP service, workspace sessions, and running tunnels alive. Only the native menubar icon remains. The macOS menubar menu shows process and WebView memory estimates (refreshed about every 15 seconds), WebView process count, MCP status, workspace count, and active sessions. It also lets you reopen the UI, refresh status, or quit the application. Reopening recreates the UI, restores the Dock icon and previous window geometry. Unsaved edits are checked before entering lightweight mode. Windows continues to use its existing hide-to-tray behavior.
 
 **Characteristics**
 

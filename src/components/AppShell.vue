@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Activity, ClipboardList, LayoutDashboard, Plus, Settings, Menu } from "@lucide/vue";
+import { Activity, ClipboardList, LayoutDashboard, Plus, Settings, Menu, Minimize2 } from "@lucide/vue";
 import appIcon from "$src/assets/app-icon.png";
 import ThemeToggle from "./ThemeToggle.vue";
 import { APP_VERSION } from "$lib/app-version";
@@ -21,8 +21,10 @@ const emit = defineEmits<{
     ];
     openHealth: [
     ];
+    compactUi: [];
 }>();
 const navOpen = ref(false);
+const canCompact = /Macintosh|Mac OS X/.test(navigator.userAgent);
 const healthTone = computed(() => globalHealthSummary.value.state === 'error' ? 'danger' : globalHealthSummary.value.state === 'warning' ? 'warning' : globalHealthSummary.value.state === 'healthy' ? 'success' : 'neutral');
 </script>
 <template><div class="ui-app-shell">
@@ -61,6 +63,8 @@ const healthTone = computed(() => globalHealthSummary.value.state === 'error' ? 
 </button>
 <button type="button" class="ui-nav-link" :class="{active:settingsActive}" @click="emit('openSettings');navOpen=false">
 <Settings :size="17"/>应用设置</button>
+<button v-if="canCompact" type="button" class="ui-nav-link" title="卸载主界面以节省内存；MCP 继续运行，点击系统菜单栏图标恢复" @click="emit('compactUi');navOpen=false">
+<Minimize2 :size="17"/>轻量驻留</button>
 <small class="ui-muted">v{{APP_VERSION}}</small>
 </div>
  </aside>

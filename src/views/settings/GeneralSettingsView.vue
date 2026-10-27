@@ -10,7 +10,7 @@ import TextAreaField from "../../components/ui/TextAreaField.vue";
 import TextField from "../../components/ui/TextField.vue";
 import ToggleSwitch from "../../components/ui/ToggleSwitch.vue";
 import SaveBar from "../../components/ui/SaveBar.vue";
-import { useUnsavedChanges } from "$lib/unsaved-changes";
+import { confirmUnsavedChanges, useUnsavedChanges } from "$lib/unsaved-changes";
 import {SETTINGS_NAV} from "$lib/ui-model";
 import {enqueueRuntimeSettingsWrite} from "$lib/queued-writes";
 import { mergeOwnedChanges } from "$lib/runtime-settings-draft";
@@ -19,6 +19,7 @@ import { checkAppUpdate, openUrl } from "$lib/api/app-info";
 import { scanGlobalAgentContext, type GlobalAgentContextScanDto } from "$lib/api/agent-context";
 import { getGlobalRuntimeSettings, getProxy, setGlobalRuntimeSettings, setProxy, type GlobalRuntimeSettingsDto, type ProxyConfigDto, } from "$lib/api/settings";
 import { getWebviewMemorySample } from "$lib/api/ui-memory";
+import { enterCompactMode } from "$lib/api/window-chrome";
 import { RELEASES_LATEST_URL, REPO_URL } from "$lib/app-links";
 import { APP_VERSION } from "$lib/app-version";
 import { AGENT_SOURCE_OPTIONS, toggleSource } from "$lib/agent-context";
@@ -46,6 +47,7 @@ const proxySaving = ref(false);
 const runtimeSaving = ref(false);
 const checkingUpdate = ref(false);
 const releasingUi = ref(false);
+const canCompact = /Macintosh|Mac OS X/.test(navigator.userAgent);
 const memoryHint = ref<string | null>(null);
 const scan = ref<GlobalAgentContextScanDto | null>(null);
 const scanning = ref(false);
@@ -77,6 +79,11 @@ async function refresh() {
     finally {
         loading.value = false;
     }
+}
+async function compactUi() {
+    if (!await confirmUnsavedChanges()) return;
+    try { await enterCompactMode(); }
+    catch (error) { showToast(String(error), { title: "进入轻量模式失败", kind: "error" }); }
 }
 async function scanSources(autoApply = false) {
     scanning.value = true;
@@ -313,6 +320,7 @@ onMounted(() => { void refresh(); });
 <div class="ui-actions">
 <BaseButton variant="secondary" @click="refreshMemory">刷新</BaseButton>
 <BaseButton variant="ghost" :busy="releasingUi" @click="releaseUi">释放界面内存</BaseButton>
+<BaseButton v-if="canCompact" variant="secondary" @click="compactUi">轻量驻留（关闭界面）</BaseButton>
 </div>
 </div>
 </details>

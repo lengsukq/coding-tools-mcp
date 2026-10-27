@@ -500,6 +500,11 @@ async fn mcp_post(
     } else {
         requested_session_id
     };
+    // The session must survive the entire tool request, not merely the
+    // initial touch. This guard releases after the worker returns.
+    let _active_session = effective_session_id
+        .as_deref()
+        .and_then(|id| state.gateway.sessions.begin_request(id));
     let response_session_id = effective_session_id
         .as_deref()
         .filter(|session_id| {

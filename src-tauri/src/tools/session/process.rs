@@ -15,6 +15,8 @@ pub struct ExecSession {
     created_at: String,
     started_at_wall: String,
     finished_at: Mutex<Option<String>>,
+    finished_instant: Mutex<Option<Instant>>,
+    last_access: Mutex<Instant>,
     pub exit_code: Mutex<Option<i32>>,
     exited: AtomicBool,
     pub(super) termination_reason: Mutex<Option<String>>,
@@ -43,6 +45,8 @@ impl ExecSession {
             created_at: unix_timestamp(),
             started_at_wall: unix_timestamp(),
             finished_at: Mutex::new(None),
+            finished_instant: Mutex::new(None),
+            last_access: Mutex::new(Instant::now()),
             exit_code: Mutex::new(None),
             exited: AtomicBool::new(false),
             termination_reason: Mutex::new(None),
@@ -149,6 +153,7 @@ impl ExecSession {
         let mut finished = self.finished_at.lock().expect("finished_at lock");
         if finished.is_none() {
             *finished = Some(unix_timestamp());
+            *self.finished_instant.lock().expect("finished instant lock") = Some(Instant::now());
         }
         let mut reason = self.termination_reason.lock().expect("termination lock");
         if reason.is_none() {
@@ -158,6 +163,21 @@ impl ExecSession {
 
     pub(crate) fn has_exited(&self) -> bool {
         self.exited.load(Ordering::Acquire)
+    }
+
+    pub(super) fn touch_access(&self) {
+        *self.last_access.lock().expect("last access lock") = Instant::now();
+    }
+
+    pub(super) fn completed_idle_for(&self, ttl: Duration) -> bool {
+        self.has_exited()
+            && self.last_access.lock().expect("last access lock").elapsed() >= ttl
+            && self
+                .finished_instant
+                .lock()
+                .expect("finished instant lock")
+                .as_ref()
+                .is_some_and(|done| done.elapsed() >= ttl)
     }
 
     pub fn mark_termination_reason(&self, reason: &str) {
