@@ -74,14 +74,16 @@ onMounted(() => { void load(); });
     <GlassCard class="animate-fade-in-up delay-100">
       <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
       <div v-else-if="!loaded" class="ui-banner ui-banner--warning" role="alert"><span>{{error}}</span><BaseButton variant="secondary" @click="load">重试</BaseButton></div>
-      <div v-else class="grid gap-4">
-        <div v-for="item in keys" :key="item.key" class="key-setting-row">
-          <label class="block min-w-0">
-            <span class="mb-1.5 block text-xs font-medium text-[var(--ui-text-secondary)]">{{ item.label }}</span>
-            <SecretField v-model="secrets[item.key]" :disabled="saving" />
-            <span class="mt-1.5 block text-xs leading-4 text-[var(--ui-text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
-          </label>
-          <BaseButton variant="secondary" :busy="regenerating === item.key" @click="regenerate(item.key)"><RefreshCw :size="13" />重新生成</BaseButton>
+      <div v-else class="grid gap-5">
+        <div v-for="item in keys" :key="item.key" class="space-y-1.5 py-1">
+          <label class="block text-xs font-medium text-[var(--ui-text-secondary)]">{{ item.label }}</label>
+          <div class="flex items-center gap-2">
+            <SecretField v-model="secrets[item.key]" :disabled="saving" class="flex-1 min-w-0" />
+            <BaseButton variant="secondary" size="md" :busy="regenerating === item.key" class="shrink-0" @click="regenerate(item.key)">
+              <RefreshCw :size="13" />重新生成
+            </BaseButton>
+          </div>
+          <span class="block text-xs leading-4 text-[var(--ui-text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
         </div>
         <SaveBar :dirty="changedKeys.length>0" :busy="saving" :error="error" @save="saveConfirmOpen=true"/>
       </div>
@@ -108,26 +110,9 @@ onMounted(() => { void load(); });
   box-sizing: border-box;
 }
 
-.key-setting-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: .5rem;
-  min-width: 0;
-}
-
 @container app-main (max-width: 620px) {
   .settings-page {
     padding-inline: 16px;
-  }
-
-  .key-setting-row {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .key-setting-row > :last-child {
-    justify-self: start;
   }
 }
 </style>

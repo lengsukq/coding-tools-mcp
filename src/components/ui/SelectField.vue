@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown } from "@lucide/vue";
 const model = defineModel<string>({ default: "" });
 defineProps<{
   label?: string;
@@ -19,7 +20,7 @@ defineProps<{
       >
         <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
       </select>
-      <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] font-bold">⌄</span>
+      <ChevronDown :size="14" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ui-text-muted)]" />
     </div>
     <span v-if="hint" class="mt-1.5 block text-xs leading-4 text-[var(--ui-text-muted)]">{{ hint }}</span>
   </label>

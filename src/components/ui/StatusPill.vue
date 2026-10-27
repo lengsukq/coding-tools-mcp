@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import {computed} from "vue";import {statusPresentation} from "$lib/ui-model";
-const props=withDefaults(defineProps<{status?:string;label?:string}>(),{status:"unknown"});
-const presentation=computed(()=>statusPresentation(props.status));
+import { computed } from "vue";
+import { statusPresentation } from "$lib/ui-model";
+const props = withDefaults(defineProps<{ status?: string; label?: string }>(), { status: "unknown" });
+const presentation = computed(() => statusPresentation(props.status));
+const isPulsing = computed(() => ["running", "in_progress", "active"].includes(props.status ?? ""));
 </script>
-<template><span :class="`is-${presentation.tone}`" class="ui-status"><span class="ui-status-dot" aria-hidden="true" />{{label || presentation.label}}</span></template>
+<template><span :class="`is-${presentation.tone}`" class="ui-status"><span class="ui-status-dot" :class="{ 'is-pulsing': isPulsing }" aria-hidden="true" />{{label || presentation.label}}</span></template>
 <style scoped>
 .is-info { background: var(--ui-accent-soft); color: var(--ui-accent); border-color: var(--ui-line); }
 .is-success {

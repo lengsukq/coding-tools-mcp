@@ -91,5 +91,24 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ui-modal-enter-active,.ui-modal-leave-active{transition:opacity .18s ease}.ui-modal-enter-from,.ui-modal-leave-to{opacity:0}
+.ui-modal-enter-active, .ui-modal-leave-active {
+  transition: opacity .18s ease;
+}
+.ui-modal-enter-active .ui-overlay {
+  transition: transform .18s cubic-bezier(.16, 1, .3, 1), opacity .18s ease;
+}
+.ui-modal-leave-active .ui-overlay {
+  transition: transform .14s ease-in, opacity .14s ease-in;
+}
+.ui-modal-enter-from, .ui-modal-leave-to {
+  opacity: 0;
+}
+.ui-modal-enter-from .ui-overlay {
+  transform: scale(.95) translateY(4px);
+  opacity: 0;
+}
+.ui-modal-leave-to .ui-overlay {
+  transform: scale(.96) translateY(2px);
+  opacity: 0;
+}
 </style>

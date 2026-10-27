@@ -38,6 +38,10 @@ function move(event: KeyboardEvent, index: number, items: ReadonlyArray<{
   <button v-for="(item,index) in items" :id="`${id}-${item.value}`" :key="item.value" role="tab" type="button" :aria-selected="modelValue === item.value" :aria-controls="`${id}-panel`" :tabindex="modelValue === item.value ? 0 : -1" :class="{active:modelValue === item.value}" @click="emit('update:modelValue',item.value)" @keydown="move($event,index,items)">{{item.label}}</button>
  </div>
  <div :id="`${id}-panel`" role="tabpanel" :aria-labelledby="`${id}-${modelValue}`" tabindex="0" class="ui-tab-panel">
-<slot />
+  <Transition name="ui-tab-fade" mode="out-in">
+    <div :key="modelValue">
+      <slot />
+    </div>
+  </Transition>
 </div>
 </template>
