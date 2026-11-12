@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ArrowUpDown, ChevronDown, FileText, Search } from "@lucide/vue";
+import { ArrowUpDown, FileText, Search } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import GlassCard from "../ui/GlassCard.vue";
 import StatusPill from "../ui/StatusPill.vue";
@@ -33,8 +33,6 @@ const feedback = ref<Record<string, string>>({});
 const resetOpen = ref(false);
 const deleting = ref('');
 const reverseVerification = ref(true);
-const expandedNotes = ref<Record<string, boolean>>({});
-const hoveredStepNote = ref<string | null>(null);
 const modes = [{ value: 'direct', label: '直接执行' }, { value: 'plan', label: '按计划执行' }, { value: 'goal', label: '按目标执行' }];
 const entries = computed(() => [...(state.value?.plans ?? []).map(item => ({ kind: 'plan' as const, item })), ...(state.value?.goals ?? []).map(item => ({ kind: 'goal' as const, item }))]);
 const visible = computed(() => entries.value.filter(({ item }) => filter.value === 'unfinished' ? ['draft', 'active', 'paused', 'awaiting_acceptance'].includes(item.status) || (item.status==='completed' && (item.id === state.value?.focus_plan_id || item.id === state.value?.focus_goal_id)) : filter.value === 'ended' ? ['archived', 'cancelled', 'completed'].includes(item.status) : item.status === 'awaiting_acceptance'));
@@ -61,10 +59,11 @@ const displayedVerification = computed(() => {
     return reverseVerification.value ? [...mapped].reverse() : mapped;
 });
 
-function toggleNote(stepId: string) {
-    expandedNotes.value[stepId] = !expandedNotes.value[stepId];
-}
 watch([() => route.query.item, entries], () => { const desired = String(route.query.item ?? ''); if (desired && entries.value.some(e => e.item.id === desired)) {
+    if (selectedId.value !== desired) {
+        const target = entries.value.find(e => e.item.id === desired);
+        filter.value = target && ['archived', 'cancelled', 'completed'].includes(target.item.status) ? 'ended' : 'unfinished';
+    }
     selectedId.value = desired;
     return;
 } if (!entries.value.some(e => e.item.id === selectedId.value))
@@ -126,8 +125,8 @@ async function remove() { await action(() => deletePlan(props.workspaceId, delet
 <BaseButton variant="secondary" size="sm" @click="refresh">重试</BaseButton>
 </div>
 <p v-if="error && selected?.item.status!=='awaiting_acceptance'" class="ui-danger" role="alert">{{error}}</p>
- <div class="ui-inspector-grid">
-<GlassCard class="ui-task-list relative !p-0 overflow-hidden flex flex-col">
+ <div class="ui-inspector-grid planning-inspector">
+<GlassCard class="ui-task-list relative !p-0 overflow-hidden flex flex-col min-w-0">
   <!-- Sticky filter & search header -->
   <div class="sticky top-0 z-10 bg-[var(--ui-surface)]/95 backdrop-blur-md p-3.5 pb-3 border-b border-[var(--ui-line)] space-y-2">
     <SelectField v-model="filter" :options="[{value:'unfinished',label:'当前与未结束'},{value:'review',label:'待验收（'+pendingCount+'）'},{value:'ended',label:'已完成、归档与取消'}]"/>
@@ -142,20 +141,20 @@ async function remove() { await action(() => deletePlan(props.workspaceId, delet
     </div>
   </div>
   <!-- Scrollable task entries -->
-  <div class="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[calc(78dvh-120px)]">
-    <button v-for="entry in filteredVisible" :key="entry.kind+entry.item.id" class="ui-task-item text-left transition hover:scale-[1.01]" :class="{active:selectedId===entry.item.id}" @click="select(entry.item.id)">
+  <div class="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-1 max-h-[min(64dvh,640px)]">
+    <button v-for="entry in filteredVisible" :key="entry.kind+entry.item.id" class="ui-task-item min-w-0 text-left transition-colors" :class="{active:selectedId===entry.item.id}" @click="select(entry.item.id)">
       <div class="flex items-center justify-between gap-2">
         <span class="rounded bg-[var(--ui-surface-subtle)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]">{{entry.kind==='plan'?'计划':'目标'}}</span>
         <StatusPill :status="entry.item.status"/>
       </div>
-      <strong class="text-xs text-[var(--ui-text)]">{{entry.item.title}}</strong>
+      <strong class="block min-w-0 text-xs leading-5 text-[var(--ui-text)]">{{entry.item.title}}</strong>
     </button>
     <EmptyState v-if="!filteredVisible.length" :title="taskSearch ? '没有匹配的任务' : '暂无任务'" :description="taskSearch ? '尝试修改搜索关键词或更换筛选条件。' : '可以调整筛选，或通过 AI 会话发起新的目标和计划。'"/>
   </div>
 </GlassCard>
- <GlassCard v-if="selected">
-<div class="ui-section-heading">
-<div>
+ <GlassCard v-if="selected" class="min-w-0 overflow-hidden">
+<div class="ui-section-heading flex-wrap">
+<div class="min-w-0 flex-1">
 <p class="ui-muted">{{selected.kind==='plan'?'计划':'目标'}}</p>
 <h2 class="break-words">{{selected.item.title}}</h2>
 </div>
@@ -171,66 +170,29 @@ async function remove() { await action(() => deletePlan(props.workspaceId, delet
 <div class="ui-progress">
 <span :style="{width:progress.percent+'%'}"/>
 </div>
-<ol class="ui-step-list space-y-2.5">
-<li v-for="(step,index) in selectedPlan.steps" :key="step.id" class="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)]/40 p-3 transition hover:bg-[var(--ui-surface-hover)]">
+<ol class="mt-4 list-none space-y-2.5">
+<li v-for="(step,index) in selectedPlan.steps" :key="step.id" class="min-w-0 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] p-3">
 <div class="flex items-start justify-between gap-3">
-  <span class="min-w-0 text-xs text-[var(--ui-text)] break-words font-medium leading-5">
+  <span class="min-w-0 flex-1 text-xs text-[var(--ui-text)] break-words font-medium leading-5">
     <span class="text-[var(--ui-accent)] font-semibold">{{index+1}}.</span> {{step.title}}
   </span>
-  <StatusPill :status="step.status"/>
+  <span class="shrink-0"><StatusPill :status="step.status"/></span>
 </div>
 
-<!-- Step Note Directly Displayed + Hover Popover -->
-<div v-if="step.notes" class="relative mt-2">
-  <div
-    class="relative rounded-lg border border-[var(--ui-line)]/70 bg-[var(--ui-surface-raised)]/95 p-2.5 text-xs text-[var(--ui-text-secondary)] shadow-sm"
-    @mouseenter="hoveredStepNote = step.id"
-    @mouseleave="hoveredStepNote = null"
-  >
-    <div class="flex items-center gap-1.5 mb-1 text-[11px] font-medium text-[var(--ui-text-muted)]">
-      <FileText :size="12" class="text-[var(--ui-accent)] shrink-0" />
-      <span>步骤备注</span>
-      <span v-if="step.notes.length > 90" class="text-[10px] text-[var(--ui-text-muted)] opacity-75">
-        · 悬浮查看全文
-      </span>
-    </div>
-    <p
-      class="whitespace-pre-wrap break-words text-[11px] leading-relaxed"
-      :class="{ 'line-clamp-2': !expandedNotes[step.id] && step.notes.length > 90 }"
-    >
-      {{ step.notes }}
-    </p>
-    <button
-      v-if="step.notes.length > 90"
-      type="button"
-      class="mt-1 text-[11px] font-medium text-[var(--ui-accent)] hover:underline inline-flex items-center gap-0.5"
-      @click="toggleNote(step.id)"
-    >
-      {{ expandedNotes[step.id] ? '收起备注' : '展开全文' }}
-    </button>
-
-    <!-- Floating Hover Card -->
-    <Transition name="ui-tab-fade">
-      <div
-        v-if="hoveredStepNote === step.id && !expandedNotes[step.id] && step.notes.length > 90"
-        class="absolute left-0 top-[calc(100%+4px)] z-30 max-h-60 w-full min-w-[260px] max-w-md overflow-y-auto rounded-xl border border-[var(--ui-line-strong)] bg-[var(--ui-surface-raised)] p-3 text-xs text-[var(--ui-text)] shadow-xl backdrop-blur-xl"
-      >
-        <div class="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-accent)]">
-          <FileText :size="12" />完整步骤备注
-        </div>
-        <p class="whitespace-pre-wrap break-words leading-relaxed text-[11px]">{{ step.notes }}</p>
-      </div>
-    </Transition>
-  </div>
-</div>
+<details v-if="step.notes" class="mt-2 min-w-0 rounded-lg border border-[var(--ui-line)]/60 bg-[var(--ui-surface-raised)]">
+  <summary class="flex cursor-pointer items-center gap-1.5 px-3 py-2 text-[11px] text-[var(--ui-text-muted)]">
+    <FileText :size="12" class="shrink-0 text-[var(--ui-accent)]" />步骤备注 · 点击展开
+  </summary>
+  <p class="border-t border-[var(--ui-line)] px-3 py-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--ui-text-secondary)]">{{step.notes}}</p>
+</details>
 </li>
 </ol>
 </template>
  <template v-if="selectedGoal">
 <h3 class="mt-5 text-sm font-semibold">验收条件</h3>
 <div v-for="criterion in selectedGoal.success_criteria" :key="criterion.id" class="ui-data-row text-xs">
-<span>{{criterion.text}}</span>
-<StatusPill :status="criterion.completed?'completed':'pending'"/>
+<span class="min-w-0 flex-1 break-words">{{criterion.text}}</span>
+<span class="shrink-0"><StatusPill :status="criterion.completed?'completed':'pending'"/></span>
 </div>
 <details v-if="selectedGoal.constraints.length" class="ui-disclosure mt-3">
 <summary class="text-xs cursor-pointer">约束条件</summary>
@@ -289,7 +251,7 @@ async function remove() { await action(() => deletePlan(props.workspaceId, delet
 </div>
 </details>
  </GlassCard>
-<GlassCard v-else>
+<GlassCard v-else class="min-w-0">
 <EmptyState :title="query.loading?'正在加载任务':'选择任务查看详情'" description="任务和目标由 AI 会话创建。这里提供状态、变更入口和人工验收。"/>
 <details class="ui-disclosure">
 <summary class="text-xs cursor-pointer">任务管理</summary>
@@ -302,3 +264,13 @@ async function remove() { await action(() => deletePlan(props.workspaceId, delet
  <ConfirmDialog :open="resetOpen" title="重置任务状态" message="清空当前工作区的目标、计划与执行状态。源码和历史会话保持不变。" severity="danger" :busy="busy" @confirm="reset" @cancel="resetOpen=false"/>
  <ConfirmDialog :open="!!deleting" title="删除计划" message="删除此计划及其步骤记录，不修改源码和历史会话。" severity="danger" :busy="busy" @confirm="remove" @cancel="deleting=''"/>
 </div></template>
+
+<style scoped>
+.planning-inspector {
+  grid-template-columns: minmax(220px, 290px) minmax(0, 1fr);
+}
+@container workspace-page (max-width: 800px) {
+  .planning-inspector { grid-template-columns: minmax(0, 1fr); }
+  .ui-task-list { max-height: 320px; }
+}
+</style>

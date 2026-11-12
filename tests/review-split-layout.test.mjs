@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 
-const source = await readFile(new URL("../src-tauri/src/mcp/listener.rs", import.meta.url), "utf8");
-const htmlTemplate = source.match(/r#"<!doctype html>([\s\S]*?)"#/)?.[1];
+const htmlTemplate = await readFile(
+  new URL("../src-tauri/src/mcp/listener/review_page.html", import.meta.url),
+  "utf8",
+);
 
 const example = {
   id: "split-fixture",
@@ -46,9 +48,7 @@ function element() {
 
 function page(mode = "split") {
   assert.ok(htmlTemplate, "review HTML template must exist");
-  const rendered = htmlTemplate
-    .replaceAll("{{", "{").replaceAll("}}", "}")
-    .replace("{data}", JSON.stringify(example));
+  const rendered = htmlTemplate.replace("__REVIEW_DATA_JSON__", JSON.stringify(example));
   const script = rendered.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script, "review page must have executable JS");
 

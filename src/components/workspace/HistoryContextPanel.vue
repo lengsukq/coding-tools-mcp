@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { History, Save, Search } from "@lucide/vue";
-import GlassCard from "../ui/GlassCard.vue";
+import { useRouter } from "vue-router";
+import { History, RefreshCw, Search } from "@lucide/vue";
 import SaveBar from "../ui/SaveBar.vue";
 import {useUnsavedChanges} from "$lib/unsaved-changes";
 import BaseButton from "../ui/BaseButton.vue";
@@ -10,6 +10,7 @@ import { listHistorySessions, type HistorySessionSummary } from "$lib/api/histor
 import { createSessionReviewUrl, issueWorkspaceReviewUrl, listWorkspaceReviews, type WorkspaceReviewSummaryDto } from "$lib/api/workspaces";
 import { showToast } from "$lib/stores/toast";
 import { openUrl } from "$lib/api/app-info";
+import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
 import type { WorkspaceProfile } from "$lib/types";
 
 const props = defineProps<{
@@ -18,19 +19,26 @@ const props = defineProps<{
   profile: WorkspaceProfile;
   onSave: (recording: boolean, sessions: number[]) => Promise<void>;
 }>();
+const router = useRouter();
 const loading = ref(false);
 const saving = ref(false);
 const sessions = ref<HistorySessionSummary[]>([]);
 const reviews = ref<WorkspaceReviewSummaryDto[]>([]);
+const planning = ref<PlanningStateDto | null>(null);
+const reviewError = ref("");
 const recording = ref(props.profile.runtime.history_recording ?? true);
 const selected = ref<number[]>([...(props.profile.runtime.history_context_sessions ?? [])]);
 const baseline = ref(serializedSelection());
 const saveError = ref("");
 const loadError = ref("");
 const sessionSearch = ref("");
+let loadGeneration = 0;
 
-// Reverse order so newest session (#12, #11...) is first
-const sortedSessions = computed(() => [...sessions.value].reverse());
+const sortedSessions = computed(() => [...sessions.value].sort((a, b) => b.number - a.number));
+const recentTasks = computed(() => [
+  ...(planning.value?.plans ?? []).map(item => ({ ...item, kind: "计划" })),
+  ...(planning.value?.goals ?? []).map(item => ({ ...item, kind: "目标" })),
+].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 20));
 
 const filteredSessions = computed(() => sortedSessions.value.filter(s => {
   if (!sessionSearch.value.trim()) return true;
@@ -80,11 +88,30 @@ watch(() => props.profile, (profile) => {
 }, { immediate: true, deep: true });
 
 async function load() {
+  const workspaceId = props.workspaceId;
+  const generation = ++loadGeneration;
   loading.value = true;
   loadError.value="";
-  try { const [history, changeReviews] = await Promise.all([listHistorySessions(props.workspaceId), listWorkspaceReviews(props.workspaceId)]); sessions.value = history.sessions; reviews.value = changeReviews; }
-  catch (error) { loadError.value=String(error); }
-  finally { loading.value = false; }
+  reviewError.value = "";
+  sessions.value = [];
+  reviews.value = [];
+  planning.value = null;
+  const [history, changeReviews, taskState] = await Promise.allSettled([
+    listHistorySessions(workspaceId),
+    listWorkspaceReviews(workspaceId),
+    getPlanningState(workspaceId),
+  ]);
+  if (generation !== loadGeneration || props.workspaceId !== workspaceId) return;
+  if (history.status === "fulfilled") sessions.value = history.value.sessions ?? [];
+  else loadError.value = String(history.reason);
+  if (changeReviews.status === "fulfilled") reviews.value = changeReviews.value;
+  else reviewError.value = "变更快照暂时不可用，不影响历史记录浏览。";
+  if (taskState.status === "fulfilled") planning.value = taskState.value;
+  loading.value = false;
+}
+
+function openTask(id: string) {
+  void router.push({ path: "/workspace/" + props.workspaceId + "/planning", query: { item: id } });
 }
 
 function toggle(number: number, checked: boolean) {
@@ -110,6 +137,7 @@ async function save() {
 
 useUnsavedChanges("历史上下文",dirty,save);
 onMounted(() => { void load(); });
+watch(() => props.workspaceId, () => { void load(); });
 </script>
 
 <template>
@@ -122,9 +150,12 @@ onMounted(() => { void load(); });
           <p class="text-xs font-semibold">注入到当前上下文的历史会话</p>
           <p class="mt-0.5 text-xs text-[var(--text-muted)]">只选择确实需要长期带入的会话，避免上下文膨胀。最新会话排在顶部。</p>
         </div>
-        <History :size="17" class="text-[var(--primary)]" />
+        <BaseButton variant="ghost" size="sm" :disabled="loading" @click="load">
+          <RefreshCw :size="14" :class="{ 'animate-spin': loading }" /> 刷新
+        </BaseButton>
       </div>
 
+      <p v-if="reviewError" class="ui-muted mb-2" role="status">{{ reviewError }}</p>
       <div class="max-h-[380px] overflow-y-auto rounded-2xl bg-[var(--ui-surface-subtle)] p-2.5 space-y-2">
         <!-- Sticky Search Bar -->
         <div class="sticky top-0 z-10 bg-[var(--ui-surface-subtle)] pb-1.5 pt-0.5 backdrop-blur-md">
@@ -169,10 +200,29 @@ onMounted(() => { void load(); });
           </span>
         </div>
 
-        <div v-if="!loading && !filteredSessions.length" class="px-4 py-6 text-center">
+        <div v-if="loading" class="px-4 py-6 text-center text-xs text-[var(--text-muted)]">正在读取历史档案…</div>
+        <div v-else-if="!loadError && !filteredSessions.length" class="px-4 py-6 text-center">
           <p class="text-xs font-medium text-[var(--text-secondary)]">{{ sessionSearch ? '未找到匹配的历史会话' : '暂无历史会话' }}</p>
-          <p class="mt-1 text-xs leading-4 text-[var(--text-muted)]">{{ sessionSearch ? '尝试清除或调整搜索关键词。' : '完成一次启用 History 的开发会话后，会自动出现在这里供后续上下文选择。' }}</p>
+          <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">{{ sessionSearch ? '尝试清除或调整搜索关键词。' : '这个工作区尚无已写入的会话档案。开启记录仅允许保存，AI 仍需调用 History checkpoint；未写入的聊天正文无法事后还原。' }}</p>
         </div>
+      </div>
+    </div>
+    <div v-if="recentTasks.length" class="min-w-0">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p class="text-xs font-semibold">任务与计划历史</p>
+          <p class="mt-1 text-xs text-[var(--text-muted)]">来自独立的 Planning 记录，不是聊天会话档案；即使没有 History checkpoint 也可查看。</p>
+        </div>
+        <History :size="16" class="text-[var(--ui-text-muted)]" />
+      </div>
+      <div class="max-h-72 space-y-1 overflow-y-auto rounded-xl border border-[var(--ui-line)] p-2">
+        <button v-for="task in recentTasks" :key="task.id" type="button"
+          class="flex w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-[var(--ui-surface-hover)]"
+          @click="openTask(task.id)">
+          <span class="shrink-0 text-[10px] text-[var(--ui-text-muted)]">{{ task.kind }}</span>
+          <span class="min-w-0 flex-1 truncate text-xs font-medium">{{ task.title }}</span>
+          <span class="shrink-0 text-[10px] text-[var(--ui-text-muted)]">{{ task.status }}</span>
+        </button>
       </div>
     </div>
     <SaveBar :dirty="dirty" :busy="saving" :error="saveError" label="保存历史上下文" @save="save" />

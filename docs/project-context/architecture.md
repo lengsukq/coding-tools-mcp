@@ -32,6 +32,17 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | --- | --- |
 | `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、Dispatch、文件/Git/Exec/History/Planning/Skill |
 | `src-tauri/src/mcp/` | MCP Streamable HTTP transport 与客户端初始化 |
+| `src-tauri/src/mcp/server.rs` | Global MCP 入口重导出、协议协商及 legacy 单工作区兼容处理 |
+| `src-tauri/src/mcp/server/scope.rs` | 显式 workspace_id 校验、请求级工作区解析和审计工作区归属提示 |
+| `src-tauri/src/mcp/server/dispatch.rs` | Global MCP 请求分发、普通工具/Workspace 工具分流与 Review 会话关联 |
+| `src-tauri/src/mcp/server/tests.rs` | Global MCP 会话、协议、History 与工具调用回归测试 |
+| `src-tauri/src/computer/native.rs` | macOS Computer Use 原生 FFI 与返回值解析，不含访问授权策略 |
+| `src-tauri/src/computer/tests.rs` | Computer Use 授权、租约、敏感动作确认等安全测试 |
+| `src-tauri/src/mcp/listener.rs` | HTTP 监听、MCP RPC 主链、会话生命周期及共享 OAuth URL 解析 |
+| `src-tauri/src/mcp/listener/oauth_http.rs` | OAuth/DCR 端点处理；认证运行时继续复用 `auth/` |
+| `src-tauri/src/mcp/listener/review_http.rs` | Review Token 校验、只读 API 和 HTML 响应；不继承 MCP/OAuth 的宽松 CORS |
+| `src-tauri/src/mcp/listener/review_page.html` | 独立 Review 网页模板，单一 JSON 占位符；保持 CSP 和输出转义 |
+| `src-tauri/src/mcp/listener/tests.rs` | MCP Listener 的 HTTP、认证、Session 与 Review 路由回归测试 |
 | `src-tauri/src/auth/` | Bearer、OAuth Authorization Code、PKCE S256、DCR、Refresh Token |
 | `src-tauri/src/planning/` | Direct / Plan / Goal、Goal/Plan 生命周期、Execution Ledger |
 | `src-tauri/src/harness/` | Durable Task、operation/event log、基线与恢复信息 |
@@ -52,6 +63,12 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 `queued-writes.ts` 持有模块级设置写入队列；各保存单元重新读取当前配置，只合并自己修改的字段，避免页面卸载或不同分类保存互相覆盖。`unsaved-changes.ts` 注册当前页面草稿，路由离开和关闭应用提供保存、放弃与取消；失败保留输入。
 
 `src/styles/design-system.css` 是语义 token 与通用视觉规则来源，页面负责布局。组件展示页仅在开发构建注册。验收依据与原生桌面待验收项见 [记录](../ui/verification/acceptance.md)。
+
+工具调用审计页面仅负责 UI 组合：`src/lib/audit/use-tool-audit.ts` 管理过滤、分页、保留策略、清理和提示；`src/components/audit/AuditRecordRow.vue` 展示记录并通过类型化事件通知父组件。审计记录行不直接访问 API。
+
+工作区 Tauri Command 名称和参数不变；`src-tauri/src/commands/workspace.rs` 仅聚合导出，具体实现分别位于 `workspace/crud.rs`、`workspace/git.rs`、`workspace/ide.rs` 和 `workspace/reviews.rs`。
+
+`review::snapshot_text_files` 在目录遍历阶段剪枝 `node_modules`、`target`、`build` 等不进入 Review 的目录及敏感目录。仍保留任意合法命令的文件前后快照，以便捕获未跟踪、新建、修改及删除的源码文件；不能仅根据命令名称猜测其无写入。
 
 ## Tool Runtime
 

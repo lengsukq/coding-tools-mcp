@@ -200,10 +200,20 @@ pub fn issue_token(workspace_root: &Path, change_id: &str) -> Result<ReviewLink,
     })
 }
 
+fn review_snapshot_entry_allowed(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() == 0
+        || (!review_path_excluded(&entry.file_name().to_string_lossy())
+            && !sensitive_path(&entry.file_name().to_string_lossy()))
+}
+
 pub fn snapshot_text_files(root: &Path) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
+    // Do not descend into trees that can never contribute a review file.
+    // Filtering only at the leaf used to traverse every node_modules/target
+    // entry before discarding it, making even a read-only command expensive.
     for entry in walkdir::WalkDir::new(root)
         .into_iter()
+        .filter_entry(review_snapshot_entry_allowed)
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
     {
@@ -227,6 +237,19 @@ pub fn snapshot_text_files(root: &Path) -> std::collections::BTreeMap<String, St
         }
     }
     out
+}
+
+#[cfg(test)]
+fn snapshot_walk_count(root: &Path, prune_excluded: bool) -> usize {
+    let walker = walkdir::WalkDir::new(root).into_iter();
+    if prune_excluded {
+        walker
+            .filter_entry(review_snapshot_entry_allowed)
+            .filter_map(Result::ok)
+            .count()
+    } else {
+        walker.filter_map(Result::ok).count()
+    }
 }
 
 pub fn create_snapshot_review(
@@ -846,6 +869,50 @@ pub fn find_review(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_prunes_ignored_and_sensitive_trees_without_losing_changes() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        let root = temp.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("node_modules/package/deep")).unwrap();
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::create_dir_all(root.join("credentials/cache")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("node_modules/package/deep/a.txt"), "ignore").unwrap();
+        fs::write(root.join("target/debug/a.txt"), "ignore").unwrap();
+        fs::write(root.join("credentials/cache/token.txt"), "ignore").unwrap();
+        for i in 0..256 {
+            fs::write(
+                root.join(format!("node_modules/package/deep/{i}.js")),
+                "ignored",
+            )
+            .unwrap();
+        }
+
+        let old_walk_count = snapshot_walk_count(root, false);
+        let pruned_walk_count = snapshot_walk_count(root, true);
+        eprintln!(
+            "review snapshot fixture entries: old={old_walk_count} pruned={pruned_walk_count}"
+        );
+        assert!(old_walk_count > pruned_walk_count + 256);
+        let before = snapshot_text_files(root);
+        assert_eq!(before.len(), 1);
+        assert_eq!(before["src/main.rs"], "fn main() {}\n");
+
+        fs::write(
+            root.join("src/main.rs"),
+            "fn main() { println!(\"hi\"); }\n",
+        )
+        .unwrap();
+        let after = snapshot_text_files(root);
+        let link =
+            create_snapshot_review(root, "snapshot-prune-test", None, "test", &before, &after)
+                .unwrap()
+                .expect("changed source must generate review");
+        let review = load_review(root, &link.change_id, &link.token).unwrap();
+        assert_eq!(review.stats.files, 1);
+    }
     #[test]
     fn sensitive_files_are_detected() {
         assert!(sensitive_path(".env"));

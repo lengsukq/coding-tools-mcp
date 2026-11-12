@@ -35,7 +35,7 @@ test("connection health is not checked on every app focus or via a root timer", 
 
 test("Windows internal Git commands suppress console windows", async () => {
   const platform = await source("src-tauri/src/platform/command.rs");
-  const workspace = await source("src-tauri/src/commands/workspace.rs");
+  const workspace = await source("src-tauri/src/commands/workspace/git.rs");
   assert.match(platform, /#\[cfg\(windows\)\]/);
   assert.match(platform, /CREATE_NO_WINDOW/);
   assert.match(workspace, /background_command\("git"\)/);
