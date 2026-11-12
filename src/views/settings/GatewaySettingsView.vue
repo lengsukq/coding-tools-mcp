@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { Activity, Check, Copy, Globe2, Play, RefreshCw, RotateCw, Square } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
+import GeminiAppConnector from "$src/components/settings/GeminiAppConnector.vue";
 import SelectField from "$src/components/ui/SelectField.vue";
 import StatusPill from "$src/components/ui/StatusPill.vue";
 import TextField from "$src/components/ui/TextField.vue";
@@ -18,7 +19,7 @@ import {
   type GlobalGatewayConfigDto,
   type GlobalGatewayStatusDto,
 } from "$lib/api/global-gateway";
-import { listFrpProfiles, type FrpProfileDto } from "$lib/api/settings";
+import { getGlobalRuntimeSettings, listFrpProfiles, type FrpProfileDto } from "$lib/api/settings";
 import { getGlobalMcpOverview, startRuntime, stopRuntime, type GlobalMcpOverviewDto } from "$lib/api/workspaces";
 import { globalMcpRuntimeState } from "$lib/stores/app";
 import { recordConnectionHealth } from "$lib/stores/health";
@@ -35,6 +36,7 @@ const tunnelActionError = ref("");
 const status = ref<GlobalMcpOverviewDto | null>(null);
 const gatewayStatus = ref<GlobalGatewayStatusDto | null>(null);
 const health = ref<GatewayHealthItemDto[]>([]);
+const authType = ref<string | null>(null);
 const frpProfiles = ref<FrpProfileDto[]>([]);
 const loading = ref(true);
 const saving = ref(false);
@@ -70,6 +72,11 @@ const publicEndpoint = computed(() => {
 });
 const publicEndpointAvailable = computed(() => config.enabled && !!publicBaseUrl.value);
 const publicEndpointStale = computed(() => publicEndpointAvailable.value && gatewayStatus.value?.state !== "running");
+const geminiPublicHealth = computed<"passed" | "failed" | "unchecked">(() => {
+  if (healthCheckFailed.value) return "failed";
+  const entry = health.value.find((item) => item.label === "Global MCP 公网入口");
+  return entry ? (entry.ok ? "passed" : "failed") : "unchecked";
+});
 const healthFailedCount = computed(() => health.value.filter((item) => !item.ok).length);
 const healthSummary = computed(() => {
   if (checking.value) return "检查中";
@@ -103,11 +110,12 @@ async function refresh() {
   loading.value = true;
   loadError.value = "";
   try {
-    const [nextConfig, nextStatus, nextGateway, nextFrp] = await Promise.all([
+    const [nextConfig, nextStatus, nextGateway, nextFrp, nextRuntime] = await Promise.all([
       getGlobalGatewayConfig(),
       getGlobalMcpOverview(),
       getGlobalGatewayStatus(),
       listFrpProfiles(),
+      getGlobalRuntimeSettings(),
     ]);
     if (!dirty.value) {
       Object.assign(config, DEFAULT_GLOBAL_GATEWAY, nextConfig);
@@ -116,6 +124,7 @@ async function refresh() {
     applyRuntimeStatus(nextStatus);
     gatewayStatus.value = nextGateway;
     frpProfiles.value = nextFrp;
+    authType.value = nextRuntime.authType;
   } catch (e) {
     loadError.value = String(e);
   } finally {
@@ -178,6 +187,13 @@ async function saveConfig() {
   try {
     error.value = "";
     await persistConfig();
+    // Gateway health belongs to the checked endpoint, not an edited or newly saved URL.
+    if (changed.localPort || changed.tunnel) {
+      health.value = [];
+      healthCheckFailed.value = false;
+      lastCheckedAt.value = null;
+      recordConnectionHealth([]);
+    }
     if (changed.localPort && changed.tunnel) {
       showToast("连接配置已保存；MCP 端口需重启本地服务，公网隧道配置将在下次启动或重连时应用。", { kind: "success", duration: 7000 });
     } else if (changed.localPort) {
@@ -378,6 +394,15 @@ onMounted(() => {
         <BaseButton variant="ghost" :busy="loading" :disabled="busy" @click="refresh"><RefreshCw :size="13" />刷新状态</BaseButton>
       </div>
     </GlassCard>
+
+    <GeminiAppConnector
+      :endpoint="publicEndpoint"
+      :public-enabled="config.enabled"
+      :mcp-running="running"
+      :auth-type="authType"
+      :public-health="geminiPublicHealth"
+      :config-dirty="dirty"
+    />
 
     <GlassCard>
       <div class="section-heading mb-4 flex flex-wrap items-start justify-between gap-3">

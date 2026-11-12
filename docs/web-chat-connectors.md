@@ -48,8 +48,19 @@
 
 ## Gemini
 
-1. Gemini 的扩展/连接器设置中寻找第三方 MCP 接入入口（若当前版本未开放自定义远程 MCP，可先用 ChatGPT 验证链路）。
-2. 配置与其他客户端一致：公网 MCP 地址 + OAuth/Bearer 认证。
+Google Gemini Apps 的 **Custom apps（自定义应用）** 可以接入远程 MCP Streamable HTTP 服务。Coding Tools MCP 的 Global MCP 可以直接复用，不需要另起一套 Gemini 专用服务。
+
+**适用资格**：该功能目前面向美国地区、18 岁及以上、使用个人 Google 账号的用户，要求 Gemini 为英语界面、开启 Keep Activity。资格与开通状态由 Google 控制；桌面端准备就绪不等于 Google 账号已被授权。
+
+1. 在 Coding Tools MCP 的「应用设置 → 连接」中将认证模式设为 **OAuth**，启动/重启 Global MCP。服务端已经支持 OAuth Authorization Code、PKCE S256、动态客户端注册（DCR）和 Refresh Token。
+2. 在「MCP 端点与公网连接」开启 Cloudflare / FRP / 外部 HTTPS 代理。确认「Global MCP 公网入口」健康检查通过，并复制 Gemini 专用面板中的 `https://<公网域名>/mcp` 地址。勿使用局域网 IP、`http://localhost`、带账号密码或 Token 的 URL。
+3. 用符合资格的个人 Google 账号打开 [Gemini](https://gemini.google.com/)，进入 **Settings → Connected Apps → Custom apps → Add custom app**，添加 MCP Server URL。
+4. 首选 Google 的 **动态客户端注册 DCR + OAuth**，按照浏览器授权流程在本地 MCP 授权页面输入口令；如果界面仅支持手动 OAuth 客户端凭据，可到「应用设置 → 认证密钥」查看静态 Client ID/Secret，切勿把 Secret 放进 URL 或提交代码。
+5. 在 Gemini 对话里启用/选择刚创建的应用，发送：`请调用 workspace_list 列出工作区，不要猜测工作区路径。` 完成连通测试。同一 Google 账号登录的 Gemini 移动 App 可使用已连接应用，但创建和管理连接建议在网页端进行。
+
+高级诊断可打开 [Gemini Developer Mode](https://gemini.google.com/devmode)，检查 MCP tool schema、授权失败和请求日志。若提示无法添加自定义应用，首先检查账号资格和语言设置，而不是关闭 MCP 安全策略；若授权失败，检查服务端 OAuth metadata、DCR 和公网 URL 是否一致。Cloudflare Quick Tunnel 的地址在重启后可能变化，需要重新更新 Gemini 中的 MCP URL。
+
+参考：[Google Gemini 自定义应用说明](https://support.google.com/gemini/answer/17209137)、[Google Developer Mode](https://developers.google.com/connected-apps/mcp/dev-mode/usage)。
 
 ## 通用 Connector（任意支持远程 MCP 的客户端）
 
