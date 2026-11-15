@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { Activity, ClipboardList, LayoutDashboard, Plus, Settings, Menu, Minimize2 } from "@lucide/vue";
 import appIcon from "$src/assets/app-icon.png";
 import ThemeToggle from "./ThemeToggle.vue";
-import { APP_VERSION } from "$lib/app-version";
+import { APP_VERSION } from "$lib/app-meta";
 import { globalHealthSummary } from "$lib/stores/health";
 defineProps<{
     dashboardActive?: boolean;

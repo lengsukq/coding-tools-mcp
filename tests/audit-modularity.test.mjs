@@ -4,15 +4,32 @@ import test from "node:test";
 
 const source = (path) => readFile(new URL("../" + path, import.meta.url), "utf8");
 
-test("audit console delegates data ownership to one composable", async () => {
+test("audit console delegates data ownership to one composable and focused subcomponents", async () => {
   const page = await source("src/views/ToolAuditView.vue");
   const store = await source("src/lib/audit/use-tool-audit.ts");
   assert.match(page, /useToolAudit\(\)/);
+  assert.match(page, /<AuditFilterBar/);
+  assert.match(page, /<AuditOverviewAndRetention/);
   assert.match(store, /export function useToolAudit\(\)/);
   assert.match(store, /listToolAuditRecords\(buildFilter\(nextOffset\)\)/);
   assert.match(store, /sequence !== loadSequence/);
   assert.match(store, /await clearToolAuditRecords/);
   assert.doesNotMatch(page, /listToolAuditRecords\(/);
+});
+
+test("Computer and Gateway settings views delegate state and cards to focused modules", async () => {
+  const computerView = await source("src/views/settings/ComputerSettingsView.vue");
+  const computerComposable = await source("src/lib/computer/use-computer-settings.ts");
+  assert.match(computerView, /useComputerSettings\(\)/);
+  assert.match(computerView, /<ComputerDiagnosticsBanner/);
+  assert.match(computerView, /<ComputerAuditPanel/);
+  assert.doesNotMatch(computerView, /listToolAuditRecords\(/);
+  assert.match(computerComposable, /export function useComputerSettings\(\)/);
+
+  const gatewayView = await source("src/views/settings/GatewaySettingsView.vue");
+  assert.match(gatewayView, /<GatewayTunnelConfigCard/);
+  assert.match(gatewayView, /<GatewayHealthCard/);
+  assert.match(gatewayView, /<GeminiAppConnector/);
 });
 
 test("Global MCP routing isolates scope resolution from tool dispatch", async () => {

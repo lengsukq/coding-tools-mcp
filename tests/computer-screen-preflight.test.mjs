@@ -10,7 +10,14 @@ const rust = [
   .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
   .join("\n");
 const native = readFileSync(new URL("../src-tauri/src/platform/macos/computer_native.m", import.meta.url), "utf8");
-const ui = readFileSync(new URL("../src/views/settings/ComputerSettingsView.vue", import.meta.url), "utf8");
+const ui = [
+  "../src/views/settings/ComputerSettingsView.vue",
+  "../src/lib/computer/use-computer-settings.ts",
+  "../src/components/settings/ComputerDiagnosticsBanner.vue",
+  "../src/components/settings/ComputerAuditPanel.vue",
+]
+  .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
+  .join("\n");
 const gatewayUi = readFileSync(new URL("../src/views/settings/GatewaySettingsView.vue", import.meta.url), "utf8");
 const computerApi = readFileSync(new URL("../src/lib/api/computer.ts", import.meta.url), "utf8");
 const listener = readFileSync(new URL("../src-tauri/src/mcp/listener.rs", import.meta.url), "utf8");
@@ -38,7 +45,7 @@ test("Computer Use has a dedicated settings component and does not poll on gatew
   assert.match(ui, /id="settings-computer"/);
   assert.match(ui, /void refreshComputerAudit\(\)/);
   assert.doesNotMatch(ui, /computerAuditPoll = setInterval/);
-  assert.match(ui, /@click="refreshComputerAudit"/);
+  assert.match(ui, /@(?:click|refresh)="refreshComputerAudit"/);
   assert.doesNotMatch(gatewayUi, /computerAuditPoll|enableComputerAccess|getComputerScreenStatus/);
   assert.match(gatewayUi, /id="settings-gateway"/);
 });

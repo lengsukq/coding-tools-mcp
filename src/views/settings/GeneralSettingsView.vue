@@ -20,8 +20,7 @@ import { scanGlobalAgentContext, type GlobalAgentContextScanDto } from "$lib/api
 import { getGlobalRuntimeSettings, getProxy, setGlobalRuntimeSettings, setProxy, type GlobalRuntimeSettingsDto, type ProxyConfigDto, } from "$lib/api/settings";
 import { getWebviewMemorySample } from "$lib/api/ui-memory";
 import { enterCompactMode } from "$lib/api/window-chrome";
-import { RELEASES_LATEST_URL, REPO_URL } from "$lib/app-links";
-import { APP_VERSION } from "$lib/app-version";
+import { APP_VERSION, RELEASES_LATEST_URL, REPO_URL } from "$lib/app-meta";
 import { AGENT_SOURCE_OPTIONS, toggleSource } from "$lib/agent-context";
 import { showToast } from "$lib/stores/toast";
 import { reloadUiOnly } from "$lib/ui-memory-guard";
