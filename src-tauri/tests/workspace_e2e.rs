@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -234,27 +236,13 @@ fn fixture_root(name: &str) -> WorkspaceFixture {
         source.display()
     );
     let root = temp.path().join("workspace");
-    copy_dir_all(&source, &root).expect("copy workspace fixture");
+    common::copy_dir_all(&source, &root).expect("copy workspace fixture");
     let harness = temp.path().join("harness");
     WorkspaceFixture {
         root,
         harness,
         _temp: temp,
     }
-}
-
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let target = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_all(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
 }
 
 fn ctx(fixture: &WorkspaceFixture) -> ToolContext {

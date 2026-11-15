@@ -33,7 +33,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 base64 = "0.22"
 jsonwebtoken = "9"
 sha2 = "0.10"
-shlex = "1"
 shell-words = "1"
 which = "7"
 zip = "2"

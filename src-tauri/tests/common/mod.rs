@@ -95,7 +95,7 @@ fn materialize_runtime_files(root: &Path, outside_secret: &Path, name: &str) {
     let _ = outside_secret;
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -119,7 +119,14 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
                 }
             }
         } else {
-            fs::copy(entry.path(), target)?;
+            let bytes = fs::read(entry.path())?;
+            fs::write(&target, bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = entry.metadata()?.permissions().mode();
+                fs::set_permissions(&target, fs::Permissions::from_mode(mode))?;
+            }
         }
     }
     Ok(())
