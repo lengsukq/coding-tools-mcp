@@ -397,6 +397,7 @@ onMounted(() => {
 
     <GeminiAppConnector
       :endpoint="publicEndpoint"
+      :local-endpoint="localEndpoint"
       :public-enabled="config.enabled"
       :mcp-running="running"
       :auth-type="authType"

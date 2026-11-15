@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::{fs, path::Path};
 
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL};
+use axum::extract::State;
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, HOST, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -14,8 +15,8 @@ use crate::settings::AppSettings;
 use crate::workspace::{AuthConfig, WorkspaceProfile};
 
 use super::{
-    bind_listener, build_router, mcp_discovery, mcp_discovery_payload, require_mcp_auth,
-    ListenerState,
+    bind_listener, build_router, mcp_discovery, mcp_discovery_payload, oauth_http,
+    require_mcp_auth, resolve_mcp_resource_base, ListenerState,
 };
 
 #[test]
@@ -24,6 +25,78 @@ fn bind_listener_reports_port_conflict_synchronously() {
     let port = occupied.local_addr().expect("读取测试端口").port();
 
     assert!(bind_listener(port, false).is_err());
+}
+
+#[tokio::test]
+async fn local_mcp_oauth_metadata_uses_loopback_resource_and_original_public_issuer() {
+    let mut state = test_listener_state();
+    state.bind_port = 28765;
+    state.configured_public_url = "https://coding-mcp.lengsu.top".into();
+    state.auth.auth_type = "oauth".into();
+
+    let mut local_headers = HeaderMap::new();
+    local_headers.insert(HOST, "127.0.0.1:28765".parse().unwrap());
+    assert_eq!(
+        resolve_mcp_resource_base(&state, &local_headers),
+        "http://127.0.0.1:28765"
+    );
+    let local =
+        oauth_http::oauth_protected_resource_metadata(State(state.clone()), local_headers.clone())
+            .await;
+    let bytes = axum::body::to_bytes(local.into_body(), 8192).await.unwrap();
+    let metadata: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(metadata["resource"], "http://127.0.0.1:28765/mcp");
+    assert_eq!(
+        metadata["authorization_servers"],
+        json!(["https://coding-mcp.lengsu.top"])
+    );
+
+    let mut public_headers = HeaderMap::new();
+    public_headers.insert(HOST, "coding-mcp.lengsu.top".parse().unwrap());
+    assert_eq!(
+        resolve_mcp_resource_base(&state, &public_headers),
+        "https://coding-mcp.lengsu.top"
+    );
+    let public =
+        oauth_http::oauth_protected_resource_metadata(State(state.clone()), public_headers).await;
+    let public_bytes = axum::body::to_bytes(public.into_body(), 8192)
+        .await
+        .unwrap();
+    let public_metadata: serde_json::Value = serde_json::from_slice(&public_bytes).unwrap();
+    assert_eq!(
+        public_metadata["resource"],
+        "https://coding-mcp.lengsu.top/mcp"
+    );
+
+    // A reverse proxy must not be tricked into advertising a loopback resource.
+    local_headers.insert("x-forwarded-host", "coding-mcp.lengsu.top".parse().unwrap());
+    assert_eq!(
+        resolve_mcp_resource_base(&state, &local_headers),
+        "https://coding-mcp.lengsu.top"
+    );
+}
+
+#[test]
+fn local_mcp_unauthorized_challenge_advertises_the_loopback_metadata_url() {
+    let mut state = test_listener_state();
+    state.bind_port = 28765;
+    state.configured_public_url = "https://coding-mcp.lengsu.top".into();
+    state.auth.auth_type = "oauth".into();
+    state.oauth = Some(Arc::new(OAuthRuntime::new(
+        state.configured_public_url.clone(),
+        "test-client".into(),
+        None,
+        "test-password".into(),
+        "test-token-secret".into(),
+    )));
+    let mut headers = HeaderMap::new();
+    headers.insert(HOST, "127.0.0.1:28765".parse().unwrap());
+    let response = require_mcp_auth(&state, &headers).expect("OAuth must challenge");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(response.headers()[WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap()
+        .contains("http://127.0.0.1:28765/.well-known/oauth-protected-resource"));
 }
 
 #[tokio::test]

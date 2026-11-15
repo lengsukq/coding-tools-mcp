@@ -30,9 +30,9 @@ pub use frp_profiles::{
     save_frp_profile, set_last_workspace, set_proxy,
 };
 pub use global_gateway::{
-    check_global_gateway_health, get_global_gateway_config, get_global_gateway_status,
-    restart_global_cloudflare_tunnel, set_global_gateway_config, start_global_gateway,
-    stop_global_gateway,
+    check_global_gateway_health, get_gemini_local_bridge_status, get_global_gateway_config,
+    get_global_gateway_status, prepare_gemini_local_bridge, restart_global_cloudflare_tunnel,
+    set_global_gateway_config, start_global_gateway, stop_global_gateway,
 };
 pub use health::run_global_health_checks;
 pub use history::list_history_sessions;

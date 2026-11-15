@@ -48,7 +48,28 @@
 
 ## Gemini
 
-Google Gemini Apps 的 **Custom apps（自定义应用）** 可以接入远程 MCP Streamable HTTP 服务。Coding Tools MCP 的 Global MCP 可以直接复用，不需要另起一套 Gemini 专用服务。
+Coding Tools MCP 的 **Global MCP** 可同时提供本机 Streamable HTTP 和公网 HTTPS 连接，不必为 Gemini 再启动一套服务。针对提供「Local MCP / Cloud MCP」选项的 Gemini 界面，桌面端「应用设置 → 连接 → Gemini App · MCP 连接」支持两种配置。**Google 官方面向 Gemini 网页版的公开文档主要说明 Cloud / HTTPS Custom apps**；Local MCP 命令只有在 Gemini 所在客户端确实能在用户电脑启动本地进程时才可使用。
+
+### Local MCP（同一台 Mac，无需公网 MCP 隧道）
+
+1. 在 Coding Tools MCP 启动 Global MCP，本地地址应显示为 `http://127.0.0.1:<端口>/mcp`；认证优先选 OAuth。
+2. 在 Coding Tools MCP 的 Gemini 面板选择「Local MCP · 本地」，点击「生成凭据并复制」（或「复制命令」）。桌面端会自动创建无空格原生硬链接入口 `~/.local/bin/coding-tools-mcp`（避免 symlink 解析到 `/Applications` 被 Gemini 沙盒拦截），并在 OAuth 模式下生成权限为 `0600` 的本机凭据 `~/.local/share/coding-tools-mcp/gemini-stdio-auth.json`。示例命令：
+
+   ```sh
+   ~/.local/bin/coding-tools-mcp mcp-stdio http://127.0.0.1:28765/mcp
+   ```
+
+   该命令使用内置原生 Rust `mcp-stdio` 子命令直接转发 stdio JSON-RPC 到本机 HTTP `/mcp`（冷启动小于 10ms），不依赖 Node.js / `npx`，也不会在 Gemini 的 ~5 秒启动超时内卡在交互式浏览器 OAuth 流程上。命令本身不包含任何密钥。
+3. 在 Gemini 自定义关联应用中选择 **Local MCP**，填写名称 `Coding Tools MCP`，说明可填写 `本地工作区管理与开发工具`，将复制的整行命令填入 Gemini「命令」输入框，保存后调用 `workspace_list` 验证。
+4. 如果 Global MCP 认证为 Bearer，面板为了避免把密钥暴露在命令行而不自动提供可复制命令；保持现有远程认证不变，可切换到 OAuth、无认证（仅可信本机），或改用 Cloud MCP。
+
+**Local MCP 导入提示 `MCP.MCPError code=4` 排查**：
+- Gemini 默认沙盒已允许读取 `~/.local`，因此原生桥接入口与 `~/.local/share/coding-tools-mcp/gemini-stdio-auth.json` 无需放行 `~/.mcp-auth`。若仍报 `code=4`，先检查 Coding Tools MCP 中 **Global MCP 是否已启动**，以及是否已重新构建/安装包含 `mcp-stdio` 子命令的最新版应用。
+- 若使用自定义沙盒限制了网络或 `~/.local`，在 Gemini 的「沙盒设置」中允许读取 `~/.local` 与访问回环网络 `127.0.0.1` 即可，不要关闭整个沙盒或 `chmod 777`。
+
+Local MCP 的调用流是 `Gemini → 原生 mcp-stdio 桥接进程 → 127.0.0.1:<端口>/mcp → Global MCP → Workspace`；**不需要启用 FRP 或 Cloudflare**。若 Gemini 运行在网页沙盒或远程服务器上、不能启动本地程序，这个命令无法连接到你 Mac 的 loopback 地址；应改用 Cloud MCP。
+
+### Cloud MCP（Gemini 网页版 Custom apps）
 
 **适用资格**：该功能目前面向美国地区、18 岁及以上、使用个人 Google 账号的用户，要求 Gemini 为英语界面、开启 Keep Activity。资格与开通状态由 Google 控制；桌面端准备就绪不等于 Google 账号已被授权。
 

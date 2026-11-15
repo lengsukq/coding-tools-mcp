@@ -110,14 +110,11 @@ mod tests {
         drop(active);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(store.reap_idle_completed_with_ttl(Duration::ZERO).await, 1);
-        assert_eq!(
-            store
-                .get(&finished_id)
-                .err()
-                .map(|e| e.to_string())
-                .is_some(),
-            true
-        );
+        assert!(store
+            .get(&finished_id)
+            .err()
+            .map(|e| e.to_string())
+            .is_some());
         assert!(
             store.get(&active_id).is_ok(),
             "running command must not be killed"

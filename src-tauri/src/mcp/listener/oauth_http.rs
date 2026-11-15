@@ -4,7 +4,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-use super::{resolve_oauth_base, ListenerState};
+use super::{resolve_mcp_resource_base, resolve_oauth_base, ListenerState};
 use crate::auth::{
     authorization_server_metadata, authorize_get, authorize_post, protected_resource_metadata,
     register_client, token_exchange, AuthorizeForm, AuthorizeParams, ClientRegistrationRequest,
@@ -43,10 +43,13 @@ pub(super) async fn oauth_protected_resource_metadata(
     if !state.auth.oauth_enabled() {
         return oauth_not_configured();
     }
-    Json(protected_resource_metadata(&resolve_oauth_base(
-        &state, &headers,
-    )))
-    .into_response()
+    let resource_base = resolve_mcp_resource_base(&state, &headers);
+    let issuer_base = resolve_oauth_base(&state, &headers);
+    let mut metadata = protected_resource_metadata(&resource_base);
+    // Keep the configured authorization server (issuer) unchanged even when
+    // tools/call is routed over localhost. Public clients are unaffected.
+    metadata["authorization_servers"] = json!([issuer_base]);
+    Json(metadata).into_response()
 }
 
 pub(super) async fn oauth_authorize_get(

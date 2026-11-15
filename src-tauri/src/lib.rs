@@ -33,15 +33,16 @@ use commands::{
     create_workspace, create_workspace_review_url, decide_computer_sensitive_action,
     delete_frp_profile, delete_plan, delete_workspace, delete_workspace_review,
     detect_installed_ides, enable_computer_access, enter_compact_mode, get_app_settings,
-    get_computer_screen_status, get_download_config, get_global_gateway_config,
-    get_global_gateway_status, get_global_mcp_overview, get_global_runtime_settings,
-    get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
-    get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
+    get_computer_screen_status, get_download_config, get_gemini_local_bridge_status,
+    get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
+    get_global_runtime_settings, get_last_workspace_id, get_planning_state, get_proxy,
+    get_runtime_status, get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
     get_workspace_activity_metrics, get_workspace_git_summary, hide_to_tray, install_software,
     issue_workspace_review_url, list_computer_available_apps, list_frp_profiles,
     list_history_sessions, list_software, list_tool_audit_records, list_workspace_reviews,
     list_workspaces, open_url, open_workspace_directory, open_workspace_in_ide,
-    pause_computer_access, quit_app, read_workspace_logs, recreate_ui_webview,
+    pause_computer_access, prepare_gemini_local_bridge, quit_app, read_workspace_logs,
+    recreate_ui_webview,
     regenerate_shared_secret, reject_goal_review, reject_plan_review,
     request_computer_accessibility_permission, request_computer_screen_permission,
     reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime, restore_runtime_state,
@@ -338,6 +339,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp-stdio") {
+        let code = mcp::stdio_bridge::run_cli(&args[2..]);
+        std::process::exit(code);
+    }
     if !acquire_single_instance() {
         return;
     }
@@ -443,6 +449,8 @@ pub fn run() {
             set_proxy,
             get_global_gateway_config,
             set_global_gateway_config,
+            get_gemini_local_bridge_status,
+            prepare_gemini_local_bridge,
             start_global_gateway,
             restart_global_cloudflare_tunnel,
             stop_global_gateway,

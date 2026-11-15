@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{
-    header::{AUTHORIZATION, CACHE_CONTROL, WWW_AUTHENTICATE},
+    header::{AUTHORIZATION, CACHE_CONTROL, HOST, WWW_AUTHENTICATE},
     HeaderMap, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,20 @@ mod review_http;
 // Shared by OAuth endpoints and bearer token verification.
 fn resolve_oauth_base(state: &ListenerState, headers: &HeaderMap) -> String {
     external_base_url(headers, state.bind_port, &state.configured_public_url)
+}
+
+/// The OAuth issuer may be public, but a loopback MCP client must see its own
+/// exact resource URL in RFC9728 metadata. Never derive this from untrusted
+/// forwarded headers; the comparison is deliberately limited to the listener.
+fn resolve_mcp_resource_base(state: &ListenerState, headers: &HeaderMap) -> String {
+    let loopback_host = format!("127.0.0.1:{}", state.bind_port);
+    if headers.get(HOST).and_then(|h| h.to_str().ok()) == Some(loopback_host.as_str())
+        && !headers.contains_key("x-forwarded-host")
+        && !headers.contains_key("forwarded")
+    {
+        return format!("http://{loopback_host}");
+    }
+    resolve_oauth_base(state, headers)
 }
 
 #[derive(Debug, Clone)]
@@ -536,7 +550,8 @@ fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Respon
             let server_url = resolve_oauth_base(state, headers);
             let mut response = verify_oauth_bearer_header(headers, oauth, &server_url)?;
             if response.status() == StatusCode::UNAUTHORIZED {
-                let metadata_url = protected_resource_metadata_url(&server_url);
+                let metadata_url =
+                    protected_resource_metadata_url(&resolve_mcp_resource_base(state, headers));
                 if let Ok(value) = format!("Bearer resource_metadata=\"{metadata_url}\"").parse() {
                     response.headers_mut().insert(WWW_AUTHENTICATE, value);
                 }

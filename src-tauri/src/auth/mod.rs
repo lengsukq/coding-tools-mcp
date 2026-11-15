@@ -8,6 +8,7 @@ pub use oauth::{
     protected_resource_metadata_url,
 };
 pub use oauth_flow::{
-    authorize_get, authorize_post, register_client, token_exchange, verify_oauth_bearer_header,
-    AuthorizeForm, AuthorizeParams, ClientRegistrationRequest, OAuthRuntime, TokenForm,
+    authorize_get, authorize_post, issue_scoped_access_token, register_client, token_exchange,
+    verify_oauth_bearer_header, verify_scoped_access_token, AuthorizeForm, AuthorizeParams,
+    ClientRegistrationRequest, OAuthRuntime, TokenForm,
 };

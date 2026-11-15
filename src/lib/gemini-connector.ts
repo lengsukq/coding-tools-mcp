@@ -1,6 +1,65 @@
 /** Gemini Apps only accepts a publicly reachable HTTPS Streamable HTTP MCP URL. */
 export const GEMINI_APP_URL = "https://gemini.google.com/";
 export const GEMINI_DEVELOPER_MODE_URL = "https://gemini.google.com/devmode";
+/** Native Rust stdio-to-Streamable-HTTP bridge embedded in the desktop binary avoids slow npx cold starts and browser OAuth timeouts. */
+export const GEMINI_LOCAL_DEFAULT_BIN = "~/.local/bin/coding-tools-mcp";
+export const GEMINI_LOCAL_AUTH_FILE = "~/.local/share/coding-tools-mcp/gemini-stdio-auth.json";
+export const GEMINI_LOCAL_SERVER_NAME = "Coding Tools MCP";
+
+export interface GeminiLocalConnectionInput {
+  localEndpoint: string;
+  mcpRunning: boolean;
+  authType: string | null;
+  bridgeCommand?: string | null;
+  binaryReady?: boolean;
+  credentialsReady?: boolean;
+  bridgeIssue?: string | null;
+}
+
+/** Only the running app's loopback listener may be used as a local command target. */
+export function validGeminiLocalEndpoint(input: string): boolean {
+  try {
+    const url = new URL(input.trim());
+    return url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+      !!url.port && url.pathname === "/mcp" && !url.search && !url.hash &&
+      !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export function geminiLocalCommand(localEndpoint: string, binaryPath?: string | null): string | null {
+  if (!validGeminiLocalEndpoint(localEndpoint)) return null;
+  const port = new URL(localEndpoint.trim()).port;
+  const bin = binaryPath?.trim() || GEMINI_LOCAL_DEFAULT_BIN;
+  const quotedBin = /\s/.test(bin) ? `"${bin}"` : bin;
+  // Normalizing the endpoint prevents injecting arguments from user-editable URLs.
+  return `${quotedBin} mcp-stdio http://127.0.0.1:${port}/mcp`;
+}
+
+export function assessGeminiLocalConnection(input: GeminiLocalConnectionInput) {
+  const fallbackCommand = geminiLocalCommand(input.localEndpoint);
+  const command = fallbackCommand ? (input.bridgeCommand?.trim() || fallbackCommand) : null;
+  const authSupported = input.authType === "oauth" || input.authType === "noauth";
+  const bridgePrepared = input.binaryReady !== false && input.credentialsReady !== false;
+  const issues: string[] = [];
+  if (!command) issues.push("本地 MCP 地址必须是 127.0.0.1 或 localhost 的 HTTP /mcp 端点（含端口）。");
+  if (!input.mcpRunning) issues.push("请先启动 Global MCP 服务，本地桥接不会单独启动桌面应用。");
+  if (input.authType === "bearer") issues.push("当前是 Bearer 模式；为避免在命令中暴露密钥，不自动生成带 Token 的配置。可使用 OAuth，或手动配置安全的凭据文件。");
+  if (!input.authType) issues.push("尚未读取到 Global MCP 认证模式，请先刷新连接状态。");
+  if (input.authType === "noauth") issues.push("当前为无认证模式，仅适用于可信本机环境；建议使用 OAuth。");
+  if (authSupported && !bridgePrepared) {
+    issues.push(input.bridgeIssue?.trim() || "尚未准备本地桥接入口或 OAuth 凭据，请点击“生成凭据并复制”。");
+  }
+  return {
+    command,
+    ready: !!command && input.mcpRunning && authSupported && bridgePrepared,
+    canCopy: !!command && authSupported,
+    needsPrepare: authSupported && !bridgePrepared,
+    issues,
+  };
+}
 
 export interface GeminiConnectionInput {
   endpoint: string;

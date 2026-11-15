@@ -122,6 +122,31 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Issue a scoped OAuth access JWT matching `OAuthRuntime::verify_access_token`.
+pub fn issue_scoped_access_token(
+    server_url: &str,
+    token_secret: &str,
+    client_id: &str,
+) -> Result<(String, i64), ()> {
+    let server_url = server_url.trim_end_matches('/');
+    let now = unix_now() as i64;
+    let token = create_token(
+        server_url,
+        token_secret,
+        OAUTH_TOKEN_TTL_SECONDS,
+        client_id,
+        "access",
+    )?;
+    Ok((token, now + OAUTH_TOKEN_TTL_SECONDS))
+}
+
+/// Verify an access JWT issued for the local bridge without instantiating a full registry.
+pub fn verify_scoped_access_token(token: &str, token_secret: &str, server_url: &str) -> bool {
+    let server_url = server_url.trim_end_matches('/');
+    decode_token_claims(token, token_secret, server_url)
+        .is_ok_and(|claims| claims.token_use == "access")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

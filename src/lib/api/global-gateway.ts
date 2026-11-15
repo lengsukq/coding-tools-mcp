@@ -26,6 +26,17 @@ export interface GatewayHealthItemDto {
   detail: string;
 }
 
+export interface GeminiLocalBridgeStatusDto {
+  command: string;
+  binaryPath: string;
+  binaryReady: boolean;
+  authFilePath: string;
+  credentialsReady: boolean;
+  authType: string;
+  endpoint: string;
+  issue: string;
+}
+
 export const DEFAULT_GLOBAL_GATEWAY: GlobalGatewayConfigDto = {
   enabled: false,
   localPort: 28765,
@@ -46,3 +57,5 @@ export const restartGlobalCloudflareTunnel = () => invoke<GlobalGatewayStatusDto
 export const stopGlobalGateway = () => invoke<void>("stop_global_gateway");
 export const getGlobalGatewayStatus = () => invoke<GlobalGatewayStatusDto>("get_global_gateway_status");
 export const checkGlobalGatewayHealth = () => invoke<GatewayHealthItemDto[]>("check_global_gateway_health");
+export const getGeminiLocalBridgeStatus = () => invoke<GeminiLocalBridgeStatusDto>("get_gemini_local_bridge_status");
+export const prepareGeminiLocalBridge = () => invoke<GeminiLocalBridgeStatusDto>("prepare_gemini_local_bridge");
