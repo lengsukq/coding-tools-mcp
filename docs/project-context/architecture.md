@@ -20,7 +20,7 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 │ Unified Tool Runtime                        │
 │ file / patch / exec / git / skill / manage │
 ├──────────────────────────────────────────────┤
-│ MCP Streamable HTTP                          │
+│ MCP Streamable HTTP & Loopback Stdio Bridge │
 └──────────────────────┬───────────────────────┘
                        │
       Local / Global Gateway / FRP / Cloudflare
@@ -30,19 +30,23 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 
 | 路径 | 当前职责 |
 | --- | --- |
-| `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、Dispatch、文件/Git/Exec/History/Planning/Skill |
-| `src-tauri/src/mcp/` | MCP Streamable HTTP transport 与客户端初始化 |
+| `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、文件/Git/Exec/History/Planning/Skill |
+| `src-tauri/src/tools/dispatch.rs` | 唯一工具调用编排入口（`call_tool`），串接门禁、策略、Harness 追踪与快照 |
+| `src-tauri/src/tools/dispatch/` | `gates.rs`（Planning 门禁）、`routing.rs`（工具路由）、`cwd.rs`（默认目录重写与自检）、`ledger.rs`（Execution Ledger 与上下文装饰） |
+| `src-tauri/src/mcp/` | MCP Streamable HTTP transport、会话状态与无头桥接 |
+| `src-tauri/src/mcp/stdio_bridge.rs` | `mcp-stdio` 子命令入口门面，供桌面 MCP 宿主通过 stdio 连接回环 `/mcp` |
+| `src-tauri/src/mcp/stdio_bridge/` | `auth.rs`（回环校验与私有凭据文件）、`compact.rs`（Schema 精简与错误适配）、`transport.rs`（stdio 帧读写与 HTTP/SSE 转发） |
 | `src-tauri/src/mcp/server.rs` | Global MCP 入口重导出、协议协商及 legacy 单工作区兼容处理 |
-| `src-tauri/src/mcp/server/scope.rs` | 显式 workspace_id 校验、请求级工作区解析和审计工作区归属提示 |
-| `src-tauri/src/mcp/server/dispatch.rs` | Global MCP 请求分发、普通工具/Workspace 工具分流与 Review 会话关联 |
-| `src-tauri/src/mcp/server/tests.rs` | Global MCP 会话、协议、History 与工具调用回归测试 |
-| `src-tauri/src/computer/native.rs` | macOS Computer Use 原生 FFI 与返回值解析，不含访问授权策略 |
-| `src-tauri/src/computer/tests.rs` | Computer Use 授权、租约、敏感动作确认等安全测试 |
+| `src-tauri/src/mcp/server/` | `scope.rs`（`workspace_id` 解析校验）、`dispatch.rs`（Global MCP 请求分发与 Review 关联） |
 | `src-tauri/src/mcp/listener.rs` | HTTP 监听、MCP RPC 主链、会话生命周期及共享 OAuth URL 解析 |
-| `src-tauri/src/mcp/listener/oauth_http.rs` | OAuth/DCR 端点处理；认证运行时继续复用 `auth/` |
-| `src-tauri/src/mcp/listener/review_http.rs` | Review Token 校验、只读 API 和 HTML 响应；不继承 MCP/OAuth 的宽松 CORS |
-| `src-tauri/src/mcp/listener/review_page.html` | 独立 Review 网页模板，单一 JSON 占位符；保持 CSP 和输出转义 |
-| `src-tauri/src/mcp/listener/tests.rs` | MCP Listener 的 HTTP、认证、Session 与 Review 路由回归测试 |
+| `src-tauri/src/mcp/listener/` | `oauth_http.rs`（OAuth/DCR 端点）、`review_http.rs` & `review_page.html`（只读 Review 页面与 API） |
+| `src-tauri/src/computer.rs` | macOS Computer Use 授权控制面、租约状态机与 MCP 调用编排 |
+| `src-tauri/src/computer/` | `geometry.rs`（Retina 截图坐标映射）、`action_policy.rs`（参数校验与敏感操作识别）、`schema.rs`（MCP 工具定义）、`native.rs`（macOS 原生 FFI） |
+| `src-tauri/src/review.rs` | 工作区/会话/单次操作级变更快照编排门面 |
+| `src-tauri/src/review/` | `diff.rs`（目录剪枝、脱敏与 Unified Diff）、`git_scan.rs`（一级 Git 仓库与变更扫描）、`store.rs`（JSON 存储与多令牌签发） |
+| `src-tauri/src/tool_audit.rs` | 已认证 MCP 工具调用的隐私安全审计门面 |
+| `src-tauri/src/tool_audit/` | `sanitize.rs`（结果分类与标识符脱敏）、`store.rs`（按天与工作区分区的 JSONL 存储与过期轮转） |
+| `src-tauri/src/platform/` | 跨平台系统原语、后台命令隐藏窗口（`command.rs`）与单实例进程协调（`single_instance.rs`） |
 | `src-tauri/src/auth/` | Bearer、OAuth Authorization Code、PKCE S256、DCR、Refresh Token |
 | `src-tauri/src/planning/` | Direct / Plan / Goal、Goal/Plan 生命周期、Execution Ledger |
 | `src-tauri/src/harness/` | Durable Task、operation/event log、基线与恢复信息 |
@@ -56,15 +60,19 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 
 ## 前端状态与界面边界
 
-工作台、侧栏及工作区使用 `ui-model.ts` 的展示口径：计划优先，目标作为关联说明，步骤完成和跳过分开，验证记录不代表验证通过。六个工作区页签和五个设置分类纳入 Hash 路由；旧设置入口映射到对应分类和区块。
+工作台、侧栏及工作区使用 `ui-model.ts` 的展示口径：计划优先，目标作为关联说明，步骤完成和跳过分开，验证记录不代表验证通过；应用版本与仓库链接常量统一收口在 `app-meta.ts`。六个工作区页签和六个设置分类纳入 Hash 路由；旧设置入口映射到对应分类和区块。
 
-`async-resource.ts` 管理单个请求资源的去重、过期和代际失效；`workspace-status-cache.ts` 按工作区与资源类型持有共享缓存，并通过引用计数轮询刷新。晚返回请求只更新自己仍有效的资源代际。Rust DTO、持久化与 IPC 保持原有归属，前端缓存是可丢弃的展示投影。
+`async-resource.ts` 管理单个请求资源的去重、过期和代际失效；`workspace-status-cache.ts` 按工作区与资源类型持有共享缓存，并通过按需加载刷新。晚返回请求只更新自己仍有效的资源代际。Rust DTO、持久化与 IPC 保持原有归属，前端缓存是可丢弃的展示投影。
 
 `queued-writes.ts` 持有模块级设置写入队列；各保存单元重新读取当前配置，只合并自己修改的字段，避免页面卸载或不同分类保存互相覆盖。`unsaved-changes.ts` 注册当前页面草稿，路由离开和关闭应用提供保存、放弃与取消；失败保留输入。
 
 `src/styles/design-system.css` 是语义 token 与通用视觉规则来源，页面负责布局。组件展示页仅在开发构建注册。验收依据与原生桌面待验收项见 [记录](../ui/verification/acceptance.md)。
 
-工具调用审计页面仅负责 UI 组合：`src/lib/audit/use-tool-audit.ts` 管理过滤、分页、保留策略、清理和提示；`src/components/audit/AuditRecordRow.vue` 展示记录并通过类型化事件通知父组件。审计记录行不直接访问 API。
+复杂视图统一遵循“组合式函数持有状态 + 纯展示子组件通过类型化 props/emits 协作”边界：
+
+- **工具调用审计页（`ToolAuditView.vue`）**：由 `src/lib/audit/use-tool-audit.ts` 管理过滤、分页、保留策略与清理，视图组合 `AuditFilterBar.vue`、`AuditRecordRow.vue` 与 `AuditOverviewAndRetention.vue`；子组件不直接访问 API。
+- **Computer Use 设置页（`ComputerSettingsView.vue`）**：由 `src/lib/computer/use-computer-settings.ts` 管理本机授权、轮询、TCC 排障建议与审批，组合 `ComputerDiagnosticsBanner.vue` 与 `ComputerAuditPanel.vue`。
+- **MCP 网关设置页（`GatewaySettingsView.vue`）**：页面管理网关配置草稿与服务启停，组合 `GeminiAppConnector.vue`、`GatewayTunnelConfigCard.vue` 与 `GatewayHealthCard.vue`。
 
 工作区 Tauri Command 名称和参数不变；`src-tauri/src/commands/workspace.rs` 仅聚合导出，具体实现分别位于 `workspace/crud.rs`、`workspace/git.rs`、`workspace/ide.rs` 和 `workspace/reviews.rs`。
 
@@ -84,7 +92,7 @@ tools::dispatch::call_tool
 - Goal / Plan 模式写入门禁；
 - Harness operation / task 记录；
 - Tool 分发与统一错误结构；
-- Execution Ledger 更新；
+- Execution Ledger 更新（`dispatch/ledger.rs`）；
 - Planning context 与恢复提示。
 
 ### Stable Tool API v2
@@ -137,7 +145,7 @@ MCP 使用统一 OAuth runtime：
 
 ## Runtime 与网络
 
-应用只运行一个 Global MCP listener，固定提供 `/mcp`。`workspace_list` 返回注册 Workspace；普通工具 schema 统一接受可选 `workspace_id`，推荐客户端在每次 project-scoped 调用中显式携带该 id，因此即使宿主不保持同一个 transport session，也能稳定路由到同一 Workspace。支持持久 MCP session 的客户端仍可通过 `workspace_select` 绑定 active Workspace 并省略后续 `workspace_id`。只有一个 Workspace 时允许安全自动选择。无论采用哪种方式，每个请求都会在执行开始前冻结不可变 `WorkspaceRequestContext`，文件、命令、Planning、History、输出缓存和策略继续受 Workspace root 隔离；不同请求和 session 不会通过桌面 UI 当前选中项隐式串线。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
+应用只运行一个 Global MCP listener，固定提供 `/mcp`（同时支持桌面端通过 `coding-tools-mcp mcp-stdio` 桥接到回环 `/mcp`）。`workspace_list` 返回注册 Workspace；普通工具 schema 统一接受可选 `workspace_id`，推荐客户端在每次 project-scoped 调用中显式携带该 id，因此即使宿主不保持同一个 transport session，也能稳定路由到同一 Workspace。支持持久 MCP session 的客户端仍可通过 `workspace_select` 绑定 active Workspace 并省略后续 `workspace_id`。只有一个 Workspace 时允许安全自动选择。无论采用哪种方式，每个请求都会在执行开始前冻结不可变 `WorkspaceRequestContext`，文件、命令、Planning、History、输出缓存和策略继续受 Workspace root 隔离；不同请求和 session 不会通过桌面 UI 当前选中项隐式串线。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
 
 ## 安全边界
 
