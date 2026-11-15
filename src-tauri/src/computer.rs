@@ -5,10 +5,22 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::computer_geometry::CaptureFrame;
 use crate::data::DataStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+mod action_policy;
+mod geometry;
+#[cfg(target_os = "macos")]
+mod native;
+mod schema;
+#[cfg(test)]
+mod tests;
+
+pub use schema::tool_definitions;
+
+use action_policy::{sensitive_action_description, validate_action};
+use geometry::CaptureFrame;
 
 const REQUEST_TTL: Duration = Duration::from_secs(120);
 const GRANT_TTL: Duration = Duration::from_secs(300);
@@ -50,26 +62,7 @@ pub fn local_enable(
     if ![0, 5, 15, 60, 480, 1440].contains(&duration_minutes) {
         return Err("INVALID_DURATION: 可选择 5/15/60 分钟、8/24 小时或永久".into());
     }
-    let app_bundle = if scope == "control" {
-        if accessibility_permission() != Some(true) {
-            return Err("启用控制前，请先授予 macOS 辅助功能权限".into());
-        }
-        let target = target
-            .filter(|value| !value.is_empty())
-            .ok_or("启用控制必须在本机选择目标应用")?;
-        let apps = native_apps()?;
-        let exists = apps["applications"].as_array().is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| item["bundle_id"].as_str() == Some(target))
-        });
-        if !exists {
-            return Err("选择的应用当前不可用，请刷新应用列表".into());
-        }
-        Some(target.to_owned())
-    } else {
-        None
-    };
+    let app_bundle = validate_control_target(scope, target, "启用控制前，请先授予 macOS 辅助功能权限")?;
     let policy = ManualComputerAccess {
         scope: scope.to_owned(),
         app_bundle,
@@ -90,6 +83,33 @@ pub fn local_enable(
     };
     drop(state);
     Ok(local_status())
+}
+
+fn validate_control_target(
+    scope: &str,
+    target: Option<&str>,
+    missing_ax_message: &str,
+) -> Result<Option<String>, String> {
+    if scope != "control" {
+        return Ok(None);
+    }
+    if accessibility_permission() != Some(true) {
+        return Err(missing_ax_message.into());
+    }
+    let target = target
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("控制授权需要在本机明确选择目标应用")?;
+    let apps = native_apps()?;
+    let exists = apps["applications"].as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item["bundle_id"].as_str() == Some(target))
+    });
+    if !exists {
+        return Err("目标应用不在当前可选择的列表中".into());
+    }
+    Ok(Some(target.to_owned()))
 }
 
 fn now_ms() -> u64 {
@@ -289,6 +309,7 @@ impl Controller {
         self.snapshot = None;
         self.sensitive_action = None;
     }
+
     fn expire(&mut self) {
         if self.manual.as_ref().is_some_and(|policy| !policy.active()) {
             self.manual = None;
@@ -327,80 +348,6 @@ impl Controller {
         }) {
             self.sensitive_action = None;
         }
-    }
-
-    #[cfg(test)]
-    fn revoked_or_replaced_grant_never_authorizes_in_flight_observation() {
-        let mut state = Controller::default();
-        let a = state.request("same-client", "observe").unwrap();
-        state
-            .approve(a["request_id"].as_str().unwrap(), None)
-            .unwrap();
-        let before = state.lease_token("same-client").unwrap();
-        assert!(state.lease_matches("same-client", &before));
-        state.grant = None;
-        assert!(!state.lease_matches("same-client", &before));
-        let b = state.request("same-client", "observe").unwrap();
-        state
-            .approve(b["request_id"].as_str().unwrap(), None)
-            .unwrap();
-        assert!(!state.lease_matches("same-client", &before));
-        assert!(state.lease_token("some-other-client").is_none());
-    }
-
-    #[cfg(test)]
-    fn coordinate_actions_require_recent_matching_snapshot() {
-        let mut state = Controller::default();
-        let req = state.request("s", "control").unwrap();
-        state
-            .approve(
-                req["request_id"].as_str().unwrap(),
-                Some("com.apple.Safari".into()),
-            )
-            .unwrap();
-        let lease = state.lease_token("s").unwrap();
-        assert!(!state.grant.as_ref().unwrap().capture_succeeded);
-        let geometry = json!({
-            "origin_x": -1440.0, "origin_y": 0.0, "point_width": 1440.0,
-            "point_height": 900.0, "pixel_width": 1920, "pixel_height": 1200
-        });
-        let snap = state.record_snapshot("s", &lease, &geometry).unwrap();
-        assert!(state.grant.as_ref().unwrap().capture_succeeded);
-        assert!(state
-            .prepare_action("s", &json!({"action":"click","x":20,"y":30}))
-            .is_err());
-        assert!(state
-            .prepare_action(
-                "s",
-                &json!({"action":"click","x":20,"y":30,"snapshot_id":"forged"})
-            )
-            .is_err());
-        let (_, converted) = state.prepare_action("s", &json!({
-            "action":"click","x":960,"y":600,"coordinate_space":"image_pixels","snapshot_id":snap
-        })).unwrap();
-        assert!(converted["x"].as_f64().unwrap() < 0.0);
-        assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
-        state.snapshot.as_mut().unwrap().created_at = Instant::now() - SNAPSHOT_TTL;
-        assert!(state
-            .prepare_action(
-                "s",
-                &json!({"action":"click","x":1,"y":2,"snapshot_id":snap})
-            )
-            .is_err());
-    }
-
-    #[cfg(test)]
-    fn action_target(&mut self, session: &str) -> Option<String> {
-        self.expire();
-        let grant = self.grant.as_mut().filter(|grant| {
-            grant.session == session
-                && grant.scope == "control"
-                && !grant.paused
-                && grant.actions_used < 100
-        })?;
-        let target = grant.app_bundle.clone()?;
-        grant.actions_used += 1;
-        Some(target)
     }
 
     fn request(&mut self, session: &str, scope: &str) -> Result<Value, String> {
@@ -553,11 +500,7 @@ impl Controller {
         };
         // Never forward untrusted values of these internal privileged fields
         // to the Objective-C action bridge.
-        if let Some(object) = prepared.as_object_mut() {
-            object.remove("high_risk_confirmed");
-            object.remove("confirmation_id");
-            object.remove("bundle_id");
-        }
+        strip_internal_action_fields(&mut prepared);
         self.grant.as_mut().expect("checked grant").actions_used += 1;
         Ok((target, prepared))
     }
@@ -586,11 +529,7 @@ impl Controller {
             .clone();
         let lease = grant.id.clone();
         let mut canonical = args.clone();
-        if let Some(object) = canonical.as_object_mut() {
-            object.remove("confirmation_id");
-            object.remove("high_risk_confirmed");
-            object.remove("bundle_id");
-        }
+        strip_internal_action_fields(&mut canonical);
         let confirmation = args.get("confirmation_id").and_then(Value::as_str);
         if let Some(existing) = &self.sensitive_action {
             if existing.session != session
@@ -649,127 +588,12 @@ impl Controller {
     }
 }
 
-fn sensitive_action_description(args: &Value) -> Option<String> {
-    match args.get("action").and_then(Value::as_str)? {
-        "press_element" => {
-            let label = args["label"].as_str()?.trim();
-            let normalized = label.to_lowercase();
-            let sensitive = [
-                "delete",
-                "remove",
-                "pay",
-                "purchase",
-                "submit",
-                "send",
-                "erase",
-                "delete all",
-                "transfer",
-                "删除",
-                "支付",
-                "付款",
-                "购买",
-                "提交",
-                "发送",
-                "转账",
-                "移除",
-                "清空",
-                "确认订单",
-                "卸载",
-                "永久",
-            ];
-            sensitive
-                .iter()
-                .any(|needle| normalized.contains(needle))
-                .then(|| format!("语义按钮：{}", label.chars().take(100).collect::<String>()))
-        }
-        "key" => {
-            let modifiers = args.get("modifiers")?.as_array()?;
-            let command = modifiers.iter().any(|v| v == "command");
-            let control = modifiers.iter().any(|v| v == "control");
-            let key = args["key"].as_str()?.to_ascii_lowercase();
-            ((command && ["q", "w", "v", "delete", "backspace"].contains(&key.as_str()))
-                || (control && ["delete", "backspace"].contains(&key.as_str())))
-            .then(|| {
-                format!(
-                    "高风险快捷键：{} + {}",
-                    if command { "Command" } else { "Control" },
-                    key
-                )
-            })
-        }
-        _ => None,
+fn strip_internal_action_fields(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("high_risk_confirmed");
+        object.remove("confirmation_id");
+        object.remove("bundle_id");
     }
-}
-
-fn validate_action(args: &Value) -> Result<(), String> {
-    let action = args.get("action").and_then(Value::as_str).unwrap_or("");
-    let required = match action {
-        "click" | "double_click" | "right_click" | "move" => &["x", "y"][..],
-        "drag" => &["x", "y", "end_x", "end_y"][..],
-        "scroll" => &["amount"][..],
-        "type" => &["text"][..],
-        "open_url" => &["url"][..],
-        "key" | "focus_app" => {
-            if action == "key" {
-                &["key"][..]
-            } else {
-                &[][..]
-            }
-        }
-        "press_element" => &["label"][..],
-        _ => return Err("INVALID_ACTION: unsupported action".into()),
-    };
-    for field in required {
-        let value = args
-            .get(*field)
-            .ok_or_else(|| format!("INVALID_ARGUMENT: missing {field}"))?;
-        if matches!(*field, "x" | "y" | "end_x" | "end_y")
-            && !value.as_f64().is_some_and(f64::is_finite)
-        {
-            return Err(format!("INVALID_COORDINATE: invalid {field}"));
-        }
-        if *field == "amount" && !value.as_i64().is_some_and(|n| (-15..=15).contains(&n)) {
-            return Err("INVALID_SCROLL: amount out of range".into());
-        }
-        if matches!(*field, "text" | "key" | "label" | "url") && !value.is_string() {
-            return Err(format!("INVALID_ARGUMENT: {field} must be string"));
-        }
-    }
-    if action == "type" && args["text"].as_str().unwrap_or("").encode_utf16().count() > 2000 {
-        return Err("INVALID_TEXT: too long".into());
-    }
-    if action == "open_url" {
-        let url = args["url"].as_str().unwrap_or("");
-        if url.len() > 2048
-            || url.chars().any(char::is_whitespace)
-            || url.chars().any(char::is_control)
-            || !(url.starts_with("https://") || url.starts_with("http://"))
-        {
-            return Err("INVALID_BROWSER_URL: only bounded HTTP(S) URLs are supported".into());
-        }
-    }
-    if action == "press_element"
-        && !args["label"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty() && s.chars().count() <= 160)
-    {
-        return Err("INVALID_ELEMENT_LABEL".into());
-    }
-    if action == "key" {
-        if let Some(modifiers) = args.get("modifiers") {
-            let Some(all) = modifiers.as_array() else {
-                return Err("INVALID_MODIFIERS".into());
-            };
-            if all.len() > 4
-                || all.iter().any(|m| {
-                    !matches!(m.as_str(), Some("command" | "shift" | "control" | "option"))
-                })
-            {
-                return Err("INVALID_MODIFIERS".into());
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -936,18 +760,7 @@ pub fn local_approve(request_id: &str, target_bundle: Option<&str>) -> Result<Va
         if accessibility_permission() != Some(true) {
             return Err("请先授予 macOS 辅助功能权限".into());
         }
-        let target = target_bundle
-            .filter(|s| !s.trim().is_empty())
-            .ok_or("控制授权需要在本机明确选择目标应用")?;
-        let apps = native_apps()?;
-        let found = apps["applications"].as_array().is_some_and(|all| {
-            all.iter()
-                .any(|app| app["bundle_id"].as_str() == Some(target))
-        });
-        if !found {
-            return Err("目标应用不在当前可选择的列表中".into());
-        }
-        Some(target.to_owned())
+        validate_control_target(&scope, target_bundle, "请先授予 macOS 辅助功能权限")?
     } else {
         None
     };
@@ -966,64 +779,6 @@ pub fn local_revoke() -> Result<Value, String> {
     .map_err(|error| error.to_string())?;
     *locked() = Controller::default();
     Ok(local_status())
-}
-
-pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "computer_session",
-            "title": "Computer session",
-            "description": "Legacy temporary Computer Use session (request/status/stop). If the Mac owner already enabled Computer Use in local settings, DO NOT request a session: use computer_observe / computer_action directly, without session_token. For legacy temporary approvals only, call request and retain the private session_token across calls. Never expose tokens. Only local desktop UI can enable persistent access.",
-            "inputSchema": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["request", "status", "stop"] },
-                "scope": { "type": "string", "enum": ["observe", "control"], "default": "observe" },
-                "session_token": { "type": "string", "description": "Needed only when using legacy per-session approval without a persistent MCP header; NOT required for locally enabled Computer Use." }
-            }, "required": ["action"], "additionalProperties": false },
-            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
-        }),
-        json!({
-            "name": "computer_observe",
-            "title": "Observe computer screen",
-            "description": "Read windows or a ScreenCaptureKit screenshot. If the Mac user manually enabled observe/control in Coding Tools MCP settings, call directly with NO computer_session(request) and NO session_token. Each OAuth/Bearer-authenticated request is bound to that client's identity and audited. If the user has not enabled it, use legacy per-session approval. Coordinates are global macOS points.",
-            "inputSchema": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["screenshot", "windows", "ui_tree"] },
-                "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
-                "display_index": { "type": "integer", "minimum": 1, "maximum": 16, "default": 1 },
-                "display_id": { "type": "integer", "minimum": 1 },
-                "window_id": { "type": "integer", "minimum": 1 },
-                "quality": { "type": "string", "enum": ["fast", "detailed"], "default": "fast", "description": "Fast 1280x850 JPEG by default; detailed up to 1920x1200." },
-                "region": { "type": "object", "properties": {
-                    "x": { "type": "number" }, "y": { "type": "number" },
-                    "width": { "type": "number", "exclusiveMinimum": 0 },
-                    "height": { "type": "number", "exclusiveMinimum": 0 }
-                }, "required": ["x", "y", "width", "height"], "additionalProperties": false }
-            }, "required": ["action"], "additionalProperties": false },
-            "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": true }
-        }),
-        json!({
-            "name": "computer_action",
-            "title": "Control approved Mac application",
-            "description": "Execute mouse/keyboard action ONLY while Mac owner enabled local CONTROL permission for one selected application. When local policy is enabled, call directly without computer_session(request) or session_token; requests are authenticated and audited. Otherwise legacy per-session approval applies. Pointer actions require a recent matching snapshot_id; sensitive shortcuts/semantic send/delete/payment require separate 60-second local one-time confirmation.",
-            "inputSchema": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press_element", "focus_app", "open_url"] },
-                "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
-                "x": { "type": "number" }, "y": { "type": "number" },
-                "end_x": { "type": "number" }, "end_y": { "type": "number" },
-                "amount": { "type": "integer", "minimum": -15, "maximum": 15 },
-                "text": { "type": "string", "maxLength": 2000 },
-                "url": { "type": "string", "maxLength": 2048, "description": "HTTP(S) navigation of the locally approved web browser; no file or script schemes." },
-                "label": { "type": "string", "minLength": 1, "maxLength": 160 },
-                "role": { "type": "string", "maxLength": 80 },
-                "snapshot_id": { "type": "string", "description": "Required for all pointer actions; returned by computer_observe screenshot; valid for 45 seconds" },
-                "confirmation_id": { "type": "string", "description": "For locally approved sensitive actions only. After approval retry the exact same request with this ID; one-time consumption, 60 second TTL." },
-                "coordinate_space": { "type": "string", "enum": ["screen_points", "image_pixels"], "default": "screen_points" },
-                "key": { "type": "string", "minLength": 1, "maxLength": 12 },
-                "modifiers": { "type": "array", "uniqueItems": true, "maxItems": 4,
-                    "items": { "type": "string", "enum": ["command", "shift", "control", "option"] } }
-            }, "required": ["action"], "additionalProperties": false },
-            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true }
-        }),
-    ]
 }
 
 fn tool_error(message: &str) -> Value {
@@ -1154,10 +909,7 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
                         Err(error) => return tool_error(&error),
                     };
                     value["snapshot_id"] = json!(snapshot_id);
-                    value["captured_at_unix_ms"] = json!(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis());
+                    value["captured_at_unix_ms"] = json!(now_ms());
                     let metadata = value;
                     json!({
                         "isError": false,
@@ -1186,9 +938,6 @@ pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
         _ => tool_error("不支持的 computer action"),
     }
 }
-
-#[cfg(target_os = "macos")]
-mod native;
 
 #[cfg(target_os = "macos")]
 fn native_windows() -> Result<Value, String> {
@@ -1231,6 +980,3 @@ fn native_windows() -> Result<Value, String> {
 fn native_capture(_: &Value, _: Option<&str>) -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM: macOS only".into())
 }
-
-#[cfg(test)]
-mod tests;

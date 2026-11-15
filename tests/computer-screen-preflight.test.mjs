@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const rust = readFileSync(new URL("../src-tauri/src/computer.rs", import.meta.url), "utf8");
+const rust = [
+  "../src-tauri/src/computer.rs",
+  "../src-tauri/src/computer/action_policy.rs",
+  "../src-tauri/src/computer/schema.rs",
+]
+  .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
+  .join("\n");
 const native = readFileSync(new URL("../src-tauri/src/platform/macos/computer_native.m", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../src/views/settings/ComputerSettingsView.vue", import.meta.url), "utf8");
 const gatewayUi = readFileSync(new URL("../src/views/settings/GatewaySettingsView.vue", import.meta.url), "utf8");

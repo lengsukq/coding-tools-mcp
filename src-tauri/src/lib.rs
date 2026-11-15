@@ -5,7 +5,6 @@ mod app_state;
 mod auth;
 mod commands;
 mod computer;
-mod computer_geometry;
 mod data;
 mod error;
 mod global_gateway;
@@ -42,8 +41,7 @@ use commands::{
     list_history_sessions, list_software, list_tool_audit_records, list_workspace_reviews,
     list_workspaces, open_url, open_workspace_directory, open_workspace_in_ide,
     pause_computer_access, prepare_gemini_local_bridge, quit_app, read_workspace_logs,
-    recreate_ui_webview,
-    regenerate_shared_secret, reject_goal_review, reject_plan_review,
+    recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
     request_computer_accessibility_permission, request_computer_screen_permission,
     reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime, restore_runtime_state,
     resume_computer_access, revoke_computer_screen_access, run_global_health_checks,
@@ -143,83 +141,6 @@ fn update_tray_dashboard(app: &AppHandle) {
     let _ = menu
         .compact_action
         .set_enabled(cfg!(target_os = "macos") && !compact);
-}
-
-#[cfg(target_os = "windows")]
-fn signal_existing_instance() -> bool {
-    use windows::core::w;
-    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-    use windows::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
-    };
-
-    let Ok(mutex) = (unsafe {
-        CreateMutexW(
-            None,
-            false,
-            w!("Local\\CodingToolsMcpDesktop-SingleInstance"),
-        )
-    }) else {
-        eprintln!("创建应用单实例锁失败，为避免误清理其他实例的 frpc，本次启动已取消");
-        return false;
-    };
-    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        let _ = unsafe { CloseHandle(mutex) };
-        if let Ok(event) = unsafe {
-            OpenEventW(
-                EVENT_MODIFY_STATE,
-                false,
-                w!("Local\\CodingToolsMcpDesktop-ShowWindow"),
-            )
-        } {
-            let _ = unsafe { SetEvent(event) };
-            let _ = unsafe { CloseHandle(event) };
-        }
-        return false;
-    }
-
-    // Keep mutex handle for process lifetime (do not CloseHandle).
-    let _ = INSTANCE_MUTEX.set(mutex.0 as usize);
-
-    let Ok(event) = (unsafe {
-        CreateEventW(
-            None,
-            false,
-            false,
-            w!("Local\\CodingToolsMcpDesktop-ShowWindow"),
-        )
-    }) else {
-        return true;
-    };
-    // Pass the handle as usize so the waiter thread is Send (HANDLE is !Send).
-    let event_bits = event.0 as usize;
-    std::thread::spawn(move || {
-        use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
-        let event = HANDLE(event_bits as *mut std::ffi::c_void);
-        loop {
-            let _ = unsafe { WaitForSingleObject(event, INFINITE) };
-            if let Some(app) = SHOW_APP_HANDLE.get() {
-                let _ = commands::window_chrome::show_main_window(app.clone());
-            }
-        }
-    });
-    true
-}
-
-#[cfg(target_os = "windows")]
-static SHOW_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
-static INSTANCE_MUTEX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
-fn acquire_single_instance() -> bool {
-    signal_existing_instance()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn acquire_single_instance() -> bool {
-    true
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -337,6 +258,30 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+fn spawn_memory_maintenance(app_handle: AppHandle) {
+    // Maintenance is owned by the desktop process rather than the WebView or MCP
+    // listener, so compact mode / listener restarts do not interrupt cleanup.
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let (sessions, capabilities) = app_handle
+                .state::<AppState>()
+                .gateway
+                .sessions
+                .maintenance_sweep();
+            let completed_commands = crate::tools::session::reap_idle_command_sessions().await;
+            if sessions > 0 || capabilities > 0 || completed_commands > 0 {
+                eprintln!(
+                    "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands}"
+                );
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -344,7 +289,7 @@ pub fn run() {
         let code = mcp::stdio_bridge::run_cli(&args[2..]);
         std::process::exit(code);
     }
-    if !acquire_single_instance() {
+    if !platform::acquire_single_instance() {
         return;
     }
     tauri::Builder::default()
@@ -352,32 +297,8 @@ pub fn run() {
         .setup(|app| {
             app.manage(AppState::new().expect("failed to load app state"));
             setup_tray(app)?;
-            // Maintenance is owned by the desktop process rather than the
-            // WebView or MCP listener, so compact mode / listener restarts do
-            // not interrupt cleanup. It never kills a running command.
-            let maintenance_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                interval.tick().await;
-                loop {
-                    interval.tick().await;
-                    let (sessions, capabilities) = maintenance_app
-                        .state::<AppState>()
-                        .gateway.sessions.maintenance_sweep();
-                    let completed_commands =
-                        crate::tools::session::reap_idle_command_sessions().await;
-                    if sessions > 0 || capabilities > 0 || completed_commands > 0 {
-                        eprintln!(
-                            "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands}"
-                        );
-                    }
-                }
-            });
-            #[cfg(target_os = "windows")]
-            {
-                let _ = SHOW_APP_HANDLE.set(app.handle().clone());
-            }
+            spawn_memory_maintenance(app.handle().clone());
+            platform::register_show_window_handle(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

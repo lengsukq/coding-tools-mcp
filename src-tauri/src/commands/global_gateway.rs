@@ -317,8 +317,10 @@ mod tests {
     use super::*;
 
     fn test_settings(auth_type: &str, public_url: &str) -> AppSettings {
-        let mut settings = AppSettings::default();
-        settings.global_mcp_auth_type = auth_type.into();
+        let mut settings = AppSettings {
+            global_mcp_auth_type: auth_type.into(),
+            ..AppSettings::default()
+        };
         settings.global_gateway.local_port = 28765;
         settings.global_gateway.public_url = public_url.into();
         settings

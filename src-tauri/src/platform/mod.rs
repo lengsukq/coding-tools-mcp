@@ -43,9 +43,11 @@ pub(crate) mod windows;
 mod command;
 mod open;
 mod paths;
+mod single_instance;
 
 pub(crate) use command::background_command;
 pub use open::{is_allowed_url, open_path_in_file_manager, open_url};
+pub use single_instance::{acquire_single_instance, register_show_window_handle};
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxPlatform;

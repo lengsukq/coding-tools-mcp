@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CaptureFrame {
+pub(super) struct CaptureFrame {
     pub origin_x: f64,
     pub origin_y: f64,
     pub point_width: f64,

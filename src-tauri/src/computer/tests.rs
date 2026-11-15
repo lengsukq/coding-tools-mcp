@@ -1,4 +1,18 @@
+use super::action_policy::validate_action;
 use super::*;
+
+fn action_target(state: &mut Controller, session: &str) -> Option<String> {
+    state.expire();
+    let grant = state.grant.as_mut().filter(|grant| {
+        grant.session == session
+            && grant.scope == "control"
+            && !grant.paused
+            && grant.actions_used < 100
+    })?;
+    let target = grant.app_bundle.clone()?;
+    grant.actions_used += 1;
+    Some(target)
+}
 
 #[test]
 fn fast_browser_navigation_validates_scheme_and_does_not_require_a_snapshot() {
@@ -170,7 +184,7 @@ fn read_only_grant_cannot_perform_control_actions() {
         .approve(req["request_id"].as_str().unwrap(), None)
         .unwrap();
     assert!(state.allowed("session-a"));
-    assert!(state.action_target("session-a").is_none());
+    assert!(action_target(&mut state, "session-a").is_none());
     assert!(state.request("session-a", "control").is_err());
 }
 
@@ -185,10 +199,10 @@ fn control_grant_is_bound_to_approved_app_and_session() {
         )
         .unwrap();
     assert_eq!(
-        state.action_target("session-a").as_deref(),
+        action_target(&mut state, "session-a").as_deref(),
         Some("com.apple.Safari")
     );
-    assert!(state.action_target("session-b").is_none());
+    assert!(action_target(&mut state, "session-b").is_none());
     assert!(state.request("session-b", "observe").is_err());
 }
 
@@ -204,12 +218,67 @@ fn rejects_invalid_action_arguments_before_native_dispatch() {
 
 #[test]
 fn lease_invalidation_prevents_old_observation() {
-    Controller::revoked_or_replaced_grant_never_authorizes_in_flight_observation();
+    let mut state = Controller::default();
+    let a = state.request("same-client", "observe").unwrap();
+    state
+        .approve(a["request_id"].as_str().unwrap(), None)
+        .unwrap();
+    let before = state.lease_token("same-client").unwrap();
+    assert!(state.lease_matches("same-client", &before));
+    state.grant = None;
+    assert!(!state.lease_matches("same-client", &before));
+    let b = state.request("same-client", "observe").unwrap();
+    state
+        .approve(b["request_id"].as_str().unwrap(), None)
+        .unwrap();
+    assert!(!state.lease_matches("same-client", &before));
+    assert!(state.lease_token("some-other-client").is_none());
 }
 
 #[test]
 fn coordinate_actions_are_bound_to_recent_capture() {
-    Controller::coordinate_actions_require_recent_matching_snapshot();
+    let mut state = Controller::default();
+    let req = state.request("s", "control").unwrap();
+    state
+        .approve(
+            req["request_id"].as_str().unwrap(),
+            Some("com.apple.Safari".into()),
+        )
+        .unwrap();
+    let lease = state.lease_token("s").unwrap();
+    assert!(!state.grant.as_ref().unwrap().capture_succeeded);
+    let geometry = json!({
+        "origin_x": -1440.0, "origin_y": 0.0, "point_width": 1440.0,
+        "point_height": 900.0, "pixel_width": 1920, "pixel_height": 1200
+    });
+    let snap = state.record_snapshot("s", &lease, &geometry).unwrap();
+    assert!(state.grant.as_ref().unwrap().capture_succeeded);
+    assert!(state
+        .prepare_action("s", &json!({"action":"click","x":20,"y":30}))
+        .is_err());
+    assert!(state
+        .prepare_action(
+            "s",
+            &json!({"action":"click","x":20,"y":30,"snapshot_id":"forged"})
+        )
+        .is_err());
+    let (_, converted) = state
+        .prepare_action(
+            "s",
+            &json!({
+                "action":"click","x":960,"y":600,"coordinate_space":"image_pixels","snapshot_id":snap
+            }),
+        )
+        .unwrap();
+    assert!(converted["x"].as_f64().unwrap() < 0.0);
+    assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
+    state.snapshot.as_mut().unwrap().created_at = Instant::now() - SNAPSHOT_TTL;
+    assert!(state
+        .prepare_action(
+            "s",
+            &json!({"action":"click","x":1,"y":2,"snapshot_id":snap})
+        )
+        .is_err());
 }
 
 #[test]
@@ -238,6 +307,7 @@ fn paused_control_lease_denies_observe_and_input_until_resumed() {
         .prepare_action("client-a", &json!({"action": "focus_app"}))
         .is_ok());
 }
+
 fn control_session() -> Controller {
     let mut state = Controller::default();
     let req = state.request("client-a", "control").unwrap();

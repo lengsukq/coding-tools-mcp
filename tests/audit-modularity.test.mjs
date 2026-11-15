@@ -29,15 +29,24 @@ test("Global MCP routing isolates scope resolution from tool dispatch", async ()
   assert.match(scope, /WORKSPACE_NOT_SELECTED/);
 });
 
-test("Computer Use native FFI is isolated from authorization and policy state", async () => {
+test("Computer Use isolates native FFI, geometry, action policy, and schemas from lease state", async () => {
   const computer = await source("src-tauri/src/computer.rs");
   const native = await source("src-tauri/src/computer/native.rs");
+  const geometry = await source("src-tauri/src/computer/geometry.rs");
+  const actionPolicy = await source("src-tauri/src/computer/action_policy.rs");
+  const schema = await source("src-tauri/src/computer/schema.rs");
   const tests = await source("src-tauri/src/computer/tests.rs");
   assert.match(computer, /mod native;/);
+  assert.match(computer, /mod geometry;/);
+  assert.match(computer, /mod action_policy;/);
+  assert.match(computer, /mod schema;/);
   assert.match(computer, /fn prepare_or_request_sensitive_action/);
   assert.doesNotMatch(computer, /fn computer_native_(?:capture|action|windows|free)/);
   assert.match(native, /unsafe extern "C"/);
   assert.match(native, /computer_native_free\(pointer\)/);
+  assert.match(geometry, /pub\(super\) struct CaptureFrame/);
+  assert.match(actionPolicy, /pub\(super\) fn validate_action/);
+  assert.match(schema, /pub fn tool_definitions\(\)/);
   assert.match(tests, /high_risk_confirmation_is_local_exact_and_single_use/);
 });
 
@@ -61,4 +70,27 @@ test("workspace commands keep stable exports but split independent domains", asy
   assert.match(await source("src-tauri/src/commands/workspace/git.rs"), /pub async fn get_workspace_git_summary/);
   assert.match(await source("src-tauri/src/commands/workspace/crud.rs"), /pub fn delete_workspace/);
   assert.match(await source("src-tauri/src/commands/workspace/reviews.rs"), /pub fn list_workspace_reviews/);
+});
+
+test("stdio bridge, review, tool audit, and tool dispatch separate core domains from orchestration", async () => {
+  const bridge = await source("src-tauri/src/mcp/stdio_bridge.rs");
+  assert.match(bridge, /mod auth;/);
+  assert.match(bridge, /mod compact;/);
+  assert.match(bridge, /mod transport;/);
+
+  const review = await source("src-tauri/src/review.rs");
+  assert.match(review, /mod diff;/);
+  assert.match(review, /mod git_scan;/);
+  assert.match(review, /mod store;/);
+  assert.match(review, /pub use diff::snapshot_text_files;/);
+
+  const audit = await source("src-tauri/src/tool_audit.rs");
+  assert.match(audit, /mod sanitize;/);
+  assert.match(audit, /mod store;/);
+
+  const dispatch = await source("src-tauri/src/tools/dispatch.rs");
+  assert.match(dispatch, /mod cwd;/);
+  assert.match(dispatch, /mod gates;/);
+  assert.match(dispatch, /mod ledger;/);
+  assert.match(dispatch, /mod routing;/);
 });
