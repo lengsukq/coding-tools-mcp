@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::computer::ManualComputerAccess;
-use crate::settings::{DownloadConfig, FrpProfile, GlobalGatewayConfig, ProxyConfig};
+use crate::settings::{
+    DownloadConfig, FrpProfile, GlobalGatewayConfig, LanFederationConfig, ProxyConfig,
+};
 use crate::workspace::WorkspaceProfile;
 
 /// Unified on-disk payload stored in `data/profiles.json`.
@@ -39,6 +41,8 @@ pub struct AppData {
     pub global_custom_skill_paths: String,
     #[serde(default)]
     pub allow_lan_access: bool,
+    #[serde(default = "crate::settings::default_allow_local_noauth")]
+    pub allow_local_noauth: bool,
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
     #[serde(default)]
@@ -51,6 +55,8 @@ pub struct AppData {
     pub restore_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
+    #[serde(default)]
+    pub lan_federation: LanFederationConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_audit_retention_days: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

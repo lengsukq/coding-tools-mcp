@@ -383,6 +383,15 @@ function authLabel(record: ToolAuditRecord): { text: string; kind: "oauth" | "be
       kind: "oauth",
     };
   }
+  if (record.authMethod === "lan_peer") {
+    return {
+      text: record.sourcePeer ? `局域网对等 · ${record.sourcePeer}` : `局域网对等 · ${record.clientId ?? "已配对节点"}`,
+      kind: "oauth",
+    };
+  }
+  if (record.authMethod === "local_loopback") {
+    return { text: "本机回环免授权直连", kind: "none" };
+  }
   if (record.authMethod === "shared_bearer") {
     return { text: "共享 Bearer", kind: "bearer" };
   }

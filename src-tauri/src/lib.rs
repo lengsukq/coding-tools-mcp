@@ -10,6 +10,7 @@ mod error;
 mod global_gateway;
 pub mod harness;
 mod health;
+pub(crate) mod lan_peer;
 mod local_network;
 mod mcp;
 pub mod planning;
@@ -27,29 +28,32 @@ mod workspace;
 
 use app_state::AppState;
 use commands::{
-    accept_goal_review, accept_plan_review, approve_computer_screen_request, check_app_update,
-    check_global_gateway_health, clear_tool_audit_records, create_session_review_url,
-    create_workspace, create_workspace_review_url, decide_computer_sensitive_action,
-    delete_frp_profile, delete_plan, delete_workspace, delete_workspace_review,
-    detect_installed_ides, enable_computer_access, enter_compact_mode, get_app_settings,
-    get_computer_screen_status, get_download_config, get_gemini_local_bridge_status,
-    get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
-    get_global_runtime_settings, get_last_workspace_id, get_planning_state, get_proxy,
-    get_runtime_status, get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
+    accept_goal_review, accept_plan_review, approve_computer_screen_request,
+    cancel_lan_pairing_pin, check_app_update, check_global_gateway_health,
+    clear_tool_audit_records, create_lan_pairing_pin, create_session_review_url, create_workspace,
+    create_workspace_review_url, decide_computer_sensitive_action, delete_frp_profile, delete_plan,
+    delete_workspace, delete_workspace_review, detect_installed_ides, enable_computer_access,
+    enter_compact_mode, get_app_settings, get_computer_screen_status, get_download_config,
+    get_gemini_local_bridge_status, get_global_gateway_config, get_global_gateway_status,
+    get_global_mcp_overview, get_global_runtime_settings, get_lan_peers_overview,
+    get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
+    get_service_usage_stats, get_shared_secret, get_webview_memory_sample,
     get_workspace_activity_metrics, get_workspace_git_summary, hide_to_tray, install_software,
     issue_workspace_review_url, list_computer_available_apps, list_frp_profiles,
     list_history_sessions, list_software, list_tool_audit_records, list_workspace_reviews,
-    list_workspaces, open_url, open_workspace_directory, open_workspace_in_ide,
-    pause_computer_access, prepare_gemini_local_bridge, quit_app, read_workspace_logs,
-    recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
+    list_workspaces, open_url, open_workspace_directory, open_workspace_in_ide, pair_lan_peer,
+    pause_computer_access, prepare_gemini_local_bridge, probe_lan_peer_address, quit_app,
+    read_workspace_logs, recreate_ui_webview, regenerate_shared_secret, reject_goal_review,
+    reject_plan_review, remove_lan_paired_peer, rename_lan_paired_peer,
     request_computer_accessibility_permission, request_computer_screen_permission,
     reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime, restore_runtime_state,
     resume_computer_access, revoke_computer_screen_access, run_global_health_checks,
-    save_frp_profile, scan_agent_context, scan_global_agent_context, set_download_config,
-    set_global_gateway_config, set_global_runtime_settings, set_last_workspace, set_planning_mode,
-    set_proxy, set_shared_secret, set_shared_secrets, set_tool_audit_retention_days,
-    show_main_window, start_global_gateway, start_runtime, stop_global_gateway, stop_runtime,
-    uninstall_software, update_workspace,
+    save_frp_profile, save_lan_federation_settings, scan_agent_context, scan_global_agent_context,
+    scan_lan_peers, set_download_config, set_global_gateway_config, set_global_runtime_settings,
+    set_lan_paired_peer_enabled, set_last_workspace, set_planning_mode, set_proxy,
+    set_shared_secret, set_shared_secrets, set_tool_audit_retention_days, show_main_window,
+    start_global_gateway, start_runtime, stop_global_gateway, stop_runtime, uninstall_software,
+    update_workspace,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -379,6 +383,16 @@ pub fn run() {
             check_global_gateway_health,
             get_global_runtime_settings,
             set_global_runtime_settings,
+            get_lan_peers_overview,
+            save_lan_federation_settings,
+            create_lan_pairing_pin,
+            cancel_lan_pairing_pin,
+            scan_lan_peers,
+            probe_lan_peer_address,
+            pair_lan_peer,
+            remove_lan_paired_peer,
+            set_lan_paired_peer_enabled,
+            rename_lan_paired_peer,
             get_webview_memory_sample,
             recreate_ui_webview,
             enter_compact_mode,

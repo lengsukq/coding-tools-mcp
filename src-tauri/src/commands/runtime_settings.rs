@@ -27,6 +27,8 @@ pub struct GlobalRuntimeSettingsDto {
     pub custom_skill_paths: String,
     #[serde(default)]
     pub allow_lan_access: bool,
+    #[serde(default = "crate::settings::default_allow_local_noauth")]
+    pub allow_local_noauth: bool,
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
     #[serde(default)]
@@ -50,6 +52,7 @@ pub fn get_global_runtime_settings(
             custom_instruction_paths: settings.global_custom_instruction_paths,
             custom_skill_paths: settings.global_custom_skill_paths,
             allow_lan_access: settings.allow_lan_access,
+            allow_local_noauth: settings.allow_local_noauth,
             restore_runtime_state_on_launch: settings.restore_runtime_state_on_launch,
             migration_notice: settings.global_mcp_migration_notice,
         })
@@ -91,6 +94,7 @@ pub fn set_global_runtime_settings(
             runtime.custom_instruction_paths.trim().to_string();
         settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
         settings.allow_lan_access = runtime.allow_lan_access;
+        settings.allow_local_noauth = runtime.allow_local_noauth;
         settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;
         settings.global_mcp_migration_notice.clear();
         if let Some(running) = running_snapshot {

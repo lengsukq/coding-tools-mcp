@@ -199,6 +199,8 @@ fn listener_state(profiles: Vec<WorkspaceProfile>) -> ListenerState {
         scope_id: "global-mcp".into(),
         scope_label: "Global MCP Gateway".into(),
         bind_port: 0,
+        allow_lan_mcp: false,
+        allow_local_noauth: false,
         configured_public_url: String::new(),
         bearer_token: None,
         oauth: None,
@@ -867,3 +869,58 @@ async fn computer_http_tool_catalog_and_default_deny() {
 fn path_string(path: &Path) -> String {
     path.display().to_string()
 }
+
+#[tokio::test]
+async fn local_loopback_agent_works_without_oauth_while_blocking_tunnel_and_cross_origin() {
+    use std::net::SocketAddr;
+
+    let mut state = test_listener_state();
+    state.auth.auth_type = "oauth".into();
+    state.allow_local_noauth = true;
+    state.allow_lan_mcp = false;
+    state.configured_public_url = "https://coding-mcp.example.test".into();
+    state.oauth = Some(Arc::new(OAuthRuntime::new(
+        "https://coding-mcp.example.test".into(),
+        "test-client".into(),
+        None,
+        "test-password".into(),
+        "test-token-secret".into(),
+    )));
+
+    let app = build_router(state).into_make_service_with_connect_info::<SocketAddr>();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listen");
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}/mcp");
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    // 1. Direct OS loopback Agent without OAuth succeeds immediately.
+    let session = initialize_session(&client, &url).await;
+    let listed = call_tool(&client, &url, &session, 2, "workspace_list", json!({})).await;
+    assert_eq!(listed["result"]["isError"], false);
+
+    // 2. Tunnel-forwarded traffic arriving via 127.0.0.1 (e.g. cloudflared / frpc) MUST still challenge OAuth (401).
+    let tunnel_attempt = client
+        .post(&url)
+        .header("cf-connecting-ip", "203.0.113.10")
+        .json(&json!({"jsonrpc":"2.0","id":3,"method":"initialize","params":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tunnel_attempt.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // 3. Browser cross-origin request with Origin header MUST still challenge OAuth (401).
+    let browser_csrf = client
+        .post(&url)
+        .header("Origin", "https://evil.example")
+        .json(&json!({"jsonrpc":"2.0","id":4,"method":"initialize","params":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(browser_csrf.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    server.abort();
+}
+

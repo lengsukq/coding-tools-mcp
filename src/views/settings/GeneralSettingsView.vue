@@ -29,7 +29,7 @@ const props = withDefaults(defineProps<{
 }>(), { section: "general" });
 const proxy = reactive<ProxyConfigDto>({ mode: "none", url: "" });
 const runtime = reactive<GlobalRuntimeSettingsDto>({
-    authType: "oauth", executablePaths: "", permissionMode: "trusted", allowedCommands: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, restoreRuntimeStateOnLaunch: false, migrationNotice: "",
+    authType: "oauth", executablePaths: "", permissionMode: "trusted", allowedCommands: "", aiInstructions: "", instructionSources: [], skillSources: [], customInstructionPaths: "", customSkillPaths: "", allowLanAccess: false, allowLocalNoauth: true, restoreRuntimeStateOnLaunch: false, migrationNotice: "",
 });
 const authOptions = [
     { value: "oauth", label: "OAuth（推荐）" },
@@ -55,7 +55,7 @@ const runtimeError = ref("");
 const proxyError = ref("");
 const runtimeBaseline = ref<GlobalRuntimeSettingsDto | null>(null);
 const proxyBaseline = ref("");
-const owned = computed<Array<keyof GlobalRuntimeSettingsDto>>(() => props.section === "connection" ? ["authType", "allowLanAccess"] : props.section === "general" ? ["restoreRuntimeStateOnLaunch"] : ["permissionMode", "allowedCommands", "executablePaths", "aiInstructions", "instructionSources", "skillSources", "customInstructionPaths", "customSkillPaths"]);
+const owned = computed<Array<keyof GlobalRuntimeSettingsDto>>(() => props.section === "connection" ? ["authType", "allowLocalNoauth", "allowLanAccess"] : props.section === "general" ? ["restoreRuntimeStateOnLaunch"] : ["permissionMode", "allowedCommands", "executablePaths", "aiInstructions", "instructionSources", "skillSources", "customInstructionPaths", "customSkillPaths"]);
 const runtimeDirty = computed(() => !loading.value && !!runtimeBaseline.value && owned.value.some(key => JSON.stringify(runtime[key]) !== JSON.stringify(runtimeBaseline.value![key])));
 const proxyDirty = computed(() => !loading.value && props.section === "tools" && JSON.stringify(proxy) !== proxyBaseline.value);
 async function refresh() {
@@ -232,7 +232,8 @@ onMounted(() => { void refresh(); });
 </div>
 <div class="ui-stack">
 <SelectField v-model="runtime.authType" label="认证模式" :options="authOptions"/>
-<ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网访问" description="允许局域网设备访问唯一 MCP 端点。"/>
+<ToggleSwitch v-model="runtime.allowLocalNoauth" label="本机 Agent 免授权直连（推荐开启）" description="允许本机 127.0.0.1 非浏览器 Agent 免 OAuth 直接连接并访问已配对的局域网/组网工作区；公网隧道与跨机请求仍强制校验认证。"/>
+<ToggleSwitch v-model="runtime.allowLanAccess" label="允许局域网未配对客户端直连 /mcp" description="开启局域网设备配对无需勾选此项；仅当需要其他电脑不经配对直接连接本机 /mcp 时启用。"/>
 <p v-if="runtime.migrationNotice" class="ui-banner ui-banner--warning">{{runtime.migrationNotice}}</p>
 <SaveBar :dirty="runtimeDirty" :busy="runtimeSaving" :error="runtimeError" @save="saveRuntime"/>
 </div>

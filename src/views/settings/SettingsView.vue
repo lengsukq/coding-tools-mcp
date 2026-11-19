@@ -6,6 +6,7 @@ import PageHeader from "$src/components/ui/PageHeader.vue";
 import PageTabs from "$src/components/ui/PageTabs.vue";
 import GeneralSettingsView from "./GeneralSettingsView.vue";
 import GatewaySettingsView from "./GatewaySettingsView.vue";
+import LanPeersSettingsView from "./LanPeersSettingsView.vue";
 import ComputerSettingsView from "./ComputerSettingsView.vue";
 import KeysSettingsView from "./KeysSettingsView.vue";
 import FrpSettingsView from "./FrpSettingsView.vue";
@@ -26,6 +27,7 @@ watch([section, () => route.query.panel], () => void reveal());
 <div :key="section" class="ui-stack">
 <template v-if="section==='connection'">
 <GatewaySettingsView/>
+<LanPeersSettingsView/>
 <GeneralSettingsView section="connection"/>
 <details id="settings-keys" class="ui-disclosure">
 <summary>认证密钥 <span class="ui-muted">影响全部工作区连接</span>

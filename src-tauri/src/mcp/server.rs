@@ -13,6 +13,8 @@ pub type SharedState = SharedToolContext;
 pub struct GatewayResponse {
     pub body: Value,
     pub workspace: Option<WorkspaceRequestContext>,
+    pub federated_workspace_id: Option<String>,
+    pub execution_host: Option<String>,
 }
 
 mod dispatch;

@@ -16,18 +16,18 @@
 
 ## 当前核心能力
 
-- 单一 Global MCP 连接管理多个隔离 Workspace；
+- 单一 Global MCP 连接管理多个隔离 Workspace，并支持跨 macOS / Windows 局域网对等配对与单跳联邦路由（`{device_id}:{workspace_id}` 复合作用域与 `device_list` 设备发现）；
 - request-scoped `workspace_id` 路由，并兼容持久 MCP session 的 `workspace_select`；
 - MCP Streamable HTTP 与本机回环 `mcp-stdio` 无头桥接（供桌面端 Gemini / Claude 等本地 MCP 宿主直连）；
 - Bearer / OAuth、PKCE S256、Dynamic Client Registration、Refresh Token；
-- macOS 原生 Computer Use（ScreenCaptureKit 截图观察与目标应用受控输入，含高风险动作单次审批与客户端审计）；
+- macOS 原生 Computer Use（ScreenCaptureKit 截图观察与目标应用受控输入，含高风险动作单次审批、客户端审计及局域网跨设备 `device_id` 消歧转发）；
 - 文件、Patch、命令、Git、图片与 Skill 工具；
 - Stable Tool API v2 聚合管理入口；
 - Direct / Plan / Goal 模式与人工验收；
 - Planning / Harness Task / History 通过 Execution Ledger 收口执行状态；
 - 项目内 `docs/history-session/` 无损历史；
-- FRP / Cloudflare 与 Global Gateway；
-- 应用级共享密钥存储、工具调用审计日志（JSONL 日期分区与自动过期轮转）、运行日志、健康检查与 usage 统计。
+- FRP / Cloudflare 与 Global Gateway（含局域网对等节点变更审查快照 `/review/peer/{device_id}/{id}` 单隧道穿透）；
+- 应用级共享密钥存储、工具调用审计日志（JSONL 日期分区、自动过期轮转与跨设备双向审计记录）、运行日志、健康检查与 usage 统计。
 
 ## 文档导航
 
@@ -56,4 +56,4 @@ Agent 的分析与交付前置要求以当前 `AGENTS.md` 和 `.agents/skills/mc
 原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
-*当前事实更新: 2026-11-15*
+*当前事实更新: 2026-11-18*

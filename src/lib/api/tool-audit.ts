@@ -9,7 +9,7 @@ export interface ToolAuditRecord {
   toolName: string;
   actionName?: string | null;
   wrapperToolName: string | null;
-  authMethod: "oauth" | "shared_bearer" | "none" | string;
+  authMethod: "oauth" | "shared_bearer" | "lan_peer" | "none" | string;
   clientId: string | null;
   outcome: "success" | "error" | string;
   errorCategory: string | null;
@@ -17,6 +17,8 @@ export interface ToolAuditRecord {
   responseBytes: number;
   changeId: string | null;
   changedFileCount: number | null;
+  executionHost?: string | null;
+  sourcePeer?: string | null;
 }
 
 export interface ToolAuditFilter {

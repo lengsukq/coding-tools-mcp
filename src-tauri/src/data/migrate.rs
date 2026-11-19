@@ -171,7 +171,10 @@ pub fn load_or_migrate() -> AppResult<AppData> {
     }
 
     let app_root = platform().app_config_dir()?;
-    let mut data = AppData::default();
+    let mut data = AppData {
+        allow_local_noauth: true,
+        ..AppData::default()
+    };
 
     let legacy_profiles = app_root.join(LEGACY_PROFILES_FILE);
     if legacy_profiles.exists() {
@@ -272,6 +275,7 @@ fn merge_settings(data: &mut AppData, settings: AppSettings) {
     data.global_custom_instruction_paths = settings.global_custom_instruction_paths;
     data.global_custom_skill_paths = settings.global_custom_skill_paths;
     data.allow_lan_access = settings.allow_lan_access;
+    data.allow_local_noauth = settings.allow_local_noauth;
     data.restore_runtime_state_on_launch = settings.restore_runtime_state_on_launch;
     data.global_mcp_was_running = settings.global_mcp_was_running;
     data.global_mcp_migration_notice = settings.global_mcp_migration_notice;

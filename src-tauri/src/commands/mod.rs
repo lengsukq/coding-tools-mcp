@@ -5,6 +5,7 @@ mod frp_profiles;
 mod global_gateway;
 mod health;
 mod history;
+mod lan_peers;
 mod logs;
 mod planning;
 pub(crate) mod runtime;
@@ -36,6 +37,11 @@ pub use global_gateway::{
 };
 pub use health::run_global_health_checks;
 pub use history::list_history_sessions;
+pub use lan_peers::{
+    cancel_lan_pairing_pin, create_lan_pairing_pin, get_lan_peers_overview, pair_lan_peer,
+    probe_lan_peer_address, remove_lan_paired_peer, rename_lan_paired_peer,
+    save_lan_federation_settings, scan_lan_peers, set_lan_paired_peer_enabled,
+};
 pub use logs::read_workspace_logs;
 pub use planning::{
     accept_goal_review, accept_plan_review, delete_plan, get_planning_state, reject_goal_review,

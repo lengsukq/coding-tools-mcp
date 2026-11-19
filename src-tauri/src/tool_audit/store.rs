@@ -246,6 +246,8 @@ fn matches_filter(
                 record.session_id.as_deref().unwrap_or_default(),
                 record.tool_name.as_str(),
                 record.client_id.as_deref().unwrap_or_default(),
+                record.execution_host.as_deref().unwrap_or_default(),
+                record.source_peer.as_deref().unwrap_or_default(),
             ]
             .iter()
             .any(|value| value.to_lowercase().contains(needle))

@@ -50,9 +50,16 @@ fn normalize_session_id(value: &str) -> Option<String> {
 pub fn gateway_tool_definitions() -> Vec<Value> {
     vec![
         gateway_tool(
+            "device_list",
+            "List LAN devices",
+            "List this host and all paired LAN devices (macOS / Windows / Linux), including online status, OS, workspace counts, and Computer Use availability.",
+            json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            true,
+        ),
+        gateway_tool(
             "workspace_list",
             "List workspaces",
-            "List workspaces registered in Coding Tools MCP. Use this before selecting a project context.",
+            "List workspaces registered in Coding Tools MCP (including paired LAN peers scoped as {device_id}:{workspace_id}). Use this before selecting a project context.",
             json!({ "type": "object", "properties": {}, "additionalProperties": false }),
             true,
         ),
@@ -66,11 +73,11 @@ pub fn gateway_tool_definitions() -> Vec<Value> {
         gateway_tool(
             "workspace_select",
             "Select workspace",
-            "Select the active Workspace for this MCP session. This never changes another Chat session.",
+            "Select the active Workspace (local or paired LAN {device_id}:{workspace_id}) for this MCP session. This never changes another Chat session.",
             json!({
                 "type": "object",
                 "properties": {
-                    "workspace_id": { "type": "string", "description": "Workspace id returned by workspace_list." }
+                    "workspace_id": { "type": "string", "description": "Workspace id returned by workspace_list (local id or {device_id}:{workspace_id} for paired LAN computers)." }
                 },
                 "required": ["workspace_id"],
                 "additionalProperties": false
@@ -80,11 +87,11 @@ pub fn gateway_tool_definitions() -> Vec<Value> {
         gateway_tool(
             "workspace_invoke",
             "Invoke in workspace",
-            "Run one ordinary Coding Tools MCP tool against an explicitly selected registered Workspace without changing the session's active Workspace.",
+            "Run one ordinary Coding Tools MCP tool against an explicitly selected registered Workspace (local or paired LAN {device_id}:{workspace_id}) without changing the session's active Workspace.",
             json!({
                 "type": "object",
                 "properties": {
-                    "workspace_id": { "type": "string", "description": "Workspace id returned by workspace_list." },
+                    "workspace_id": { "type": "string", "description": "Workspace id returned by workspace_list (local id or {device_id}:{workspace_id})." },
                     "tool": { "type": "string", "description": "Ordinary Coding Tools MCP tool name, for example read_file or git_status." },
                     "arguments": { "type": "object", "description": "Arguments passed to the nested tool." }
                 },
@@ -99,7 +106,11 @@ pub fn gateway_tool_definitions() -> Vec<Value> {
 pub fn is_gateway_tool(name: &str) -> bool {
     matches!(
         name,
-        "workspace_list" | "workspace_current" | "workspace_select" | "workspace_invoke"
+        "device_list"
+            | "workspace_list"
+            | "workspace_current"
+            | "workspace_select"
+            | "workspace_invoke"
     )
 }
 

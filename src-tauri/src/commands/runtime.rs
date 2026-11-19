@@ -44,6 +44,12 @@ pub fn get_global_mcp_overview(state: State<'_, AppState>) -> AppResult<GlobalMc
         .iter()
         .map(|workspace| (workspace.id.clone(), workspace.name.clone()))
         .collect::<std::collections::HashMap<_, _>>();
+    let peer_names = state
+        .with_settings(|store| Ok(store.settings().lan_federation.paired_peers))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.device_id, p.device_name))
+        .collect::<std::collections::HashMap<_, _>>();
     let sessions = state
         .gateway
         .sessions
@@ -53,11 +59,16 @@ pub fn get_global_mcp_overview(state: State<'_, AppState>) -> AppResult<GlobalMc
             let workspace_id = scope.active_workspace_id.unwrap_or_default();
             let workspace_name = if workspace_id.is_empty() {
                 "未选择 Workspace".into()
+            } else if let Some(local_name) = names.get(&workspace_id) {
+                local_name.clone()
+            } else if let Some((dev_id, remote_ws)) = workspace_id.split_once(':') {
+                if let Some(peer_name) = peer_names.get(dev_id) {
+                    format!("[{peer_name}] {remote_ws}")
+                } else {
+                    "已删除或未配对 Workspace".into()
+                }
             } else {
-                names
-                    .get(&workspace_id)
-                    .cloned()
-                    .unwrap_or_else(|| "已删除 Workspace".into())
+                "已删除 Workspace".into()
             };
             GlobalMcpSessionDto {
                 session_id,

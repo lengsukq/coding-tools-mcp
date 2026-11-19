@@ -8,7 +8,10 @@ use sha2::{Digest, Sha256};
 
 use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
 use crate::data::DataStore;
-use crate::settings::AppSettings;
+use crate::lan_peer::{
+    PeerDeviceMetaDto, LAN_PEER_SECRETS_SCOPE,
+};
+use crate::settings::{AppSettings, PairedPeerConfig};
 use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
 use crate::tools::policy::PolicySettings;
 use crate::tools::{SharedToolContext, ToolContext, Workspace};
@@ -182,6 +185,10 @@ pub struct WorkspaceDescriptor {
     pub id: String,
     pub name: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<PeerDeviceMetaDto>,
 }
 
 impl From<&WorkspaceProfile> for WorkspaceDescriptor {
@@ -190,6 +197,8 @@ impl From<&WorkspaceProfile> for WorkspaceDescriptor {
             id: profile.id.clone(),
             name: profile.name.clone(),
             path: profile.path.clone(),
+            qualified_name: None,
+            device: None,
         }
     }
 }
@@ -215,6 +224,10 @@ impl WorkspaceRegistry {
             .collect::<Vec<_>>();
         items.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
         Ok(items)
+    }
+
+    pub fn local_descriptors(&self) -> Result<Vec<WorkspaceDescriptor>, String> {
+        self.descriptors()
     }
 
     pub fn resolve(&self, workspace_id: &str) -> Result<WorkspaceProfile, GatewayError> {
@@ -706,7 +719,7 @@ pub struct GatewayState {
     pub registry: WorkspaceRegistry,
     pub sessions: Arc<GatewaySessionStore>,
     usage: Mutex<HashMap<String, Arc<ServiceUsage>>>,
-    settings_override: Option<AppSettings>,
+    settings_override: Arc<Mutex<Option<AppSettings>>>,
 }
 
 impl Default for GatewayState {
@@ -715,7 +728,7 @@ impl Default for GatewayState {
             registry: WorkspaceRegistry::default(),
             sessions: Arc::new(GatewaySessionStore::default()),
             usage: Mutex::new(HashMap::new()),
-            settings_override: None,
+            settings_override: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -730,7 +743,61 @@ impl GatewayState {
             registry: WorkspaceRegistry::from_profiles(profiles),
             sessions: Arc::new(GatewaySessionStore::default()),
             usage: Mutex::new(HashMap::new()),
-            settings_override: Some(settings),
+            settings_override: Arc::new(Mutex::new(Some(settings))),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clone_for_test(&self) -> Self {
+        let usage_snapshot = self
+            .usage
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        Self {
+            registry: self.registry.clone(),
+            sessions: self.sessions.clone(),
+            usage: Mutex::new(usage_snapshot),
+            settings_override: self.settings_override.clone(),
+        }
+    }
+
+    pub fn settings_snapshot(&self) -> Option<AppSettings> {
+        self.settings_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn is_test_override(&self) -> bool {
+        self.settings_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    pub fn register_test_paired_peer(&self, peer: PairedPeerConfig, shared_secret: String) {
+        let mut guard = self
+            .settings_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(settings) = guard.as_mut() {
+            settings.lan_federation.enabled = true;
+            if let Some(existing) = settings
+                .lan_federation
+                .paired_peers
+                .iter_mut()
+                .find(|p| p.device_id == peer.device_id)
+            {
+                *existing = peer.clone();
+            } else {
+                settings.lan_federation.paired_peers.push(peer.clone());
+            }
+            settings
+                .app_secrets
+                .entry(LAN_PEER_SECRETS_SCOPE.to_string())
+                .or_default()
+                .insert(peer.device_id, shared_secret);
         }
     }
 
@@ -803,8 +870,7 @@ impl GatewayState {
         profile: WorkspaceProfile,
     ) -> Result<WorkspaceRequestContext, GatewayError> {
         let global = self
-            .settings_override
-            .clone()
+            .settings_snapshot()
             .unwrap_or_else(AppSettings::load_or_default);
         let workspace = Workspace::new(profile.path.clone().into()).map_err(|error| {
             GatewayError::invalid("WORKSPACE_UNAVAILABLE", error.message().to_string())

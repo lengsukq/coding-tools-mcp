@@ -104,9 +104,10 @@ pub fn prepare_gemini_local_bridge(
     let oauth_secret = match auth_type {
         "oauth" => SecretStore::get_shared("oauth_token_secret")?.unwrap_or_default(),
         "noauth" => String::new(),
+        "bearer" if settings.allow_local_noauth => String::new(),
         "bearer" => {
             return Err(AppError::Message(
-                "Bearer 模式不支持自动生成本地桥接凭据，请切换到 OAuth 或无认证模式。".into(),
+                "Bearer 模式不支持自动生成本地桥接凭据，请开启本机回环免授权直连，或切换到 OAuth / 无认证模式。".into(),
             ))
         }
         _ => {
@@ -148,6 +149,9 @@ fn prepare_bridge_with_paths(
             write_private_auth_file(auth_path, &payload).map_err(AppError::Message)?;
         }
         "noauth" => {
+            remove_auth_file_if_exists(auth_path).map_err(AppError::Message)?;
+        }
+        "bearer" if settings.allow_local_noauth => {
             remove_auth_file_if_exists(auth_path).map_err(AppError::Message)?;
         }
         _ => {}
@@ -236,6 +240,7 @@ fn evaluate_credentials(
 ) -> (bool, String) {
     match settings.global_mcp_auth_type.trim() {
         "noauth" => (true, String::new()),
+        "bearer" if settings.allow_local_noauth => (true, String::new()),
         "bearer" => (
             false,
             "当前是 Bearer 模式；为避免在命令或明文文件外暴露密钥，请切换到 OAuth 或无认证模式。".into(),

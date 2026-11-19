@@ -11,7 +11,7 @@ const router = createRouter({ history: createWebHashHistory(), routes: [
         { path: "/workspace/:id/:tab(overview|planning|changes|history|diagnostics|settings)?", name: "workspace", component: WorkspaceView },
         { path: "/audit", name: "tool-audit", component: ToolAuditView },
         { path: "/settings", redirect: "/settings/general" },
-        ...["keys", "gateway", "frp"].map(panel => ({ path: `/settings/${panel}`, redirect: { path: `/settings/${legacySettingsSection(panel)!.section}`, query: { panel } } })),
+        ...["keys", "gateway", "frp", "lan"].map(panel => ({ path: `/settings/${panel}`, redirect: { path: `/settings/${legacySettingsSection(panel)!.section}`, query: { panel } } })),
         { path: "/settings/software", redirect: { path: `/settings/${legacySettingsSection("software")!.section}`, query: { panel: "software" } } },
         { path: "/settings/:section(general|connection|execution|computer|tools|about)", name: "settings", component: SettingsView },
         ...(import.meta.env.DEV ? [{ path: "/dev/ui", component: () => import("./views/ComponentGalleryView.vue") }] : []),

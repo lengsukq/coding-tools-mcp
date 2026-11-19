@@ -62,6 +62,7 @@ export interface GlobalRuntimeSettingsDto {
   customInstructionPaths: string;
   customSkillPaths: string;
   allowLanAccess: boolean;
+  allowLocalNoauth?: boolean;
   restoreRuntimeStateOnLaunch: boolean;
   migrationNotice: string;
 }

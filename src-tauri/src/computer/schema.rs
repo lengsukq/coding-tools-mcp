@@ -9,6 +9,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["request", "status", "stop"] },
                 "scope": { "type": "string", "enum": ["observe", "control"], "default": "observe" },
+                "device_id": { "type": "string", "description": "Optional target device_id from device_list (or 'local') when multiple LAN computers are paired." },
                 "session_token": { "type": "string", "description": "Needed only when using legacy per-session approval without a persistent MCP header; NOT required for locally enabled Computer Use." }
             }, "required": ["action"], "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
@@ -19,6 +20,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "description": "Read windows or a ScreenCaptureKit screenshot. If the Mac user manually enabled observe/control in Coding Tools MCP settings, call directly with NO computer_session(request) and NO session_token. Each OAuth/Bearer-authenticated request is bound to that client's identity and audited. If the user has not enabled it, use legacy per-session approval. Coordinates are global macOS points.",
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["screenshot", "windows", "ui_tree"] },
+                "device_id": { "type": "string", "description": "Optional target device_id from device_list (or 'local') when multiple LAN computers are paired." },
                 "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
                 "display_index": { "type": "integer", "minimum": 1, "maximum": 16, "default": 1 },
                 "display_id": { "type": "integer", "minimum": 1 },
@@ -38,6 +40,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "description": "Execute mouse/keyboard action ONLY while Mac owner enabled local CONTROL permission for one selected application. When local policy is enabled, call directly without computer_session(request) or session_token; requests are authenticated and audited. Otherwise legacy per-session approval applies. Pointer actions require a recent matching snapshot_id; sensitive shortcuts/semantic send/delete/payment require separate 60-second local one-time confirmation.",
             "inputSchema": { "type": "object", "properties": {
                 "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press_element", "focus_app", "open_url"] },
+                "device_id": { "type": "string", "description": "Optional target device_id from device_list (or 'local') when multiple LAN computers are paired." },
                 "session_token": { "type": "string", "description": "Legacy approvals only; omit for locally enabled Computer Use." },
                 "x": { "type": "number" }, "y": { "type": "number" },
                 "end_x": { "type": "number" }, "end_y": { "type": "number" },

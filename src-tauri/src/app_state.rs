@@ -24,6 +24,8 @@ impl AppState {
                 .tool_audit_retention_days
                 .unwrap_or(crate::tool_audit::DEFAULT_RETENTION_DAYS),
         );
+        let _ = crate::lan_peer::ensure_local_identity();
+        crate::lan_peer::sync_discovery_daemon();
         let gateway = Arc::new(GatewayState::default());
         Ok(Self {
             data: Mutex::new(store),

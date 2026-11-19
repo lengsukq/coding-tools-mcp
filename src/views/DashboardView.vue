@@ -58,7 +58,7 @@ const activities = computed(() => ordered.value.flatMap(row => (history.value[ro
 const samples=ref<UsagePoint[]>([]);
 const chart=computed(()=>buildUsageChart(samples.value));
 const totals = computed(() => summarizeUsage(usage.value));
-const quickItems = computed(() => [{ label: '添加工作区', hint: '项目', run: () => addWorkspace() }, { label: 'MCP 连接设置', hint: '应用设置', run: () => router.push('/settings/connection') }, ...ordered.value.map(row => ({ label: '打开 ' + row.workspace.name, hint: '工作区', run: () => router.push(`/workspace/${row.workspace.id}`) }))]);
+const quickItems = computed(() => [{ label: '添加工作区', hint: '项目', run: () => addWorkspace() }, { label: 'MCP 连接设置', hint: '应用设置', run: () => router.push('/settings/connection') }, { label: '局域网设备配对', hint: '多设备互联', run: () => router.push('/settings/connection?panel=lan') }, ...ordered.value.map(row => ({ label: '打开 ' + row.workspace.name, hint: '工作区', run: () => router.push(`/workspace/${row.workspace.id}`) }))]);
 const filteredCommands = computed(() => quickItems.value.filter(x => x.label.toLowerCase().includes(commandQuery.value.toLowerCase())));
 function addWorkspace() { window.dispatchEvent(new CustomEvent('coding-tools:add-workspace')); }
 function visible(id: string) { return !dashboardPreferences.value.hiddenModules.includes(id as any); }

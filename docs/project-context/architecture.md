@@ -39,7 +39,9 @@ Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌�
 | `src-tauri/src/mcp/server.rs` | Global MCP 入口重导出、协议协商及 legacy 单工作区兼容处理 |
 | `src-tauri/src/mcp/server/` | `scope.rs`（`workspace_id` 解析校验）、`dispatch.rs`（Global MCP 请求分发与 Review 关联） |
 | `src-tauri/src/mcp/listener.rs` | HTTP 监听、MCP RPC 主链、会话生命周期及共享 OAuth URL 解析 |
-| `src-tauri/src/mcp/listener/` | `oauth_http.rs`（OAuth/DCR 端点）、`review_http.rs` & `review_page.html`（只读 Review 页面与 API） |
+| `src-tauri/src/mcp/listener/` | `oauth_http.rs`（OAuth/DCR 端点）、`review_http.rs` & `review_page.html`（只读 Review 页面、API 及跨设备 `/review/peer/{device_id}/{id}` 代理） |
+| `src-tauri/src/lan_peer.rs` | 跨平台（macOS / Windows / Linux）局域网与异地组网（EasyTier / Tailscale 等）对等发现、6 位一次性配对码双向握手与单跳联邦门面 |
+| `src-tauri/src/lan_peer/` | `crypto.rs`（HMAC-SHA256 与防重放）、`identity.rs`（设备身份与 `{device_id}:{workspace_id}` 命名空间）、`discovery.rs`（UDP 多播/广播、虚拟网卡单播扫描与 HTTP 跨子网并发探测）、`pairing.rs`（双向 PIN 握手）、`client.rs` & `server.rs`（多地址选路故障切换、签名对等 RPC 与公网隧道硬隔离） |
 | `src-tauri/src/computer.rs` | macOS Computer Use 授权控制面、租约状态机与 MCP 调用编排 |
 | `src-tauri/src/computer/` | `geometry.rs`（Retina 截图坐标映射）、`action_policy.rs`（参数校验与敏感操作识别）、`schema.rs`（MCP 工具定义）、`native.rs`（macOS 原生 FFI） |
 | `src-tauri/src/review.rs` | 工作区/会话/单次操作级变更快照编排门面 |

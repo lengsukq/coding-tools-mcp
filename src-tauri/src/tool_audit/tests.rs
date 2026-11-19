@@ -64,6 +64,8 @@ fn record(workspace_id: Option<&str>, timestamp_ms: u64, outcome: &str) -> ToolA
         response_bytes: 80,
         change_id: None,
         changed_file_count: None,
+        execution_host: None,
+        source_peer: None,
     }
 }
 

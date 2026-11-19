@@ -58,7 +58,7 @@ pub(super) fn safe_error_category(value: &str) -> String {
 
 pub(super) fn safe_auth_method(value: &str) -> String {
     match value {
-        "oauth" | "shared_bearer" => value,
+        "oauth" | "shared_bearer" | "lan_peer" | "local_loopback" => value,
         _ => "none",
     }
     .to_string()

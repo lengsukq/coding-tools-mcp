@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -32,6 +33,109 @@ pub type ShutdownSender = oneshot::Sender<()>;
 
 mod oauth_http;
 mod review_http;
+
+const PROXY_FORWARDED_HEADERS: &[&str] = &[
+    "cf-connecting-ip",
+    "cf-ray",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+    "via",
+    "true-client-ip",
+];
+
+struct PeerConnectAddr(Option<SocketAddr>);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for PeerConnectAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let addr = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0);
+        Ok(Self(addr))
+    }
+}
+
+fn is_loopback_host(headers: &HeaderMap) -> bool {
+    let Some(raw) = headers.get(HOST).and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    let trimmed = raw.trim().to_ascii_lowercase();
+    let host_only = if let Some(rest) = trimmed.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((ipv6, _)) => ipv6,
+            None => return false,
+        }
+    } else if let Some((h, _)) = trimmed.rsplit_once(':') {
+        if h.contains(':') {
+            return false;
+        }
+        h
+    } else {
+        trimmed.as_str()
+    };
+    matches!(host_only, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn is_direct_loopback_agent(headers: &HeaderMap, remote: Option<SocketAddr>) -> bool {
+    let via_proxy = PROXY_FORWARDED_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name));
+    remote.is_some_and(|addr| addr.ip().is_loopback())
+        && !via_proxy
+        && is_loopback_host(headers)
+        && headers.get("origin").is_none()
+}
+
+fn check_mcp_surface_scope(
+    allow_lan_mcp: bool,
+    auth_enabled: bool,
+    headers: &HeaderMap,
+    remote: Option<SocketAddr>,
+) -> Option<Response> {
+    if remote.is_some_and(|addr| !addr.ip().is_loopback()) && !allow_lan_mcp {
+        return Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "code": "LAN_MCP_DISABLED",
+                    "message": "当前主机未开启局域网直连 /mcp；请在本机通过 127.0.0.1 连接以跨设备访问配对工作区，或在设置中开启「允许局域网访问」。"
+                })),
+            )
+                .into_response(),
+        );
+    }
+    let via_proxy = PROXY_FORWARDED_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name));
+    if !auth_enabled
+        && (remote.is_some_and(|addr| !addr.ip().is_loopback())
+            || via_proxy
+            || !is_loopback_host(headers)
+            || headers.get("origin").is_some())
+    {
+        return Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "code": "NOAUTH_LOOPBACK_ONLY",
+                    "message": "无认证模式仅允许本机 127.0.0.1 非浏览器客户端直接访问，禁止通过局域网、组网网卡或公网隧道无认证调用。"
+                })),
+            )
+                .into_response(),
+        );
+    }
+    None
+}
 
 // Shared by OAuth endpoints and bearer token verification.
 fn resolve_oauth_base(state: &ListenerState, headers: &HeaderMap) -> String {
@@ -89,6 +193,8 @@ struct ListenerState {
     scope_id: String,
     scope_label: String,
     bind_port: u16,
+    allow_lan_mcp: bool,
+    allow_local_noauth: bool,
     configured_public_url: String,
     bearer_token: Option<String>,
     oauth: Option<Arc<OAuthRuntime>>,
@@ -134,18 +240,21 @@ pub fn spawn_gateway_listener(
     } else {
         None
     };
+    let settings = AppSettings::load_or_default();
+    let allow_lan_access = settings.allow_lan_access || settings.lan_federation.enabled;
     let state = ListenerState {
         gateway,
         auth,
         scope_id: "global-mcp".into(),
         scope_label: "Global MCP Gateway".into(),
         bind_port: port,
+        allow_lan_mcp: settings.allow_lan_access,
+        allow_local_noauth: settings.allow_local_noauth,
         configured_public_url,
         bearer_token,
         oauth,
         oauth_client_secret,
     };
-    let allow_lan_access = AppSettings::load_or_default().allow_lan_access;
     let listener = bind_listener(port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let handle = tauri::async_runtime::spawn(async move {
@@ -165,8 +274,8 @@ async fn serve(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let profile_id = state.scope_id.clone();
     // CORS is intentionally applied only to the MCP/OAuth protocol router.
-    // Review links are bearer URLs and must not inherit permissive CORS.
-    let app = build_router(state);
+    // Review links and LAN peer endpoints must not inherit permissive CORS.
+    let app = build_router(state).into_make_service_with_connect_info::<SocketAddr>();
 
     append_profile_log(
         &profile_id,
@@ -185,6 +294,7 @@ async fn serve(
 }
 
 fn build_router(state: ListenerState) -> Router {
+    let lan_gateway = state.gateway.clone();
     let protocol = Router::new()
         .route("/mcp", get(mcp_discovery).post(mcp_post))
         .route(
@@ -209,8 +319,23 @@ fn build_router(state: ListenerState) -> Router {
     let review = Router::new()
         .route("/review/{id}", get(review_http::review_page))
         .route("/api/reviews/{id}", get(review_http::review_api))
-        .route("/api/reviews/{id}/diff", get(review_http::review_api));
-    protocol.merge(review).with_state(state)
+        .route("/api/reviews/{id}/diff", get(review_http::review_api))
+        .route(
+            "/review/peer/{device_id}/{id}",
+            get(review_http::peer_review_page),
+        )
+        .route(
+            "/api/reviews/peer/{device_id}/{id}",
+            get(review_http::peer_review_api),
+        )
+        .route(
+            "/api/reviews/peer/{device_id}/{id}/diff",
+            get(review_http::peer_review_api),
+        );
+    protocol
+        .merge(review)
+        .with_state(state)
+        .merge(crate::lan_peer::lan_router(lan_gateway))
 }
 
 fn bind_listener(port: u16, allow_lan_access: bool) -> Result<tokio::net::TcpListener, String> {
@@ -239,14 +364,38 @@ fn mcp_discovery_payload() -> Value {
 
 async fn mcp_post(
     State(state): State<ListenerState>,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Some(response) = require_mcp_auth(&state, &headers) {
+    if let Some(response) = check_mcp_surface_scope(
+        state.allow_lan_mcp,
+        state.auth.auth_enabled(),
+        &headers,
+        remote,
+    ) {
         return response;
     }
+    let local_agent_trusted = state.allow_local_noauth
+        && !headers.contains_key(AUTHORIZATION)
+        && is_direct_loopback_agent(&headers, remote);
+    if !local_agent_trusted {
+        if let Some(response) = require_mcp_auth(&state, &headers) {
+            return response;
+        }
+    }
     let meta = RpcRequestMeta::from_body(&body);
-    let computer_principal = computer_auth_principal(&state, &headers);
+    let (effective_auth_method, effective_client_id): (&'static str, Option<String>) =
+        if local_agent_trusted {
+            ("local_loopback", Some("loopback".into()))
+        } else {
+            audit_auth_identity(&state, &headers)
+        };
+    let computer_principal = if local_agent_trusted {
+        Some("local_loopback".into())
+    } else {
+        computer_auth_principal(&state, &headers)
+    };
     let computer_tool = meta.method == "tools/call"
         && matches!(
             meta.tool_name.as_str(),
@@ -255,6 +404,11 @@ async fn mcp_post(
     let capability_arg = body
         .pointer("/params/arguments/session_token")
         .and_then(Value::as_str);
+    let remote_computer_target = body
+        .pointer("/params/arguments/device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|dev| !dev.is_empty() && dev != "local" && dev != "self");
     // A capability is an explicit, short-lived bearer secret for MCP clients
     // that do not retain the transport header. Neither workspace_id nor _meta
     // can become a Computer Use identity.
@@ -272,6 +426,15 @@ async fn mcp_post(
                 // Stable per-authenticated-principal identity: no ChatGPT
                 // transport header, request _meta, or session_token required.
                 // Only the local webview can enable this policy.
+                Some(state.gateway.sessions.computer_auto_session(owner))
+            }
+            (Some(owner), None)
+                if (local_agent_trusted || audit_auth_identity(&state, &headers).0 != "none")
+                    && remote_computer_target =>
+            {
+                // Remote LAN Computer Use target: mint a transport-bound principal
+                // session so dispatch can forward to the paired Mac, which enforces
+                // its own local Computer Use policy and TCC independently.
                 Some(state.gateway.sessions.computer_auto_session(owner))
             }
             (Some(owner), None) => {
@@ -321,14 +484,13 @@ async fn mcp_post(
                 "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
             }
         });
-        let (auth_method, client_id) = audit_auth_identity(&state, &headers);
         record_tool_call(
             ToolAuditCall::new(
                 &meta.request_id,
                 &meta.tool_name,
                 None,
-                auth_method,
-                client_id.as_deref(),
+                effective_auth_method,
+                effective_client_id.as_deref(),
                 serde_json::to_vec(&body)
                     .map(|v| v.len())
                     .unwrap_or_default(),
@@ -394,7 +556,6 @@ async fn mcp_post(
     log_request(&state.scope_id, effective_session_id.as_deref(), &meta);
 
     let audit_call = if meta.method == "tools/call" {
-        let (auth_method, client_id) = audit_auth_identity(&state, &headers);
         let request_bytes = serde_json::to_vec(&body)
             .map(|bytes| bytes.len())
             .unwrap_or_default();
@@ -402,8 +563,8 @@ async fn mcp_post(
             &meta.request_id,
             &meta.tool_name,
             effective_session_id.as_deref(),
-            auth_method,
-            client_id.as_deref(),
+            effective_auth_method,
+            effective_client_id.as_deref(),
             request_bytes,
             &body,
         ))
@@ -461,11 +622,13 @@ async fn mcp_post(
                     &response,
                 );
             }
-            if let Some(call) = audit_call {
+            if let Some(mut call) = audit_call {
+                call.set_execution_host(gateway_response.execution_host);
                 let workspace_id = gateway_response
                     .workspace
                     .as_ref()
                     .map(|workspace| workspace.workspace_id.clone())
+                    .or(gateway_response.federated_workspace_id)
                     .or(audit_workspace_id);
                 record_tool_call(call, workspace_id, &response);
             }

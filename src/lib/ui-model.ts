@@ -44,7 +44,7 @@ export const SETTINGS_NAV = [
     { value: "tools", label: "网络与工具" }, { value: "about", label: "关于" },
 ] as const;
 export function legacySettingsSection(section: string) {
-    if (["gateway", "keys", "frp"].includes(section))
+    if (["gateway", "keys", "frp", "lan"].includes(section))
         return { section: "connection", panel: section };
     if (section === "software")
         return { section: "tools", panel: "software" };

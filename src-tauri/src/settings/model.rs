@@ -111,6 +111,94 @@ impl Default for GlobalGatewayConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedPeerConfig {
+    pub device_id: String,
+    pub device_name: String,
+    pub fingerprint: String,
+    #[serde(default)]
+    pub os: String,
+    #[serde(default)]
+    pub arch: String,
+    #[serde(default)]
+    pub version: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    #[serde(default = "default_peer_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub paired_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanFederationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub device_id: String,
+    #[serde(default)]
+    pub device_name: String,
+    /// "all" | "selected"
+    #[serde(default = "default_lan_share_mode")]
+    pub share_mode: String,
+    #[serde(default)]
+    pub shared_workspace_ids: Vec<String>,
+    /// "full" | "readonly"
+    #[serde(default = "default_lan_trust_level")]
+    pub trust_level: String,
+    /// Whether paired LAN peers may route Computer Use calls to this host
+    /// (still strictly gated by this host's own local Computer Use policy and TCC).
+    #[serde(default = "default_lan_allow_computer_use")]
+    pub allow_computer_use: bool,
+    /// Optional custom subnets (CIDRs such as `10.144.144.0/24`, `192.168.2.0/24`)
+    /// or explicit seed nodes (`10.144.144.2:28765`) for EasyTier, Tailscale, ZeroTier,
+    /// WireGuard, and cross-subnet VLAN environments.
+    #[serde(default)]
+    pub extra_subnets: Vec<String>,
+    #[serde(default)]
+    pub paired_peers: Vec<PairedPeerConfig>,
+}
+
+impl Default for LanFederationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            device_id: String::new(),
+            device_name: String::new(),
+            share_mode: default_lan_share_mode(),
+            shared_workspace_ids: Vec::new(),
+            trust_level: default_lan_trust_level(),
+            allow_computer_use: default_lan_allow_computer_use(),
+            extra_subnets: Vec::new(),
+            paired_peers: Vec::new(),
+        }
+    }
+}
+
+fn default_peer_enabled() -> bool {
+    true
+}
+
+fn default_lan_share_mode() -> String {
+    "all".to_string()
+}
+
+fn default_lan_trust_level() -> String {
+    "full".to_string()
+}
+
+fn default_lan_allow_computer_use() -> bool {
+    true
+}
+
+pub(crate) fn default_allow_local_noauth() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -149,6 +237,11 @@ pub struct AppSettings {
     /// Defaults to false so services remain loopback-only unless explicitly enabled.
     #[serde(default)]
     pub allow_lan_access: bool,
+    /// Allow verified direct loopback (`127.0.0.1` / `::1` without proxy/tunnel headers)
+    /// local Agent MCP clients to connect without OAuth/Bearer while keeping auth enforced
+    /// for public tunnels and non-loopback requests.
+    #[serde(default = "default_allow_local_noauth")]
+    pub allow_local_noauth: bool,
     /// Restore the MCP services that were running in the previous app session.
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
@@ -162,6 +255,8 @@ pub struct AppSettings {
     pub restore_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub global_gateway: GlobalGatewayConfig,
+    #[serde(default)]
+    pub lan_federation: LanFederationConfig,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
     /// Persisted alongside other app settings in app_settings.json.
     #[serde(default)]
@@ -377,11 +472,13 @@ impl AppSettings {
             global_custom_instruction_paths: data.global_custom_instruction_paths.clone(),
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
             allow_lan_access: data.allow_lan_access,
+            allow_local_noauth: data.allow_local_noauth,
             restore_runtime_state_on_launch: data.restore_runtime_state_on_launch,
             global_mcp_was_running: data.global_mcp_was_running,
             global_mcp_migration_notice: data.global_mcp_migration_notice.clone(),
             restore_mcp_workspace_ids: data.restore_mcp_workspace_ids.clone(),
             global_gateway: data.global_gateway.clone(),
+            lan_federation: data.lan_federation.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
             app_secrets: data.app_secrets.clone(),
@@ -403,11 +500,13 @@ impl AppSettings {
         data.global_custom_instruction_paths = self.global_custom_instruction_paths.clone();
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
         data.allow_lan_access = self.allow_lan_access;
+        data.allow_local_noauth = self.allow_local_noauth;
         data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;
         data.global_mcp_was_running = self.global_mcp_was_running;
         data.global_mcp_migration_notice = self.global_mcp_migration_notice.clone();
         data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();
         data.global_gateway = self.global_gateway.clone();
+        data.lan_federation = self.lan_federation.clone();
     }
 
     pub fn load_or_default() -> Self {
@@ -416,6 +515,7 @@ impl AppSettings {
                 global_executable_paths: default_global_executable_paths(),
                 global_permission_mode: default_global_permission_mode(),
                 global_allowed_commands: default_global_allowed_commands(),
+                allow_local_noauth: true,
                 ..Self::default()
             }
         })

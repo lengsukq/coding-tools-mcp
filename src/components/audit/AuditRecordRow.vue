@@ -72,6 +72,22 @@ const emit = defineEmits<{
                   <Zap :size="10" />
                   变更 {{ record.changedFileCount ?? 0 }} 文件
                 </span>
+
+                <!-- Cross-device federation pill -->
+                <span
+                  v-if="record.executionHost && record.executionHost !== 'local'"
+                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-surface-subtle)] border border-[var(--ui-line)] px-2 py-0.5 text-xs text-[var(--text-secondary)]"
+                  title="通过局域网联邦单跳转发至配对电脑执行"
+                >
+                  转发 → {{ record.executionHost.replace(/^peer:/, '') }}
+                </span>
+                <span
+                  v-else-if="record.sourcePeer"
+                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-surface-subtle)] border border-[var(--ui-line)] px-2 py-0.5 text-xs text-[var(--text-secondary)]"
+                  title="来自局域网配对电脑发起的远端调用"
+                >
+                  来自 ← {{ record.sourcePeer }}
+                </span>
               </div>
 
               <!-- Right: Duration + Time + Payload + Expand Arrow -->

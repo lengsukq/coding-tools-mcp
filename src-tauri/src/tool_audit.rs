@@ -48,6 +48,10 @@ pub(crate) struct ToolAuditRecord {
     pub response_bytes: u64,
     pub change_id: Option<String>,
     pub changed_file_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_peer: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -88,6 +92,8 @@ pub(crate) struct ToolAuditCall {
     auth_method: String,
     client_id: Option<String>,
     request_bytes: u64,
+    execution_host: Option<String>,
+    source_peer: Option<String>,
 }
 
 impl ToolAuditCall {
@@ -100,6 +106,31 @@ impl ToolAuditCall {
         client_id: Option<&str>,
         request_bytes: usize,
         body: &Value,
+    ) -> Self {
+        Self::new_with_peer_context(
+            request_id,
+            tool_name,
+            session_id,
+            auth_method,
+            client_id,
+            request_bytes,
+            body,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_peer_context(
+        request_id: &Value,
+        tool_name: &str,
+        session_id: Option<&str>,
+        auth_method: &str,
+        client_id: Option<&str>,
+        request_bytes: usize,
+        body: &Value,
+        execution_host: Option<String>,
+        source_peer: Option<String>,
     ) -> Self {
         let delegated_tool = if tool_name == "workspace_invoke" {
             body.get("params")
@@ -132,7 +163,13 @@ impl ToolAuditCall {
             auth_method: safe_auth_method(auth_method),
             client_id: client_id.map(|value| bounded_visible_text(value, 128)),
             request_bytes: request_bytes as u64,
+            execution_host: execution_host.map(|v| bounded_visible_text(&v, 128)),
+            source_peer: source_peer.map(|v| bounded_visible_text(&v, 128)),
         }
+    }
+
+    pub(crate) fn set_execution_host(&mut self, host: Option<String>) {
+        self.execution_host = host.map(|v| bounded_visible_text(&v, 128));
     }
 
     pub(super) fn finish(self, workspace_id: Option<String>, response: &Value) -> ToolAuditRecord {
@@ -170,6 +207,8 @@ impl ToolAuditCall {
             response_bytes,
             change_id,
             changed_file_count,
+            execution_host: self.execution_host,
+            source_peer: self.source_peer,
         }
     }
 }

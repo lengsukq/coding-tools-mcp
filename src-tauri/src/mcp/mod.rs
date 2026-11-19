@@ -3,7 +3,7 @@ mod audit;
 pub mod gateway;
 mod gateway_state;
 mod listener;
-mod server;
+pub(crate) mod server;
 pub mod stdio_bridge;
 
 pub use listener::{
