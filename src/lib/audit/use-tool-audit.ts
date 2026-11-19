@@ -1,4 +1,18 @@
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+
+const FULL_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
+  day: "numeric",
+});
 import { useRoute } from "vue-router";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -48,6 +62,7 @@ const clearConfirmOpen = ref(false);
 const expandedKeys = ref<Set<string>>(new Set());
 const copiedKey = ref<string | null>(null);
 let loadSequence = 0;
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 // Computed lookups & stats
 const workspaceNames = computed(() => new Map(workspaces.value.map((w) => [w.id, w.name])));
@@ -260,7 +275,8 @@ async function copyText(text: string, key: string, label: string) {
     await navigator.clipboard.writeText(text);
     copiedKey.value = key;
     showToast(`${label}已复制`, { kind: "success", duration: 1800 });
-    setTimeout(() => {
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
       if (copiedKey.value === key) copiedKey.value = null;
     }, 1800);
   } catch {
@@ -340,15 +356,7 @@ async function clearRecords(scope: "workspace" | "all") {
 
 // Formatters
 function formatTime(timestampMs: number): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(timestampMs);
+  return FULL_TIME_FORMATTER.format(timestampMs);
 }
 
 function formatRelativeTime(timestampMs: number): string {
@@ -361,7 +369,7 @@ function formatRelativeTime(timestampMs: number): string {
   if (diffHours < 24) return `${diffHours}小时前`;
   const diffDays = Math.floor(diffHours / 24);
   if (diffDays < 30) return `${diffDays}天前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(timestampMs);
+  return SHORT_DATE_FORMATTER.format(timestampMs);
 }
 
 function formatDuration(durationMs: number): string {
@@ -416,6 +424,10 @@ function errorLabel(category: string | null): string {
 
 onMounted(() => {
   void loadAudit(0);
+});
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer);
 });
   return {
     workspaces, PAGE_SIZE, loading, savingRetention, clearingRecords, records, total, errorCount, workspaceCount, offset, retentionDays, retentionInput, healthMessage, query, workspaceId, sessionId, toolName, outcome, timePreset, fromDate, toDate, showAdvancedFilters, retentionModalOpen, clearConfirmOpen, expandedKeys, copiedKey, workspaceNames, selectedWorkspaceName, pageNumber, pageCount, rangeStart, rangeEnd, successCount, successRate, outcomeSegments, timePresets, retentionPresets, activeFilters, loadAudit, applyFilters, handleTimePresetChange, resetFilters, getRecordKey, toggleExpand, copyText, quickFilterBySession, quickFilterByTool, quickFilterByWorkspace, openRetentionModal, saveRetention, clearRecords, formatTime, formatRelativeTime, formatDuration, formatBytes, authLabel, errorLabel

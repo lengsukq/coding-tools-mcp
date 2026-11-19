@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
-import { Check, Copy, FileCode, Layers, RefreshCw, Search, Sparkles } from "@lucide/vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { Check, Copy, Search } from "@lucide/vue";
 import {useUnsavedChanges} from "$lib/unsaved-changes";
 import SaveBar from "../ui/SaveBar.vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
@@ -41,6 +41,7 @@ const scanError = ref("");
 const scanTab = ref<'all' | 'instructions' | 'skills'>('all');
 const scanSearch = ref('');
 const copiedPath = ref<string | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 let persistPromise: Promise<boolean> | null = null;
 
 interface UnifiedScanItem {
@@ -89,13 +90,18 @@ async function copyItemPath(path: string) {
   try {
     await navigator.clipboard.writeText(path);
     copiedPath.value = path;
-    setTimeout(() => {
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
       if (copiedPath.value === path) copiedPath.value = null;
     }, 1500);
   } catch {
     showToast("复制路径失败", { kind: "error" });
   }
 }
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer);
+});
 
 function providerBadgeClass(provider: string) {
   const p = (provider || '').toLowerCase();

@@ -49,6 +49,7 @@ const deleteBusy = ref(false);
 const loadError = ref("");
 const renderError = ref("");
 let loadGeneration = 0;
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 const workspaceId = computed(() => String(route.params.id ?? ""));
 
@@ -93,7 +94,8 @@ function copyPath() {
   if (!profile.value?.path) return;
   void navigator.clipboard.writeText(profile.value.path);
   pathCopied.value = true;
-  setTimeout(() => { pathCopied.value = false; }, 1600);
+  if (copyTimer) clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => { pathCopied.value = false; }, 1600);
 }
 
 const enqueueWorkspaceWrite=enqueueWorkspaceSettingsWrite;
@@ -148,7 +150,10 @@ onErrorCaptured((error) => {
   return false;
 });
 
-onBeforeUnmount(() => { loadGeneration += 1; });
+onBeforeUnmount(() => {
+  loadGeneration += 1;
+  if (copyTimer) clearTimeout(copyTimer);
+});
 </script>
 
 <template>
@@ -206,10 +211,6 @@ onBeforeUnmount(() => { loadGeneration += 1; });
   container-type: inline-size;
 }
 
-.workspace-tabs {
-  width: 100%;
-}
-
 .workspace-shell {
   width: 100%;
   min-width: 0;
@@ -219,17 +220,9 @@ onBeforeUnmount(() => { loadGeneration += 1; });
   box-sizing: border-box;
 }
 
-.workspace-content {
-  padding-bottom: 32px;
-}
-
 @container workspace-page (max-width: 760px) {
   .workspace-route {
     --workspace-gutter: 16px;
-  }
-
-  .workspace-content {
-    padding-top: 16px;
   }
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { Check, Copy, Eye, EyeOff, RotateCw } from "@lucide/vue";
 import BaseButton from "./ui/BaseButton.vue";
 
@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{ value?: string; busy?: boolean; allowRe
 defineEmits<{ regenerate: [] }>();
 const visible = ref(false);
 const copied = ref(false);
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 const fieldValue = computed({
   get: () => props.value ?? model.value,
   set: (value: string) => {
@@ -24,8 +25,13 @@ async function copy() {
   if (!fieldValue.value) return;
   await navigator.clipboard.writeText(fieldValue.value);
   copied.value = true;
-  setTimeout(() => { copied.value = false; }, 1500);
+  if (copyTimer) clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => { copied.value = false; }, 1500);
 }
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer);
+});
 </script>
 
 <template>
