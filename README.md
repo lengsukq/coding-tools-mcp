@@ -23,51 +23,40 @@ Coding Tools MCP 是一个 Rust + Tauri 2 构建的 **local-first AI coding runt
 
 它更接近一个“给 AI 用的长期开发工作台”，而不是为每个项目重复启动一套 MCP 服务：**Workspace 负责项目边界，Planning 负责意图与进度，Execution / Verification 负责执行证据，History 负责跨会话恢复。**
 
-![Coding Tools MCP 工作区总览](docs/images/workspace-overview.png)
+## v0.3.4 – v0.3.8+：近期核心更新
 
-*当前版本的工作区概览：集中查看当前分支、全部 Diff、活跃 Session、验证证据、7 天 AI 修改趋势、Git Health、Goal / Plan 进度以及执行质量。*
+在“一个 Global MCP 管理所有隔离 Workspace”的基础底座上，近期版本重点补齐了 **主流 AI 零门槛接入、跨设备局域网协同、macOS 原生屏幕控制、全流程审计与 Vue 3 设计系统**：
 
-## v0.3.3：最近的重点改进
+- **Gemini App 连接器与原生 `mcp-stdio` 桥接**：新增「Gemini App · MCP 连接」面板，支持 **Local MCP**（内置毫秒级 Rust `mcp-stdio` 本地桥接，不开公网、不依赖 Node.js，自动生成 `0600` 权限凭据）与 **Cloud MCP**（一键体检并复制公网地址，适配 Gemini 网页版/手机端）；同时基于 OAuth 2.1（PKCE S256 + DCR）和 Bearer 兼容 **ChatGPT、claude.ai、Grok、Gemini**。
+- **局域网对等配对与多设备联邦网关**：支持跨 macOS / Windows 局域网（及 EasyTier / Tailscale 等组网）设备发现与 **6 位配对码**双向握手；通过 HMAC 签名对等 RPC（`/api/lan/v1/*`）实现公网隧道硬隔离，支持 `{device_id}:{workspace_id}` 复合工作区路由、`device_list` 设备发现、跨设备 Computer Use 转发、变更审查代理（`/review/peer/{device_id}/{id}`）与双向审计。
+- **macOS 原生 Computer Use（受控屏幕观察与输入）**：基于 `ScreenCaptureKit` 实现按需截屏观察与目标应用受控鼠键输入；内置截图快照绑定防错位、高危动作单次确认、一键紧急暂停/恢复、macOS TCC 权限自检，以及独立的 **Computer Use** 设置页。
+- **工具调用审计与多主题调色盘**：新增工具调用审计中心（按天分区的 JSONL 日志、自动过期轮转、筛选统计与详情抽屉）；推出统一毛玻璃设计系统、6 大设置分类与草稿保护，以及 **6 套全站主题调色盘**（海洋蓝、珊瑚橙、葡萄紫、翡翠绿、琥珀金、樱花粉）。
+- **Tunnel 控制、健康监控与轻量运行态**：支持强制重启 Cloudflare Quick Tunnel 与全局健康状态实时汇总；新增 macOS **轻量菜单栏模式**、每 5 分钟空闲会话/命令内存回收，并优化任务验收与分栏 Diff 行对齐。
+- **架构与界面全面重构**：前端全面迁移至 Vue 3 + TypeScript + Tailwind CSS 4，并完成网关、Computer Use、Stdio 桥接、Review、Audit 与调度器的模块化拆分。
 
-0.3.x 的主要变化不是继续增加孤立工具，而是把“多工作区 AI 开发”这条主链路收拢成一个完整工作台：
-
-- **一个 Global MCP 管理所有 Workspace**：从 0.3.0 开始取消“每个项目一套 MCP / Tunnel”的模型，只保留一个 `/mcp` 入口；Chat Session 通过 `workspace_list` / `workspace_select` 选择项目，Workspace 之间仍保持数据和 Planning 隔离。
-- **Workspace Session 路由更稳定**：0.3.2 补强了客户端不稳定保留 Transport Session 时的 Workspace 选择保持；需要显式、一次性操作其他项目时可以使用 `workspace_invoke`，不会污染其他 Chat Session。
-- **Workspace Overview 变成真正的项目总览**：展示当前分支、一级子 Git、变更文件、活跃 Session、验证证据、最近提交、7 天 AI Activity、Git Health、Goal / Plan 完成度和执行错误；支持一键生成整个 Workspace 的 Diff / Review，并可直接用检测到的 IDE 打开项目。
-- **侧边栏直接显示开发状态**：Workspace 项会显示当前 Git 分支、clean / changed 状态、当前 Goal / Plan、完成进度和执行状态；切换工作区采用缓存优先加载，减少重复请求造成的卡顿。
-- **Dashboard 从“服务状态页”升级为 AI 工作台**：新增 AI Executions、Verification、Token Flow、Chat → Workspace Session 路由、Planning 完成度、Workspace Token Distribution、最近 History Session 和“需要关注”异常聚合。
-- **界面和响应式布局重做**：0.3.3 统一 Apple / iOS 风格设计 token、浅色/深色模式、表单与状态组件，并重新整理 Dashboard、Workspace、Planning 等页面在宽屏和窄屏下的布局。
-
-这意味着现在推荐的使用路径已经非常明确：**连接一次 Global MCP → 选择 Workspace → 维护 Goal / Plan → 执行与验证 → History 留档。**
+这意味着现在推荐的使用路径更加立体：**连接一次 Global MCP（本机 `mcp-stdio`、局域网联邦或公网 `/mcp`）→ 选择本地或对等设备 Workspace → 维护 Goal / Plan → 执行与审计验收 → History 留档。**
 
 ## 功能全景：特点与优势
 
-Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspace-first** 为核心的 AI 开发运行时：桌面端管理项目和服务，统一工具运行时负责安全执行，并通过 MCP 为 AI 客户端提供开发能力。
+Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspace-first** 为核心的 AI 开发运行时：桌面端管理项目和服务，统一工具运行时负责安全执行，并通过 MCP 为本地、局域网与公网 AI 客户端提供开发能力。
 
 | 功能 | 主要特点 | 带来的优势 |
 | --- | --- | --- |
 | 工作区管理 | 每个项目有独立目录、执行策略、Planning 与 History；侧边栏直接展示分支、变更和当前 Goal / Plan | 多项目切换更清晰，降低把命令执行到错误项目的风险 |
 | MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | 单一协议入口减少重复状态机和兼容分支，策略、错误和权限更容易保持一致 |
-| 连接与公网入口 | 支持本地地址、Global Gateway、FRP 和 Cloudflare Tunnel | 本机开发和远程 ChatGPT 接入可以使用同一工作区，部署方式更灵活 |
-| 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer 和静态 Client | 既能提供现代 OAuth 安全流程，也能兼容旧客户端和简单部署 |
-| Planning / Goal / Task | Direct、Plan、Goal 三种约束模式，Execution Ledger 统一记录执行状态 | 复杂任务可拆分、可恢复、可验收，减少 AI 在中途偏离目标的情况 |
+| 连接、桥接与联邦网关 | 支持本机 `mcp-stdio` 桥接、Global Gateway、FRP、Cloudflare Quick Tunnel 及局域网多设备联邦 | 本机 Gemini/Claude、局域网跨机协同和远程网页 AI 可共用同一套工作区模型 |
+| 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer、静态 Client 与 LAN HMAC 配对 | 既能满足现代网页端 OAuth 流程，也能兼顾本机桥接、旧客户端与局域网安全通信 |
+| macOS Computer Use | 基于 `ScreenCaptureKit` 的按需截屏与目标应用受控输入，含快照绑定、紧急暂停与 TCC 诊断 | 需要界面操作时 AI 可安全代劳，同时通过多重边界锁定权限、防止误操作 |
+| Planning / Goal / Task | Direct、Plan、Goal 三种约束模式，Execution Ledger 统一记录执行状态与人工验收 | 复杂任务可拆分、可恢复、可验收，减少 AI 在中途偏离目标的情况 |
 | 历史会话 | 项目内保存无损 Markdown 档案，并提供有界状态、搜索、分页读取和启动提示词 | 上下文跟着仓库走，不依赖某一个聊天窗口，也不会每次注入全部历史 |
-| 日志与健康检查 | 在桌面端查看请求日志、端点、OAuth 元数据和连接检查结果 | 出现连接或授权问题时，可以快速定位在本地服务、隧道还是客户端 |
+| 审计、日志与健康检查 | 提供工具调用审计（筛选/轮转）、请求日志、OAuth 元数据与连接健康汇总 | AI 每次调用都透明可查，出现连接、权限或授权问题时能快速定位根因 |
 | Workspace-first 安全边界 | 工作区外默认只读，`.git` 永久保护；`.github`、依赖清单/锁文件、构建配置等高风险文件默认保护，可按 Workspace 显式放开 Patch 写入 | 权限范围明确、修改可控，适合把 AI 接入真实项目而不是临时演示目录 |
 
 ### 桌面端全局 Dashboard：不进入工作区也能掌握全局状态
 
 全局 Dashboard 把多个 Workspace 的运行与执行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看当前 AI Execution、验证证据、Global MCP 状态、Chat Session 路由、Planning 焦点和需要人工关注的异常。
 
-![全局 Dashboard 运行总览](docs/images/dashboard-overview.png)
-
-*从当前执行到 Session 路由集中展示，先判断“AI 正在做什么、是否有阻塞、请求落在哪个 Workspace”。*
-
 Dashboard 还会持续刷新 MCP Token 估算，并提供 Token Flow、请求成功率、Planning 完成度、Workspace Token Distribution、最近 History Session 与系统健康状态。Token 统计来自本地服务请求大小估算，不保存请求正文。
-
-![Dashboard 指标、连接方式、AI Planning 与 Token 用量](docs/images/dashboard-insights.png)
-
-*从执行数量、验证状态、Planning、Session 路由到 Token 趋势，帮助开发者快速判断当前工作负载和待处理事项。*
 
 ### 1. 工作区管理：把项目变成长期可识别的开发上下文
 
@@ -104,25 +93,21 @@ Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git�
 - AI 可以完成从理解代码、修改文件、运行测试到检查 Git 的完整闭环。
 - 复杂操作的权限与失败原因更容易解释、审计和恢复。
 
-### 3. 连接与公网入口：从本机调试平滑走向远程开发
+### 3. 连接、本地桥接与公网入口：从本机直连平滑走向远程开发
 
-整个应用只保留一个 Global MCP Endpoint（`/mcp`）。本地或远程 AI 客户端先建立 MCP session，再用 `workspace_list` / `workspace_select` 选择项目；需要远程访问时，FRP 或 Cloudflare 只暴露这一个入口。
+整个应用只保留一个 Global MCP Endpoint（`/mcp`）。本地或远程 AI 客户端先建立 MCP session，再用 `workspace_list` / `workspace_select` 选择项目；支持本机回环桥接、局域网多设备联邦和公网隧道三种接入形态。
 
 **特点**
 
-- 支持 FRP 和 Cloudflare Tunnel，隧道进程由桌面端统一监督。
-- 每个 Chat session 的 Workspace 选择彼此隔离，请求开始时会固定项目上下文。
-- 服务停止时，关联的公网 Tunnel 也会一起断开，减少遗留公网进程。
+- **本机无头桥接（`mcp-stdio`）**：内置原生 Rust `mcp-stdio` 子命令与「Gemini App · MCP 连接」向导，冷启动小于 10ms，无需 Node.js/`npx` 与公网隧道即可直连本地桌面 AI 客户端。
+- **公网隧道监督与重启**：支持 FRP 和 Cloudflare Quick Tunnel（含面板一键强制重启），隧道进程由桌面端统一监督；服务停止时关联隧道同步断开。
+- **会话隔离**：每个 Chat session 的 Workspace 选择彼此隔离，请求开始前固定项目上下文。
 
 **优势**
 
-- 本地开发、局域网调试和远程 ChatGPT 接入可以使用同一套工作区模型。
+- 本机 Gemini/Claude、局域网跨机协同和远程网页 AI（ChatGPT、claude.ai、Grok、Gemini）共用同一套工作区模型。
 - 多个项目不必为每个工作区都单独维护一套公网基础设施。
-- 端点、隧道和服务状态集中可见，排查网络问题更直接。
-
-![Global Gateway 共享公网入口](docs/images/global-gateway.png)
-
-*Global MCP 通过一个 `/mcp` 入口承载多个 Workspace；session 内选择项目，FRP 和 Cloudflare 只负责公网传输。*
+- 端点、隧道、健康检查与服务状态集中可见，排查网络问题更直接。
 
 ### 4. OAuth 与认证：兼顾安全流程和客户端兼容
 
@@ -143,10 +128,6 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 ### 5. Planning、Goal、Task：让复杂任务可控、可恢复、可验收
 
 规划页面把“目标”“计划”和“执行任务”分开管理。Direct 适合小改动，Plan 适合需要拆步骤的任务，Goal 适合需要长期推进和明确验收标准的工作。AI 可以在对话中创建和维护计划，桌面端负责显示约束、状态和最终验收归档。
-
-![AI Planning 规划与验收](docs/images/planning-overview.png)
-
-*规划页同时展示当前执行模式、Goal / Plan 状态、待验收数量和 Goal 的验收清单。*
 
 **特点**
 
@@ -182,10 +163,6 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 
 通用设置还集中管理应用版本与 Releases 入口、界面内存释放、全局 Agent Runtime、启动时恢复运行状态和局域网访问开关。涉及网络暴露的选项默认关闭，并明确提示启用后的影响。
 
-![通用设置与 Agent Runtime](docs/images/settings-general.png)
-
-*通用设置把更新入口、WebView 内存管理、运行状态恢复、局域网访问和全局可执行 PATH 放在同一处。*
-
 **macOS 轻量驻留（菜单栏）**：主界面侧栏点击「轻量驻留」，或关闭窗口时选择「轻量驻留」，会卸载主 WebView、隐藏 Dock 图标（仅保留右上角菜单栏入口），降低界面内存占用，同时保持全局 MCP、工作区会话及已启动的隧道继续运行。点击 macOS 右上角菜单栏图标可查看约每 15 秒更新的主进程/界面内存估算、WebView 进程数、MCP 状态、工作区与活跃会话，并可恢复主窗口、刷新信息或完全退出。恢复界面时 Dock 图标也会恢复；页面重新加载并保留窗口尺寸与位置。未保存的表单修改会在进入轻量模式前要求确认。Windows 暂保留原有托盘隐藏模式，不声称释放 WebView 内存。
 
 **特点**
@@ -201,6 +178,36 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 - 连接失败、授权失败和工具调用失败有明确的排查入口。
 - 对安全能力的边界如实呈现，方便团队根据部署环境补充系统级隔离。
 
+### 8. 局域网对等配对与多设备联邦：一个入口协同多台电脑
+
+当开发者同时拥有多台设备（如 macOS 笔记本与 Windows 台式机）时，可通过「应用设置 → MCP 连接 → 局域网多设备配对」建立点对点联邦，在同一个 AI 会话中跨设备访问共享工作区。
+
+**特点**
+
+- 支持 UDP 多播/广播、虚拟网卡单播扫描及 HTTP 直连探测，并通过 **6 位一次性配对码**完成双向安全握手。
+- 对等通信采用 HMAC-SHA256 签名与防重放校验，局域网接口（`/api/lan/v1/*`）与公网隧道硬隔离，不暴露给公网。
+- AI 可调用 `device_list` 发现已配对设备，并通过 `{device_id}:{workspace_id}` 复合作用域路由工具调用、转发 Computer Use 操作或通过 `/review/peer/{device_id}/{id}` 查看跨设备变更审查。
+
+**优势**
+
+- 只需连接一台主设备的 MCP 入口，即可安全调度局域网或组网内多台主机上的项目与算力。
+- 跨设备调用记录双向审计，共享工作区范围可按设备独立勾选与随时停用。
+
+### 9. macOS 原生 Computer Use 与审计/主题系统：安全可控、全程留痕
+
+针对需要查看界面或模拟点击的桌面操作场景，提供 opt-in 的 macOS 原生 Computer Use 能力；同时在应用层补全工具调用审计与多主题界面体验。
+
+**特点**
+
+- **macOS 原生 Computer Use**：基于 `ScreenCaptureKit` 按需截图观察并执行受控鼠键输入；支持在「应用设置 → Computer Use」配置持久化本地授权与**目标应用白名单**，内置操作绑定快照防错位、高危动作单次确认、一键紧急暂停/恢复与 macOS TCC 权限诊断。
+- **工具调用审计中心**：记录每次已认证 MCP 工具调用的摘要、脱敏结果与耗时（按日期与工作区分区的 JSONL 存储，支持过期自动轮转），可在桌面端筛选统计与查看详情。
+- **多主题与设置防护**：提供 6 套全站主题调色盘（海洋蓝/珊瑚橙/葡萄紫/翡翠绿/琥珀金/樱花粉）与三层毛玻璃设计系统，并为设置页提供草稿保护与分组串行保存。
+
+**优势**
+
+- 需要界面操作时 AI 可安全代劳，遇到风险或屏幕变化可立即阻断或由人工拍板。
+- 每一次工具调用均有账可查，长时间跨项目开发也能保持清晰的可追溯性。
+
 ## 30 秒看懂怎么用
 
 ```text
@@ -215,10 +222,11 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
   → 在新对话中开始开发
 ```
 
-第一次使用只需要记住两件事：**桌面端负责把项目变成 MCP 工作区，ChatGPT 负责通过公网 `/mcp` 地址连接它。**
+第一次使用只需要记住两件事：**桌面端负责把项目变成 MCP 工作区（并支持本机 `mcp-stdio` 桥接、局域网多设备联邦或公网 `/mcp` 入口），AI 客户端负责连上它并按 Workspace 边界开发。**
 
 - [查看完整安装和桌面端启动步骤](#五分钟开始使用)
 - [直接查看 ChatGPT 插件配置](#mcp-connector)
+- [查看 Gemini / claude.ai / Grok 接入矩阵](docs/web-chat-connectors.md)
 
 ## 五分钟开始使用
 
@@ -239,43 +247,25 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 2. 选择项目根目录。
 3. 设置工作区名称并保存；工作区会长期保留在左侧列表中。
 
-### 3. 配置公网隧道
+### 3. 配置公网隧道或本地连接
 
-如果 AI 客户端不在本机，需要把本地 MCP 暴露为 HTTPS 地址：
-
-- 打开“设置 → Global MCP 连接”，确认唯一 MCP 本地端口和公网方式。
-- **零门槛推荐：Cloudflare Quick Tunnel**。选择 Cloudflare 快速模式，无需账号即可生成 `https://<随机>.trycloudflare.com` 公网地址，适合首次接入和临时演示；长期使用建议 FRP 固定子域名或外部反向代理。
-- 在“软件管理”中安装或识别 `frpc` / `cloudflared`。
-- 在“FRP 配置”中保存服务器、端口和 Token，再回到 Global MCP 连接选择 FRP 并填写唯一子域名。
-
-![FRP 配置页面](docs/images/frp-configuration.png)
-
-*FRP 服务器配置集中保存，Global MCP 连接只需选择配置并填写公网子域名。*
+- **同一台 Mac / 本机客户端（推荐优先使用）**：打开 **「应用设置 → MCP 连接」**，无需开启公网隧道即可使用本地回环地址（`http://127.0.0.1:<端口>/mcp`），或直接在 **「Gemini App · MCP 连接 → Local MCP」** 点击「生成凭据并复制」，通过内置原生 `mcp-stdio` 桥接直连。
+- **跨设备局域网协同**：在 **「应用设置 → MCP 连接 → 局域网多设备配对」** 中扫描或探测同局域网设备，通过 6 位配对码安全握手，即可在一个 MCP 入口中使用 `{device_id}:{workspace_id}` 跨机操作 macOS / Windows 上的项目。
+- **公网远程访问（ChatGPT / Gemini 网页版 / claude.ai / Grok）**：在 **「应用设置 → MCP 连接」** 配置公网入口：
+  - **零门槛推荐：Cloudflare Quick Tunnel**。选择 Cloudflare 快速模式，无需账号即可生成 `https://<随机>.trycloudflare.com` 公网地址，并支持在面板中一键强制重启隧道；长期使用建议 FRP 固定子域名或外部反向代理。
+  - 在 **「应用设置 → 网络与工具」** 中安装或识别 `frpc` / `cloudflared`。
+  - 在 **「应用设置 → MCP 连接 → FRP 服务器配置」** 中保存服务器、端口和 Token，再回到 Global MCP 连接选择 FRP 并填写唯一子域名。
 
 如果还没有可用的 FRPS 服务端，可以参考：[FRPS 服务端安装教程（微信公众号）](https://mp.weixin.qq.com/s/kmpQhHsvmHlaLfj4rw3A0Q)。安装完成后，把服务端地址、端口和 Token 填入客户端的“FRP 配置”即可。
 
 ### 4. 启动 MCP
 
-在 Dashboard 或“设置 → Global MCP 连接”点击“启动 Global MCP”。客户端会显示：
+在 Dashboard 或“应用设置 → MCP 连接”点击“启动 Global MCP”。客户端会显示：
 
 - 唯一本地 MCP 地址，例如 `http://127.0.0.1:28765/mcp`；
 - 公网 HTTPS MCP 地址；
-- ChatGPT 连接所需的认证信息；
-- 实时日志和健康检查结果。
-
-![MCP 本地、公网与 ChatGPT 连接信息](docs/images/workspace-connection.png)
-
-启动后可以直接检查本地与公网端点、OAuth 元数据和 MCP 受保护资源：
-
-![MCP 健康检查结果](docs/images/health-check.png)
-
-*健康检查会逐项显示连接和认证元数据是否可用。*
-
-遇到连接问题时，无需离开桌面端即可查看最近的 MCP 请求日志：
-
-![MCP 运行日志](docs/images/runtime-logs.png)
-
-*日志可快速确认工具列表、历史初始化和检查点调用是否真正到达服务端。*
+- ChatGPT / Gemini 连接所需的认证与桥接信息；
+- 实时日志和健康检查结果（支持分别检查本地与公网端点、OAuth 元数据和 MCP 受保护资源，并在桌面端直接查看最近的 MCP 请求日志，确认工具列表、历史与检查点调用是否真正到达服务端）。
 
 ### 5. 连接 AI 客户端
 
@@ -365,10 +355,6 @@ git_status
 ## 让项目记住每次对话
 
 普通聊天记录适合回看交流内容，但不适合作为长期开发交接。Coding Tools MCP 将会话进度写入当前项目的 `docs/history-session/`，让上下文跟随项目，而不是困在某一个聊天窗口里。
-
-![ChatGPT 新会话启动提示词](docs/images/history-session-prompt.png)
-
-*当前会话默认记录；旧会话通过工作区的“历史上下文”面板选择后，才会以有界快照注入。*
 
 历史上下文面板提供当前会话记录开关、历史会话多选、预览和清除选择。应用选择后会刷新 MCP 上下文，只注入会话索引、最近检查点、关键文件和精选片段；每个会话最多 3 条片段、每条最多 512 字节。完整 Markdown 历史仍保存在 `docs/history-session/`，需要时再用搜索和分页读取工具恢复。
 
@@ -469,11 +455,15 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 
 | 路径 | 作用 |
 | --- | --- |
-| `src-tauri/src/tools/` | 文件、Patch、Exec、Git 等共享工具内核 |
-| `src-tauri/src/mcp/` | MCP Streamable HTTP 服务 |
-| `src-tauri/src/tunnel/` | FRP / Cloudflare 隧道和进程管理 |
+| `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、文件/Git/Exec/History/Planning/Skill |
+| `src-tauri/src/mcp/` | Global MCP Streamable HTTP 服务、OAuth/Review 路由与 `mcp-stdio` 无头桥接 |
+| `src-tauri/src/lan_peer/` & `lan_peer.rs` | 跨平台局域网设备发现、6 位配对码握手、HMAC 对等 RPC 与公网隔离 |
+| `src-tauri/src/computer/` & `computer.rs` | macOS 原生 Computer Use（ScreenCaptureKit 截图观察、受控输入与权限门控） |
+| `src-tauri/src/tool_audit/` & `tool_audit.rs` | 工具调用隐私安全审计、日期分区 JSONL 存储与过期轮转 |
+| `src-tauri/src/review/` & `review.rs` | 工作区/会话/跨设备变更快照生成与 Unified/Split Diff 服务 |
+| `src-tauri/src/tunnel/` | FRP / Cloudflare 隧道下载、配置与进程监督 |
 | `src-tauri/tests/fixtures/` | 当前 Rust 集成测试使用的隔离 fixture |
-| `src/` | Vue 3 + Tailwind CSS 4 桌面界面 |
+| `src/` | Vue 3 + Vue Router + Tailwind CSS 4 桌面界面与多主题设计系统 |
 
 ## 致谢
 感谢 [Linux.do](https://linux.do/) 社区对项目推广与反馈的支持。

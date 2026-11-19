@@ -23,51 +23,40 @@ Coding Tools MCP is a **local-first AI coding runtime** built with Rust and Taur
 
 It is closer to a long-lived AI development workbench than a separate MCP server per project: **Workspace defines the project boundary, Planning carries intent and progress, Execution / Verification carries runtime evidence, and History enables cross-conversation recovery.**
 
-![Coding Tools MCP workspace overview](docs/images/workspace-overview.png)
+## v0.3.4 – v0.3.8+: Recent Core Updates
 
-*Current workspace overview: branch state, whole-workspace Diff, active Sessions, verification evidence, 7-day AI activity, Git Health, Goal / Plan progress, and execution quality are visible together.*
+Building on the single-Global-MCP multi-workspace foundation, recent releases add **zero-friction AI client connectors, LAN multi-device federation, native macOS Computer Use, full tool-call auditing, and a Vue 3 design system**:
 
-## v0.3.3: recent improvements
+- **Gemini App Connector & Native `mcp-stdio` Bridge**: Added the **Gemini App · MCP Connection** card supporting both **Local MCP** (native Rust `mcp-stdio` bridge with sub-10ms cold start, no Node.js/`npx` or public tunnel needed, and `0600` local OAuth credentials) and **Cloud MCP** (preflight checks + public HTTPS URL for Gemini web/mobile), alongside unified OAuth 2.1 (PKCE S256 + DCR) and Bearer support for **ChatGPT, claude.ai, Grok, and Gemini**.
+- **LAN Peer Pairing & Multi-Device Federation**: Supports cross-platform (macOS / Windows) LAN and overlay-network device discovery with a **6-digit one-time PIN** handshake, HMAC-SHA256 signed peer RPC (`/api/lan/v1/*`) strictly isolated from public tunnels, `{device_id}:{workspace_id}` composite routing, `device_list`, cross-device Computer Use forwarding, peer change review proxying (`/review/peer/{device_id}/{id}`), and bidirectional auditing.
+- **Native macOS Computer Use**: Opt-in `ScreenCaptureKit` screen observation and target-app guarded pointer/keyboard input with snapshot-bound pointer safety, one-time confirmation for sensitive actions, instant local emergency pause/resume, macOS TCC diagnostics, and dedicated **Computer Use** settings.
+- **Tool-Call Auditing & Multi-Theme Design System**: Added privacy-safe tool-call auditing (daily partitioned JSONL logs with retention rotation, filters, and detail drawer), unified 3-layer glassmorphism tokens, 6 organized settings sections with draft protection, and **6 site-wide theme palettes** (Ocean Blue, Coral Orange, Grape Purple, Emerald Green, Amber Gold, Sakura Pink).
+- **Tunnel Controls, Health Monitoring & Lightweight Runtime**: Added forced Cloudflare Quick Tunnel restart, a global health-monitoring store, macOS **Lightweight Menubar Mode** with 5-minute idle session/command reaping, and improved planning acceptance and split-diff alignment.
+- **Frontend & Backend Modularization**: Migrated the desktop UI to Vue 3 + TypeScript + Tailwind CSS 4 and modularized Gateway, Computer Use, Stdio Bridge, Review, Audit, and Tool Dispatch.
 
-The 0.3.x line focuses less on adding isolated tools and more on turning multi-workspace AI development into one coherent workflow:
-
-- **One Global MCP for every Workspace**: since 0.3.0, the app no longer runs a separate MCP / Tunnel stack per project. A single `/mcp` endpoint serves all registered Workspaces, while Chat Sessions select projects through `workspace_list` / `workspace_select`.
-- **More resilient Workspace session routing**: 0.3.2 improved Workspace selection for clients that do not reliably preserve the transport session. For explicit one-off operations against another project, `workspace_invoke` avoids mutating other Chat Sessions.
-- **A real Workspace Overview**: current branch, first-level nested Git repositories, changed files, active Sessions, verification evidence, recent commit, 7-day AI Activity, Git Health, Goal / Plan progress, and execution errors are surfaced together. The page can also generate a whole-workspace Diff / Review and open the project in a detected IDE.
-- **Development state directly in the sidebar**: Workspace rows show branch and clean / changed state, the focused Goal / Plan, progress, and execution status. Workspace switching uses cache-first loading with background refresh to reduce repeated requests and UI stalls.
-- **Dashboard upgraded from service status to an AI workbench**: AI Executions, Verification, Token Flow, Chat → Workspace routing, Planning completion, Workspace Token Distribution, recent History Sessions, and attention-required issues are summarized globally.
-- **Responsive UI refresh**: 0.3.3 unifies Apple / iOS-style design tokens, light and dark themes, form and status components, and responsive layouts across Dashboard, Workspace, and Planning screens.
-
-The recommended path is now straightforward: **connect one Global MCP → select a Workspace → maintain Goal / Plan → execute and verify → preserve History.**
+The recommended path is now even more flexible: **connect one Global MCP (local `mcp-stdio`, LAN federation, or public `/mcp`) → choose a local or peer Workspace → maintain Goal / Plan → execute, audit, and accept → preserve History.**
 
 ## Feature overview: characteristics and advantages
 
-Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** AI development runtime: the desktop app manages projects and services, one tool runtime performs controlled operations, and MCP provides the client-facing entry point.
+Coding Tools MCP is more than an MCP URL forwarder. It is a **Workspace-first** AI development runtime: the desktop app manages projects and services, one tool runtime performs controlled operations, and MCP serves local, LAN, and remote AI clients.
 
 | Feature | Main characteristics | Practical advantages |
 | --- | --- | --- |
 | Workspace management | Each project has its own directory, execution policy, Planning, and History; the sidebar shows branch, changes, and current Goal / Plan | Clearer multi-project switching and less risk of sending a command to the wrong project |
 | MCP tool runtime | Files, patches, commands, Git, images, Skills, and state management share one core | A single protocol surface reduces duplicated state machines and compatibility branches |
-| Connectivity and public entry points | Local endpoints, Global Gateway, FRP, and Cloudflare Tunnel | The same workspace can serve local development and remote ChatGPT access |
-| Authentication | OAuth Authorization Code, PKCE S256, DCR, and Refresh Tokens, with Bearer and static-client compatibility | Modern OAuth flows are available without abandoning older clients or simple deployments |
-| Planning / Goal / Task | Direct, Plan, and Goal modes with one Execution Ledger | Complex work can be decomposed, resumed, verified, and handed off with less drift |
+| Connectivity, bridge & federation | Local `mcp-stdio` bridge, Global Gateway, FRP, Cloudflare Quick Tunnel, and LAN multi-device federation | Local Gemini/Claude, cross-machine LAN workflows, and remote web AI clients share one workspace model |
+| Authentication | OAuth Authorization Code, PKCE S256, DCR, Refresh Tokens, plus Bearer, static clients, and LAN HMAC pairing | Modern web OAuth flows coexist cleanly with local stdio bridges, legacy clients, and LAN peers |
+| macOS Computer Use | Opt-in `ScreenCaptureKit` capture and target-app guarded input with snapshot binding, emergency pause, and TCC diagnostics | Allows safe UI automation when CLI/file tools aren't enough, with strict permission boundaries |
+| Planning / Goal / Task | Direct, Plan, and Goal modes with one Execution Ledger and human acceptance workflow | Complex work can be decomposed, resumed, verified, and accepted with less drift |
 | Conversation history | Lossless Markdown archives plus bounded state, search, pagination, and startup prompts | Context follows the repository instead of one chat window, without injecting every old message |
-| Logs and health checks | Inspect requests, endpoints, OAuth metadata, and connectivity results in the desktop app | Faster diagnosis of whether a problem is local service, tunnel, authentication, or client-side |
+| Auditing, logs & health checks | Tool-call audit logs (filterable with retention rotation), request logs, OAuth metadata, and connectivity checks | Every tool call is traceable and connection, permission, or auth failures are easy to pinpoint |
 | Workspace-first security | Read-only by default outside the workspace, protected Git assets, patch preflight, explicit dangerous-operation confirmation | Clear and controllable permissions make it suitable for real projects, not just demos |
 
 ### Global Dashboard: see the whole system without opening a workspace
 
 The global Dashboard summarizes multiple Workspaces in one control surface. Without opening a project first, it shows current AI executions, verification evidence, Global MCP state, Chat Session routing, Planning focus, and issues that need attention.
 
-![Global Dashboard runtime overview](docs/images/dashboard-overview.png)
-
-*Current execution, verification, and Session routing are visible together, making it easy to see what the AI is doing, whether anything is blocked, and where requests are routed.*
-
 The Dashboard also refreshes estimated MCP token usage and exposes Token Flow, request success rate, Planning completion, Workspace Token Distribution, recent History Sessions, and system health. Token usage is estimated from local request sizes; request bodies are not stored.
-
-![Dashboard metrics, connection modes, AI Planning, and token usage](docs/images/dashboard-insights.png)
-
-*Execution counts, verification, Planning, Session routing, and token trends provide a compact picture of workload and pending attention.*
 
 ### 1. Workspace management: turn a project into durable, identifiable context
 
@@ -104,25 +93,21 @@ The Rust tool runtime provides file reading, search, patches, command execution,
 - The AI can complete the full loop from understanding code to editing files, running tests, and checking Git.
 - Permission decisions and failures are easier to explain, audit, and recover from.
 
-### 3. Connectivity and public entry points: move from local debugging to remote development
+### 3. Connectivity, local bridge, and public entry points: from local apps to remote development
 
-The application exposes one Global MCP endpoint at `/mcp`. A client establishes a session, calls `workspace_list` and `workspace_select`, and then uses the selected project context; FRP or Cloudflare only provides public transport for that single endpoint.
+The application exposes one Global MCP endpoint at `/mcp`. A client establishes a session, calls `workspace_list` and `workspace_select`, and operates within the selected project context across local stdio bridging, LAN federation, or public tunnels.
 
 **Characteristics**
 
-- FRP and Cloudflare Tunnel are supported, with tunnel processes supervised by the desktop app.
-- Each Chat session keeps an isolated workspace selection, and every request captures its workspace context before tool dispatch.
-- Stopping Global MCP also disconnects its associated tunnel, reducing orphaned public processes.
+- **Native `mcp-stdio` bridge**: Built-in Rust `mcp-stdio` subcommand and **Gemini App · MCP Connection** setup wizard with sub-10ms cold start and no Node.js / `npx` or public tunnel required for local desktop AI hosts.
+- **Supervised public tunnels**: FRP and Cloudflare Quick Tunnel (with one-click forced tunnel restart) are supervised by the desktop app; stopping Global MCP also shuts down its associated tunnel.
+- **Isolated sessions**: Each Chat session keeps an isolated workspace selection, and every request captures its workspace context before tool dispatch.
 
 **Advantages**
 
-- Local development, LAN debugging, and remote ChatGPT access share the same workspace model.
+- Local Gemini/Claude hosts, LAN peer devices, and remote web AI clients (ChatGPT, claude.ai, Grok, Gemini) share the same workspace model.
 - Multiple projects do not each need a separately maintained public-infrastructure stack.
-- Endpoints, tunnels, and service states are visible together, making network debugging more direct.
-
-![Global Gateway shared public entry point](docs/images/global-gateway.png)
-
-*Global MCP provides one `/mcp` entry point for multiple workspaces; session-scoped selection supplies the project boundary, while FRP and Cloudflare provide public transport.*
+- Endpoints, tunnels, health checks, and service states are visible together, making network debugging more direct.
 
 ### 4. OAuth and authentication: modern security with client compatibility
 
@@ -143,10 +128,6 @@ The MCP OAuth runtime supports Authorization Code, PKCE S256, Dynamic Client Reg
 ### 5. Planning, Goals, and Tasks: keep complex work controlled and resumable
 
 The planning page separates goals, plans, and execution tasks. Direct suits small changes, Plan suits work that needs steps, and Goal suits long-running work with explicit acceptance criteria. The AI can create and maintain plans in conversation while the desktop app displays constraints, progress, and final acceptance records.
-
-![AI Planning and acceptance](docs/images/planning-overview.png)
-
-*The planning page shows the active execution mode, Goal / Plan state, pending acceptance count, and the Goal acceptance checklist together.*
 
 **Characteristics**
 
@@ -182,10 +163,6 @@ The desktop app exposes service logs, endpoint checks, OAuth metadata checks, an
 
 Global settings also bring together the application version and Releases links, UI-memory release, the global Agent Runtime, startup restoration of running services, and LAN-access controls. Network-exposure options are off by default and explain their impact when enabled.
 
-![General settings and Agent Runtime](docs/images/settings-general.png)
-
-*General settings combine update links, WebView memory management, runtime-state restoration, LAN access, and the global executable PATH.*
-
 **macOS lightweight menubar mode:** Use **Lightweight Mode** from the sidebar or the close dialog to destroy the main WebView and remove the Dock icon while keeping the MCP service, workspace sessions, and running tunnels alive. Only the native menubar icon remains. The macOS menubar menu shows process and WebView memory estimates (refreshed about every 15 seconds), WebView process count, MCP status, workspace count, and active sessions. It also lets you reopen the UI, refresh status, or quit the application. Reopening recreates the UI, restores the Dock icon and previous window geometry. Unsaved edits are checked before entering lightweight mode. Windows continues to use its existing hide-to-tray behavior.
 
 **Characteristics**
@@ -201,6 +178,36 @@ Global settings also bring together the application version and Releases links, 
 - Connection, authorization, and tool-call failures have clear diagnostic entry points.
 - Security boundaries are stated honestly, making it easier to add system-level isolation where deployment requires it.
 
+### 8. LAN peer pairing and multi-device federation: coordinate multiple computers from one endpoint
+
+When working across multiple machines (such as a Mac laptop and a Windows desktop), you can pair them under **Settings → MCP Connection → LAN Multi-Device Pairing** and access shared workspaces from a single AI session.
+
+**Characteristics**
+
+- Supports UDP multicast/broadcast, virtual-NIC unicast scanning, and direct HTTP probing with a **6-digit one-time PIN** handshake.
+- Peer RPC (`/api/lan/v1/*`) uses HMAC-SHA256 signatures with replay protection and is strictly isolated from public tunnels.
+- AI agents can call `device_list` to discover paired devices, route calls via `{device_id}:{workspace_id}`, forward Computer Use actions, and inspect cross-device change reviews at `/review/peer/{device_id}/{id}`.
+
+**Advantages**
+
+- Connect to one primary device's MCP endpoint to coordinate projects and compute across your LAN or overlay network.
+- Cross-device calls are bidirectionally audited, and shared workspaces can be toggled or revoked per peer at any time.
+
+### 9. Native macOS Computer Use, tool auditing, and theme system
+
+For UI tasks that require seeing the screen or clicking controls, Coding Tools MCP provides opt-in macOS Computer Use alongside full tool-call auditing and customizable themes.
+
+**Characteristics**
+
+- **Native macOS Computer Use**: Uses `ScreenCaptureKit` for on-demand screenshots and guarded mouse/keyboard input, with persistent local grants, **target-app scoping**, snapshot-bound pointer actions, one-time confirmation for sensitive actions, instant emergency pause/resume, and macOS TCC diagnostics under **Settings → Computer Use**.
+- **Tool-Call Audit**: Records authenticated MCP tool calls with sanitized summaries and timings in daily partitioned JSONL logs with retention rotation, searchable and filterable in the desktop UI.
+- **Themes & Draft Guard**: Includes 6 site-wide theme palettes (Ocean Blue, Coral Orange, Grape Purple, Emerald Green, Amber Gold, Sakura Pink), a unified 3-layer glassmorphism design system, and draft-unsaved protection across settings groups.
+
+**Advantages**
+
+- Lets AI assist with UI-bound tasks safely, with immediate local pause and manual approval on sensitive actions.
+- Keeps an auditable trail of every tool call across long-running multi-project workflows.
+
 ## Understand the workflow in 30 seconds
 
 ```text
@@ -215,10 +222,11 @@ Install the desktop app
   → start developing in a new conversation
 ```
 
-For a first connection, remember only this: **the desktop app turns the project into an MCP workspace, and ChatGPT connects to it through the public `/mcp` URL.**
+For a first connection, remember only this: **the desktop app turns local projects into isolated MCP workspaces (reachable via local `mcp-stdio`, LAN federation, or a public `/mcp` URL), and your AI client connects to it with clear Workspace boundaries.**
 
 - [See the complete desktop setup](#get-started-in-five-minutes)
 - [Go directly to the ChatGPT plugin setup](#mcp-connector)
+- [See Gemini / claude.ai / Grok connector matrix](docs/web-chat-connectors.md)
 
 ## Get started in five minutes
 
@@ -239,43 +247,25 @@ The macOS build is currently unsigned. If macOS blocks the first launch, allow i
 2. Select the project root directory.
 3. Configure the workspace name and save it. The workspace remains available in the sidebar across conversations and restarts.
 
-### 3. Configure a public tunnel
+### 3. Configure local bridge, LAN pairing, or public tunnel
 
-When the AI client is not running on the same machine, expose MCP through HTTPS:
-
-- Open **Settings → Global MCP Connection** and configure the single local endpoint and public transport.
-- **Zero-setup default: Cloudflare Quick Tunnel.** Select Cloudflare Quick Tunnel in the Global MCP connection settings to generate a `https://<random>.trycloudflare.com` public URL without an account — ideal for first-time setup and temporary demos. For long-term use, prefer FRP with a fixed subdomain or an external reverse proxy.
-- Install or detect `frpc` / `cloudflared` from **Software management**.
-- Save the server, port, and token under **FRP settings**, then select that profile and one subdomain in **Global MCP Connection**.
-
-![FRP configuration](docs/images/frp-configuration.png)
-
-*FRP server profiles are stored centrally; the single Global MCP connection selects one profile and supplies one public subdomain.*
+- **Same Mac / local desktop hosts (recommended first)**: Open **Settings → MCP Connection** to use the local loopback endpoint (`http://127.0.0.1:<port>/mcp`), or use **Gemini App · MCP Connection → Local MCP** and click **Generate Credentials & Copy** to connect via the built-in native `mcp-stdio` bridge without any public tunnel.
+- **Cross-device LAN collaboration**: Under **Settings → MCP Connection → LAN Multi-Device Pairing**, scan or probe peers and pair with a 6-digit PIN to access `{device_id}:{workspace_id}` across macOS and Windows machines.
+- **Public remote access (ChatGPT / Gemini web / claude.ai / Grok)**: Configure public exposure under **Settings → MCP Connection**:
+  - **Zero-setup default: Cloudflare Quick Tunnel.** Select Cloudflare Quick Tunnel to generate a `https://<random>.trycloudflare.com` public URL without an account (supports one-click forced restart in the UI). For long-term use, prefer FRP with a fixed subdomain or an external reverse proxy.
+  - Install or detect `frpc` / `cloudflared` from **Settings → Network & Tools**.
+  - Save the server, port, and token under **Settings → MCP Connection → FRP Server Configuration**, then select that profile and one subdomain in Global MCP Connection.
 
 If you do not have an FRPS server yet, follow this [FRPS server installation guide (Chinese, WeChat)](https://mp.weixin.qq.com/s/kmpQhHsvmHlaLfj4rw3A0Q). After deployment, enter the server address, port, and token under **FRP settings** in the desktop client.
 
 ### 4. Start MCP
 
-Open Dashboard or **Settings → Global MCP Connection** and click **Start Global MCP**. The desktop client shows:
+Open Dashboard or **Settings → MCP Connection** and click **Start Global MCP**. The desktop client shows:
 
 - the single local MCP URL such as `http://127.0.0.1:28765/mcp`;
 - the public HTTPS MCP URL;
-- authentication details for ChatGPT;
-- live logs and health-check results.
-
-![Local, public, and ChatGPT MCP connection details](docs/images/workspace-connection.png)
-
-The desktop app can verify the local and public endpoints, OAuth metadata, and the MCP protected-resource document:
-
-![MCP health-check results](docs/images/health-check.png)
-
-*Each connectivity and authentication check reports its result separately.*
-
-When a connection fails, inspect recent MCP requests without leaving the desktop app:
-
-![MCP runtime logs](docs/images/runtime-logs.png)
-
-*The log quickly confirms whether tool discovery, history bootstrap, and checkpoint calls reached the server.*
+- authentication and bridge details for ChatGPT / Gemini;
+- live logs and per-check health results (verifying local and public endpoints, OAuth metadata, and the MCP protected-resource document, with recent MCP request logs viewable directly in the desktop app).
 
 ### 5. Connect an AI client
 
@@ -365,10 +355,6 @@ If ChatGPT still shows an old tool list, disconnect and reconnect the plugin or 
 ## Let the project remember every conversation
 
 Chat transcripts are useful for rereading a discussion, but they are a poor long-term development handoff. Coding Tools MCP stores progress in `docs/history-session/` under the current project, so context follows the repository instead of staying trapped in one chat window.
-
-![ChatGPT new-conversation startup prompt](docs/images/history-session-prompt.png)
-
-*The current conversation can be recorded by default; older sessions are selected from the Workspace History Context panel and injected only as bounded context.*
 
 The History Context panel controls current-session recording, multi-selects older sessions, previews the selected context, and clears selections. Applying a selection refreshes MCP context with only a bounded session index, recent checkpoints, key files, and selected snippets; the full Markdown archives remain in `docs/history-session/` and are searched/read on demand when exact older context is required.
 
@@ -461,11 +447,15 @@ On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone t
 
 | Path | Purpose |
 | --- | --- |
-| `src-tauri/src/tools/` | Shared file, Patch, Exec, and Git tool kernel |
-| `src-tauri/src/mcp/` | MCP Streamable HTTP server |
-| `src-tauri/src/tunnel/` | FRP / Cloudflare tunnel and process management |
+| `src-tauri/src/tools/` | Shared file, Patch, Exec, Git, Planning, History, and Skill tool kernel |
+| `src-tauri/src/mcp/` | Global MCP Streamable HTTP server, OAuth/Review routes, and `mcp-stdio` bridge |
+| `src-tauri/src/lan_peer/` & `lan_peer.rs` | Cross-platform LAN discovery, 6-digit PIN pairing, HMAC peer RPC, and tunnel isolation |
+| `src-tauri/src/computer/` & `computer.rs` | Native macOS Computer Use (`ScreenCaptureKit` capture, guarded input, and policy gates) |
+| `src-tauri/src/tool_audit/` & `tool_audit.rs` | Privacy-safe tool-call auditing, daily JSONL storage, and retention rotation |
+| `src-tauri/src/review/` & `review.rs` | Workspace/session/peer change snapshots and Unified/Split Diff service |
+| `src-tauri/src/tunnel/` | FRP / Cloudflare tunnel download, config, and process supervision |
 | `src-tauri/tests/fixtures/` | Isolated fixtures used by current Rust integration tests |
-| `src/` | Vue 3 + Vue Router + Tailwind CSS desktop UI |
+| `src/` | Vue 3 + Vue Router + Tailwind CSS 4 desktop UI and multi-theme design system |
 
 ## License
 
