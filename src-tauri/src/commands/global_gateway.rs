@@ -312,7 +312,16 @@ fn install_bridge_entrypoint(bin_path: &Path, target_exe: &Path) -> AppResult<()
     }
     #[cfg(not(unix))]
     {
-        let _ = (bin_path, target_exe);
+        let same_path = bin_path == target_exe
+            || (bin_path.exists()
+                && fs::canonicalize(bin_path).ok() == fs::canonicalize(target_exe).ok());
+        if !same_path {
+            let parent = bin_path
+                .parent()
+                .ok_or_else(|| AppError::Message("无效的本地桥接入口路径。".into()))?;
+            fs::create_dir_all(parent)?;
+            fs::copy(target_exe, bin_path)?;
+        }
     }
     Ok(())
 }
