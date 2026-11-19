@@ -23,7 +23,9 @@ pub use api::{kill_session, read_output, write_stdin};
 pub use process::ExecSession;
 use signal::send_session_signal;
 use store::EvictedCommand;
-pub use store::{kill_workspace_sessions, workspace_session_store};
+pub use store::{
+    drop_workspace_session_store, kill_workspace_sessions, workspace_session_store,
+};
 
 const SESSION_BUFFER_BYTES: usize = 1_048_576;
 const SESSION_HEAD_BYTES: usize = 128 * 1024;

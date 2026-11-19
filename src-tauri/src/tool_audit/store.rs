@@ -214,6 +214,20 @@ impl ToolAuditStore {
     }
 }
 
+fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && needle_lower.is_ascii() {
+        let needle = needle_lower.as_bytes();
+        return haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle));
+    }
+    haystack.to_lowercase().contains(needle_lower)
+}
+
 fn matches_filter(
     record: &ToolAuditRecord,
     filter: &ToolAuditFilter,
@@ -231,14 +245,9 @@ fn matches_filter(
             .as_deref()
             .is_some_and(|workspace| record.workspace_id.as_deref() != Some(workspace))
         || session_filter.is_some_and(|session| {
-            !record
-                .session_id
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(session)
+            !contains_ignore_case(record.session_id.as_deref().unwrap_or_default(), session)
         })
-        || tool_filter.is_some_and(|tool| !record.tool_name.to_lowercase().contains(tool))
+        || tool_filter.is_some_and(|tool| !contains_ignore_case(&record.tool_name, tool))
         || outcome_filter.is_some_and(|outcome| record.outcome != outcome)
         || search.is_some_and(|needle| {
             ![
@@ -250,6 +259,6 @@ fn matches_filter(
                 record.source_peer.as_deref().unwrap_or_default(),
             ]
             .iter()
-            .any(|value| value.to_lowercase().contains(needle))
+            .any(|value| contains_ignore_case(value, needle))
         }))
 }

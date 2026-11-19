@@ -356,14 +356,9 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
     };
 
     let url = format!("http://{}:{}/api/lan/v1/pair/complete", target.host, target.port);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(2500))
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let response = client
+    let response = super::client::shared_lan_http_client()
         .post(&url)
+        .timeout(Duration::from_secs(5))
         .json(&payload)
         .send()
         .await

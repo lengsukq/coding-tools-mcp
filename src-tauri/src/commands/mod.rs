@@ -27,7 +27,7 @@ pub use computer::{
     resume_computer_access, revoke_computer_screen_access,
 };
 pub use frp_profiles::{
-    delete_frp_profile, get_app_settings, get_last_workspace_id, get_proxy, list_frp_profiles,
+    delete_frp_profile, get_last_workspace_id, get_proxy, list_frp_profiles,
     save_frp_profile, set_last_workspace, set_proxy,
 };
 pub use global_gateway::{

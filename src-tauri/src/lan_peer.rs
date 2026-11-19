@@ -37,3 +37,10 @@ pub use pairing::{
     remove_local_paired_peer, rename_paired_peer, update_paired_peer_enabled, PairingPinDto,
 };
 pub use server::lan_router;
+
+/// Reclaim expired LAN discovery, catalog, and replay-guard caches.
+pub fn prune_caches() {
+    client::prune_peer_cache();
+    discovery::prune_discovered_peers();
+    server::prune_replay_cache();
+}

@@ -225,4 +225,12 @@ impl ReplayGuard {
         guard.insert(key, now_ms);
         true
     }
+
+    pub fn prune_expired(&self, now_ms: u64) {
+        let mut guard = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|_, ts| now_ms.saturating_sub(*ts) <= REPLAY_TTL_MS);
+        if guard.capacity() > 64 && guard.len() * 4 < guard.capacity() {
+            guard.shrink_to_fit();
+        }
+    }
 }

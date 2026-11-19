@@ -138,6 +138,12 @@ fn replay_guard() -> &'static ReplayGuard {
     REPLAY_GUARD.get_or_init(ReplayGuard::default)
 }
 
+pub(super) fn prune_replay_cache() {
+    if let Some(guard) = REPLAY_GUARD.get() {
+        guard.prune_expired(unix_time_ms());
+    }
+}
+
 pub fn lan_router(gateway: Arc<GatewayState>) -> Router {
     Router::new()
         .route("/api/lan/v1/hello", get(lan_hello))

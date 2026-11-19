@@ -158,6 +158,17 @@ pub fn list_discovered_peers() -> Vec<DiscoveredPeerDto> {
     list
 }
 
+pub(super) fn prune_discovered_peers() {
+    let now = unix_time_ms();
+    if let Some(map) = DISCOVERED.get() {
+        let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|_, peer| now.saturating_sub(peer.last_seen_ms) <= DISCOVERED_TTL_MS);
+        if guard.capacity() > 32 && guard.len() * 4 < guard.capacity() {
+            guard.shrink_to_fit();
+        }
+    }
+}
+
 /// Direct HTTP probe (`GET http://{host}:{port}/api/lan/v1/hello`) as a firewall-safe
 /// fallback when Windows Defender Firewall or router AP isolation blocks UDP broadcast.
 pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto, String> {
@@ -194,14 +205,9 @@ pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto
     }
 
     let url = format!("http://{clean_host}:{port}/api/lan/v1/hello");
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(1800))
-        .timeout(Duration::from_millis(3000))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = super::client::shared_lan_http_client()
         .get(&url)
+        .timeout(Duration::from_millis(3000))
         .send()
         .await
         .map_err(|e| format!("无法连接到 {clean_host}:{port}（请确认对方已开启局域网配对且 MCP 服务正在运行）：{e}"))?;
@@ -226,8 +232,7 @@ pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto
         return Err("该地址指向当前本机，无需与本机自己配对".into());
     }
 
-    let settings = AppSettings::load_or_default();
-    let already_paired = settings
+    let already_paired = settings_for_check
         .lan_federation
         .paired_peers
         .iter()
@@ -299,8 +304,7 @@ fn bind_discovery_socket() -> Option<UdpSocket> {
     UdpSocket::from_std(std_sock).ok()
 }
 
-fn build_local_beacon(kind: &str) -> Option<Vec<u8>> {
-    let settings = AppSettings::load_or_default();
+fn build_local_beacon_with_settings(settings: &AppSettings, kind: &str) -> Option<Vec<u8>> {
     if !settings.lan_federation.enabled {
         return None;
     }
@@ -322,10 +326,10 @@ fn build_local_beacon(kind: &str) -> Option<Vec<u8>> {
 }
 
 async fn broadcast_beacon(socket: &UdpSocket, kind: &str) {
-    let Some(bytes) = build_local_beacon(kind) else {
+    let settings = AppSettings::load_or_default();
+    let Some(bytes) = build_local_beacon_with_settings(&settings, kind) else {
         return;
     };
-    let settings = AppSettings::load_or_default();
     let mut targets = vec![
         SocketAddr::from((MULTICAST_GROUP, LAN_DISCOVERY_UDP_PORT)),
         SocketAddr::from((Ipv4Addr::BROADCAST, LAN_DISCOVERY_UDP_PORT)),
@@ -378,14 +382,7 @@ pub async fn probe_configured_overlay_targets() {
     if seeds.is_empty() {
         return;
     }
-    let Ok(client) = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(600))
-        .timeout(Duration::from_millis(1200))
-        .build()
-    else {
-        return;
-    };
+    let client = super::client::shared_lan_http_client();
     let Ok((local_cfg, _)) = ensure_local_identity() else {
         return;
     };
@@ -399,12 +396,16 @@ pub async fn probe_configured_overlay_targets() {
     for chunk in seeds.chunks(32) {
         let mut futs = Vec::with_capacity(chunk.len());
         for (host, port) in chunk.iter().cloned() {
-            let client = client.clone();
             let self_id = local_cfg.device_id.clone();
             let already_paired_set = paired_ids.clone();
             futs.push(async move {
                 let url = format!("http://{host}:{port}/api/lan/v1/hello");
-                let Ok(resp) = client.get(&url).send().await else {
+                let Ok(resp) = client
+                    .get(&url)
+                    .timeout(Duration::from_millis(1200))
+                    .send()
+                    .await
+                else {
                     return;
                 };
                 if !resp.status().is_success() {
@@ -500,8 +501,7 @@ async fn run_discovery_loop(
                         .map(|v4| v4.to_string())
                         .unwrap_or_else(|| v6.to_string()),
                 };
-                let settings = AppSettings::load_or_default();
-                let already_paired = settings
+                let already_paired = settings_check
                     .lan_federation
                     .paired_peers
                     .iter()
@@ -522,7 +522,7 @@ async fn run_discovery_loop(
                 });
 
                 if beacon.kind == "discover" {
-                    if let Some(reply) = build_local_beacon("announce") {
+                    if let Some(reply) = build_local_beacon_with_settings(&settings_check, "announce") {
                         let _ = socket.send_to(&reply, src_addr).await;
                     }
                 }

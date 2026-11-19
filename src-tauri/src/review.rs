@@ -23,7 +23,7 @@ use diff::change_file_from_bytes;
 use git_scan::{
     git_blob_at_head, git_head, git_repo_changes, is_git_repository_root, prefixed_review_path,
 };
-use store::{fresh_token, persist_change_set, workspace_key};
+use store::{fresh_token, persist_change_set, workspace_key, PersistChangeSetInput};
 
 const MAX_WORKSPACE_REVIEW_FILES: usize = 500;
 
@@ -78,18 +78,18 @@ pub fn create_patch_review(
             change_file_from_bytes(path, status, before.as_bytes(), after.as_bytes())
         })
         .collect::<Vec<_>>();
-    persist_change_set(
+    persist_change_set(PersistChangeSetInput {
         workspace_root,
         change_id,
         token_hash,
-        workspace_key(workspace_root),
-        "operation",
-        None,
-        operation_id.into_iter().map(str::to_string).collect(),
-        git_head(workspace_root),
+        workspace_key: workspace_key(workspace_root),
+        scope: "operation",
+        session_id: None,
+        operation_ids: operation_id.into_iter().map(str::to_string).collect(),
+        base_revision: git_head(workspace_root),
         summary,
         files,
-    )?;
+    })?;
     Ok(ReviewLink {
         change_id: change_id.into(),
         token,
@@ -172,18 +172,18 @@ pub fn create_workspace_review(
 
     let change_id = Uuid::new_v4().simple().to_string();
     let (token, token_hash) = fresh_token();
-    persist_change_set(
+    persist_change_set(PersistChangeSetInput {
         workspace_root,
-        &change_id,
+        change_id: &change_id,
         token_hash,
-        workspace_key(workspace_root),
-        "workspace",
-        None,
-        Vec::new(),
-        Some(base_revisions.join(" | ")),
+        workspace_key: workspace_key(workspace_root),
+        scope: "workspace",
+        session_id: None,
+        operation_ids: Vec::new(),
+        base_revision: Some(base_revisions.join(" | ")),
         summary,
         files,
-    )?;
+    })?;
     Ok(Some(ReviewLink { change_id, token }))
 }
 
@@ -225,17 +225,17 @@ pub fn create_session_review(
     }
     let change_id = Uuid::new_v4().simple().to_string();
     let (token, token_hash) = fresh_token();
-    persist_change_set(
+    persist_change_set(PersistChangeSetInput {
         workspace_root,
-        &change_id,
+        change_id: &change_id,
         token_hash,
-        workspace_key(workspace_root),
-        "session",
-        Some(session_id.to_string()),
-        operations,
-        git_head(workspace_root),
+        workspace_key: workspace_key(workspace_root),
+        scope: "session",
+        session_id: Some(session_id.to_string()),
+        operation_ids: operations,
+        base_revision: git_head(workspace_root),
         summary,
-        by_path.into_values().collect(),
-    )?;
+        files: by_path.into_values().collect(),
+    })?;
     Ok(Some(ReviewLink { change_id, token }))
 }

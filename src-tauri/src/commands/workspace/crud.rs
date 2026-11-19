@@ -49,6 +49,8 @@ pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()>
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&profile.path));
     crate::tools::session::kill_workspace_sessions(&workspace_path);
+    crate::tools::session::drop_workspace_session_store(&workspace_path);
+    state.gateway.drop_workspace(&profile.id);
     state.with_runtime(|runtime| {
         runtime.drop_workspace(&profile.id);
         Ok(())

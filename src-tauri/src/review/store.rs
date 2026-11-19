@@ -242,42 +242,42 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-// These inputs map directly to the persisted review record.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn persist_change_set(
-    workspace_root: &Path,
-    change_id: &str,
-    token_hash: String,
-    workspace_key: String,
-    scope: &str,
-    session_id: Option<String>,
-    operation_ids: Vec<String>,
-    base_revision: Option<String>,
-    summary: &str,
-    files: Vec<ChangeFile>,
-) -> Result<(), String> {
+pub(super) struct PersistChangeSetInput<'a> {
+    pub(super) workspace_root: &'a Path,
+    pub(super) change_id: &'a str,
+    pub(super) token_hash: String,
+    pub(super) workspace_key: String,
+    pub(super) scope: &'a str,
+    pub(super) session_id: Option<String>,
+    pub(super) operation_ids: Vec<String>,
+    pub(super) base_revision: Option<String>,
+    pub(super) summary: &'a str,
+    pub(super) files: Vec<ChangeFile>,
+}
+
+pub(super) fn persist_change_set(input: PersistChangeSetInput<'_>) -> Result<(), String> {
     let stats = ReviewStats {
-        files: files.len(),
-        additions: files.iter().map(|file| file.additions).sum(),
-        deletions: files.iter().map(|file| file.deletions).sum(),
+        files: input.files.len(),
+        additions: input.files.iter().map(|file| file.additions).sum(),
+        deletions: input.files.iter().map(|file| file.deletions).sum(),
     };
     let created_at = now_secs();
     let change = ChangeSet {
-        id: change_id.into(),
-        token_hash,
+        id: input.change_id.into(),
+        token_hash: input.token_hash,
         token_hashes: Vec::new(),
-        workspace_key,
-        session_id,
-        scope: scope.into(),
-        operation_ids,
-        base_revision,
+        workspace_key: input.workspace_key,
+        session_id: input.session_id,
+        scope: input.scope.into(),
+        operation_ids: input.operation_ids,
+        base_revision: input.base_revision,
         created_at,
         expires_at: created_at + 30 * 24 * 60 * 60,
-        summary: summary.into(),
+        summary: input.summary.into(),
         stats,
-        files,
+        files: input.files,
     };
-    let dir = workspace_root.join(REVIEW_DIR);
+    let dir = input.workspace_root.join(REVIEW_DIR);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    write_change_set(&dir.join(format!("{change_id}.json")), &change)
+    write_change_set(&dir.join(format!("{}.json", input.change_id)), &change)
 }

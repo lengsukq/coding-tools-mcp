@@ -352,6 +352,9 @@ impl GatewaySessionStore {
         let before = sessions.len();
         Self::prune_expired(&mut sessions, now);
         let removed_sessions = before - sessions.len();
+        if sessions.capacity() > 64 && sessions.len() * 4 < sessions.capacity() {
+            sessions.shrink_to_fit();
+        }
         let mut capabilities = self
             .computer_capabilities
             .lock()
@@ -362,6 +365,9 @@ impl GatewaySessionStore {
                 && sessions.contains_key(&cap.session_id)
         });
         let removed_capabilities = before_capabilities - capabilities.len();
+        if capabilities.capacity() > 64 && capabilities.len() * 4 < capabilities.capacity() {
+            capabilities.shrink_to_fit();
+        }
         drop(capabilities);
         drop(sessions);
         let mut totals = self.maintenance.lock().unwrap_or_else(|e| e.into_inner());
@@ -808,6 +814,18 @@ impl GatewayState {
             .entry(workspace_id.to_string())
             .or_insert_with(|| Arc::new(ServiceUsage::default()))
             .clone()
+    }
+
+    pub fn drop_workspace(&self, workspace_id: &str) {
+        self.sessions.clear_workspace(workspace_id);
+        let mut usage = self
+            .usage
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        usage.remove(workspace_id);
+        if usage.capacity() > 32 && usage.len() * 4 < usage.capacity() {
+            usage.shrink_to_fit();
+        }
     }
 
     pub fn select_workspace(

@@ -78,6 +78,33 @@ struct CachedPeerCatalog {
 
 static PEER_CACHE: OnceLock<Mutex<HashMap<String, CachedPeerCatalog>>> = OnceLock::new();
 static PREFERRED_HOST: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static LAN_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Shared no-proxy HTTP client for all LAN peer traffic, avoiding per-request
+/// connection-pool and TLS root-store allocations.
+pub(super) fn shared_lan_http_client() -> &'static reqwest::Client {
+    LAN_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_millis(CONNECT_TIMEOUT_MS))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(4)
+            .build()
+            .expect("shared LAN HTTP client")
+    })
+}
+
+pub(super) fn prune_peer_cache() {
+    let now = unix_time_ms();
+    let stale_ttl_ms = CATALOG_CACHE_TTL_MS * 10;
+    if let Some(cache) = PEER_CACHE.get() {
+        let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|_, entry| now.saturating_sub(entry.fetched_at_ms) <= stale_ttl_ms);
+        if guard.capacity() > 32 && guard.len() * 4 < guard.capacity() {
+            guard.shrink_to_fit();
+        }
+    }
+}
 
 fn peer_cache() -> &'static Mutex<HashMap<String, CachedPeerCatalog>> {
     PEER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -197,12 +224,7 @@ async fn signed_http_request(
     body: Vec<u8>,
     timeout: Duration,
 ) -> Result<(u16, Vec<u8>, u64), String> {
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(CONNECT_TIMEOUT_MS))
-        .timeout(timeout)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = shared_lan_http_client();
 
     let mut candidate_hosts = Vec::new();
     if let Some(preferred) = preferred_peer_host(&peer.device_id) {
@@ -235,6 +257,7 @@ async fn signed_http_request(
         let started = Instant::now();
         let mut req = client
             .request(method.clone(), &url)
+            .timeout(timeout)
             .header(PEER_ID_HEADER, caller_device_id)
             .header(TIMESTAMP_HEADER, timestamp_ms.to_string())
             .header(NONCE_HEADER, &nonce)

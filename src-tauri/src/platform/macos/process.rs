@@ -116,8 +116,9 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
         .as_ref()
         .map(|info| info.ri_proc_start_abstime)
         .unwrap_or(0);
+    let all_pids = super::net::all_pids()?;
     let descendants: std::collections::HashSet<u32> =
-        collect_child_pids(root)?.into_iter().collect();
+        collect_child_pids_from(root, &all_pids)?.into_iter().collect();
 
     let mut sample = ProcessTreeMemory {
         main_bytes: root_rusage.as_ref().map(rusage_memory_bytes).unwrap_or(0),
@@ -125,7 +126,7 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
         webview_process_count: 0,
     };
 
-    for raw_pid in super::net::all_pids()? {
+    for raw_pid in all_pids {
         let pid = raw_pid as u32;
         if pid == root {
             continue;
@@ -202,17 +203,20 @@ fn normalized_image_path(path: &Path) -> PathBuf {
 
 fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
     let pids = super::net::all_pids()?;
-    let mut pending = vec![root_pid];
+    collect_child_pids_from(root_pid, &pids)
+}
+
+fn collect_child_pids_from(root_pid: u32, pids: &[i32]) -> AppResult<Vec<u32>> {
     let mut seen = std::collections::HashSet::from([root_pid]);
     let mut ordered = Vec::new();
 
-    for pid in pids {
-        let Some(parent) = super::net::parent_pid(pid as u32)? else {
+    for &pid in pids {
+        let pid = pid as u32;
+        let Some(parent) = super::net::parent_pid(pid)? else {
             continue;
         };
-        if pending.contains(&parent) && seen.insert(pid as u32) {
-            ordered.push(pid as u32);
-            pending.push(pid as u32);
+        if seen.contains(&parent) && seen.insert(pid) {
+            ordered.push(pid);
         }
     }
     Ok(ordered)

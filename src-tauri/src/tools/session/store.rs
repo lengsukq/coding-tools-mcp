@@ -257,3 +257,13 @@ pub fn kill_workspace_sessions(workspace_root: &Path) -> usize {
         })
         .count()
 }
+
+pub fn drop_workspace_session_store(workspace_root: &Path) {
+    if let Some(registry) = WORKSPACE_SESSION_STORES.get() {
+        let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        guard.remove(workspace_root);
+        if guard.capacity() > 32 && guard.len() * 4 < guard.capacity() {
+            guard.shrink_to_fit();
+        }
+    }
+}

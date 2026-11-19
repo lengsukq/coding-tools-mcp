@@ -33,7 +33,7 @@ use commands::{
     clear_tool_audit_records, create_lan_pairing_pin, create_session_review_url, create_workspace,
     create_workspace_review_url, decide_computer_sensitive_action, delete_frp_profile, delete_plan,
     delete_workspace, delete_workspace_review, detect_installed_ides, enable_computer_access,
-    enter_compact_mode, get_app_settings, get_computer_screen_status, get_download_config,
+    enter_compact_mode, get_computer_screen_status, get_download_config,
     get_gemini_local_bridge_status, get_global_gateway_config, get_global_gateway_status,
     get_global_mcp_overview, get_global_runtime_settings, get_lan_peers_overview,
     get_last_workspace_id, get_planning_state, get_proxy, get_runtime_status,
@@ -248,14 +248,19 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let app_handle = app.handle().clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(15));
-            let app_for_ui = app_handle.clone();
-            if app_handle
-                .run_on_main_thread(move || update_tray_dashboard(&app_for_ui))
-                .is_err()
-            {
-                break;
+        tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let app_for_ui = app_handle.clone();
+                if app_handle
+                    .run_on_main_thread(move || update_tray_dashboard(&app_for_ui))
+                    .is_err()
+                {
+                    break;
+                }
             }
         });
     }
@@ -277,6 +282,7 @@ fn spawn_memory_maintenance(app_handle: AppHandle) {
                 .sessions
                 .maintenance_sweep();
             let completed_commands = crate::tools::session::reap_idle_command_sessions().await;
+            crate::lan_peer::prune_caches();
             if sessions > 0 || capabilities > 0 || completed_commands > 0 {
                 eprintln!(
                     "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands}"
@@ -362,7 +368,6 @@ pub fn run() {
             list_frp_profiles,
             save_frp_profile,
             delete_frp_profile,
-            get_app_settings,
             set_last_workspace,
             get_last_workspace_id,
             list_software,
