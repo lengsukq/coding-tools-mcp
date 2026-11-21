@@ -143,10 +143,6 @@ export async function getGlobalMcpOverview(): Promise<GlobalMcpOverviewDto> {
   return invoke<GlobalMcpOverviewDto>("get_global_mcp_overview");
 }
 
-export async function restartRuntime(): Promise<RuntimeStatus> {
-  return invoke<RuntimeStatus>("restart_runtime");
-}
-
 export async function restoreRuntimeState(): Promise<void> {
   return invoke("restore_runtime_state");
 }

@@ -17,9 +17,16 @@ import {
   type PairedPeerStatusDto,
   type PairingPinDto,
 } from "$lib/api/lan-peers";
+import { useClipboard } from "$lib/composables/use-clipboard";
 import { workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
+import { isValidPort } from "$lib/validators";
+
+const DEFAULT_LAN_MCP_PORT = 28765;
+const PAIRING_PIN_LENGTH = 6;
+const PIN_COUNTDOWN_TICK_MS = 1000;
+const COPY_FEEDBACK_MS = 1800;
 
 export function formatPlatformLabel(os: string, arch?: string): string {
   const osLabel =
@@ -53,6 +60,29 @@ export interface LanDraftForm {
   extraSubnetsText: string;
 }
 
+function cloneLanDraft(source: LanDraftForm): LanDraftForm {
+  return {
+    ...source,
+    sharedWorkspaceIds: [...source.sharedWorkspaceIds],
+  };
+}
+
+function isLanDraftEqual(a: LanDraftForm, b: LanDraftForm): boolean {
+  if (
+    a.enabled !== b.enabled ||
+    a.deviceName !== b.deviceName ||
+    a.shareMode !== b.shareMode ||
+    a.trustLevel !== b.trustLevel ||
+    a.allowComputerUse !== b.allowComputerUse ||
+    a.allowLocalNoauth !== b.allowLocalNoauth ||
+    a.extraSubnetsText !== b.extraSubnetsText
+  ) {
+    return false;
+  }
+  if (a.sharedWorkspaceIds.length !== b.sharedWorkspaceIds.length) return false;
+  return a.sharedWorkspaceIds.every((id, index) => id === b.sharedWorkspaceIds[index]);
+}
+
 export function useLanPeers() {
   const loading = ref(true);
   const scanning = ref(false);
@@ -60,6 +90,7 @@ export function useLanPeers() {
   const pinBusy = ref(false);
   const probing = ref(false);
   const pairingBusy = ref(false);
+  const renamingBusy = ref(false);
   const peerActionId = ref<string | null>(null);
   const loadError = ref("");
   const saveError = ref("");
@@ -69,7 +100,8 @@ export function useLanPeers() {
   const overview = ref<LanOverviewDto | null>(null);
   const activePin = ref<PairingPinDto | null>(null);
   const pinCountdownSec = ref(0);
-  const copiedKey = ref<string | null>(null);
+  const { copiedKey: clipboardKey, copyText: copyToClipboard } = useClipboard(COPY_FEEDBACK_MS);
+  const copiedKey = computed<string | null>(() => clipboardKey.value || null);
 
   const draft = reactive<LanDraftForm>({
     enabled: false,
@@ -81,13 +113,11 @@ export function useLanPeers() {
     allowLocalNoauth: true,
     extraSubnetsText: "",
   });
-  const baseline = ref("");
+  const baseline = ref<LanDraftForm | null>(null);
 
-  // Manual IP probe inputs
   const probeHost = ref("");
-  const probePort = ref("28765");
+  const probePort = ref(String(DEFAULT_LAN_MCP_PORT));
 
-  // Pairing modal state
   const pairingModalOpen = ref(false);
   const pairingTarget = ref<{
     deviceName: string;
@@ -98,22 +128,24 @@ export function useLanPeers() {
   } | null>(null);
   const pinInput = ref("");
 
-  // Rename modal state
   const renameModalOpen = ref(false);
   const renameTargetId = ref("");
   const renameInput = ref("");
 
   let loadSequence = 0;
   let pinTimer: number | null = null;
-  let copyTimer: number | null = null;
 
-  const dirty = computed(() => !loading.value && !!baseline.value && JSON.stringify(draft) !== baseline.value);
+  const dirty = computed(() => !loading.value && baseline.value !== null && !isLanDraftEqual(draft, baseline.value));
   const discoveredUnpaired = computed(() =>
     (overview.value?.discoveredPeers ?? []).filter((item) => !item.alreadyPaired),
   );
   const onlinePeerCount = computed(() =>
     (overview.value?.pairedPeers ?? []).filter((item) => item.enabled && item.online).length,
   );
+
+  function patchDraft(patch: Partial<LanDraftForm>) {
+    Object.assign(draft, patch);
+  }
 
   function stopPinTimer() {
     if (pinTimer !== null) {
@@ -139,15 +171,15 @@ export function useLanPeers() {
     };
     updateRemaining();
     if (pinCountdownSec.value > 0) {
-      pinTimer = window.setInterval(updateRemaining, 1000);
+      pinTimer = window.setInterval(updateRemaining, PIN_COUNTDOWN_TICK_MS);
     }
   }
 
   function applyOverview(next: LanOverviewDto, overwriteDraft = !dirty.value) {
     overview.value = next;
     syncPinState(next.activePin);
-    if (!probePort.value || probePort.value === "28765") {
-      probePort.value = String(next.localDevice.mcpPort || 28765);
+    if (!probePort.value || probePort.value === String(DEFAULT_LAN_MCP_PORT)) {
+      probePort.value = String(next.localDevice.mcpPort || DEFAULT_LAN_MCP_PORT);
     }
     if (overwriteDraft) {
       draft.enabled = next.config.enabled;
@@ -158,7 +190,7 @@ export function useLanPeers() {
       draft.allowComputerUse = next.config.allowComputerUse ?? true;
       draft.allowLocalNoauth = next.localDevice.allowLocalNoauth ?? true;
       draft.extraSubnetsText = (next.config.extraSubnets ?? []).join("\n");
-      baseline.value = JSON.stringify(draft);
+      baseline.value = cloneLanDraft(draft);
     }
   }
 
@@ -284,7 +316,7 @@ export function useLanPeers() {
       probeError.value = "请输入对方电脑的局域网或 EasyTier/Tailscale 组网 IP（例如 10.144.144.2）";
       return;
     }
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    if (!isValidPort(port)) {
       probeError.value = "端口必须是 1 到 65535 之间的整数";
       return;
     }
@@ -328,7 +360,7 @@ export function useLanPeers() {
   async function submitPair() {
     if (pairingBusy.value || !pairingTarget.value) return;
     const digits = pinInput.value.replace(/\D/g, "");
-    if (digits.length !== 6) {
+    if (digits.length !== PAIRING_PIN_LENGTH) {
       pairError.value = "请输入对方电脑上显示的 6 位数字配对码";
       return;
     }
@@ -376,7 +408,8 @@ export function useLanPeers() {
   async function submitRename() {
     const id = renameTargetId.value;
     const name = renameInput.value.trim();
-    if (!id || !name) return;
+    if (!id || !name || renamingBusy.value) return;
+    renamingBusy.value = true;
     peerActionId.value = id;
     try {
       const next = await renameLanPairedPeer(id, name);
@@ -386,6 +419,7 @@ export function useLanPeers() {
     } catch (error) {
       showToast(String(error), { title: "重命名失败", kind: "error" });
     } finally {
+      renamingBusy.value = false;
       peerActionId.value = null;
     }
   }
@@ -414,18 +448,7 @@ export function useLanPeers() {
   }
 
   async function copyText(text: string, key: string, label: string) {
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      copiedKey.value = key;
-      if (copyTimer !== null) window.clearTimeout(copyTimer);
-      copyTimer = window.setTimeout(() => {
-        if (copiedKey.value === key) copiedKey.value = null;
-      }, 1800);
-      showToast(`${label}已复制`, { kind: "success", duration: 1800 });
-    } catch {
-      showToast(`复制${label}失败`, { kind: "error" });
-    }
+    await copyToClipboard(text, { key, label, durationMs: COPY_FEEDBACK_MS });
   }
 
   useUnsavedChanges("局域网多设备配对", dirty, saveSettings);
@@ -437,7 +460,6 @@ export function useLanPeers() {
   onBeforeUnmount(() => {
     loadSequence++;
     stopPinTimer();
-    if (copyTimer !== null) window.clearTimeout(copyTimer);
   });
 
   return {
@@ -448,6 +470,7 @@ export function useLanPeers() {
     pinBusy,
     probing,
     pairingBusy,
+    renamingBusy,
     peerActionId,
     loadError,
     saveError,
@@ -468,6 +491,7 @@ export function useLanPeers() {
     pinInput,
     renameModalOpen,
     renameInput,
+    patchDraft,
     refresh,
     saveSettings,
     toggleSharedWorkspace,

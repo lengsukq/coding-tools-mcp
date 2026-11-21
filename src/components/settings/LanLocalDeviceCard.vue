@@ -29,6 +29,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  "update-draft": [patch: Partial<LanDraftForm>];
   save: [];
   "generate-pin": [];
   "revoke-pin": [];
@@ -42,8 +43,8 @@ const shareModeOptions = [
 ];
 
 const trustLevelOptions = [
-  { value: "full", label: "完全协作（读写与命令均遵循本机工作区权限）" },
-  { value: "readonly", label: "仅只读共享（禁止远端配对电脑写入或执行命令）" },
+  { value: "full", label: "完全协作（读写与命令）" },
+  { value: "readonly", label: "仅只读共享（禁写禁命令）" },
 ];
 
 function spacedPin(pin: string): string {
@@ -84,7 +85,7 @@ function formatAddressList(device: LocalDeviceDto): string {
           :busy="pinBusy"
           @click="emit('generate-pin')"
         >
-          <KeyRound :size="14" />生成 6 位配对码
+          <KeyRound v-if="!pinBusy" :size="14" />生成 6 位配对码
         </BaseButton>
         <BaseButton
           v-else
@@ -93,7 +94,7 @@ function formatAddressList(device: LocalDeviceDto): string {
           :busy="pinBusy"
           @click="emit('revoke-pin')"
         >
-          <X :size="14" />关闭配对码
+          <X v-if="!pinBusy" :size="14" />关闭配对码
         </BaseButton>
       </div>
     </div>
@@ -136,7 +137,7 @@ function formatAddressList(device: LocalDeviceDto): string {
           <span class="text-xs text-[var(--ui-text-muted)]">本机设备标识 · {{ formatPlatformLabel(localDevice.os, localDevice.arch) }}</span>
           <button
             type="button"
-            class="inline-flex items-center gap-1 text-xs text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+            class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 text-xs text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
             @click="emit('copy-text', localDevice.deviceId, 'device-id', '设备 ID')"
           >
             <Check v-if="copiedKey === 'device-id'" :size="12" class="text-[var(--ui-success)]" />
@@ -157,7 +158,7 @@ function formatAddressList(device: LocalDeviceDto): string {
           <button
             v-if="localDevice.addresses.length"
             type="button"
-            class="inline-flex items-center gap-1 text-xs text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+            class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 text-xs text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
             @click="emit('copy-text', `${localDevice.addresses[0]}:${localDevice.mcpPort}`, 'lan-addr', '节点地址')"
           >
             <Check v-if="copiedKey === 'lan-addr'" :size="12" class="text-[var(--ui-success)]" />
@@ -198,34 +199,39 @@ function formatAddressList(device: LocalDeviceDto): string {
     <!-- Editable Federation Policy -->
     <div class="mt-4 ui-stack">
       <ToggleSwitch
-        v-model="draft.enabled"
+        :model-value="draft.enabled"
         label="开启局域网 / 组网对等发现与工作区联邦"
         description="开启后在物理网卡及虚拟组网网卡上监听对等配对请求（配对前不暴露任何工作区信息，公网隧道请求一律拦截）。"
+        @update:model-value="emit('update-draft', { enabled: $event })"
       />
 
       <ToggleSwitch
-        v-model="draft.allowLocalNoauth"
+        :model-value="draft.allowLocalNoauth"
         label="允许本机 Agent 免 OAuth 直连并调用局域网/组网工作区"
         description="开启后，本机 Claude Code、Cursor、Codex、Windsurf 等客户端直连 127.0.0.1 无需 OAuth 授权，跨机请求由网关自动以配对密钥签名转发。"
+        @update:model-value="emit('update-draft', { allowLocalNoauth: $event })"
       />
 
       <div class="ui-two-col">
         <TextField
-          v-model="draft.deviceName"
+          :model-value="draft.deviceName"
           label="本机显示名称（用于区分多台电脑）"
           placeholder="例如：Leo 的 MacBook Pro / 客厅 Mac mini / Windows 主力机"
+          @update:model-value="emit('update-draft', { deviceName: $event })"
         />
         <SelectField
-          v-model="draft.trustLevel"
+          :model-value="draft.trustLevel"
           label="向已配对设备授予的访问权限"
           :options="trustLevelOptions"
+          @update:model-value="emit('update-draft', { trustLevel: $event })"
         />
       </div>
 
       <SelectField
-        v-model="draft.shareMode"
+        :model-value="draft.shareMode"
         label="向已配对设备暴露的工作区范围"
         :options="shareModeOptions"
+        @update:model-value="emit('update-draft', { shareMode: $event })"
       />
 
       <div v-if="draft.shareMode === 'selected'" class="ui-inset p-3 space-y-2">
@@ -252,11 +258,12 @@ function formatAddressList(device: LocalDeviceDto): string {
         </summary>
         <div class="ui-disclosure-body">
           <TextAreaField
-            v-model="draft.extraSubnetsText"
+            :model-value="draft.extraSubnetsText"
             label="自定义组网子网段（CIDR）或固定节点地址（每行或逗号分隔，可选）"
             placeholder="10.144.144.0/24&#10;192.168.2.0/24&#10;10.144.144.2:28765"
             :rows="3"
             mono
+            @update:model-value="emit('update-draft', { extraSubnetsText: $event })"
           />
           <p class="text-xs text-[var(--ui-text-muted)]">
             默认已自动识别常见虚拟网卡网段（EasyTier 默认 <code>10.144.144.0/24</code>、<code>10.126.126.0/24</code>、<code>198.18.0.0/15</code> 与 Tailscale <code>100.64.0.0/10</code>）。若使用了 EasyTier 子网代理（无 TUN 跨网段转发）或自定义网段，在此填入目标 CIDR（如 <code>192.168.2.0/24</code>）或节点 IP 即可自动扫描发现。
@@ -266,9 +273,10 @@ function formatAddressList(device: LocalDeviceDto): string {
 
       <ToggleSwitch
         v-if="localDevice?.computerUseSupported"
-        v-model="draft.allowComputerUse"
+        :model-value="draft.allowComputerUse"
         label="允许已配对设备转发 Computer Use 请求至本机"
         description="仍严格受本机「Computer Use」页面的手动开关、macOS 录屏/辅助功能权限及敏感动作二次确认保护。"
+        @update:model-value="emit('update-draft', { allowComputerUse: $event })"
       />
 
       <SaveBar :dirty="dirty" :busy="saving" :error="saveError" @save="emit('save')" />

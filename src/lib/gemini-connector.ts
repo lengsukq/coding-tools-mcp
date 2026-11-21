@@ -100,7 +100,7 @@ export function assessGeminiConnection(input: GeminiConnectionInput) {
   if (!input.publicEnabled) issues.push("请先启用公网连接，并配置 Cloudflare、FRP 或自己的 HTTPS 反向代理。");
   if (!validEndpoint) issues.push("需要公网可访问的 HTTPS /mcp 地址，不能使用本地或内网地址。");
   if (!input.mcpRunning) issues.push("请先启动 Global MCP 服务。");
-  if (input.authType !== "oauth") issues.push("请在应用设置 → 连接 → 认证与访问范围中选择 OAuth，然后重启 MCP 服务。Gemini 自定义应用优先使用 OAuth/DCR。");
+  if (input.authType !== "oauth") issues.push("请在应用设置 → 连接 → 认证与访问范围中选择 OAuth（保存后自动热更新生效）。Gemini 自定义应用优先使用 OAuth/DCR。");
   if (input.configDirty) issues.push("公网配置尚未保存，请先保存并应用配置后再复制地址。");
   if (input.publicHealth === "failed") issues.push("公网健康检查失败，请修复后再尝试连接 Gemini。");
   if (input.publicHealth === "unchecked") issues.push("尚未验证公网端点，建议先点击连接健康中的健康检查。");

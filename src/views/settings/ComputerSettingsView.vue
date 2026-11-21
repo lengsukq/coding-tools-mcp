@@ -12,6 +12,13 @@ import {
   useComputerSettings,
 } from "$lib/computer/use-computer-settings";
 
+withDefaults(
+  defineProps<{
+    panel?: "control" | "audit";
+  }>(),
+  { panel: "control" },
+);
+
 const {
   computer,
   computerBusy,
@@ -41,13 +48,21 @@ const {
 
 <template>
   <div id="settings-computer" class="ui-stack">
-    <GlassCard>
+    <GlassCard v-if="panel === 'audit'">
+      <ComputerAuditPanel
+        :records="computerAuditRecords"
+        :health-message="computerAuditHealth"
+        :busy="auditBusy"
+        @refresh="refreshComputerAudit"
+      />
+    </GlassCard>
+
+    <GlassCard v-else>
       <div class="section-heading flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold">Computer Use · 屏幕访问</h2>
+          <h2 class="text-base font-semibold">Computer Use · 屏幕访问授权</h2>
           <p class="mt-1 text-xs leading-5 text-[var(--ui-text-muted)]">
-            默认关闭。本机手动开启后，已通过 MCP OAuth / Bearer 验证的客户端可直接在授权范围内查看或操作，无需逐次申请；所有调用记录客户端身份和结果。
-            查看与控制权限分离，控制只作用于本机指定应用，macOS 屏幕录制与辅助功能授权仍然有效。
+            默认关闭。本机手动开启后，已通过 MCP OAuth / Bearer 验证的客户端可直接在授权范围内查看或操作，无需逐次申请；查看与控制权限分离，macOS 屏幕录制与辅助功能授权始终作为系统权威门禁。
           </p>
         </div>
         <StatusPill
@@ -56,12 +71,13 @@ const {
         />
       </div>
 
-      <div class="ui-inset mt-4 grid gap-3 p-3">
+      <div class="ui-inset mt-4 grid gap-3 p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
             <strong class="text-sm">本机主动授权</strong>
             <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-              {{ manualExpiryLabel }} · {{
+              {{ manualExpiryLabel }} ·
+              {{
                 computer?.manualEnabled
                   ? computer.manualScope === "control"
                     ? "控制指定应用"
@@ -71,10 +87,10 @@ const {
             </p>
           </div>
           <div v-if="computer?.manualEnabled" class="flex flex-wrap gap-2">
-            <BaseButton variant="secondary" :disabled="computerBusy" @click="toggleComputerPause">
+            <BaseButton variant="secondary" size="sm" :disabled="computerBusy" @click="toggleComputerPause">
               {{ computer.manualPaused ? "恢复" : "紧急暂停" }}
             </BaseButton>
-            <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">
+            <BaseButton variant="secondary" size="sm" :disabled="computerBusy" @click="revokeComputer">
               立即关闭
             </BaseButton>
           </div>
@@ -88,14 +104,14 @@ const {
         <div v-if="manualScope === 'control'" class="settings-two-col">
           <SelectField v-model="manualTargetApp" label="只允许操作此应用" :options="computerAppOptions" />
           <div class="flex items-end">
-            <BaseButton variant="ghost" :disabled="computerBusy" @click="refreshComputerApps">
+            <BaseButton variant="ghost" size="sm" :disabled="computerBusy" @click="refreshComputerApps">
               刷新应用列表
             </BaseButton>
           </div>
         </div>
 
         <p v-if="manualScope === 'control'" class="text-xs leading-5 text-[var(--ui-text-muted)]">
-          控制模式仅针对所选应用；鼠标坐标仍需近期截图，删除、支付、发送等敏感操作仍需你单独确认。切换客户端会使旧截图失效。
+          控制模式仅针对所选应用；鼠标坐标仍需近期截图，删除、支付、发送等敏感操作仍需单独确认。
         </p>
 
         <div v-if="manualDuration === '0'" class="ui-inset p-3">
@@ -109,7 +125,12 @@ const {
         <div class="flex flex-wrap gap-2">
           <BaseButton
             :busy="computerBusy"
-            :disabled="!computer?.supported || computerBusy || (manualScope === 'control' && (!manualTargetApp || !computer?.accessibilityGranted)) || (manualDuration === '0' && !confirmPermanent)"
+            :disabled="
+              !computer?.supported ||
+              computerBusy ||
+              (manualScope === 'control' && (!manualTargetApp || !computer?.accessibilityGranted)) ||
+              (manualDuration === '0' && !confirmPermanent)
+            "
             @click="enableManualComputer"
           >
             {{ computer?.manualEnabled ? "更新本机授权" : "开启 Computer Use" }}
@@ -134,7 +155,8 @@ const {
               computer.pendingSensitiveActionApproved
                 ? "已允许一次，等待原客户端重试执行；不可重复使用"
                 : "审批本身不会执行操作"
-            }} · 剩余 {{ computer.pendingSensitiveActionExpiresInSeconds ?? 0 }} 秒
+            }}
+            · 剩余 {{ computer.pendingSensitiveActionExpiresInSeconds ?? 0 }} 秒
           </p>
         </div>
         <BaseButton
@@ -186,7 +208,7 @@ const {
         </BaseButton>
       </div>
 
-      <div v-else class="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <div v-else class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-line)] pt-3">
         <span class="text-xs text-[var(--ui-text-muted)]">
           {{
             computer?.active
@@ -195,24 +217,17 @@ const {
           }}
         </span>
         <div v-if="computer?.active" class="flex flex-wrap items-center gap-2">
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="toggleComputerPause">
+          <BaseButton variant="secondary" size="sm" :disabled="computerBusy" @click="toggleComputerPause">
             {{ computer.paused ? "恢复" : "紧急暂停" }}
           </BaseButton>
-          <BaseButton variant="secondary" :disabled="computerBusy" @click="revokeComputer">
+          <BaseButton variant="secondary" size="sm" :disabled="computerBusy" @click="revokeComputer">
             立即撤销
           </BaseButton>
         </div>
-        <BaseButton v-else variant="ghost" :disabled="computerBusy" @click="refreshComputerScreen">
-          刷新
+        <BaseButton v-else variant="ghost" size="sm" :disabled="computerBusy" @click="refreshComputerScreen">
+          刷新状态
         </BaseButton>
       </div>
-
-      <ComputerAuditPanel
-        :records="computerAuditRecords"
-        :health-message="computerAuditHealth"
-        :busy="auditBusy"
-        @refresh="refreshComputerAudit"
-      />
     </GlassCard>
   </div>
 </template>
@@ -222,7 +237,7 @@ const {
 .settings-two-col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .75rem;
+  gap: 0.75rem;
   min-width: 0;
 }
 @container app-main (max-width: 700px) {

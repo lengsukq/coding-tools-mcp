@@ -44,7 +44,7 @@ function move(e:KeyboardEvent,index:number){let next=index;if(["ArrowRight","Arr
 <style scoped>
 .palette-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   min-width: 0;
   padding: 0 !important;
@@ -115,10 +115,9 @@ function move(e:KeyboardEvent,index:number){let next=index;if(["ArrowRight","Arr
   text-overflow: ellipsis;
 }
 
-@container app-main (max-width: 640px) {
+@container subnav-stage (max-width: 540px) {
   .palette-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .palette-card { gap: 8px; padding: 8px; border-radius: 12px; }
   .palette-swatch { width: 28px; height: 28px; flex-basis: 28px; border-radius: 9px; }
-  .palette-desc { display: none; }
 }
 </style>

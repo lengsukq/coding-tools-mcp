@@ -30,6 +30,7 @@ defineProps<{
   pairError: string;
   pairingBusy: boolean;
   renameModalOpen: boolean;
+  renamingBusy: boolean;
   renameInput: string;
 }>();
 
@@ -61,7 +62,7 @@ const emit = defineEmits<{
         </p>
       </div>
       <BaseButton variant="secondary" size="sm" :busy="scanning" @click="emit('scan')">
-        <RefreshCw :size="13" />扫描并刷新状态
+        <RefreshCw v-if="!scanning" :size="13" />扫描并刷新状态
       </BaseButton>
     </div>
 
@@ -117,7 +118,7 @@ const emit = defineEmits<{
               @update:model-value="emit('update:probePort', $event)"
             />
             <BaseButton variant="secondary" :busy="probing" @click="emit('probe')">
-              <Search :size="13" />探测节点
+              <Search v-if="!probing" :size="13" />探测节点
             </BaseButton>
           </div>
         </div>
@@ -247,6 +248,7 @@ const emit = defineEmits<{
       :open="renameModalOpen"
       title="修改配对设备显示名称"
       description="自定义名称将显示在 AI 的 workspace_list 与 device_list 中，方便区分多台同名项目电脑。"
+      :dismissible="!renamingBusy"
       @close="emit('close-rename')"
     >
       <form class="ui-stack" @submit.prevent="emit('submit-rename')">
@@ -254,11 +256,12 @@ const emit = defineEmits<{
           :model-value="renameInput"
           label="设备显示名称"
           placeholder="例如：书房 Mac mini / Windows 编译机"
+          :disabled="renamingBusy"
           @update:model-value="emit('update:renameInput', $event)"
         />
-        <div class="flex justify-end gap-2 mt-2">
-          <BaseButton type="button" variant="ghost" @click="emit('close-rename')">取消</BaseButton>
-          <BaseButton type="submit">保存名称</BaseButton>
+        <div class="mt-2 flex justify-end gap-2">
+          <BaseButton type="button" variant="ghost" :disabled="renamingBusy" @click="emit('close-rename')">取消</BaseButton>
+          <BaseButton type="submit" :busy="renamingBusy" :disabled="renamingBusy || !renameInput.trim()">保存名称</BaseButton>
         </div>
       </form>
     </ModalDialog>

@@ -48,14 +48,6 @@ export async function loadWorkspaceSnapshot(id: string): Promise<WorkspaceSnapsh
   return { items, profile };
 }
 
-export async function refreshWorkspaceSnapshot(id: string) {
-  const items = (await listWorkspaces()).map(normalizeWorkspaceProfile);
-  return {
-    items,
-    profile: items.find((item) => item.id === id) ?? null,
-  };
-}
-
 export function withRuntimePolicy(
   profile: WorkspaceProfile,
   draft: RuntimePolicyDraft,

@@ -46,12 +46,12 @@ const emit = defineEmits<{
                 </div>
 
                 <!-- Tool Name Badge -->
-                <span class="font-mono text-xs font-semibold rounded-md bg-[var(--primary-soft)] text-[var(--primary)] px-2 py-0.5">
+                <span class="rounded-md bg-[var(--ui-accent-soft)] px-2 py-0.5 font-mono text-xs font-semibold text-[var(--ui-accent)]">
                   {{ record.toolName }}
                 </span>
 
                 <!-- Wrapper indicator -->
-                <span v-if="record.wrapperToolName" class="text-xs text-[var(--text-muted)] font-mono">
+                <span v-if="record.wrapperToolName" class="font-mono text-xs text-[var(--ui-text-muted)]">
                   via {{ record.wrapperToolName }}
                 </span>
 
@@ -76,14 +76,14 @@ const emit = defineEmits<{
                 <!-- Cross-device federation pill -->
                 <span
                   v-if="record.executionHost && record.executionHost !== 'local'"
-                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-surface-subtle)] border border-[var(--ui-line)] px-2 py-0.5 text-xs text-[var(--text-secondary)]"
+                  class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] px-2 py-0.5 text-xs text-[var(--ui-text-secondary)]"
                   title="通过局域网联邦单跳转发至配对电脑执行"
                 >
                   转发 → {{ record.executionHost.replace(/^peer:/, '') }}
                 </span>
                 <span
                   v-else-if="record.sourcePeer"
-                  class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-surface-subtle)] border border-[var(--ui-line)] px-2 py-0.5 text-xs text-[var(--text-secondary)]"
+                  class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] px-2 py-0.5 text-xs text-[var(--ui-text-secondary)]"
                   title="来自局域网配对电脑发起的远端调用"
                 >
                   来自 ← {{ record.sourcePeer }}
@@ -91,11 +91,11 @@ const emit = defineEmits<{
               </div>
 
               <!-- Right: Duration + Time + Payload + Expand Arrow -->
-              <div class="flex items-center gap-3 shrink-0 ml-auto text-xs text-[var(--text-muted)]">
+              <div class="ml-auto flex shrink-0 items-center gap-3 text-xs text-[var(--ui-text-muted)]">
                 <!-- Payload size -->
-                <div class="hidden sm:flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
+                <div class="hidden items-center gap-2 font-mono text-xs text-[var(--ui-text-secondary)] sm:flex">
                   <span class="inline-flex items-center gap-0.5" title="请求体积">
-                    <ArrowUp :size="10" class="text-[var(--primary)]" /> {{ formatters.formatBytes(record.requestBytes) }}
+                    <ArrowUp :size="10" class="text-[var(--ui-accent)]" /> {{ formatters.formatBytes(record.requestBytes) }}
                   </span>
                   <span class="inline-flex items-center gap-0.5" title="响应体积">
                     <ArrowDown :size="10" class="text-[var(--ui-success)]" /> {{ formatters.formatBytes(record.responseBytes) }}
@@ -104,19 +104,19 @@ const emit = defineEmits<{
 
                 <!-- Execution Duration -->
                 <span
-                  class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-mono font-medium"
+                  class="inline-flex items-center rounded-md px-1.5 py-0.5 font-mono text-xs font-medium"
                   :class="record.durationMs < 200
                     ? 'bg-[var(--ui-surface-subtle)] text-[var(--ui-text-secondary)]'
                     : record.durationMs < 1000
-                      ? 'bg-[var(--primary-soft)] text-[var(--primary)]'
-                      : 'bg-[var(--ui-warning-soft)] text-[var(--ui-warning)] '"
+                      ? 'bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]'
+                      : 'bg-[var(--ui-warning-soft)] text-[var(--ui-warning)]'"
                 >
                   {{ formatters.formatDuration(record.durationMs) }}
                 </span>
 
                 <!-- Relative time -->
                 <time
-                  class="text-xs text-[var(--text-muted)] min-w-[50px] text-right"
+                  class="min-w-[50px] text-right text-xs text-[var(--ui-text-muted)]"
                   :title="formatters.formatTime(record.timestampMs)"
                 >
                   {{ formatters.formatRelativeTime(record.timestampMs) }}
@@ -124,7 +124,7 @@ const emit = defineEmits<{
 
                 <!-- Expand Chevron -->
                 <div
-                  class="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] transition-transform duration-200"
+                  class="flex h-5 w-5 items-center justify-center rounded text-[var(--ui-text-muted)] transition-transform duration-200"
                   :class="{ 'rotate-180': expanded }"
                 >
                   <ChevronDown :size="14" />
@@ -133,9 +133,9 @@ const emit = defineEmits<{
             </div>
 
             <!-- Secondary Subline: Workspace + Auth + Brief IDs -->
-            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-muted)] pl-8.5">
-              <span class="flex items-center gap-1 font-medium text-[var(--text-secondary)]">
-                <Layers :size="11" class="text-[var(--text-muted)]" />
+            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pl-8.5 text-xs text-[var(--ui-text-muted)]">
+              <span class="flex items-center gap-1 font-medium text-[var(--ui-text-secondary)]">
+                <Layers :size="11" class="text-[var(--ui-text-muted)]" />
                 {{ workspaceName }}
               </span>
 
@@ -145,14 +145,14 @@ const emit = defineEmits<{
 
               <template v-if="record.requestId">
                 <span>•</span>
-                <span class="font-mono text-xs text-[var(--text-muted)] truncate max-w-[200px]" :title="record.requestId">
+                <span class="max-w-[200px] truncate font-mono text-xs text-[var(--ui-text-muted)]" :title="record.requestId">
                   Req: {{ record.requestId.slice(0, 14) }}…
                 </span>
               </template>
 
               <template v-if="record.sessionId">
                 <span>•</span>
-                <span class="font-mono text-xs text-[var(--text-muted)] truncate max-w-[180px]" :title="record.sessionId">
+                <span class="max-w-[180px] truncate font-mono text-xs text-[var(--ui-text-muted)]" :title="record.sessionId">
                   Sess: {{ record.sessionId.slice(0, 12) }}…
                 </span>
               </template>
@@ -160,22 +160,22 @@ const emit = defineEmits<{
 
             <!-- Expanded Details Drawer -->
             <transition
-              enter-active-class="transition duration-200 ease-out"
+              enter-active-class="transition-[opacity,transform] duration-200 ease-out"
               enter-from-class="opacity-0 -translate-y-1"
               enter-to-class="opacity-100 translate-y-0"
-              leave-active-class="transition duration-150 ease-in"
+              leave-active-class="transition-[opacity,transform] duration-150 ease-in"
               leave-from-class="opacity-100 translate-y-0"
               leave-to-class="opacity-0 -translate-y-1"
             >
               <div
                 v-if="expanded"
-                class="mt-3.5 rounded-xl border border-[var(--border)] bg-[var(--ui-surface-subtle)] p-4 text-xs space-y-3 cursor-default"
+                class="mt-3.5 cursor-default space-y-3 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] p-4 text-xs"
                 @click.stop
               >
                 <!-- Detail Header / Quick Filter actions -->
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-light)] pb-2.5">
-                  <span class="font-semibold text-xs text-[var(--text-main)] flex items-center gap-1.5">
-                    <Sparkles :size="13" class="text-[var(--primary)]" /> 调用上下文与排查诊断
+                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ui-line)] pb-2.5">
+                  <span class="flex items-center gap-1.5 text-xs font-semibold text-[var(--ui-text)]">
+                    <Sparkles :size="13" class="text-[var(--ui-accent)]" /> 调用上下文与排查诊断
                   </span>
 
                   <!-- Quick Filter Actions -->
@@ -183,7 +183,7 @@ const emit = defineEmits<{
                     <button
                       v-if="record.sessionId"
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-xs font-medium text-[var(--ui-text-secondary)] shadow-xs transition hover:border-[var(--ui-accent)] hover:text-[var(--ui-accent)]"
                       @click="emit('filter-session', record.sessionId)"
                     >
                       <Filter :size="10" /> 仅看此 Session
@@ -191,7 +191,7 @@ const emit = defineEmits<{
 
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-xs font-medium text-[var(--ui-text-secondary)] shadow-xs transition hover:border-[var(--ui-accent)] hover:text-[var(--ui-accent)]"
                       @click="emit('filter-tool', record.toolName)"
                     >
                       <Filter :size="10" /> 仅看此工具
@@ -200,7 +200,7 @@ const emit = defineEmits<{
                     <button
                       v-if="record.workspaceId"
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full bg-[var(--card-bg)] border border-[var(--card-border)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] transition hover:text-[var(--primary)] hover:border-[var(--primary)] shadow-xs"
+                      class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-xs font-medium text-[var(--ui-text-secondary)] shadow-xs transition hover:border-[var(--ui-accent)] hover:text-[var(--ui-accent)]"
                       @click="emit('filter-workspace', record.workspaceId)"
                     >
                       <Filter :size="10" /> 过滤当前工作区
@@ -209,15 +209,15 @@ const emit = defineEmits<{
                 </div>
 
                 <!-- Structured Key-Value Grid -->
-                <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-xs">
+                <div class="grid grid-cols-1 gap-2.5 font-mono text-xs sm:grid-cols-2 lg:grid-cols-3">
                   <!-- Request ID -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                  <div class="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2.5">
+                    <div class="mb-1 flex items-center justify-between font-sans text-xs text-[var(--ui-text-muted)]">
                       <span>Request ID</span>
                       <button
                         v-if="record.requestId"
                         type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        class="text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
                         title="复制完整 Request ID"
                         @click="emit('copy-text', record.requestId, `req-${record.requestId}`, 'Request ID')"
                       >
@@ -225,19 +225,19 @@ const emit = defineEmits<{
                         <Copy v-else :size="12" />
                       </button>
                     </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
+                    <span class="select-all break-all text-[var(--ui-text)]">
                       {{ record.requestId || '—' }}
                     </span>
                   </div>
 
                   <!-- Session ID -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                  <div class="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2.5">
+                    <div class="mb-1 flex items-center justify-between font-sans text-xs text-[var(--ui-text-muted)]">
                       <span>Session ID</span>
                       <button
                         v-if="record.sessionId"
                         type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        class="text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
                         title="复制 Session ID"
                         @click="emit('copy-text', record.sessionId, `sess-${record.sessionId}`, 'Session ID')"
                       >
@@ -245,19 +245,19 @@ const emit = defineEmits<{
                         <Copy v-else :size="12" />
                       </button>
                     </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
+                    <span class="select-all break-all text-[var(--ui-text)]">
                       {{ record.sessionId || '—' }}
                     </span>
                   </div>
 
                   <!-- Client ID / Auth Method -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5">
-                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                  <div class="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2.5">
+                    <div class="mb-1 flex items-center justify-between font-sans text-xs text-[var(--ui-text-muted)]">
                       <span>认证与客户端</span>
                       <button
                         v-if="record.clientId"
                         type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        class="text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
                         title="复制 Client ID"
                         @click="emit('copy-text', record.clientId, `cli-${record.clientId}`, 'Client ID')"
                       >
@@ -265,20 +265,20 @@ const emit = defineEmits<{
                         <Copy v-else :size="12" />
                       </button>
                     </div>
-                    <span class="break-all select-all text-[var(--text-main)]">
+                    <span class="select-all break-all text-[var(--ui-text)]">
                       {{ record.clientId ? `${record.authMethod}: ${record.clientId}` : record.authMethod }}
                     </span>
                   </div>
 
                   <!-- Change ID -->
-                  <div v-if="record.changeId" class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 sm:col-span-2">
-                    <div class="flex items-center justify-between text-xs font-sans text-[var(--text-muted)] mb-1">
+                  <div v-if="record.changeId" class="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2.5 sm:col-span-2">
+                    <div class="mb-1 flex items-center justify-between font-sans text-xs text-[var(--ui-text-muted)]">
                       <span class="flex items-center gap-1 text-[var(--ui-accent)]">
                         <Zap :size="11" /> 状态变更摘要 (Change ID)
                       </span>
                       <button
                         type="button"
-                        class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition"
+                        class="text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
                         title="复制 Change ID"
                         @click="emit('copy-text', record.changeId!, `chg-${record.changeId}`, 'Change ID')"
                       >
@@ -287,17 +287,17 @@ const emit = defineEmits<{
                       </button>
                     </div>
                     <div class="flex items-baseline justify-between gap-2">
-                      <code class="break-all select-all text-[var(--ui-accent)]">{{ record.changeId }}</code>
-                      <span class="shrink-0 text-xs font-sans text-[var(--text-muted)]">
+                      <code class="select-all break-all text-[var(--ui-accent)]">{{ record.changeId }}</code>
+                      <span class="shrink-0 font-sans text-xs text-[var(--ui-text-muted)]">
                         涉及 {{ record.changedFileCount ?? 0 }} 个受影响文件
                       </span>
                     </div>
                   </div>
 
                   <!-- Execution Timestamp & Payload Details -->
-                  <div class="rounded-lg bg-[var(--card-bg)] border border-[var(--border)] p-2.5 font-sans" :class="{ 'sm:col-span-2 lg:col-span-1': !record.changeId }">
-                    <div class="text-xs text-[var(--text-muted)] mb-1">执行绝对时间与体积</div>
-                    <div class="space-y-0.5 text-xs text-[var(--text-secondary)] font-mono">
+                  <div class="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2.5 font-sans" :class="{ 'sm:col-span-2 lg:col-span-1': !record.changeId }">
+                    <div class="mb-1 text-xs text-[var(--ui-text-muted)]">执行绝对时间与体积</div>
+                    <div class="space-y-0.5 font-mono text-xs text-[var(--ui-text-secondary)]">
                       <p>时间戳: {{ formatters.formatTime(record.timestampMs) }}</p>
                       <p>请求体: {{ formatters.formatBytes(record.requestBytes) }} ({{ record.requestBytes }} B)</p>
                       <p>响应体: {{ formatters.formatBytes(record.responseBytes) }} ({{ record.responseBytes }} B)</p>

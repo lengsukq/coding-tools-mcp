@@ -1,91 +1,119 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { RefreshCw, Save } from "@lucide/vue";
+import { RefreshCw } from "@lucide/vue";
 import BaseButton from "../../components/ui/BaseButton.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import GlassCard from "../../components/ui/GlassCard.vue";
+import SaveBar from "../../components/ui/SaveBar.vue";
 import SecretField from "../../components/SecretField.vue";
 import { getSharedSecret, regenerateSharedSecret, setSharedSecrets, type SharedSecretKey } from "$lib/api/secrets";
-import SaveBar from "../../components/ui/SaveBar.vue";
-import {useUnsavedChanges} from "$lib/unsaved-changes";
 import { showToast } from "$lib/stores/toast";
+import { useUnsavedChanges } from "$lib/unsaved-changes";
 
-const keys: Array<{ key: SharedSecretKey; label: string; hint: string }> = [
+const SHARED_KEYS: Array<{ key: SharedSecretKey; label: string; hint: string }> = [
   { key: "oauth_client_id", label: "MCP OAuth Client ID", hint: "OAuth 客户端公开 ID" },
   { key: "bearer_token", label: "MCP Bearer Token", hint: "Bearer 认证模式使用" },
   { key: "oauth_client_secret", label: "MCP OAuth Client Secret", hint: "OAuth 客户端密钥" },
   { key: "oauth_password", label: "MCP 授权口令", hint: "首次授权时使用" },
   { key: "oauth_token_secret", label: "MCP Token Secret", hint: "OAuth Token 签名密钥" },
 ];
+
 const secrets = reactive<Partial<Record<SharedSecretKey, string>>>({});
 const originals = reactive<Partial<Record<SharedSecretKey, string>>>({});
 const loading = ref(true);
 const saving = ref(false);
 const regenerating = ref<SharedSecretKey | null>(null);
 const saveConfirmOpen = ref(false);
-const error=ref("");
-const loaded=ref(false);
-const changedKeys = computed(() => keys.filter((item) => secrets[item.key] !== originals[item.key]));
+const error = ref("");
+const loaded = ref(false);
+const changedKeys = computed(() => SHARED_KEYS.filter((item) => secrets[item.key] !== originals[item.key]));
 
 async function load() {
-  loading.value = true;error.value="";
+  loading.value = true;
+  error.value = "";
   try {
-    for (const item of keys) {
-      const value = await getSharedSecret(item.key) ?? "";
-      secrets[item.key] = value;
-      originals[item.key] = value;
+    const entries = await Promise.all(
+      SHARED_KEYS.map(async (item) => [item.key, (await getSharedSecret(item.key)) ?? ""] as const),
+    );
+    for (const [key, value] of entries) {
+      secrets[key] = value;
+      originals[key] = value;
     }
-    loaded.value=true;
-  } catch (e) { error.value=String(e); }
-  finally { loading.value = false; }
+    loaded.value = true;
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    loading.value = false;
+  }
 }
+
 async function regenerate(key: SharedSecretKey) {
   regenerating.value = key;
-  try { secrets[key] = await regenerateSharedSecret(key); showToast("已生成新密钥草稿；点击保存后旧密钥才会失效。", { kind: "warning", duration: 7000 }); }
-  catch (error) { showToast(String(error), { title: "重新生成失败", kind: "error" }); }
-  finally { regenerating.value = null; }
+  try {
+    secrets[key] = await regenerateSharedSecret(key);
+    showToast("已生成新密钥草稿；点击保存后旧密钥才会失效。", { kind: "warning", duration: 7000 });
+  } catch (err) {
+    showToast(String(err), { title: "重新生成失败", kind: "error" });
+  } finally {
+    regenerating.value = null;
+  }
 }
+
 async function save() {
   if (changedKeys.value.length === 0) {
     saveConfirmOpen.value = false;
     showToast("没有需要保存的密钥更改。", { kind: "info" });
-    return;
+    return true;
   }
-  if(saving.value || !loaded.value) return false;
-  error.value="";saving.value = true;
+  if (saving.value || !loaded.value) return false;
+  error.value = "";
+  saving.value = true;
   try {
-    const updates = changedKeys.value
-      .map((item) => ({ key: item.key, value: secrets[item.key] ?? "" }));
-    if (updates.length > 0) {
-      await setSharedSecrets(updates);
-      for (const update of updates) originals[update.key] = update.value;
-    }
+    const updates = changedKeys.value.map((item) => ({ key: item.key, value: secrets[item.key] ?? "" }));
+    await setSharedSecrets(updates);
+    for (const update of updates) originals[update.key] = update.value;
     saveConfirmOpen.value = false;
-    showToast("共享密钥已保存", { kind: "success" });return true;
-  } catch (e) { error.value=String(e);return false; }
-  finally { saving.value = false; }
+    showToast("共享密钥已保存", { kind: "success" });
+    return true;
+  } catch (e) {
+    error.value = String(e);
+    return false;
+  } finally {
+    saving.value = false;
+  }
 }
-useUnsavedChanges("认证密钥（替换后客户端可能需要重新连接）",computed(()=>loaded.value && changedKeys.value.length>0),save);
-onMounted(() => { void load(); });
+
+useUnsavedChanges(
+  "认证密钥（替换后客户端可能需要重新连接）",
+  computed(() => loaded.value && changedKeys.value.length > 0),
+  save,
+);
+
+onMounted(() => {
+  void load();
+});
 </script>
 
 <template>
   <div class="ui-stack">
-    <GlassCard class="animate-fade-in-up delay-100">
-      <p v-if="loading" class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</p>
-      <div v-else-if="!loaded" class="ui-banner ui-banner--warning" role="alert"><span>{{error}}</span><BaseButton variant="secondary" @click="load">重试</BaseButton></div>
+    <GlassCard class="animate-fade-in-up">
+      <p v-if="loading" class="py-8 text-center text-xs text-[var(--ui-text-muted)]">加载中…</p>
+      <div v-else-if="!loaded" class="ui-banner ui-banner--warning" role="alert">
+        <span>{{ error }}</span>
+        <BaseButton variant="secondary" @click="load">重试</BaseButton>
+      </div>
       <div v-else class="grid gap-5">
-        <div v-for="item in keys" :key="item.key" class="space-y-1.5 py-1">
+        <div v-for="item in SHARED_KEYS" :key="item.key" class="space-y-1.5 py-1">
           <label class="block text-xs font-medium text-[var(--ui-text-secondary)]">{{ item.label }}</label>
           <div class="flex items-center gap-2">
-            <SecretField v-model="secrets[item.key]" :disabled="saving" class="flex-1 min-w-0" />
+            <SecretField v-model="secrets[item.key]" :disabled="saving" class="min-w-0 flex-1" />
             <BaseButton variant="secondary" size="md" :busy="regenerating === item.key" class="shrink-0" @click="regenerate(item.key)">
-              <RefreshCw :size="13" />重新生成
+              <RefreshCw v-if="regenerating !== item.key" :size="13" />重新生成
             </BaseButton>
           </div>
           <span class="block text-xs leading-4 text-[var(--ui-text-muted)]">{{ item.hint }} · 可点击眼睛显示或复制</span>
         </div>
-        <SaveBar :dirty="changedKeys.length>0" :busy="saving" :error="error" @save="saveConfirmOpen=true"/>
+        <SaveBar :dirty="changedKeys.length > 0" :busy="saving" :error="error" @save="saveConfirmOpen = true" />
       </div>
     </GlassCard>
   </div>
@@ -102,17 +130,3 @@ onMounted(() => { void load(); });
     @cancel="saveConfirmOpen = false"
   />
 </template>
-
-<style scoped>
-.settings-page {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-@container app-main (max-width: 620px) {
-  .settings-page {
-    padding-inline: 16px;
-  }
-}
-</style>

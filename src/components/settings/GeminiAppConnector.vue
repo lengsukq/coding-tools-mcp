@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { Check, Copy, ExternalLink } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import GlassCard from "../ui/GlassCard.vue";
@@ -21,7 +21,8 @@ import {
 } from "$lib/gemini-connector";
 import { showToast } from "$lib/stores/toast";
 
-const props = defineProps<GeminiConnectionInput & { localEndpoint: string }>();
+const props = defineProps<GeminiConnectionInput & { localEndpoint: string; serverName?: string }>();
+const effectiveServerName = computed(() => props.serverName?.trim() || GEMINI_LOCAL_SERVER_NAME);
 const mode = ref<"local" | "cloud">("local");
 const bridgeStatus = ref<GeminiLocalBridgeStatusDto | null>(null);
 const preparingBridge = ref(false);
@@ -44,26 +45,41 @@ const localPreflight = computed(() => assessGeminiLocalConnection({
 }));
 const copied = ref(false);
 const localCopied = ref(false);
-const prompt = "请使用 Coding Tools MCP 调用 workspace_list，列出可用工作区；然后先询问我需要进入哪个工作区，不要猜测路径。";
+const prompt = computed(() => `请使用 ${effectiveServerName.value} 调用 workspace_list，列出可用工作区；然后先询问我需要进入哪个工作区，不要猜测路径。`);
+
+const BRIDGE_REFRESH_DEBOUNCE_MS = 60;
+let bridgeRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let bridgeRefreshSeq = 0;
 
 async function refreshBridgeStatus() {
+  const seq = ++bridgeRefreshSeq;
   try {
-    bridgeStatus.value = await getGeminiLocalBridgeStatus();
-  } catch {
-    bridgeStatus.value = null;
+    const next = await getGeminiLocalBridgeStatus();
+    if (seq === bridgeRefreshSeq) bridgeStatus.value = next;
+  } catch (error) {
+    if (seq === bridgeRefreshSeq) {
+      bridgeStatus.value = null;
+      console.warn("[GeminiAppConnector] failed to load local bridge status:", error);
+    }
   }
 }
 
-onMounted(() => {
-  void refreshBridgeStatus();
-});
-
 watch(
-  () => [props.localEndpoint, props.authType, props.endpoint],
+  () => [props.localEndpoint, props.authType],
   () => {
-    void refreshBridgeStatus();
+    if (bridgeRefreshTimer !== undefined) clearTimeout(bridgeRefreshTimer);
+    bridgeRefreshTimer = setTimeout(() => {
+      bridgeRefreshTimer = undefined;
+      void refreshBridgeStatus();
+    }, BRIDGE_REFRESH_DEBOUNCE_MS);
   },
+  { immediate: true },
 );
+
+onBeforeUnmount(() => {
+  bridgeRefreshSeq += 1;
+  if (bridgeRefreshTimer !== undefined) clearTimeout(bridgeRefreshTimer);
+});
 
 async function copyEndpoint() {
   if (!preflight.value.canCopy) return;
@@ -94,7 +110,7 @@ async function copyLocalCommand() {
 
 async function copyPrompt() {
   try {
-    await navigator.clipboard.writeText(prompt);
+    await navigator.clipboard.writeText(prompt.value);
     showToast("验证提示词已复制", { kind: "success" });
   } catch (error) {
     showToast(String(error), { title: "复制失败", kind: "error" });
@@ -131,7 +147,7 @@ async function openGemini(url: string) {
       <div class="ui-inset mt-4 space-y-3 p-3">
         <div>
           <span class="text-xs text-[var(--ui-text-muted)]">服务器名称</span>
-          <strong class="mt-1 block text-sm">{{ GEMINI_LOCAL_SERVER_NAME }}</strong>
+          <strong class="mt-1 block text-sm">{{ effectiveServerName }}</strong>
         </div>
         <div>
           <span class="text-xs text-[var(--ui-text-muted)]">说明</span>
@@ -163,7 +179,7 @@ async function openGemini(url: string) {
         <h3 class="text-sm font-semibold text-[var(--ui-text)]">本地连接步骤</h3>
         <ol class="list-decimal space-y-1 pl-5">
           <li>确认本机 Global MCP 正在运行，点击上方「{{ localPreflight.needsPrepare ? "生成凭据并复制" : "复制命令" }}」自动生成桥接入口与受保护的 OAuth 凭据并复制命令。</li>
-          <li>在 Gemini 的「设置自定义的关联应用」中选择 Local MCP，服务器名称填写「{{ GEMINI_LOCAL_SERVER_NAME }}」。</li>
+          <li>在 Gemini 的「设置自定义的关联应用」中选择 Local MCP，服务器名称填写「{{ effectiveServerName }}」。</li>
           <li>将上方整行原生命令粘贴到「命令」字段；「说明」可填写 Coding Tools MCP 本地工具。</li>
           <li>若 Gemini 默认阻止本地桥接访问网络，在 Gemini 的「沙盒设置」中允许网络访问 <code>127.0.0.1</code>；内置默认沙盒已可读取 <code>~/.local</code> 下的桥接入口与凭据文件，无需关闭整个沙盒。</li>
           <li>保存后通过 workspace_list 验证连接。若出现 MCP.MCPError code=4，点击「显示日志」检查 Global MCP 是否已启动或沙盒是否拦截回环网络。</li>
@@ -173,16 +189,22 @@ async function openGemini(url: string) {
       </div>
     </template>
 
-    <div v-if="mode === 'cloud'" class="ui-inset mt-4 flex min-w-0 flex-wrap items-center gap-3 p-3">
-      <div class="min-w-0 flex-1">
-        <span class="text-xs text-[var(--ui-text-muted)]">Gemini 自定义 MCP Server URL</span>
-        <code class="mt-1 block break-all text-xs">{{ preflight.validEndpoint ? endpoint : "尚无可用的公网 HTTPS /mcp 地址" }}</code>
+    <div v-if="mode === 'cloud'" class="ui-inset mt-4 space-y-3 p-3">
+      <div>
+        <span class="text-xs text-[var(--ui-text-muted)]">MCP 对外展示名称（可在「认证与访问范围」中自定义）</span>
+        <strong class="mt-1 block text-sm">{{ effectiveServerName }}</strong>
       </div>
-      <BaseButton variant="secondary" size="sm" :disabled="!preflight.canCopy" @click="copyEndpoint">
-        <Check v-if="copied" :size="13" />
-        <Copy v-else :size="13" />
-        {{ copied ? "已复制" : "复制地址" }}
-      </BaseButton>
+      <div class="flex min-w-0 flex-wrap items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <span class="text-xs text-[var(--ui-text-muted)]">Gemini 自定义 MCP Server URL</span>
+          <code class="mt-1 block break-all text-xs">{{ preflight.validEndpoint ? endpoint : "尚无可用的公网 HTTPS /mcp 地址" }}</code>
+        </div>
+        <BaseButton variant="secondary" size="sm" :disabled="!preflight.canCopy" @click="copyEndpoint">
+          <Check v-if="copied" :size="13" />
+          <Copy v-else :size="13" />
+          {{ copied ? "已复制" : "复制地址" }}
+        </BaseButton>
+      </div>
     </div>
 
     <div v-if="mode === 'cloud' && preflight.issues.length" class="ui-banner ui-banner--warning mt-3" role="status">

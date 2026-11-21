@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import type { ToolAuditRecord } from "$lib/api/tool-audit";
+import { formatAuditAuthLabel, formatAuditErrorLabel } from "$lib/audit/use-tool-audit";
+import { formatFullDateTime } from "$lib/formatters";
 
 defineProps<{
   records: ToolAuditRecord[];
@@ -11,10 +13,6 @@ defineProps<{
 const emit = defineEmits<{
   refresh: [];
 }>();
-
-function formatAuditTime(timestampMs: number) {
-  return new Date(timestampMs).toLocaleString("zh-CN", { hour12: false });
-}
 </script>
 
 <template>
@@ -42,7 +40,7 @@ function formatAuditTime(timestampMs: number) {
           </span>
         </div>
         <p class="break-all text-[var(--ui-text-muted)]">
-          {{ formatAuditTime(record.timestampMs) }} · {{ record.authMethod }} · 客户端：{{
+          {{ formatFullDateTime(record.timestampMs) }} · {{ formatAuditAuthLabel(record).text }} · 客户端：{{
             record.clientId ||
             (record.authMethod === "shared_bearer"
               ? "共享 Bearer 凭证（无法区分具体客户端）"
@@ -50,7 +48,7 @@ function formatAuditTime(timestampMs: number) {
           }}
         </p>
         <p v-if="record.errorCategory" class="text-[var(--ui-text-muted)]">
-          错误类型：{{ record.errorCategory }}
+          错误类型：{{ formatAuditErrorLabel(record.errorCategory) }}
         </p>
       </div>
       <p v-if="!records.length" class="text-xs text-[var(--ui-text-muted)]">

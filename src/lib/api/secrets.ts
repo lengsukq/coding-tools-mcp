@@ -11,10 +11,6 @@ export async function getSharedSecret(key: SharedSecretKey): Promise<string | nu
   return invoke<string | null>("get_shared_secret", { key });
 }
 
-export async function setSharedSecret(key: SharedSecretKey, value: string): Promise<void> {
-  return invoke("set_shared_secret", { key, value });
-}
-
 export async function setSharedSecrets(updates: Array<{ key: SharedSecretKey; value: string }>): Promise<void> {
   return invoke("set_shared_secrets", { updates });
 }

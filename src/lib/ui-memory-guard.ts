@@ -1,11 +1,12 @@
 import {hasUnsavedChanges,confirmUnsavedChanges} from "./unsaved-changes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getWebviewMemorySample, recreateUiWebview } from "$lib/api/ui-memory";
+import { enterCompactMode } from "$lib/api/window-chrome";
 
-/** How long the window must stay minimized/hidden before a silent UI recreate. */
+/** How long the window must stay minimized/hidden before releasing UI memory. */
 const HIDDEN_RELOAD_MS = 50 * 60 * 1000;
 /** Auto-recreate when WebView working set exceeds this (MB). */
-const MEMORY_WARN_MB = 2048;
+const MEMORY_WARN_MB = 1024;
 /** Min gap between any UI recreates. */
 const RELOAD_COOLDOWN_MS = 60 * 60 * 1000;
 /** How often to sample memory while the window may be visible. */
@@ -72,6 +73,11 @@ function cooldownOk(): boolean {
   return Date.now() - lastReloadAt() >= RELOAD_COOLDOWN_MS;
 }
 
+function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /mac/i.test(navigator.platform || navigator.userAgent);
+}
+
 async function isWindowObscured(): Promise<boolean> {
   if (typeof document !== "undefined" && document.visibilityState === "hidden") {
     return true;
@@ -104,11 +110,27 @@ async function maybeSilentReload(): Promise<void> {
 
   // The user may be restoring the app at the exact moment the hidden timer
   // fires. Re-check after a short delay so a reveal never races a WebView
-  // recreate and produces a visible "restart" flash.
+  // unload/recreate and produces a visible "restart" flash.
   await new Promise((resolve) => window.setTimeout(resolve, HIDDEN_RECHECK_DELAY_MS));
   if (!(await isWindowObscured())) {
     markVisible();
     return;
+  }
+
+  if (isMacPlatform()) {
+    if (hasUnsavedChanges.value || releasing) return;
+    releasing = true;
+    try {
+      localStorage.setItem(LAST_RELOAD_KEY, String(Date.now()));
+    } catch {
+      // ignore quota / private mode
+    }
+    try {
+      await enterCompactMode();
+      return;
+    } catch {
+      releasing = false;
+    }
   }
 
   await reloadUiOnly("hidden-or-minimized");

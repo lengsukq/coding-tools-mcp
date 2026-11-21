@@ -1,6 +1,5 @@
-import { getPlanningState, type PlanningStateDto } from "$lib/api/planning";
-import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
-import type { RuntimeState, WorkspaceProfile } from "$lib/types";
+import type { ServiceUsageStats } from "$lib/api/usage";
+import { formatCompactNumber } from "$lib/formatters";
 
 export interface UsagePoint {
   timestamp: number;
@@ -36,54 +35,6 @@ export interface UsageTotals {
   errorCount: number;
 }
 
-export function stateLabel(state: RuntimeState | undefined): string {
-  switch (state) {
-    case "running":
-      return "运行中";
-    case "starting":
-      return "启动中";
-    case "stopping":
-      return "停止中";
-    case "error":
-      return "异常";
-    default:
-      return "已停止";
-  }
-}
-
-export function stateClass(state: RuntimeState | undefined): string {
-  return state ?? "stopped";
-}
-
-export function planningLabel(
-  planningByWorkspace: Record<string, PlanningStateDto | null>,
-  workspaceId: string,
-): string {
-  const planning = planningByWorkspace[workspaceId];
-  if (!planning) return "Planning 未加载";
-  const goal = planning.goals.find((item) => item.id === planning.focus_goal_id);
-  const plan = planning.plans.find((item) => item.id === planning.focus_plan_id);
-  return goal?.title ?? plan?.title ?? `${planning.mode.toUpperCase()} 模式`;
-}
-
-export function summarizePlanning(planningByWorkspace: Record<string, PlanningStateDto | null>) {
-  let activeGoals = 0;
-  let activePlans = 0;
-  let pendingReview = 0;
-  const modes = { direct: 0, plan: 0, goal: 0 };
-
-  for (const planning of Object.values(planningByWorkspace)) {
-    if (!planning) continue;
-    modes[planning.mode] += 1;
-    activeGoals += planning.goals.filter((goal) => ["active", "paused"].includes(goal.status)).length;
-    activePlans += planning.plans.filter((plan) => ["draft", "active", "paused"].includes(plan.status)).length;
-    pendingReview += planning.goals.filter((goal) => goal.status === "awaiting_acceptance").length;
-    pendingReview += planning.plans.filter((plan) => plan.status === "awaiting_acceptance").length;
-  }
-
-  return { activeGoals, activePlans, pendingReview, modes };
-}
-
 export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStats[]>): UsageTotals {
   const totals: UsageTotals = {
     estimatedTokens: 0,
@@ -108,57 +59,8 @@ export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStat
   return totals;
 }
 
-export async function loadPlanningByWorkspace(
-  items: WorkspaceProfile[],
-): Promise<Record<string, PlanningStateDto | null>> {
-  const entries = await Promise.all(
-    items.map(async (workspace) => {
-      try {
-        return [workspace.id, await getPlanningState(workspace.id)] as const;
-      } catch {
-        return [workspace.id, null] as const;
-      }
-    }),
-  );
-  return Object.fromEntries(entries);
-}
-
-export async function loadUsageByWorkspace(
-  items: WorkspaceProfile[],
-): Promise<Record<string, ServiceUsageStats[]>> {
-  const entries = await Promise.all(
-    items.map(async (workspace) => {
-      try {
-        return [workspace.id, await getServiceUsageStats(workspace.id)] as const;
-      } catch {
-        return [workspace.id, []] as const;
-      }
-    }),
-  );
-  return Object.fromEntries(entries);
-}
-
 export function formatCount(value: number): string {
-  return new Intl.NumberFormat("zh-CN", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
-export function formatMillions(value: number): string {
-  return `${(value / 1_000_000).toFixed(2)}M`;
-}
-
-export function formatMetric(value: number): string {
-  if (value >= 1_000_000) return formatMillions(value);
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return Math.round(value).toLocaleString("zh-CN");
-}
-
-export function formatEstimatedTokens(value: number): string {
-  if (value >= 1_000_000) return formatMillions(value);
-  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
-  return Math.round(value).toLocaleString("zh-CN");
+  return formatCompactNumber(value);
 }
 
 export function buildUsagePoint(

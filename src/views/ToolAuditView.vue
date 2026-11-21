@@ -76,37 +76,51 @@ const auditFormatters = {
 </script>
 
 <template>
-  <section class="page-scroll flex-1 min-h-0">
-    <div class="tool-audit-page ui-page space-y-6 pb-12">
+  <section class="page-scroll min-h-0 flex-1">
+    <div class="tool-audit-page ui-page">
       <PageHeader
-        kicker="全局可观测与审计"
+        kicker="全局可观测与安全审计"
         title="工具调用审计"
-        description="追溯经过已认证 MCP 网关的工具调用、执行状态、响应耗时与数据变更。日志仅在本机持久化。"
+        description="追溯经过网关的每一次工具调用、跨机转发状态、耗时与变更影响；日志仅在本机持久化。"
       >
         <template #actions>
           <BaseButton variant="secondary" size="sm" :busy="loading" @click="loadAudit(0)">
-            <RefreshCw :size="13" :class="{ 'animate-spin': loading }" /> 刷新数据
+            <RefreshCw v-if="!loading" :size="14" />
+            <span>刷新数据</span>
           </BaseButton>
         </template>
       </PageHeader>
 
-      <transition
-        enter-active-class="transition duration-200 ease-out"
-        enter-from-class="opacity-0 -translate-y-2"
-        enter-to-class="opacity-100 translate-y-0"
-      >
-        <div v-if="healthMessage" class="ui-banner ui-banner--warning text-sm" role="status">
-          <AlertTriangle :size="18" class="mt-0.5 shrink-0 text-[var(--ui-warning)]" />
-          <div class="min-w-0 flex-1">
-            <p class="font-semibold text-xs text-[var(--ui-warning)]">审计日志写入异常通知</p>
-            <p class="mt-0.5 text-xs leading-5 text-[var(--ui-text-secondary)]">
-              {{ healthMessage }} 提示：工具调用仍在继续正常执行，仅部分日志写盘被推迟。
-            </p>
-          </div>
+      <div v-if="healthMessage" class="ui-banner ui-banner--warning text-sm" role="status">
+        <AlertTriangle :size="18" class="mt-0.5 shrink-0 text-[var(--ui-warning)]" />
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-semibold text-[var(--ui-warning)]">审计日志写入异常通知</p>
+          <p class="mt-0.5 text-xs leading-5 text-[var(--ui-text-secondary)]">
+            {{ healthMessage }} 提示：工具调用仍在继续正常执行，仅部分日志写盘被推迟。
+          </p>
         </div>
-      </transition>
+      </div>
 
-      <GlassCard :padded="false" class="overflow-hidden border border-[var(--border)] shadow-sm animate-fade-in-up delay-200">
+      <AuditOverviewAndRetention
+        v-model:retention-modal-open="retentionModalOpen"
+        v-model:retention-input="retentionInput"
+        :total="total"
+        :error-count="errorCount"
+        :workspace-count="workspaceCount"
+        :page-number="pageNumber"
+        :page-count="pageCount"
+        :success-rate="successRate"
+        :selected-workspace-name="selectedWorkspaceName"
+        :workspace-id="workspaceId"
+        :retention-days="retentionDays"
+        :retention-presets="retentionPresets"
+        :saving-retention="savingRetention"
+        @open-retention="openRetentionModal"
+        @save-retention="saveRetention"
+        @clear-records="clearRecords"
+      />
+
+      <GlassCard :padded="false" class="overflow-hidden">
         <AuditFilterBar
           v-model:query="query"
           v-model:outcome="outcome"
@@ -128,48 +142,44 @@ const auditFormatters = {
 
         <div
           v-if="loading && records.length === 0"
-          class="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-[var(--text-muted)]"
+          class="flex min-h-[300px] flex-col items-center justify-center gap-3 text-sm text-[var(--ui-text-muted)]"
         >
-          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--surface-hover)]">
-            <RefreshCw :size="22" class="animate-spin text-[var(--primary)]" />
+          <div class="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--ui-surface-subtle)]">
+            <RefreshCw :size="20" class="animate-spin text-[var(--ui-accent)]" />
           </div>
-          <p class="font-medium">正在读取审计日志记录…</p>
+          <p class="text-xs font-medium">正在读取审计日志记录…</p>
         </div>
 
         <div
           v-else-if="records.length === 0"
-          class="flex min-h-[220px] flex-col items-center justify-center px-6 text-center sm:min-h-[320px]"
+          class="flex min-h-[260px] flex-col items-center justify-center px-6 text-center"
         >
-          <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-hover)] text-[var(--text-muted)] mb-3">
-            <FilterX v-if="activeFilters.length > 0" :size="26" />
-            <ShieldCheck v-else :size="26" />
+          <div class="mb-3 grid h-14 w-14 place-items-center rounded-full bg-[var(--ui-surface-subtle)] text-[var(--ui-text-muted)]">
+            <FilterX v-if="activeFilters.length > 0" :size="24" />
+            <ShieldCheck v-else :size="24" />
           </div>
-          <p class="text-sm font-semibold text-[var(--text-main)]">
-            {{ activeFilters.length > 0 ? '未匹配到符合条件的审计记录' : '暂无工具调用审计记录' }}
+          <p class="text-sm font-semibold text-[var(--ui-text)]">
+            {{ activeFilters.length > 0 ? "未匹配到符合条件的审计记录" : "暂无工具调用审计记录" }}
           </p>
-          <p class="mt-1.5 max-w-md text-xs leading-relaxed text-[var(--text-muted)]">
-            {{ activeFilters.length > 0
-              ? '建议调整关键词、时间范围或放宽过滤条件重试。'
-              : '当已授权的 MCP 客户端调用工具时，调用记录将自动捕获并列于此处。' }}
+          <p class="mt-1.5 max-w-md text-xs leading-relaxed text-[var(--ui-text-muted)]">
+            {{
+              activeFilters.length > 0
+                ? "建议调整关键词、时间范围或放宽过滤条件后重试。"
+                : "当 MCP 客户端发起工具调用时，调用耗时、认证方式与变更摘要将自动汇总在此。"
+            }}
           </p>
-          <BaseButton
-            v-if="activeFilters.length > 0"
-            variant="secondary"
-            size="sm"
-            class="mt-4"
-            @click="resetFilters"
-          >
-            <RotateCcw :size="13" /> 重置所有筛选条件
+          <BaseButton v-if="activeFilters.length > 0" variant="secondary" size="sm" class="mt-4" @click="resetFilters">
+            <RotateCcw :size="13" /> 重置筛选条件
           </BaseButton>
         </div>
 
-        <div v-else class="divide-y divide-[var(--border-light)]">
+        <div v-else class="divide-y divide-[var(--ui-line)]">
           <AuditRecordRow
             v-for="record in records"
             :key="getRecordKey(record)"
             :record="record"
             :expanded="expandedKeys.has(getRecordKey(record))"
-            :copied-key="copiedKey"
+            :copied-key="expandedKeys.has(getRecordKey(record)) ? (copiedKey || null) : null"
             :workspace-name="record.workspaceId ? workspaceNames.get(record.workspaceId) || record.workspaceId : '全局路由'"
             :formatters="auditFormatters"
             @toggle="toggleExpand(getRecordKey(record))"
@@ -180,63 +190,36 @@ const auditFormatters = {
           />
         </div>
 
-        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-light)] bg-[var(--ui-surface-subtle)] px-4 py-3 lg:px-5">
-          <div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <span>显示第 <strong class="font-medium text-[var(--text-main)]">{{ rangeStart }}–{{ rangeEnd }}</strong> 条</span>
-            <span>/</span>
-            <span>共 <strong class="font-medium text-[var(--text-main)]">{{ total.toLocaleString() }}</strong> 条记录</span>
+        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] px-5 py-3.5">
+          <div class="flex items-center gap-2 text-xs tabular-nums text-[var(--ui-text-muted)]">
+            <span>
+              显示第 <strong class="font-medium text-[var(--ui-text)]">{{ rangeStart }}–{{ rangeEnd }}</strong> 条
+            </span>
+            <span>·</span>
+            <span>
+              共 <strong class="font-medium text-[var(--ui-text)]">{{ total.toLocaleString() }}</strong> 条记录
+            </span>
           </div>
 
           <div class="flex items-center gap-2">
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              :disabled="offset === 0 || loading"
-              @click="loadAudit(Math.max(0, offset - PAGE_SIZE))"
-            >
+            <BaseButton variant="secondary" size="sm" :disabled="offset === 0 || loading" @click="loadAudit(Math.max(0, offset - PAGE_SIZE))">
               <ChevronLeft :size="14" /> 上一页
             </BaseButton>
 
-            <span class="min-w-16 text-center text-xs font-mono font-medium text-[var(--text-secondary)]">
+            <span class="min-w-16 text-center font-mono text-xs font-medium text-[var(--ui-text-secondary)]">
               {{ pageNumber }} / {{ pageCount }}
             </span>
 
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              :disabled="offset + PAGE_SIZE >= total || loading"
-              @click="loadAudit(offset + PAGE_SIZE)"
-            >
+            <BaseButton variant="secondary" size="sm" :disabled="offset + PAGE_SIZE >= total || loading" @click="loadAudit(offset + PAGE_SIZE)">
               下一页 <ChevronRight :size="14" />
             </BaseButton>
           </div>
         </footer>
       </GlassCard>
 
-      <AuditOverviewAndRetention
-        v-model:retention-modal-open="retentionModalOpen"
-        v-model:retention-input="retentionInput"
-        :total="total"
-        :error-count="errorCount"
-        :workspace-count="workspaceCount"
-        :page-number="pageNumber"
-        :page-count="pageCount"
-        :success-rate="successRate"
-        :selected-workspace-name="selectedWorkspaceName"
-        :workspace-id="workspaceId"
-        :retention-days="retentionDays"
-        :retention-presets="retentionPresets"
-        :saving-retention="savingRetention"
-        @open-retention="openRetentionModal"
-        @save-retention="saveRetention"
-        @clear-records="clearRecords"
-      />
-
-      <footer class="flex items-center justify-between px-1 text-xs leading-relaxed text-[var(--text-muted)]">
-        <p>
-          💡 审计日志安全说明：记录保存在本机应用数据目录。为保护用户隐私，仅持久化工具名称、耗时与变更摘要，不保存请求提示词参数与完整模型输出内容。
-        </p>
-        <span class="shrink-0 font-mono text-xs">MCP Audit v2.4</span>
+      <footer class="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[var(--ui-text-muted)]">
+        <p>隐私保护说明：仅在本机记录工具名称、耗时与文件变更计数，不保存提示词原文与完整返回内容。</p>
+        <span class="shrink-0 font-mono text-[11px]">MCP Audit v2.5</span>
       </footer>
     </div>
   </section>

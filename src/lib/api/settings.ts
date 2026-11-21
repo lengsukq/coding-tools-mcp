@@ -53,6 +53,7 @@ export async function setProxy(proxy: ProxyConfigDto): Promise<void> {
 
 export interface GlobalRuntimeSettingsDto {
   authType: string;
+  mcpServerName?: string;
   executablePaths: string;
   permissionMode: string;
   allowedCommands: string;

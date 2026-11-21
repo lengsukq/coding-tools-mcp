@@ -1,13 +1,9 @@
 import { ref } from "vue";
 
 export type DashboardDensity = "comfortable" | "compact";
-export type DashboardModuleId =
-  | "focus"
-  | "attention"
-  | "workspaces"
-  | "activity"
-  | "usage"
-  | "health";
+export type DashboardModuleId = "focus" | "workspaces" | "activity" | "usage";
+
+const VALID_MODULE_IDS = new Set<DashboardModuleId>(["focus", "workspaces", "activity", "usage"]);
 
 export interface DashboardPreferences {
   density: DashboardDensity;
@@ -33,11 +29,14 @@ function readPreferences(): DashboardPreferences {
     const parsed = JSON.parse(raw) as Partial<DashboardPreferences>;
     return {
       density: parsed.density === "compact" ? "compact" : "comfortable",
-      hiddenModules: Array.isArray(parsed.hiddenModules) ? parsed.hiddenModules : [],
+      hiddenModules: Array.isArray(parsed.hiddenModules)
+        ? parsed.hiddenModules.filter((item): item is DashboardModuleId => VALID_MODULE_IDS.has(item))
+        : [],
       pinnedWorkspaceIds: Array.isArray(parsed.pinnedWorkspaceIds) ? parsed.pinnedWorkspaceIds : [],
       workspaceOrder: Array.isArray(parsed.workspaceOrder) ? parsed.workspaceOrder : [],
     };
-  } catch {
+  } catch (error) {
+    console.warn("[dashboard-preferences] failed to read saved preferences:", error);
     return defaults;
   }
 }
@@ -53,7 +52,11 @@ export function updateDashboardPreferences(
 ) {
   const next = updater(dashboardPreferences.value);
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch (error) {
+      console.warn("[dashboard-preferences] failed to persist preferences:", error);
+    }
   }
   dashboardPreferences.value = next;
 }

@@ -43,21 +43,21 @@ onBeforeUnmount(() => {
   <section class="ui-inset p-4" aria-labelledby="chatgpt-session-prompt-title">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div class="flex min-w-0 items-center gap-3">
-        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]"><History :size="17" /></span>
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]"><History :size="17" /></span>
         <div class="min-w-0">
           <h3 id="chatgpt-session-prompt-title" class="text-sm font-semibold">ChatGPT 新会话启动提示词</h3>
-          <p class="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">当前会话默认记录；旧会话由面板选择后按需注入。</p>
+          <p class="mt-0.5 text-xs leading-5 text-[var(--ui-text-muted)]">当前会话默认记录；旧会话由面板选择后按需注入。</p>
         </div>
       </div>
       <div class="flex shrink-0 gap-2">
-        <BaseButton :busy="copying" @click="copyPrompt"><Check v-if="copied" :size="14" /><Copy v-else :size="14" />{{ copied ? '已复制' : '复制完整提示词' }}</BaseButton>
+        <BaseButton :busy="copying" @click="copyPrompt"><Check v-if="copied && !copying" :size="14" /><Copy v-else-if="!copying" :size="14" />{{ copied ? '已复制' : '复制完整提示词' }}</BaseButton>
         <BaseButton variant="secondary" :aria-expanded="expanded" aria-controls="chatgpt-session-prompt-content" @click="expanded = !expanded">{{ expanded ? '收起提示词' : '查看完整提示词' }}<ChevronDown :size="14" class="transition-transform" :class="expanded ? 'rotate-180' : ''" /></BaseButton>
       </div>
     </div>
     <Transition name="prompt-expand">
-      <div v-if="expanded" id="chatgpt-session-prompt-content" class="mt-4 border-t border-[var(--ui-line)] pt-4 dark:border-[var(--ui-line)]">
-        <pre class="whitespace-pre-wrap break-words rounded-2xl bg-[var(--ui-surface-subtle)] p-3 font-mono text-xs leading-5 text-[var(--text-secondary)]">{{ sessionPrompt }}</pre>
-        <p class="mt-2 text-xs leading-5 text-[var(--text-muted)]">复制后粘贴到使用当前工作区 MCP 连接器的 ChatGPT 新会话。</p>
+      <div v-if="expanded" id="chatgpt-session-prompt-content" class="mt-4 border-t border-[var(--ui-line)] pt-4">
+        <pre class="whitespace-pre-wrap break-words rounded-2xl bg-[var(--ui-surface-subtle)] p-3 font-mono text-xs leading-5 text-[var(--ui-text-secondary)]">{{ sessionPrompt }}</pre>
+        <p class="mt-2 text-xs leading-5 text-[var(--ui-text-muted)]">复制后粘贴到使用当前工作区 MCP 连接器的 ChatGPT 新会话。</p>
       </div>
     </Transition>
     <p v-if="errorMessage" class="mt-2 text-xs text-[var(--ui-danger)]" role="alert">{{ errorMessage }}</p>

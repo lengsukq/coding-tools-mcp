@@ -1,269 +1,488 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowUp, ArrowDown, Pin, FolderOpen, Copy, Command, RefreshCw } from "@lucide/vue";
+import { Activity, FolderGit2, History, Plus, RefreshCw, Sparkles } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
+import EmptyState from "$src/components/ui/EmptyState.vue";
+import GlassCard from "$src/components/ui/GlassCard.vue";
 import PageHeader from "$src/components/ui/PageHeader.vue";
 import PageShell from "$src/components/ui/PageShell.vue";
-import GlassCard from "$src/components/ui/GlassCard.vue";
-import StatusPill from "$src/components/ui/StatusPill.vue";
-import EmptyState from "$src/components/ui/EmptyState.vue";
-import DashboardCommandPalette from "$src/components/dashboard/DashboardCommandPalette.vue";
+import DashboardFocusPane from "$src/components/dashboard/DashboardFocusPane.vue";
 import DashboardPreferencesPopover from "$src/components/dashboard/DashboardPreferencesPopover.vue";
-import { dashboardPreferences, loadDashboardPreferences, sortWorkspaceIds, moveWorkspace, togglePinnedWorkspace, toggleDashboardModule, updateDashboardPreferences } from "$lib/dashboard-preferences";
+import DashboardUsagePane from "$src/components/dashboard/DashboardUsagePane.vue";
+import DashboardWorkspacesPane from "$src/components/dashboard/DashboardWorkspacesPane.vue";
+import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
+import { getLastWorkspaceId } from "$lib/api/settings";
+import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
+import { openWorkspaceDirectory } from "$lib/api/workspaces";
+import { useClipboard } from "$lib/composables/use-clipboard";
+import { buildUsageChart, buildUsagePoint, summarizeUsage, type UsagePoint } from "$lib/dashboard";
+import {
+  dashboardPreferences,
+  loadDashboardPreferences,
+  moveWorkspace,
+  sortWorkspaceIds,
+  toggleDashboardModule,
+  togglePinnedWorkspace,
+  updateDashboardPreferences,
+  type DashboardModuleId,
+} from "$lib/dashboard-preferences";
+import type { DashboardAttentionItem, DashboardWorkspaceRow } from "$lib/dashboard-types";
 import { workspaces } from "$lib/stores/app";
 import { globalHealthSummary } from "$lib/stores/health";
-import { getLastWorkspaceId } from "$lib/api/settings";
-import { openWorkspaceDirectory } from "$lib/api/workspaces";
-import { peekCachedPlanningState, peekCachedWorkspaceGitSummary, workspaceResourceState, statusRevision, getCachedPlanningState, getCachedWorkspaceGitSummary } from "$lib/workspace-status-cache";
-import { taskFocus, statusPresentation } from "$lib/ui-model";
-import { listHistorySessions, type HistorySessionSummary } from "$lib/api/history";
-import { summarizeUsage, formatCount, buildUsagePoint, buildUsageChart, type UsagePoint } from "$lib/dashboard";
-import {getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
 import { showToast } from "$lib/stores/toast";
+import { taskFocus } from "$lib/ui-model";
+import {
+  getCachedPlanningState,
+  getCachedWorkspaceGitSummary,
+  peekCachedPlanningState,
+  peekCachedWorkspaceGitSummary,
+  workspaceResourceState,
+} from "$lib/workspace-status-cache";
+
+type DashboardPane = "focus" | "workspaces" | "activity" | "usage";
+const USAGE_POLL_INTERVAL_MS = 30_000;
+const MAX_USAGE_SAMPLES = 60;
+const MAX_RECENT_ACTIVITIES = 12;
+
 const router = useRouter();
-const lastId = ref('');
+const { copyText } = useClipboard(1600);
+const lastId = ref("");
 const preferencesOpen = ref(false);
-const commandOpen = ref(false);
-const commandQuery = ref('');
+const activePane = ref<DashboardPane>("focus");
+const workspaceLayout = ref<"cards" | "table">("cards");
+const workspaceSearch = ref("");
+const workspaceScope = ref<"all" | "pinned" | "changed">("all");
 const history = ref<Record<string, HistorySessionSummary[]>>({});
 const usage = ref<Record<string, ServiceUsageStats[]>>({});
 const analyticsOpen = ref(false);
-const auxiliaryError = ref('');
+const auxiliaryError = ref("");
 let timer = 0;
 let generation = 0;
 let inFlight = false;
-let loadedHistoryKey = '';
+let loadedHistoryKey = "";
 let rerunRequested = false;
-const ordered = computed(() => { statusRevision.value; const byId = new Map(workspaces.value.map(w => [w.id, w])); return sortWorkspaceIds([...byId.keys()], dashboardPreferences.value).map(id => { const workspace = byId.get(id)!; const state = peekCachedPlanningState(id); const git = peekCachedWorkspaceGitSummary(id); const query = workspaceResourceState(id); return { workspace, state, git, query, focus: taskFocus(state) }; }); });
-const focused = computed(() => ordered.value.find(w => w.workspace.id === lastId.value && (w.focus.plan || w.focus.goal)) ?? ordered.value.find(w => w.focus.plan || w.focus.goal));
-const attention = computed(() => ordered.value.flatMap(row => {
-    const result: Array<{
-        key: string;
-        title: string;
-        detail: string;
-        path: string;
-        query?: Record<string, string>;
-    }> = [];
+
+const pinnedIds = computed(() => new Set(dashboardPreferences.value.pinnedWorkspaceIds));
+
+const ordered = computed<DashboardWorkspaceRow[]>(() => {
+  const byId = new Map(workspaces.value.map((w) => [w.id, w]));
+  return sortWorkspaceIds([...byId.keys()], dashboardPreferences.value).map((id) => {
+    const workspace = byId.get(id)!;
+    const state = peekCachedPlanningState(id);
+    const git = peekCachedWorkspaceGitSummary(id);
+    const query = workspaceResourceState(id);
+    return { workspace, state, git, query, focus: taskFocus(state) };
+  });
+});
+
+const orderedIds = computed(() => ordered.value.map((row) => row.workspace.id));
+const orderedIndexById = computed(() => new Map(ordered.value.map((row, index) => [row.workspace.id, index])));
+
+const filteredWorkspaces = computed(() => {
+  const q = workspaceSearch.value.trim().toLowerCase();
+  return ordered.value.filter((row) => {
+    if (workspaceScope.value === "pinned" && !pinnedIds.value.has(row.workspace.id)) {
+      return false;
+    }
+    if (workspaceScope.value === "changed" && changedCountNumber(row) <= 0) {
+      return false;
+    }
+    if (!q) return true;
+    return (
+      row.workspace.name.toLowerCase().includes(q) ||
+      row.workspace.path.toLowerCase().includes(q) ||
+      row.focus.title.toLowerCase().includes(q)
+    );
+  });
+});
+
+const spotlightWorkspaces = computed(() => ordered.value.slice(0, 6));
+
+const focused = computed(
+  () =>
+    ordered.value.find((w) => w.workspace.id === lastId.value && (w.focus.plan || w.focus.goal)) ??
+    ordered.value.find((w) => w.focus.plan || w.focus.goal),
+);
+
+const attention = computed<DashboardAttentionItem[]>(() =>
+  ordered.value.flatMap((row) => {
+    const result: DashboardAttentionItem[] = [];
     const id = row.workspace.id;
-    if (row.query.error || row.query.stale)
-        result.push({ key: id + 'fetch', title: row.workspace.name + ' · 状态待更新', detail: row.query.error || '上次数据已过期，正在重新检查。', path: `/workspace/${id}/planning` });
-    for (const item of [...(row.state?.plans ?? []), ...(row.state?.goals ?? [])].filter(i => i.status === 'awaiting_acceptance'))
-        result.push({ key: id + item.id, title: row.workspace.name + ' · 待验收', detail: item.title, path: `/workspace/${id}/planning`, query: { item: item.id } });
-    if (row.state?.execution.last_error || ['blocked', 'failed', 'error'].includes(row.state?.execution.state ?? ''))
-        result.push({ key: id + 'error', title: row.workspace.name + ' · 执行需要处理', detail: row.state?.execution.last_error || '执行已阻塞，请查看诊断。', path: `/workspace/${id}/diagnostics` });
+    if (row.query.error || row.query.stale) {
+      result.push({
+        key: id + "fetch",
+        title: row.workspace.name + " · 状态待更新",
+        detail: row.query.error || "上次数据已过期，正在重新检查。",
+        path: `/workspace/${id}/planning`,
+      });
+    }
+    for (const item of [...(row.state?.plans ?? []), ...(row.state?.goals ?? [])]) {
+      if (item.status !== "awaiting_acceptance") continue;
+      result.push({
+        key: id + item.id,
+        title: row.workspace.name + " · 待验收",
+        detail: item.title,
+        path: `/workspace/${id}/planning`,
+        query: { item: item.id },
+      });
+    }
+    if (row.state?.execution.last_error || ["blocked", "failed", "error"].includes(row.state?.execution.state ?? "")) {
+      result.push({
+        key: id + "error",
+        title: row.workspace.name + " · 执行需要处理",
+        detail: row.state?.execution.last_error || "执行已阻塞，请查看诊断。",
+        path: `/workspace/${id}/diagnostics`,
+      });
+    }
     return result;
-}));
-const activities = computed(() => ordered.value.flatMap(row => (history.value[row.workspace.id] ?? []).map(session => ({ workspace: row.workspace, session }))).sort((a, b) => new Date(b.session.updated_at ?? b.session.created_at ?? 0).getTime() - new Date(a.session.updated_at ?? a.session.created_at ?? 0).getTime()).slice(0, 6));
-const samples=ref<UsagePoint[]>([]);
-const chart=computed(()=>buildUsageChart(samples.value));
+  }),
+);
+
+const attentionTotal = computed(
+  () => attention.value.length + (["warning", "error"].includes(globalHealthSummary.value.state) ? 1 : 0),
+);
+
+const activities = computed(() =>
+  workspaces.value
+    .flatMap((workspace) =>
+      (history.value[workspace.id] ?? []).map((session) => ({
+        workspace,
+        session,
+        sortMs: new Date(session.updated_at ?? session.created_at ?? 0).getTime() || 0,
+      })),
+    )
+    .sort((a, b) => b.sortMs - a.sortMs)
+    .slice(0, MAX_RECENT_ACTIVITIES),
+);
+
+const samples = ref<UsagePoint[]>([]);
+const chart = computed(() => buildUsageChart(samples.value));
 const totals = computed(() => summarizeUsage(usage.value));
-const quickItems = computed(() => [{ label: '添加工作区', hint: '项目', run: () => addWorkspace() }, { label: 'MCP 连接设置', hint: '应用设置', run: () => router.push('/settings/connection') }, { label: '局域网设备配对', hint: '多设备互联', run: () => router.push('/settings/connection?panel=lan') }, ...ordered.value.map(row => ({ label: '打开 ' + row.workspace.name, hint: '工作区', run: () => router.push(`/workspace/${row.workspace.id}`) }))]);
-const filteredCommands = computed(() => quickItems.value.filter(x => x.label.toLowerCase().includes(commandQuery.value.toLowerCase())));
-function addWorkspace() { window.dispatchEvent(new CustomEvent('coding-tools:add-workspace')); }
-function visible(id: string) { return !dashboardPreferences.value.hiddenModules.includes(id as any); }
+
+function addWorkspace() {
+  window.dispatchEvent(new CustomEvent("coding-tools:add-workspace"));
+}
+
+function visible(id: DashboardModuleId) {
+  return !dashboardPreferences.value.hiddenModules.includes(id);
+}
+
+function changedCountNumber(row: DashboardWorkspaceRow): number {
+  if (!row.git) return 0;
+  return (row.git.available ? row.git.changedFiles : 0) + row.git.subRepositories.reduce((n, r) => n + r.changedFiles, 0);
+}
+
+function changedCount(row: DashboardWorkspaceRow) {
+  if (!row.git) return "—";
+  return changedCountNumber(row);
+}
+
+function selectPane(pane: DashboardPane) {
+  activePane.value = pane;
+  analyticsOpen.value = pane === "usage";
+  if (pane === "activity") void loadAuxiliary();
+}
+
+function handleMoveWorkspace(workspaceId: string, direction: -1 | 1) {
+  moveWorkspace(workspaceId, direction, orderedIds.value);
+}
+
 async function loadAuxiliary(forceHistory = false) {
-    if (inFlight) { rerunRequested = true; return; }
-    inFlight = true; const id = ++generation; const items = [...workspaces.value]; const historyKey = items.map(w => w.id).join(',');
-    try {
-    if (visible('activity') && (forceHistory || loadedHistoryKey !== historyKey)) {
-        const sessions = await Promise.all(items.map(async (w) => [w.id, (await listHistorySessions(w.id)).sessions] as const));
-        if (id === generation) {
-            history.value = Object.fromEntries(sessions);
-            loadedHistoryKey = historyKey;
+  if (inFlight) {
+    rerunRequested = true;
+    return;
+  }
+  const needHistory = visible('activity') && activePane.value === 'activity';
+  const needUsage = analyticsOpen.value;
+  if (!needHistory && !needUsage) return;
+
+  inFlight = true;
+  const id = ++generation;
+  const items = [...workspaces.value];
+  const historyKey = items.map((w) => w.id).join(",");
+  const errors: string[] = [];
+  try {
+    if (visible('activity') && activePane.value === 'activity' && (forceHistory || loadedHistoryKey !== historyKey)) {
+      const settled = await Promise.allSettled(
+        items.map(async (w) => [w.id, (await listHistorySessions(w.id)).sessions] as const),
+      );
+      if (id === generation) {
+        const nextHistory: Record<string, HistorySessionSummary[]> = {};
+        for (const outcome of settled) {
+          if (outcome.status === "fulfilled") {
+            const [wsId, sessions] = outcome.value;
+            nextHistory[wsId] = sessions;
+          } else {
+            errors.push(String(outcome.reason));
+          }
         }
+        history.value = nextHistory;
+        loadedHistoryKey = historyKey;
+      }
     }
-    auxiliaryError.value = '';
     if (analyticsOpen.value) {
-        const next=Object.fromEntries(await Promise.all(items.map(async w=>[w.id,await getServiceUsageStats(w.id)] as const)));
-        if (id === generation)
-            {usage.value=next;samples.value=[...samples.value,buildUsagePoint(next,samples.value.at(-1))].slice(-60);}
+      const settled = await Promise.allSettled(
+        items.map(async (w) => [w.id, await getServiceUsageStats(w.id)] as const),
+      );
+      if (id === generation) {
+        const nextUsage: Record<string, ServiceUsageStats[]> = {};
+        for (const outcome of settled) {
+          if (outcome.status === "fulfilled") {
+            const [wsId, stats] = outcome.value;
+            nextUsage[wsId] = stats;
+          } else {
+            errors.push(String(outcome.reason));
+          }
+        }
+        usage.value = nextUsage;
+        samples.value = [...samples.value, buildUsagePoint(nextUsage, samples.value.at(-1))].slice(-MAX_USAGE_SAMPLES);
+      }
     }
-}
-catch (error) {
-    auxiliaryError.value = String(error);
-}
-finally {
+    if (id === generation) {
+      auxiliaryError.value = errors[0] ?? "";
+    }
+  } finally {
     inFlight = false;
     if (rerunRequested && id === generation) {
-        rerunRequested = false;
-        void loadAuxiliary();
+      rerunRequested = false;
+      void loadAuxiliary();
     }
-} }
-async function refresh() { await Promise.allSettled(ordered.value.flatMap(row => [getCachedPlanningState(row.workspace.id, true), getCachedWorkspaceGitSummary(row.workspace.id, true)])); await loadAuxiliary(true); }
-async function reveal(path: string) { try {
+  }
+}
+
+async function refresh() {
+  await Promise.allSettled(
+    ordered.value.flatMap((row) => [getCachedPlanningState(row.workspace.id, true), getCachedWorkspaceGitSummary(row.workspace.id, true)]),
+  );
+  await loadAuxiliary(true);
+}
+
+async function reveal(path: string) {
+  try {
     await openWorkspaceDirectory(path);
+  } catch (e) {
+    showToast(String(e), { kind: "error" });
+  }
 }
-catch (e) {
-    showToast(String(e), { kind: 'error' });
-} }
-async function copy(path: string) { try {
-    await navigator.clipboard.writeText(path);
-    showToast('路径已复制', { kind: 'success' });
+
+async function copy(path: string) {
+  await copyText(path, { key: path, label: "路径" });
 }
-catch (e) {
-    showToast(String(e), { kind: 'error' });
-} }
-function keys(e: KeyboardEvent) { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault();
-    commandOpen.value = !commandOpen.value;
-} }
-watch(() => workspaces.value.map(w => w.id).join(','), () => void loadAuxiliary());
-watch(() => visible('activity'), open => { if (open) void loadAuxiliary(); });
+
+watch(
+  () => dashboardPreferences.value.hiddenModules,
+  () => {
+    if (activePane.value !== "focus" && !visible(activePane.value)) {
+      selectPane("focus");
+    }
+  },
+);
+
+watch(
+  () => workspaces.value.map((w) => w.id).join(","),
+  () => void loadAuxiliary(),
+);
+watch(
+  () => visible("activity"),
+  (open) => {
+    if (open && activePane.value === "activity") void loadAuxiliary();
+  },
+);
 watch(analyticsOpen, open => {
-    if (timer) window.clearInterval(timer);
-    timer = 0;
-    if (!open) return;
-    void loadAuxiliary();
-    // Sampling is useful only while the analytics panel is open.
-    timer = window.setInterval(() => { if (document.visibilityState === 'visible') void loadAuxiliary(); }, 30000);
+  if (timer) window.clearInterval(timer);
+  timer = 0;
+  if (!open) return;
+  void loadAuxiliary();
+  timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void loadAuxiliary();
+  }, USAGE_POLL_INTERVAL_MS);
 });
-onMounted(() => { loadDashboardPreferences(); void getLastWorkspaceId().then(id => { lastId.value = id; if (id) void getCachedPlanningState(id).catch(() => {}); }).catch(() => { }); void loadAuxiliary(); window.addEventListener('keydown', keys); });
-onUnmounted(() => { generation++; window.clearInterval(timer); window.removeEventListener('keydown', keys); });
+
+onMounted(() => {
+  loadDashboardPreferences();
+  void getLastWorkspaceId()
+    .then((id) => {
+      lastId.value = id;
+      if (id) void getCachedPlanningState(id).catch(() => undefined);
+    })
+    .catch((err) => {
+      console.warn("[DashboardView] failed to read last workspace id:", err);
+    });
+});
+
+onUnmounted(() => {
+  generation++;
+  window.clearInterval(timer);
+});
 </script>
-<template><section class="page-scroll" :data-density="dashboardPreferences.density">
-<PageShell>
- <PageHeader kicker="工作台" title="今天的开发工作" description="先处理阻塞与待验收，再查看当前任务和代码变更。">
-<template #actions>
-<BaseButton variant="secondary" size="sm" @click="commandOpen=true">
-<Command :size="15"/>快捷操作 ⌘K</BaseButton>
-<BaseButton variant="ghost" size="sm" @click="refresh">
-<RefreshCw :size="15"/>刷新</BaseButton>
-<DashboardPreferencesPopover :open="preferencesOpen" :density="dashboardPreferences.density" :hidden-modules="dashboardPreferences.hiddenModules" @toggle-open="preferencesOpen=!preferencesOpen" @toggle-density="updateDashboardPreferences(p=>({...p,density:p.density==='compact'?'comfortable':'compact'}))" @toggle-module="toggleDashboardModule" />
+
+<template>
+  <section class="page-scroll" :data-density="dashboardPreferences.density">
+    <PageShell>
+      <PageHeader kicker="AI 开发工作台" title="今天的开发工作" description="按左侧专题快速切换视图，优先处理待验收与阻塞事项。">
+        <template #actions>
+          <BaseButton variant="secondary" size="sm" @click="refresh">
+            <RefreshCw :size="14" />
+            <span>刷新</span>
+          </BaseButton>
+          <DashboardPreferencesPopover
+            :open="preferencesOpen"
+            :density="dashboardPreferences.density"
+            :hidden-modules="dashboardPreferences.hiddenModules"
+            @toggle-open="preferencesOpen = !preferencesOpen"
+            @toggle-density="updateDashboardPreferences((p) => ({ ...p, density: p.density === 'compact' ? 'comfortable' : 'compact' }))"
+            @toggle-module="toggleDashboardModule"
+          />
+        </template>
+      </PageHeader>
+
+      <div class="ui-subnav-layout">
+        <!-- Left Secondary Dashboard View Rail -->
+        <aside class="ui-subnav-rail" aria-label="工作台总览分区">
+          <div class="ui-subnav-group">
+            <div class="ui-subnav-group__title">工作台分区</div>
+            <button
+              type="button"
+              class="ui-subnav-item"
+              :class="{ active: activePane === 'focus' }"
+              @click="selectPane('focus')"
+            >
+              <Sparkles :size="15" class="shrink-0" />
+              <span class="flex-1 truncate">焦点与待处理</span>
+              <span
+                v-if="attentionTotal > 0"
+                class="rounded-full bg-[var(--ui-warning-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums text-[var(--ui-warning)]"
+              >
+                {{ attentionTotal }}
+              </span>
+            </button>
+
+            <button
+              v-if="visible('workspaces')"
+              type="button"
+              class="ui-subnav-item"
+              :class="{ active: activePane === 'workspaces' }"
+              @click="selectPane('workspaces')"
+            >
+              <FolderGit2 :size="15" class="shrink-0" />
+              <span class="flex-1 truncate">全部工作区</span>
+              <span class="rounded-full bg-[var(--ui-surface-subtle)] px-1.5 py-0.5 text-[10.5px] tabular-nums text-[var(--ui-text-muted)]">
+                {{ ordered.length }}
+              </span>
+            </button>
+
+            <button
+              v-if="visible('activity')"
+              type="button"
+              class="ui-subnav-item"
+              :class="{ active: activePane === 'activity' }"
+              @click="selectPane('activity')"
+            >
+              <History :size="15" class="shrink-0" />
+              <span class="flex-1 truncate">最近开发会话</span>
+            </button>
+
+            <button
+              v-if="visible('usage')"
+              type="button"
+              class="ui-subnav-item"
+              :class="{ active: activePane === 'usage' }"
+              @click="selectPane('usage')"
+            >
+              <Activity :size="15" class="shrink-0" />
+              <span class="flex-1 truncate">传输用量分析</span>
+            </button>
+          </div>
+
+          <div class="mt-3 border-t border-[var(--ui-line)] pt-3">
+            <button type="button" class="ui-subnav-item text-[var(--ui-accent)]" @click="addWorkspace">
+              <Plus :size="15" class="shrink-0" />
+              <span class="truncate">添加新工作区…</span>
+            </button>
+          </div>
+        </aside>
+
+        <!-- Focused Single-Screen Stage -->
+        <div :key="activePane" class="ui-subnav-stage ui-stack min-w-0 animate-fade-in-up">
+          <DashboardFocusPane
+            v-if="activePane === 'focus'"
+            :show-focus="visible('focus')"
+            :show-workspaces="visible('workspaces')"
+            :focused="focused"
+            :attention="attention"
+            :attention-total="attentionTotal"
+            :health-state="globalHealthSummary.state"
+            :health-label="globalHealthSummary.label"
+            :health-detail="globalHealthSummary.detail"
+            :spotlight-workspaces="spotlightWorkspaces"
+            :total-workspaces="ordered.length"
+            :pinned-ids="pinnedIds"
+            :changed-count="changedCount"
+            @open-path="router.push($event)"
+            @open-all-workspaces="selectPane('workspaces')"
+            @add-workspace="addWorkspace"
+          />
+
+          <DashboardWorkspacesPane
+            v-else-if="activePane === 'workspaces'"
+            v-model:layout="workspaceLayout"
+            v-model:search="workspaceSearch"
+            v-model:scope="workspaceScope"
+            :total-count="ordered.length"
+            :filtered-workspaces="filteredWorkspaces"
+            :ordered-index-by-id="orderedIndexById"
+            :pinned-ids="pinnedIds"
+            :changed-count="changedCount"
+            @open-path="router.push($event)"
+            @add-workspace="addWorkspace"
+            @toggle-pin="togglePinnedWorkspace"
+            @move="handleMoveWorkspace"
+            @reveal="reveal"
+            @copy="copy"
+          />
+
+          <GlassCard v-else-if="activePane === 'activity'">
+            <div class="ui-section-heading">
+              <div>
+                <h2>最近开发会话</h2>
+                <p>汇总各工作区最近归档的上下文检查点，点击直达对应项目的会话历史。</p>
+              </div>
+              <span class="ui-muted">最新 {{ activities.length }} 条</span>
+            </div>
+            <p v-if="auxiliaryError" role="alert" class="ui-danger text-xs">历史加载失败：{{ auxiliaryError }}</p>
+            <div class="space-y-1">
+              <button
+                v-for="item in activities"
+                :key="item.workspace.id + item.session.number"
+                class="ui-list-action"
+                @click="router.push(`/workspace/${item.workspace.id}/history`)"
+              >
+                <span>
+                  <strong>{{ item.workspace.name }} · {{ item.session.title || "开发会话" }}</strong>
+                  <small class="line-clamp-2">{{ item.session.latest_focus || "查看会话摘要与关联变更" }}</small>
+                </span>
+                <span>查看会话 →</span>
+              </button>
+            </div>
+            <EmptyState
+              v-if="!activities.length && !auxiliaryError"
+              title="暂无归档会话活动"
+              description="在工作区开启历史记录后，AI 提交的会话检查点会汇总在此处。"
+            />
+          </GlassCard>
+
+          <DashboardUsagePane
+            v-else
+            :auxiliary-error="auxiliaryError"
+            :totals="totals"
+            :samples="samples"
+            :chart="chart"
+            :ordered="ordered"
+            :usage="usage"
+          />
+        </div>
+      </div>
+    </PageShell>
+  </section>
 </template>
-</PageHeader>
- <GlassCard>
-<div class="ui-section-heading">
-<div>
-<h2>需要处理</h2>
-<p>待验收与异常始终可见。</p>
-</div>
-<span class="ui-muted">{{attention.length+(['warning','error'].includes(globalHealthSummary.state)?1:0)}} 项</span>
-</div>
-  <button v-if="globalHealthSummary.state==='warning'||globalHealthSummary.state==='error'" class="ui-list-action" @click="router.push('/settings/connection?panel=health')">
-<span>
-<strong>全局连接 · {{globalHealthSummary.label}}</strong>
-<small>{{globalHealthSummary.detail}}</small>
-</span>
-<span>查看连接 →</span>
-</button>
-  <button v-for="item in attention" :key="item.key" class="ui-list-action" @click="router.push({path:item.path,query:item.query})">
-<span>
-<strong>{{item.title}}</strong>
-<small>{{item.detail}}</small>
-</span>
-<span>{{item.path.endsWith('/diagnostics') ? '查看诊断' : '查看任务'}} →</span>
-</button>
-  <EmptyState v-if="attention.length===0&&!['warning','error'].includes(globalHealthSummary.state)" title="当前没有已知待处理事项" description="尚未打开的工作区不会自动扫描。进入项目或点击刷新后可获得最新状态。"/>
- </GlassCard>
- <GlassCard v-if="visible('focus')" class="ui-focus-panel">
-<div class="ui-section-heading">
-<h2>当前工作</h2>
-<StatusPill v-if="focused" :status="focused?.query.error||focused?.query.stale?'unknown':focused?.focus.plan?.status??focused?.focus.goal?.status??focused?.state?.execution.state??'unknown'"/>
-</div>
-<template v-if="focused">
-<p class="ui-muted">{{focused.workspace.name}} · {{statusPresentation(focused.state?.mode).label}}</p>
-<h3 class="ui-focus-title">{{focused.focus.title}}</h3>
-<p class="ui-secondary line-clamp-2">{{focused.focus.detail}}</p>
-<p v-if="focused.focus.step" class="mt-3">当前步骤：{{focused.focus.step.title}}</p>
-<p class="ui-muted mt-3">{{focused.focus.progress.label}}</p>
-<div class="ui-progress" :aria-label="focused.focus.progress.label">
-<span :style="{width:focused.focus.progress.percent+'%'}"/>
-</div>
-<div class="ui-actions mt-4">
-<BaseButton @click="router.push(`/workspace/${focused.workspace.id}/planning`)">查看任务 →</BaseButton>
-<BaseButton variant="secondary" @click="router.push(`/workspace/${focused.workspace.id}/changes`)">查看变更</BaseButton>
-</div>
-</template>
-<EmptyState v-else title="暂无当前任务" description="通过 AI 会话发起目标或计划后，可以在这里跟踪进度和验收。"/>
-</GlassCard>
- <GlassCard v-if="visible('workspaces')">
-<div class="ui-section-heading">
-<div>
-<h2>工作区</h2>
-<p>独立管理项目任务、变更与执行权限。</p>
-</div>
-<BaseButton variant="secondary" size="sm" @click="addWorkspace">添加工作区</BaseButton>
-</div>
-<EmptyState v-if="!ordered.length" title="还没有工作区" description="选择本地项目目录，开始管理 AI 开发过程。">
-<BaseButton @click="addWorkspace">添加工作区</BaseButton>
-</EmptyState>
- <div v-else class="ui-workspace-table">
-<div class="ui-workspace-row ui-table-heading">
-<span>名称</span>
-<span>当前任务</span>
-<span>执行状态</span>
-<span>变更</span>
-<span>操作</span>
-</div>
-<div v-for="(row,index) in ordered" :key="row.workspace.id" class="ui-workspace-row">
-<button class="ui-text-link min-w-0" @click="router.push(`/workspace/${row.workspace.id}`)">{{row.workspace.name}}</button>
-<span class="ui-truncate" :title="row.focus.title">{{row.focus.title}}</span>
-<StatusPill :status="row.query.error?'error':row.query.stale?'unknown':row.state?.execution.state" :label="row.query.error?'更新失败':row.query.stale?'数据过期':undefined"/>
-<button class="ui-text-link" @click="router.push(`/workspace/${row.workspace.id}/changes`)">{{row.git?(row.git.available?row.git.changedFiles:0)+row.git.subRepositories.reduce((n,r)=>n+r.changedFiles,0):'—'}}</button>
-<details class="ui-row-menu">
-<summary>更多</summary>
-<div class="ui-menu">
-<BaseButton variant="ghost" size="sm" @click="togglePinnedWorkspace(row.workspace.id)">
-<Pin :size="14"/>{{dashboardPreferences.pinnedWorkspaceIds.includes(row.workspace.id)?'取消置顶':'置顶'}}</BaseButton>
-<BaseButton variant="ghost" size="sm" :disabled="index===0" @click="moveWorkspace(row.workspace.id,-1,ordered.map(w=>w.workspace.id))">
-<ArrowUp :size="14"/>上移</BaseButton>
-<BaseButton variant="ghost" size="sm" :disabled="index===ordered.length-1" @click="moveWorkspace(row.workspace.id,1,ordered.map(w=>w.workspace.id))">
-<ArrowDown :size="14"/>下移</BaseButton>
-<BaseButton variant="ghost" size="sm" @click="reveal(row.workspace.path)">
-<FolderOpen :size="14"/>打开目录</BaseButton>
-<BaseButton variant="ghost" size="sm" @click="copy(row.workspace.path)">
-<Copy :size="14"/>复制路径</BaseButton>
-<code>{{row.workspace.path}}</code>
-</div>
-</details>
-</div>
-</div>
- </GlassCard>
- <GlassCard v-if="visible('activity')">
-<div class="ui-section-heading">
-<h2>最近活动</h2>
-<span class="ui-muted">开发会话</span>
-</div>
-<p v-if="auxiliaryError" role="alert" class="ui-danger">历史加载失败：{{auxiliaryError}}</p>
-<button v-for="item in activities" :key="item.workspace.id+item.session.number" class="ui-list-action" @click="router.push(`/workspace/${item.workspace.id}/history`)">
-<span>
-<strong>{{item.workspace.name}} · {{item.session.title||'开发会话'}}</strong>
-<small class="line-clamp-2">{{item.session.latest_focus||'查看会话摘要与关联变更'}}</small>
-</span>
-<span>查看历史 →</span>
-</button>
-<EmptyState v-if="!activities.length&&!auxiliaryError" title="暂无最近活动" description="启用历史记录后的开发会话会显示在这里。"/>
-</GlassCard>
- <details v-if="visible('usage')" class="ui-disclosure" @toggle="analyticsOpen=($event.target as HTMLDetailsElement).open">
-<summary>用量分析 <span class="ui-muted">JSON 传输量估算</span>
-</summary>
-<div class="ui-disclosure-body">
-<p v-if="auxiliaryError" class="ui-danger" role="alert">分析更新失败：{{auxiliaryError}}。保留上次数据。</p><p class="ui-secondary">以下 Token 根据 MCP 传输量估算，不代表模型账单。</p>
-<div class="ui-metric-grid">
-<div>
-<span>估算 Tokens</span>
-<strong>{{formatCount(totals.estimatedTokens)}}</strong>
-</div>
-<div>
-<span>工具调用</span>
-<strong>{{formatCount(totals.toolCallCount)}}</strong>
-</div>
-<div>
-<span>请求数</span>
-<strong>{{formatCount(totals.requestCount)}}</strong>
-</div>
-<div>
-<span>请求错误</span>
-<strong>{{formatCount(totals.errorCount)}}</strong>
-</div>
-</div>
-<div><h3>传输量估算趋势</h3><p class="ui-muted mt-2">本次打开后的采样增量，约每 15 秒更新。</p><svg v-if="samples.length>1" viewBox="0 0 100 40" preserveAspectRatio="none" class="ui-usage-chart" role="img" aria-label="估算 Token 传输增量趋势"><path :d="chart.path" fill="none" stroke="var(--ui-accent)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg><EmptyState v-else title="正在积累趋势样本" description="保持用量区域展开，下一次采样后显示趋势。"/><p class="ui-muted">估算输入 {{formatCount(totals.estimatedInputTokens)}} · 估算输出 {{formatCount(totals.estimatedOutputTokens)}} · 工具调用 {{formatCount(totals.estimatedToolCallTokens)}}</p></div><p v-for="row in ordered" :key="row.workspace.id" class="ui-data-row">
-<span>{{row.workspace.name}}</span>
-<strong>{{formatCount(summarizeUsage({[row.workspace.id]:usage[row.workspace.id]??[]}).estimatedTokens)}}</strong>
-</p>
-</div>
-</details>
- <DashboardCommandPalette :open="commandOpen" :entries="filteredCommands" v-model:query="commandQuery" @close="commandOpen=false" @select="commandOpen=false;filteredCommands[$event]?.run()"/>
- </PageShell>
-</section></template>

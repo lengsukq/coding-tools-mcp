@@ -8,6 +8,7 @@ import StatusPill from "$src/components/ui/StatusPill.vue";
 import TextField from "$src/components/ui/TextField.vue";
 import ToggleSwitch from "$src/components/ui/ToggleSwitch.vue";
 import type { GlobalGatewayConfigDto } from "$lib/api/global-gateway";
+import { isValidPort } from "$lib/validators";
 
 defineProps<{
   config: GlobalGatewayConfigDto;
@@ -27,6 +28,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  "update-config": [patch: Partial<GlobalGatewayConfigDto>];
   save: [];
   "restart-cloudflare": [];
 }>();
@@ -45,33 +47,54 @@ const emit = defineEmits<{
     <fieldset :disabled="saving || busy || loading || !!loadError" class="grid gap-3">
       <div class="ui-inset p-3">
         <ToggleSwitch
-          v-model="config.enabled"
+          :model-value="config.enabled"
           label="启用公网连接"
           description="关闭时仍可正常使用本地 MCP 服务，只是不自动暴露公网入口。"
+          @update:model-value="emit('update-config', { enabled: $event })"
         />
       </div>
       <div class="settings-two-col">
         <TextField
           :model-value="String(config.localPort)"
           label="MCP 本地端口"
-          :error="error && (!Number.isInteger(config.localPort) || config.localPort < 1 || config.localPort > 65535) ? error : undefined"
+          :error="error && !isValidPort(config.localPort) ? error : undefined"
           type="number"
-          @update:model-value="config.localPort = Number($event)"
+          @update:model-value="emit('update-config', { localPort: Number($event) })"
         />
-        <SelectField v-model="config.tunnelType" label="公网方式" :options="tunnelOptions" />
+        <SelectField
+          :model-value="config.tunnelType"
+          label="公网方式"
+          :options="tunnelOptions"
+          @update:model-value="emit('update-config', { tunnelType: $event })"
+        />
       </div>
 
       <template v-if="config.tunnelType === 'frp'">
-        <SelectField v-model="config.frpProfileId" label="FRP 配置" :options="frpOptions" />
-        <TextField v-model="config.frpSubdomain" label="子域名" placeholder="coding-tools" />
+        <SelectField
+          :model-value="config.frpProfileId"
+          label="FRP 配置"
+          :options="frpOptions"
+          @update:model-value="emit('update-config', { frpProfileId: $event })"
+        />
+        <TextField
+          :model-value="config.frpSubdomain"
+          label="子域名"
+          placeholder="coding-tools"
+          @update:model-value="emit('update-config', { frpSubdomain: $event })"
+        />
         <div v-if="!config.frpProfileId" class="settings-two-col">
-          <TextField v-model="config.frpServer" label="FRP 服务器" placeholder="frp.example.com" />
+          <TextField
+            :model-value="config.frpServer"
+            label="FRP 服务器"
+            placeholder="frp.example.com"
+            @update:model-value="emit('update-config', { frpServer: $event })"
+          />
           <TextField
             :model-value="String(config.frpServerPort)"
             label="端口"
-            :error="error && (!Number.isInteger(config.frpServerPort) || config.frpServerPort < 1 || config.frpServerPort > 65535) ? error : undefined"
+            :error="error && !isValidPort(config.frpServerPort) ? error : undefined"
             type="number"
-            @update:model-value="config.frpServerPort = Number($event)"
+            @update:model-value="emit('update-config', { frpServerPort: Number($event) })"
           />
         </div>
       </template>
@@ -97,22 +120,24 @@ const emit = defineEmits<{
           aria-label="强制重启 Cloudflare Tunnel"
           @click="emit('restart-cloudflare')"
         >
-          <RotateCw :size="13" />强制重启隧道
+          <RotateCw v-if="!busy" :size="13" />强制重启隧道
         </BaseButton>
       </div>
 
       <TextField
         v-if="config.tunnelType === 'none'"
-        v-model="config.publicUrl"
+        :model-value="config.publicUrl"
         label="外部公网 URL（可选）"
         placeholder="https://gateway.example.com"
+        @update:model-value="emit('update-config', { publicUrl: $event })"
       />
 
       <div v-if="config.tunnelType !== 'none'" class="ui-inset p-3">
         <ToggleSwitch
-          v-model="config.useProxy"
+          :model-value="config.useProxy"
           label="使用网络代理"
           description="使用网络与工具页的网络代理连接公网隧道。"
+          @update:model-value="emit('update-config', { useProxy: $event })"
         />
       </div>
 
