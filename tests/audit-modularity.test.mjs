@@ -60,7 +60,8 @@ test("Computer Use isolates native FFI, geometry, action policy, and schemas fro
   assert.match(computer, /fn prepare_or_request_sensitive_action/);
   assert.doesNotMatch(computer, /fn computer_native_(?:capture|action|windows|free)/);
   assert.match(native, /unsafe extern "C"/);
-  assert.match(native, /computer_native_free\(pointer\)/);
+  assert.match(native, /struct NativeOwnedString/);
+  assert.match(native, /computer_native_free\(self\.0\)/);
   assert.match(geometry, /pub\(super\) struct CaptureFrame/);
   assert.match(actionPolicy, /pub\(super\) fn validate_action/);
   assert.match(schema, /pub fn tool_definitions\(\)/);
@@ -85,8 +86,8 @@ test("workspace commands keep stable exports but split independent domains", asy
   assert.match(root, /mod ide;/);
   assert.match(root, /mod reviews;/);
   assert.match(await source("src-tauri/src/commands/workspace/git.rs"), /pub async fn get_workspace_git_summary/);
-  assert.match(await source("src-tauri/src/commands/workspace/crud.rs"), /pub fn delete_workspace/);
-  assert.match(await source("src-tauri/src/commands/workspace/reviews.rs"), /pub fn list_workspace_reviews/);
+  assert.match(await source("src-tauri/src/commands/workspace/crud.rs"), /pub async fn delete_workspace/);
+  assert.match(await source("src-tauri/src/commands/workspace/reviews.rs"), /pub async fn list_workspace_reviews/);
 });
 
 test("stdio bridge, review, tool audit, and tool dispatch separate core domains from orchestration", async () => {

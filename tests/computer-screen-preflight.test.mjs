@@ -6,6 +6,8 @@ const rust = [
   "../src-tauri/src/computer.rs",
   "../src-tauri/src/computer/action_policy.rs",
   "../src-tauri/src/computer/schema.rs",
+  "../src-tauri/src/computer/local_api.rs",
+  "../src-tauri/src/computer/mcp_dispatch.rs",
 ]
   .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
   .join("\n");
@@ -35,7 +37,7 @@ test("fast Computer Use navigation and capture keep local browser-control bounda
   assert.match(rust, /"open_url" => &\["url"\]/);
   assert.match(rust, /Some\("focus_app" \| "open_url"\)/);
   assert.match(rust, /"quality": \{ "type": "string", "enum": \["fast", "detailed"\]/);
-  assert.match(native, /\[browsers containsObject:target\]/);
+  assert.match(native, /\[supportedBrowserBundles\(\) containsObject:target\]/);
   assert.match(native, /withApplicationAtURL:browser\.bundleURL/);
   assert.match(native, /NSStringEnumerationByComposedCharacterSequences/);
   assert.match(native, /double maxWidth = detailed \? 1920\.0 : 1280\.0/);
@@ -57,16 +59,19 @@ test("manually enabled Computer Use does not require request and audits client i
   assert.match(ui, /listToolAuditRecords\(\{ search: "computer_"/);
   assert.match(ui, /record\.clientId/);
   assert.match(listener, /sessions\.computer_auto_session\(owner\)/);
-  assert.match(listener, /audit_auth_identity\(&state, &headers\)\.0 != "none"/);
+  assert.match(listener, /auth\.method != "none" && policy\.auth\.auth_enabled\(\)/);
 });
 
 test("false CG preflight is only diagnostic, never a hard blocker for local consent", () => {
   const approval = rust.split("pub fn local_approve(")[1]?.split("pub fn local_revoke(")[0] ?? "";
-  const resume = rust.split("pub fn local_resume(")[1]?.split("struct Snapshot")[0] ?? "";
+  const controlValidation = rust.split("fn validate_control_target(")[1]?.split("pub fn local_decide_sensitive_action(")[0] ?? "";
+  const resume = rust.split("pub fn local_resume(")[1]?.split("pub fn local_request_accessibility_permission(")[0] ?? "";
   assert.ok(approval.includes("locked().approve(request_id, app_bundle)"));
+  assert.ok(approval.includes("validate_control_target("));
   assert.doesNotMatch(approval, /screen_recording_permission\s*\(/);
+  assert.doesNotMatch(controlValidation, /screen_recording_permission\s*\(/);
   assert.doesNotMatch(resume, /screen_recording_permission\s*\(/);
-  assert.match(approval, /accessibility_permission\s*\(/);
+  assert.match(controlValidation, /accessibility_permission\s*\(/);
 });
 
 test("ScreenCaptureKit is reached after local MCP consent, with macOS TCC as authority", () => {
@@ -74,7 +79,7 @@ test("ScreenCaptureKit is reached after local MCP consent, with macOS TCC as aut
   assert.match(native, /SCScreenshotManager\s+captureImageWithFilter/);
   assert.match(native, /SCShareableContent\s+getShareableContentExcludingDesktopWindows/);
   assert.match(native, /if\s*\(isScreenLocked\s*\(\)\)/);
-  const observe = rust.split('("computer_observe", "windows" | "screenshot" | "ui_tree")')[1] ?? "";
+  const observe = rust.split("fn handle_observe_tool(")[1]?.split("fn handle_observe_windows(")[0] ?? "";
   assert.match(observe, /observation_context\s*\(session\)/);
   assert.match(observe, /COMPUTER_NOT_APPROVED/);
   assert.match(ui, /approveComputerScreenRequest\(/);

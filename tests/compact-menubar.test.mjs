@@ -30,7 +30,7 @@ test("macOS menu reports status, memory and offers restore, refresh, quit", asyn
   assert.match(desktop, /"内存估算：/);
   assert.match(desktop, /"工作区：/);
   assert.match(desktop, /show_menu_on_left_click\(cfg!\(target_os = "macos"\)\)/);
-  assert.match(desktop, /Duration::from_secs\(15\)/);
+  assert.match(desktop, /Duration::from_secs\(120\)/);
 });
 
 test("tray compact request routes through unsaved changes guard", async () => {

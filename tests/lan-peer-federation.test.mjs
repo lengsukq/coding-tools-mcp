@@ -86,11 +86,16 @@ test("parseExtraSubnetsText deduplicates comma and newline EasyTier CIDR / seed 
 });
 
 test("LAN server hard-blocks public tunnel headers, non-LAN IPs, and multi-hop loops", async () => {
+  const localNet = await source("src-tauri/src/local_network.rs");
   const server = await source("src-tauri/src/lan_peer/server.rs");
   const crypto = await source("src-tauri/src/lan_peer/crypto.rs");
 
-  assert.match(server, /"cf-connecting-ip"/);
-  assert.match(server, /"x-forwarded-for"/);
+  assert.match(localNet, /PROXY_FORWARDED_HEADERS/);
+  assert.match(localNet, /"cf-connecting-ip"/);
+  assert.match(localNet, /"x-forwarded-for"/);
+  assert.match(localNet, /"via"/);
+  assert.match(localNet, /"true-client-ip"/);
+  assert.match(server, /has_proxy_forwarded_headers\(/);
   assert.match(server, /PUBLIC_TUNNEL_FORBIDDEN/);
   assert.match(server, /NON_LAN_ORIGIN_FORBIDDEN/);
   assert.match(server, /is_allowed_peer_ip/);
