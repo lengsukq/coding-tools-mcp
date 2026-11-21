@@ -2,35 +2,43 @@
 import { computed } from "vue";
 import { LoaderCircle } from "@lucide/vue";
 
-const props = withDefaults(defineProps<{
-  type?: "button" | "submit" | "reset";
-  variant?: "primary" | "secondary" | "ghost" | "danger" | "icon";
-  size?: "sm" | "md" | "lg";
-  disabled?: boolean;
-  busy?: boolean;
-  title?: string;
-}>(), {
-  type: "button",
-  variant: "primary",
-  size: "md",
-  disabled: false,
-  busy: false,
-});
+const props = withDefaults(
+  defineProps<{
+    type?: "button" | "submit" | "reset";
+    variant?: "primary" | "secondary" | "ghost" | "danger";
+    size?: "sm" | "md";
+    pill?: boolean;
+    disabled?: boolean;
+    busy?: boolean;
+    title?: string;
+  }>(),
+  {
+    type: "button",
+    variant: "primary",
+    size: "md",
+    pill: true,
+    disabled: false,
+    busy: false,
+  },
+);
 
 defineEmits<{ click: [event: MouseEvent] }>();
 
 const classes = computed(() => {
+  const radius = props.pill ? "rounded-full" : "rounded-[var(--ui-radius-control)]";
   const sizes = {
-    sm: props.variant === "icon" ? "h-8 w-8 rounded-[var(--ui-radius-control)]" : "h-8 px-3 text-sm rounded-[var(--ui-radius-control)]",
-    md: props.variant === "icon" ? "h-9 w-9 rounded-[var(--ui-radius-control)]" : "h-9 px-3.5 text-sm font-medium rounded-[var(--ui-radius-control)]",
-    lg: props.variant === "icon" ? "h-11 w-11 rounded-[var(--ui-radius-control)]" : "h-11 px-4 text-sm font-medium rounded-[var(--ui-radius-control)]",
+    sm: `h-8 px-3.5 text-xs font-medium ${radius}`,
+    md: `h-9 px-4 text-[13.5px] font-medium ${radius}`,
   };
   const variants = {
-    primary: "border border-transparent bg-[var(--ui-solid-accent)] text-[var(--ui-on-accent)] hover:bg-[var(--ui-solid-accent-hover)]",
-    secondary: "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-text)] backdrop-blur-xl hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-surface-raised)]",
-    ghost: "border border-transparent bg-transparent text-[var(--ui-text-secondary)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]",
-    danger: "border border-transparent bg-[var(--ui-danger)] text-[var(--ui-on-danger)] hover:brightness-105",
-    icon: "border border-transparent bg-transparent text-[var(--ui-text-secondary)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]",
+    primary:
+      "border border-transparent bg-[var(--ui-solid-accent)] text-[var(--ui-on-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_2px_8px_color-mix(in_srgb,var(--ui-accent)_24%,transparent)] hover:bg-[var(--ui-solid-accent-hover)]",
+    secondary:
+      "border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] text-[var(--ui-text)] shadow-[inset_0_1px_0_var(--ui-specular-top)] hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-surface-hover)]",
+    ghost:
+      "border border-transparent bg-transparent text-[var(--ui-text-secondary)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]",
+    danger:
+      "border border-transparent bg-[var(--ui-danger)] text-[var(--ui-on-danger)] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] hover:brightness-105",
   };
   return [sizes[props.size], variants[props.variant]].join(" ");
 });
@@ -43,10 +51,10 @@ const classes = computed(() => {
     :aria-busy="busy"
     :title="title"
     :class="classes"
-    class="inline-flex shrink-0 cursor-pointer select-none items-center justify-center gap-2 tracking-tight outline-none transition-[background,border-color,color,opacity] duration-150 focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+    class="inline-flex shrink-0 cursor-pointer select-none items-center justify-center gap-1.5 whitespace-nowrap tracking-tight outline-none transition-[background,border-color,color,opacity,transform,box-shadow] duration-150 active:scale-[0.985] focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45"
     @click="$emit('click', $event)"
   >
-    <LoaderCircle v-if="busy" :size="size === 'sm' ? 13 : 16" class="animate-spin" />
+    <LoaderCircle v-if="busy" :size="size === 'sm' ? 13 : 15" class="animate-spin" />
     <slot />
   </button>
 </template>

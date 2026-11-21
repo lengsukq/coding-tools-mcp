@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { AlertCircle, X } from "@lucide/vue";
 import ModalDialog from "./ui/ModalDialog.vue";
 import BaseButton from "./ui/BaseButton.vue";
 import { ref } from "vue";
 import { enterCompactMode, hideToTray, quitApp } from "$lib/api/window-chrome";
+import { isMacPlatform } from "$lib/platform";
 import { showToast } from "$lib/stores/toast";
 
 const open = defineModel<boolean>("open", { default: false });
 const busy = ref(false);
-const canCompact = /Macintosh|Mac OS X/.test(navigator.userAgent);
+const canCompact = isMacPlatform;
 
 async function run(action: "hide" | "compact" | "quit") {
   if (busy.value) return;

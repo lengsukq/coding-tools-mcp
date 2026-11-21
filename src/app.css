@@ -1,12 +1,71 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
-html,body,#app{width:100%;height:100%;margin:0;overflow:hidden}
-*{box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
-button,input,select,textarea{font:inherit}
-button{touch-action:manipulation}
-button:disabled{cursor:not-allowed}
-button:not(:disabled),summary{cursor:pointer}
-input[type=checkbox]{accent-color:var(--ui-accent);width:16px;height:16px;flex-shrink:0}
-code,pre,.font-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-svg{flex-shrink:0}
+
+@layer base {
+  html,
+  body,
+  #app {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    touch-action: manipulation;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--ui-accent);
+    width: 16px;
+    height: 16px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

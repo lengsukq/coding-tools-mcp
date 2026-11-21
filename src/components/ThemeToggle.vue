@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Moon, Sun } from "@lucide/vue";
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 
 const dark = ref(false);
 
@@ -9,13 +9,31 @@ function applyTheme(nextDark: boolean) {
   const theme = nextDark ? "dark" : "light";
   document.documentElement.dataset.theme = theme;
   document.documentElement.classList.toggle("dark", nextDark);
-  localStorage.setItem("coding-tools-theme", theme);
+  try {
+    localStorage.setItem("coding-tools-theme", theme);
+  } catch (error) {
+    console.warn("[ThemeToggle] failed to persist theme:", error);
+  }
+}
+
+function handleToggleEvent() {
+  applyTheme(!dark.value);
 }
 
 onMounted(() => {
-  const saved = localStorage.getItem("coding-tools-theme");
-  const initialDark = saved === "light" ? false : true;
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem("coding-tools-theme");
+  } catch (error) {
+    console.warn("[ThemeToggle] failed to read saved theme:", error);
+  }
+  const initialDark = saved !== "light";
   applyTheme(initialDark);
+  window.addEventListener("coding-tools:toggle-theme", handleToggleEvent);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("coding-tools:toggle-theme", handleToggleEvent);
 });
 </script>
 
