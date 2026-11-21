@@ -537,10 +537,6 @@ fn native_action(target: &str, args: &Value) -> Result<Value, String> {
     native::action(&request)
 }
 #[cfg(not(target_os = "macos"))]
-fn native_frontmost() -> Result<Value, String> {
-    Err("UNSUPPORTED_PLATFORM".into())
-}
-#[cfg(not(target_os = "macos"))]
 fn native_apps() -> Result<Value, String> {
     Err("UNSUPPORTED_PLATFORM".into())
 }

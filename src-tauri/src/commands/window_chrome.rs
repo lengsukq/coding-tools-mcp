@@ -40,7 +40,7 @@ pub fn is_exit_armed() -> bool {
 pub fn enter_compact_mode(app: AppHandle) -> AppResult<()> {
     #[cfg(not(target_os = "macos"))]
     {
-        return hide_to_tray(app);
+        hide_to_tray(app)
     }
     #[cfg(target_os = "macos")]
     {
