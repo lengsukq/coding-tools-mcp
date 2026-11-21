@@ -73,6 +73,7 @@ pub fn enter_compact_mode(app: AppHandle) -> AppResult<()> {
                             {
                                 eprintln!("failed to hide Dock icon in compact mode: {error}");
                             }
+                            crate::platform::macos::process::trim_process_heap();
                         }
                         Err(error) => {
                             eprintln!("failed to unload compact WebView: {error}");
@@ -115,7 +116,6 @@ pub fn hide_to_tray(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-#[tauri::command]
 pub fn show_main_window(app: AppHandle) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     if is_compact_mode() && app.get_webview_window("main").is_some() {

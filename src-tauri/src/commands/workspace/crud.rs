@@ -1,67 +1,72 @@
 use super::*;
 
 #[tauri::command]
-pub fn list_workspaces(state: State<'_, AppState>) -> AppResult<Vec<WorkspaceProfile>> {
-    state.with_workspaces(|store| Ok(store.list().to_vec()))
+pub async fn list_workspaces(app: AppHandle) -> AppResult<Vec<WorkspaceProfile>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .with_workspaces(|store| Ok(store.list().to_vec()))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("读取工作区列表失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn create_workspace(
-    state: State<'_, AppState>,
+pub async fn create_workspace(
+    app: AppHandle,
     path: String,
     name: Option<String>,
 ) -> AppResult<WorkspaceProfile> {
-    state.with_workspaces(|store| {
-        let profile = WorkspaceProfile::new(path, name);
-        store.add(profile.clone())?;
-        Ok(profile)
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_workspaces(|store| {
+            let profile = WorkspaceProfile::new(path, name);
+            store.add(profile.clone())?;
+            Ok(profile)
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("创建工作区失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn update_workspace(state: State<'_, AppState>, profile: WorkspaceProfile) -> AppResult<()> {
-    state.with_workspaces(|store| {
-        if store.get(&profile.id).is_none() {
-            return Err(AppError::Message(format!(
-                "workspace not found: {}",
-                profile.id
-            )));
-        }
-        store.update(profile)
+pub async fn update_workspace(app: AppHandle, profile: WorkspaceProfile) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_workspaces(|store| {
+            if store.get(&profile.id).is_none() {
+                return Err(AppError::Message(format!(
+                    "workspace not found: {}",
+                    profile.id
+                )));
+            }
+            store.update(profile)
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("更新工作区失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn open_workspace_directory(path: String) -> AppResult<()> {
+pub async fn open_workspace_directory(path: String) -> AppResult<()> {
     let path = PathBuf::from(path.trim());
-    open_path_in_file_manager(&path)
+    tauri::async_runtime::spawn_blocking(move || open_path_in_file_manager(&path))
+        .await
+        .map_err(|err| AppError::Message(format!("打开工作区目录失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    let profile = state.with_workspaces(|store| {
-        store
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
-    })?;
-    let workspace_path = PathBuf::from(&profile.path)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&profile.path));
-    crate::tools::session::kill_workspace_sessions(&workspace_path);
-    crate::tools::session::drop_workspace_session_store(&workspace_path);
-    state.gateway.drop_workspace(&profile.id);
-    state.with_runtime(|runtime| {
-        runtime.drop_workspace(&profile.id);
-        Ok(())
-    })?;
-    state.with_workspaces(|store| {
-        if store.remove(&id)?.is_some() {
-            teardown_workspace(store, &id)?;
-        }
-        let mut settings = store.settings();
-        settings.restore_mcp_workspace_ids.clear();
-        store.update_settings(settings)?;
-        Ok(())
+pub async fn delete_workspace(app: AppHandle, id: String) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let raw_path = state.workspace_path(&id)?;
+        let workspace_path = raw_path.canonicalize().unwrap_or(raw_path);
+        crate::tools::session::kill_workspace_sessions(&workspace_path);
+        crate::tools::session::drop_workspace_session_store(&workspace_path);
+        state.gateway.drop_workspace(&id);
+        // Single atomic write: `DataStore::remove` deletes both the profile and its secrets.
+        state.with_workspaces(|store| {
+            let _ = store.remove(&id)?;
+            Ok(())
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("删除工作区失败: {err}")))?
 }

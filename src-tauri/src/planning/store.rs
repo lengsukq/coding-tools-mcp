@@ -1,184 +1,28 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
+use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes};
 
+use super::migration::normalize_legacy_state;
 use super::{PlanningState, PLANNING_RELATIVE_PATH, PLANNING_SCHEMA_VERSION};
 
-fn normalize_legacy_state(value: &mut serde_json::Value) {
-    let fallback_updated_at = value
-        .get("execution")
-        .and_then(|execution| execution.get("updated_at"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_string();
+const PLANNING_LOCK_FILE: &str = ".state.lock";
 
-    let Some(root) = value.as_object_mut() else {
-        return;
-    };
-    root.insert(
-        "schema_version".into(),
-        serde_json::Value::from(PLANNING_SCHEMA_VERSION),
-    );
-
-    if let Some(goals) = root
-        .get_mut("goals")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for goal in goals {
-            let Some(goal) = goal.as_object_mut() else {
-                continue;
-            };
-            if !goal.contains_key("objective") {
-                let objective = goal
-                    .get("description")
-                    .and_then(serde_json::Value::as_str)
-                    .or_else(|| goal.get("title").and_then(serde_json::Value::as_str))
-                    .unwrap_or("")
-                    .to_string();
-                goal.insert("objective".into(), serde_json::Value::String(objective));
-            }
-            goal.entry("created_at")
-                .or_insert_with(|| serde_json::Value::String(fallback_updated_at.clone()));
-            goal.entry("updated_at")
-                .or_insert_with(|| serde_json::Value::String(fallback_updated_at.clone()));
-            goal.entry("plan_ids")
-                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-        }
-    }
-
-    let mut goal_plan_links = Vec::<(String, String)>::new();
-    if let Some(plans) = root
-        .get_mut("plans")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for (plan_index, plan) in plans.iter_mut().enumerate() {
-            let Some(plan) = plan.as_object_mut() else {
-                continue;
-            };
-            if !plan.contains_key("objective") {
-                let objective = plan
-                    .get("strategy")
-                    .and_then(serde_json::Value::as_str)
-                    .or_else(|| plan.get("title").and_then(serde_json::Value::as_str))
-                    .unwrap_or("")
-                    .to_string();
-                plan.insert("objective".into(), serde_json::Value::String(objective));
-            }
-            plan.entry("revision")
-                .or_insert_with(|| serde_json::Value::from(1_u64));
-            plan.entry("task_ids")
-                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-            plan.entry("created_at")
-                .or_insert_with(|| serde_json::Value::String(fallback_updated_at.clone()));
-            plan.entry("updated_at")
-                .or_insert_with(|| serde_json::Value::String(fallback_updated_at.clone()));
-
-            let needs_steps = plan
-                .get("steps")
-                .and_then(serde_json::Value::as_array)
-                .map(|steps| steps.is_empty())
-                .unwrap_or(true);
-            if needs_steps {
-                let mut steps = Vec::new();
-                if let Some(phases) = plan.get("phases").and_then(serde_json::Value::as_array) {
-                    for (phase_index, phase) in phases.iter().enumerate() {
-                        let Some(phase) = phase.as_object() else {
-                            continue;
-                        };
-                        let phase_title = phase
-                            .get("title")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("");
-                        let Some(tasks) = phase.get("tasks").and_then(serde_json::Value::as_array)
-                        else {
-                            continue;
-                        };
-                        for (task_index, task) in tasks.iter().enumerate() {
-                            let Some(task) = task.as_object() else {
-                                continue;
-                            };
-                            let id = task
-                                .get("id")
-                                .and_then(serde_json::Value::as_str)
-                                .map(str::to_string)
-                                .unwrap_or_else(|| {
-                                    format!(
-                                        "legacy-step-{}-{}-{}",
-                                        plan_index + 1,
-                                        phase_index + 1,
-                                        task_index + 1
-                                    )
-                                });
-                            let title = task
-                                .get("title")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or(&id)
-                                .to_string();
-                            let status = match task
-                                .get("status")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("pending")
-                            {
-                                "completed" | "done" => "completed",
-                                "in_progress" | "in-progress" | "inprogress" => "in_progress",
-                                "blocked" => "blocked",
-                                "skipped" => "skipped",
-                                _ => "pending",
-                            };
-                            steps.push(serde_json::json!({
-                                "id": id,
-                                "title": title,
-                                "status": status,
-                                "notes": if phase_title.is_empty() {
-                                    serde_json::Value::Null
-                                } else {
-                                    serde_json::Value::String(format!("Phase: {phase_title}"))
-                                }
-                            }));
-                        }
-                    }
-                }
-                plan.insert("steps".into(), serde_json::Value::Array(steps));
-            }
-
-            if let (Some(goal_id), Some(plan_id)) = (
-                plan.get("goal_id").and_then(serde_json::Value::as_str),
-                plan.get("id").and_then(serde_json::Value::as_str),
-            ) {
-                goal_plan_links.push((goal_id.to_string(), plan_id.to_string()));
-            }
-        }
-    }
-
-    if let Some(goals) = root
-        .get_mut("goals")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for goal in goals {
-            let Some(goal) = goal.as_object_mut() else {
-                continue;
-            };
-            let Some(goal_id) = goal
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            let Some(plan_ids) = goal
-                .get_mut("plan_ids")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
-                continue;
-            };
-            for (_, plan_id) in goal_plan_links.iter().filter(|(id, _)| id == &goal_id) {
-                if !plan_ids.iter().any(|value| value.as_str() == Some(plan_id)) {
-                    plan_ids.push(serde_json::Value::String(plan_id.clone()));
-                }
-            }
-        }
-    }
+fn has_current_schema_version_hint(raw: &str) -> bool {
+    raw.match_indices("\"schema_version\"").any(|(idx, key)| {
+        let rest = raw[idx + key.len()..].trim_start();
+        let Some(rest) = rest.strip_prefix(':') else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        let digits_len = rest
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        digits_len > 0 && rest[..digits_len].parse::<u32>().ok() == Some(PLANNING_SCHEMA_VERSION)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -193,23 +37,46 @@ impl PlanningStore {
         }
     }
 
-    pub fn load(&self) -> AppResult<PlanningState> {
-        if !self.path.exists() {
-            return Ok(PlanningState::default());
+    fn lock_path(&self) -> PathBuf {
+        self.path.with_file_name(PLANNING_LOCK_FILE)
+    }
+
+    fn load_unlocked(&self) -> AppResult<PlanningState> {
+        let raw = match fs::read_to_string(&self.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(PlanningState::default())
+            }
+            Err(error) => return Err(error.into()),
+        };
+        // Fast path for current v2 schema avoids constructing an intermediate
+        // serde_json::Value tree on every read or update.
+        if has_current_schema_version_hint(&raw) {
+            if let Ok(state) = serde_json::from_str::<PlanningState>(&raw) {
+                if state.schema_version == PLANNING_SCHEMA_VERSION {
+                    return Ok(state);
+                }
+            }
         }
-        let raw = fs::read_to_string(&self.path)?;
         let mut value: serde_json::Value = serde_json::from_str(&raw)?;
         normalize_legacy_state(&mut value);
         Ok(serde_json::from_value(value)?)
     }
 
-    pub fn save(&self, state: &PlanningState) -> AppResult<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let raw = serde_json::to_string_pretty(state)?;
-        fs::write(&self.path, format!("{raw}\n"))?;
+    fn write_unlocked(&self, state: &PlanningState) -> AppResult<()> {
+        let mut payload = serde_json::to_vec_pretty(state)?;
+        payload.push(b'\n');
+        atomic_write_bytes(&self.path, &payload)?;
         Ok(())
+    }
+
+    pub fn load(&self) -> AppResult<PlanningState> {
+        self.load_unlocked()
+    }
+
+    pub fn save(&self, state: &PlanningState) -> AppResult<()> {
+        let _lock = acquire_file_lock(&self.lock_path())?;
+        self.write_unlocked(state)
     }
 
     pub fn reset(&self) -> AppResult<PlanningState> {
@@ -222,10 +89,11 @@ impl PlanningStore {
         &self,
         mutate: impl FnOnce(&mut PlanningState) -> AppResult<R>,
     ) -> AppResult<R> {
-        let mut state = self.load()?;
+        let _lock = acquire_file_lock(&self.lock_path())?;
+        let mut state = self.load_unlocked()?;
         state.revision = state.revision.saturating_add(1);
         let result = mutate(&mut state)?;
-        self.save(&state)?;
+        self.write_unlocked(&state)?;
         Ok(result)
     }
 }
@@ -449,5 +317,136 @@ mod tests {
         assert_eq!(reloaded.schema_version, PLANNING_SCHEMA_VERSION);
         assert!(reloaded.goals.is_empty());
         assert!(reloaded.plans.is_empty());
+    }
+
+    #[test]
+    fn v2_fast_path_loads_directly_and_falls_back_for_incomplete_v2_or_v1() {
+        let workspace = tempdir().expect("workspace");
+        let store = PlanningStore::new(workspace.path());
+        let path = workspace.path().join(PLANNING_RELATIVE_PATH);
+        std::fs::create_dir_all(path.parent().expect("planning dir")).expect("planning dir");
+
+        let v2_state = json!({
+            "schema_version": 2,
+            "revision": 7,
+            "mode": "plan",
+            "focus_goal_id": "goal-v2",
+            "focus_plan_id": "plan-v2",
+            "goals": [{
+                "id": "goal-v2",
+                "title": "Fast path goal",
+                "objective": "Deserialize directly without Value migration",
+                "status": "active",
+                "success_criteria": [{
+                    "id": "crit-1",
+                    "text": "Loads cleanly",
+                    "completed": true
+                }],
+                "constraints": ["No regression"],
+                "plan_ids": ["plan-v2"],
+                "created_at": "100",
+                "updated_at": "101"
+            }],
+            "plans": [{
+                "id": "plan-v2",
+                "goal_id": "goal-v2",
+                "title": "Fast path plan",
+                "objective": "Verify v2 direct load",
+                "status": "active",
+                "steps": [{
+                    "id": "step-1",
+                    "title": "Verify",
+                    "status": "completed",
+                    "notes": "done"
+                }],
+                "task_ids": ["task-1"],
+                "revision": 3,
+                "created_at": "100",
+                "updated_at": "101"
+            }],
+            "execution": {
+                "goal_id": "goal-v2",
+                "plan_id": "plan-v2",
+                "step_id": "step-1",
+                "task_id": "task-1",
+                "last_tool": "apply_patch",
+                "state": "completed",
+                "last_error": null,
+                "changed_files": ["src/main.rs"],
+                "history_checkpoint_ref": null,
+                "verification": ["cargo test"],
+                "updated_at": "101"
+            }
+        });
+        let raw_v2 = format!("{}\n", serde_json::to_string_pretty(&v2_state).unwrap());
+        assert!(has_current_schema_version_hint(&raw_v2));
+        std::fs::write(&path, raw_v2).expect("write v2 state");
+
+        let loaded = store.load().expect("v2 fast path load");
+        assert_eq!(loaded.schema_version, PLANNING_SCHEMA_VERSION);
+        assert_eq!(loaded.revision, 7);
+        assert_eq!(loaded.mode, crate::planning::PlanningMode::Plan);
+        assert_eq!(loaded.focus_goal_id.as_deref(), Some("goal-v2"));
+        assert_eq!(loaded.focus_plan_id.as_deref(), Some("plan-v2"));
+        assert_eq!(loaded.goals.len(), 1);
+        assert!(loaded.goals[0].success_criteria[0].completed);
+        assert_eq!(loaded.plans[0].steps[0].notes.as_deref(), Some("done"));
+
+        // A file declaring schema_version=2 but missing required legacy-migrated fields
+        // must still transparently fall back to the Value migration path.
+        let incomplete_v2 = json!({
+            "schema_version": 2,
+            "revision": 2,
+            "mode": "direct",
+            "focus_goal_id": null,
+            "focus_plan_id": null,
+            "goals": [{
+                "id": "goal-fallback",
+                "title": "Fallback Goal",
+                "description": "Migrated from description",
+                "status": "active"
+            }],
+            "plans": []
+        });
+        std::fs::write(&path, serde_json::to_string(&incomplete_v2).unwrap())
+            .expect("write incomplete v2");
+        let migrated = store.load().expect("fallback migration should succeed");
+        assert_eq!(migrated.goals[0].objective, "Migrated from description");
+
+        // Hint helper rejects non-v2 schema versions (e.g. 1 or 20).
+        assert!(!has_current_schema_version_hint(r#"{"schema_version": 1}"#));
+        assert!(!has_current_schema_version_hint(
+            r#"{"schema_version": 20}"#
+        ));
+    }
+
+    #[test]
+    fn concurrent_updates_are_serialized_without_lost_revisions() {
+        let workspace = tempdir().expect("workspace");
+        let store = PlanningStore::new(workspace.path());
+        let workers = (0..4)
+            .map(|worker| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for step in 0..8 {
+                        store
+                            .update(|state| {
+                                state
+                                    .execution
+                                    .verification
+                                    .push(format!("w{worker}-{step}"));
+                                Ok(())
+                            })
+                            .expect("concurrent update");
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("worker join");
+        }
+        let state = store.load().expect("reload");
+        assert_eq!(state.revision, 32);
+        assert_eq!(state.execution.verification.len(), 32);
     }
 }

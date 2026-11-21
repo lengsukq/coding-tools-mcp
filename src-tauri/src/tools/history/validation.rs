@@ -3,34 +3,36 @@ use super::*;
 pub fn validate(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let history_dir = resolve_dir(ctx, args)?;
     let repair = args.get("repair").and_then(Value::as_bool).unwrap_or(false);
-    if repair {
+    let _lock = if repair {
         storage::ensure_directory(&history_dir)?;
-    }
-    let index_status = derived_status(storage::read_index(&history_dir));
-    let manifest_status = derived_status(storage::read_manifest(&history_dir));
-    let state_status = derived_status(storage::read_state(&history_dir));
+        Some(storage::lock_directory(&history_dir)?)
+    } else {
+        None
+    };
+    let index_status = derived_status(&storage::read_index(&history_dir));
+    let manifest_status = derived_status(&storage::read_manifest(&history_dir));
+    let existing_state = storage::read_state(&history_dir);
+    let state_status = derived_status(&existing_state);
     let report = storage::scan(&ctx.workspace, &history_dir)?;
     let mut warnings = Vec::<String>::new();
     if !report.duplicate_session_keys.is_empty() {
         warnings.push("存在重复 session_key，相关映射未写入索引。".into());
     }
     let repaired = if repair {
-        let _lock = storage::lock_directory(&history_dir)?;
-        let locked_report = storage::scan(&ctx.workspace, &history_dir)?;
-        let manifest = storage::build_manifest(&locked_report);
-        let state_revision = storage::read_state(&history_dir)
+        let manifest = storage::build_manifest(&report);
+        let state_revision = existing_state
             .ok()
             .flatten()
             .map(|state| state.state_revision + 1)
             .unwrap_or(1);
         let state = storage::build_state(
-            &locked_report,
+            &report,
             &manifest,
-            locked_report.latest_number(),
+            report.latest_number(),
             &now_timestamp(),
             state_revision,
         );
-        storage::write_index(&history_dir, &storage::rebuild_index(&locked_report))?;
+        storage::write_index(&history_dir, &storage::rebuild_index(&report))?;
         storage::write_manifest(&history_dir, &manifest)?;
         storage::write_state(&history_dir, &state)?;
         true

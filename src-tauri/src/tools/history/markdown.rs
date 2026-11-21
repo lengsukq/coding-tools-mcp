@@ -1,8 +1,10 @@
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+
+use crate::tools::io_util::sha256_hex;
 
 use super::model::{CheckpointRecord, InitialInputRecord};
 
@@ -210,11 +212,11 @@ pub fn checkpoint_fingerprint(record: &CheckpointRecord) -> String {
     canonical.supersedes = None;
     canonical.content_hash.clear();
     let encoded = serde_json::to_vec(&canonical).expect("checkpoint record is serializable");
-    format!("{:x}", Sha256::digest(encoded))
+    sha256_hex(&encoded)
 }
 
 pub fn initial_input_fingerprint(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    sha256_hex(value.as_bytes())
 }
 
 fn automatic_turn_id(record: &CheckpointRecord) -> String {
@@ -265,9 +267,9 @@ pub fn redact_record(record: &mut CheckpointRecord) -> bool {
 }
 
 pub fn redact_text(value: &mut String) -> bool {
-    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    static PATTERNS: OnceLock<[Regex; 3]> = OnceLock::new();
     let patterns = PATTERNS.get_or_init(|| {
-        vec![
+        [
             Regex::new(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{6,}").expect("bearer regex"),
             Regex::new(r"(?i)\b(api[_ -]?key|token|cookie|password|passwd|pwd)\s*[:=]\s*[^\s,;]+")
                 .expect("secret assignment regex"),
@@ -275,19 +277,52 @@ pub fn redact_text(value: &mut String) -> bool {
                 .expect("private key regex"),
         ]
     });
-    let original = value.clone();
-    let mut redacted = value.clone();
-    redacted = patterns[0]
-        .replace_all(&redacted, "${1}[REDACTED]")
-        .into_owned();
-    redacted = patterns[1]
-        .replace_all(&redacted, |captures: &regex::Captures<'_>| {
+
+    // Keep borrowing `value` while patterns do not match so clean inputs incur zero allocations.
+    let mut current = Cow::Borrowed(value.as_str());
+    if let Cow::Owned(updated) = patterns[0].replace_all(&current, "${1}[REDACTED]") {
+        current = Cow::Owned(updated);
+    }
+    if let Cow::Owned(updated) = patterns[1]
+        .replace_all(&current, |captures: &regex::Captures<'_>| {
             format!("{}=[REDACTED]", &captures[1])
         })
-        .into_owned();
-    redacted = patterns[2]
-        .replace_all(&redacted, "[REDACTED]")
-        .into_owned();
-    *value = redacted;
-    *value != original
+    {
+        current = Cow::Owned(updated);
+    }
+    if let Cow::Owned(updated) = patterns[2].replace_all(&current, "[REDACTED]") {
+        current = Cow::Owned(updated);
+    }
+    if let Cow::Owned(updated) = current {
+        if updated != *value {
+            *value = updated;
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_text_preserves_clean_text_and_redacts_secrets() {
+        let mut clean = String::from("refactor history query pagination and manifest lookup");
+        assert!(!redact_text(&mut clean));
+        assert_eq!(
+            clean,
+            "refactor history query pagination and manifest lookup"
+        );
+
+        let mut with_secret =
+            String::from("Authorization: Bearer secret-token-12345; password=hunter2");
+        assert!(redact_text(&mut with_secret));
+        assert_eq!(
+            with_secret,
+            "Authorization: Bearer [REDACTED]; password=[REDACTED]"
+        );
+        // Second pass over already-redacted content reports no further change.
+        assert!(!redact_text(&mut with_secret));
+    }
 }

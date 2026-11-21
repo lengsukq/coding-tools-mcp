@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
@@ -9,6 +9,8 @@ use crate::error::{AppError, AppResult};
 pub struct GlobalRuntimeSettingsDto {
     #[serde(default = "crate::settings::default_global_mcp_auth_type")]
     pub auth_type: String,
+    #[serde(default)]
+    pub mcp_server_name: String,
     #[serde(default)]
     pub executable_paths: String,
     #[serde(default = "crate::settings::default_global_permission_mode")]
@@ -36,71 +38,100 @@ pub struct GlobalRuntimeSettingsDto {
 }
 
 #[tauri::command]
-pub fn get_global_runtime_settings(
-    state: State<'_, AppState>,
-) -> AppResult<GlobalRuntimeSettingsDto> {
-    state.with_settings(|store| {
-        let settings = store.settings();
-        Ok(GlobalRuntimeSettingsDto {
-            auth_type: settings.global_mcp_auth_type,
-            executable_paths: settings.global_executable_paths,
-            permission_mode: settings.global_permission_mode,
-            allowed_commands: settings.global_allowed_commands,
-            ai_instructions: settings.global_ai_instructions,
-            instruction_sources: settings.global_instruction_sources,
-            skill_sources: settings.global_skill_sources,
-            custom_instruction_paths: settings.global_custom_instruction_paths,
-            custom_skill_paths: settings.global_custom_skill_paths,
-            allow_lan_access: settings.allow_lan_access,
-            allow_local_noauth: settings.allow_local_noauth,
-            restore_runtime_state_on_launch: settings.restore_runtime_state_on_launch,
-            migration_notice: settings.global_mcp_migration_notice,
+pub async fn get_global_runtime_settings(app: AppHandle) -> AppResult<GlobalRuntimeSettingsDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_settings(|store| {
+            let settings = store.settings();
+            Ok(GlobalRuntimeSettingsDto {
+                auth_type: settings.global_mcp_auth_type,
+                mcp_server_name: settings.global_mcp_server_name,
+                executable_paths: settings.global_executable_paths,
+                permission_mode: settings.global_permission_mode,
+                allowed_commands: settings.global_allowed_commands,
+                ai_instructions: settings.global_ai_instructions,
+                instruction_sources: settings.global_instruction_sources,
+                skill_sources: settings.global_skill_sources,
+                custom_instruction_paths: settings.global_custom_instruction_paths,
+                custom_skill_paths: settings.global_custom_skill_paths,
+                allow_lan_access: settings.allow_lan_access,
+                allow_local_noauth: settings.allow_local_noauth,
+                restore_runtime_state_on_launch: settings.restore_runtime_state_on_launch,
+                migration_notice: settings.global_mcp_migration_notice,
+            })
         })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("读取全局运行设置失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn set_global_runtime_settings(
+pub async fn set_global_runtime_settings(
+    app: AppHandle,
     state: State<'_, AppState>,
     runtime: GlobalRuntimeSettingsDto,
 ) -> AppResult<()> {
-    let auth_type = runtime.auth_type.trim();
-    if !matches!(auth_type, "oauth" | "bearer" | "noauth") {
+    let auth_type = runtime.auth_type.trim().to_string();
+    if !matches!(auth_type.as_str(), "oauth" | "bearer" | "noauth") {
         return Err(AppError::Message(format!(
             "不支持的 Global MCP 认证模式: {auth_type}"
         )));
     }
+    let mcp_server_name = runtime.mcp_server_name.trim().to_string();
+    if mcp_server_name.chars().count() > 80 {
+        return Err(AppError::Message(
+            "MCP 服务名称不能超过 80 个字符".to_string(),
+        ));
+    }
+    if mcp_server_name.chars().any(char::is_control) {
+        return Err(AppError::Message(
+            "MCP 服务名称不能包含换行或控制字符".to_string(),
+        ));
+    }
 
-    let should_capture_running = state.with_settings(|store| {
-        Ok(runtime.restore_runtime_state_on_launch
-            && !store.settings().restore_runtime_state_on_launch)
-    })?;
-    let running_snapshot = if should_capture_running {
-        Some(state.with_runtime(|supervisor| Ok(supervisor.is_running()))?)
-    } else {
-        None
-    };
+    let app_for_save = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_save.state::<AppState>();
+        let should_capture_running = state.with_settings(|store| {
+            Ok(runtime.restore_runtime_state_on_launch
+                && !store.settings().restore_runtime_state_on_launch)
+        })?;
+        let running_snapshot = if should_capture_running {
+            Some(state.with_runtime(|supervisor| Ok(supervisor.is_running()))?)
+        } else {
+            None
+        };
 
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        settings.global_mcp_auth_type = auth_type.to_string();
-        settings.global_executable_paths = runtime.executable_paths.trim().to_string();
-        settings.global_permission_mode = runtime.permission_mode.trim().to_string();
-        settings.global_allowed_commands = runtime.allowed_commands.trim().to_string();
-        settings.global_ai_instructions = runtime.ai_instructions.trim().to_string();
-        settings.global_instruction_sources = runtime.instruction_sources;
-        settings.global_skill_sources = runtime.skill_sources;
-        settings.global_custom_instruction_paths =
-            runtime.custom_instruction_paths.trim().to_string();
-        settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
-        settings.allow_lan_access = runtime.allow_lan_access;
-        settings.allow_local_noauth = runtime.allow_local_noauth;
-        settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;
-        settings.global_mcp_migration_notice.clear();
-        if let Some(running) = running_snapshot {
-            settings.global_mcp_was_running = running;
-            settings.restore_mcp_workspace_ids.clear();
-        }
-        store.update_settings(settings)
+        state.with_settings(|store| {
+            let mut settings = store.settings();
+            settings.global_mcp_auth_type = auth_type;
+            settings.global_mcp_server_name = mcp_server_name;
+            settings.global_executable_paths = runtime.executable_paths.trim().to_string();
+            settings.global_permission_mode = runtime.permission_mode.trim().to_string();
+            settings.global_allowed_commands = runtime.allowed_commands.trim().to_string();
+            settings.global_ai_instructions = runtime.ai_instructions.trim().to_string();
+            settings.global_instruction_sources = runtime.instruction_sources;
+            settings.global_skill_sources = runtime.skill_sources;
+            settings.global_custom_instruction_paths =
+                runtime.custom_instruction_paths.trim().to_string();
+            settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
+            settings.allow_lan_access = runtime.allow_lan_access;
+            settings.allow_local_noauth = runtime.allow_local_noauth;
+            settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;
+            settings.global_mcp_migration_notice.clear();
+            if let Some(running) = running_snapshot {
+                settings.global_mcp_was_running = running;
+            }
+            store.update_settings(settings)
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("保存全局运行设置任务失败: {err}")))??;
+
+    if let Err(error) = crate::commands::runtime::apply_live_runtime_changes(&state, false).await {
+        eprintln!("Global MCP live reload after runtime settings save failed: {error}");
+        return Err(AppError::Message(format!(
+            "全局运行设置已保存，但热重载 Global MCP 失败，请手动重启服务：{error}"
+        )));
+    }
+    Ok(())
 }

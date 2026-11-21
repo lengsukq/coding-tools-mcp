@@ -3,19 +3,20 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use sha2::Digest;
-
 use crate::agent_context::{
-    discover_instructions, discover_skills, render_instruction_documents,
-    AgentContextRuntimeConfig, SkillEntry,
+    discover_compact_workspace_instructions, discover_instructions, discover_skills,
+    render_instruction_documents, AgentContextRuntimeConfig, SkillEntry,
 };
 use crate::harness::Harness;
+use crate::tools::io_util::hash_and_count_json;
 use crate::tools::policy::PolicySettings;
 use crate::tools::registry::ToolProfile;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
 use crate::usage::ServiceUsage;
 use crate::workspace::AuthConfig;
+
+const MAX_CONTEXT_AUDIT_BLOCKS: usize = 32;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ContextAuditBlock {
@@ -167,19 +168,18 @@ impl ToolContext {
         let Some(config) = &self.agent_context else {
             return self.ai_instructions.clone();
         };
-        let mut repository_instructions = discover_instructions(
-            self.workspace.root(),
-            &config.instruction_sources,
-            &config.custom_instruction_paths,
-        );
-        if self.tool_profile.is_compact() {
-            repository_instructions.retain(|document| {
-                document.scope == "workspace"
-                    && (document.path.ends_with("AGENTS.md")
-                        || document.path.ends_with("AGENTS.override.md"))
-            });
-            repository_instructions.truncate(1);
-        }
+        let repository_instructions = if self.tool_profile.is_compact() {
+            discover_compact_workspace_instructions(
+                self.workspace.root(),
+                &config.instruction_sources,
+            )
+        } else {
+            discover_instructions(
+                self.workspace.root(),
+                &config.instruction_sources,
+                &config.custom_instruction_paths,
+            )
+        };
         merge_ai_instructions(
             &self.ai_instructions,
             &render_instruction_documents(&repository_instructions),
@@ -207,49 +207,56 @@ impl ToolContext {
         std::env::join_paths(paths).ok()
     }
 
-    pub fn workspace_path(&self) -> String {
-        self.workspace.root_display()
-    }
-
     pub fn default_cwd_display(&self) -> String {
-        let cwd = self.default_cwd.lock().expect("cwd lock");
+        let cwd = self
+            .default_cwd
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         relative_display(self.workspace.root(), &cwd)
     }
 
     pub fn set_default_cwd(&self, path: PathBuf) {
-        *self.default_cwd.lock().expect("cwd lock") = path;
+        *self
+            .default_cwd
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = path;
     }
 
     pub fn default_cwd_path(&self) -> PathBuf {
-        self.default_cwd.lock().expect("cwd lock").clone()
+        self.default_cwd
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn record_context_block(&self, kind: &str, value: &serde_json::Value) {
-        let Ok(bytes) = serde_json::to_vec(value) else {
+        let Some((bytes, hash)) = hash_and_count_json(value) else {
             return;
         };
-        let hash = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
-        let Ok(mut audit) = self.context_audit.lock() else {
-            return;
-        };
+        let mut audit = self
+            .context_audit
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let repeated = audit.blocks.iter().any(|block| block.hash == hash);
         audit.blocks.push_back(ContextAuditBlock {
             kind: kind.to_string(),
-            bytes: bytes.len(),
+            bytes,
             hash,
             repeated,
         });
-        while audit.blocks.len() > 32 {
+        while audit.blocks.len() > MAX_CONTEXT_AUDIT_BLOCKS {
             audit.blocks.pop_front();
         }
     }
 
     pub fn context_audit_snapshot(&self) -> serde_json::Value {
-        let blocks = self
-            .context_audit
-            .lock()
-            .map(|audit| audit.blocks.iter().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
+        let blocks = {
+            let audit = self
+                .context_audit
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            audit.blocks.iter().cloned().collect::<Vec<_>>()
+        };
         let total_bytes = blocks.iter().map(|block| block.bytes).sum::<usize>();
         let repeated_bytes = blocks
             .iter()

@@ -5,10 +5,10 @@ pub const TOOL_API_VERSION: &str = "2";
 mod profiles;
 mod schema;
 
+pub(crate) use profiles::exposed_tool_names_cached;
 pub use profiles::{
-    canonical_tool_name, exposed_tool_names, is_allowed_tool, list_tools, list_tools_for_profile,
-    normalize_tool_profile, ToolProfile, ALLOWED_TOOLS, COMPACT_TOOLS, CORE_READ_ONLY_TOOLS,
-    CORE_TOOLS, READ_ONLY_TOOLS,
+    canonical_tool_name, exposed_tool_names, is_allowed_tool, list_tools_for_profile, ToolProfile,
+    ALLOWED_TOOLS, COMPACT_TOOLS, CORE_READ_ONLY_TOOLS, CORE_TOOLS,
 };
 pub use schema::input_schema;
 
@@ -581,5 +581,13 @@ mod tests {
         assert!(!names.contains(&"get_default_cwd"));
         assert!(!names.contains(&"set_default_cwd"));
         assert_eq!(tool_api_descriptor()["version"], "2");
+    }
+
+    #[test]
+    fn read_only_catalog_excludes_mutating_set_default_cwd() {
+        let names = super::exposed_tool_names("read-only");
+        assert!(!names.contains(&"set_default_cwd"));
+        assert!(names.contains(&"get_default_cwd"));
+        assert!(names.contains(&"read_file"));
     }
 }

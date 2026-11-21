@@ -1,10 +1,21 @@
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::collections::HashSet;
+use std::io::Read;
+use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use regex::Regex;
 use serde_json::{json, Value};
 
+use crate::platform::{background_command, platform};
+use crate::tools::io_util::truncate_utf8;
 use crate::tools::workspace::{tool_ok, Workspace, WorkspaceError};
+
+const DEFAULT_GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const GIT_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const MAX_GIT_STDOUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_GIT_STDERR_BYTES: usize = 256 * 1024;
+const STREAM_DRAIN_CHUNK_BYTES: usize = 8192;
 
 pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
@@ -21,7 +32,7 @@ pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
     let root_check = run_git(
         &resolved.path,
         &["rev-parse", "--show-toplevel"],
-        Duration::from_secs(10),
+        DEFAULT_GIT_TIMEOUT,
     )?;
     if !root_check.success {
         return Ok(tool_ok(json!({
@@ -36,7 +47,7 @@ pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
     if !include_untracked {
         status_args.push("--untracked-files=no");
     }
-    let completed = run_git(&resolved.path, &status_args, Duration::from_secs(10))?;
+    let completed = run_git(&resolved.path, &status_args, DEFAULT_GIT_TIMEOUT)?;
     if !completed.success && completed.exit_code != 0 {
         return Err(git_error(&completed.stderr));
     }
@@ -111,21 +122,7 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         .and_then(Value::as_u64)
         .unwrap_or(65_536) as usize;
 
-    let mut path_filters: Vec<String> = Vec::new();
-    if let Some(p) = args.get("path").and_then(Value::as_str) {
-        path_filters.push(p.to_string());
-    }
-    if let Some(paths) = args.get("paths").and_then(Value::as_array) {
-        for p in paths {
-            if let Some(s) = p.as_str() {
-                path_filters.push(s.to_string());
-            }
-        }
-    }
-    for p in &path_filters {
-        ws.reject_unsafe_text(p)?;
-    }
-
+    let path_filters = collect_path_filters(ws, args)?;
     if !is_git_repo(ws.root()) {
         return Ok(tool_ok(json!({
             "diff": "",
@@ -136,19 +133,24 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     }
 
     let mut chunks = Vec::new();
+    let mut capture_truncated = false;
     if unstaged {
-        chunks.push(run_git_diff(ws.root(), context, &path_filters, false)?);
+        let (text, cap_hit) = run_git_diff(ws.root(), context, &path_filters, false)?;
+        capture_truncated |= cap_hit;
+        chunks.push(text);
     }
     if staged {
-        chunks.push(run_git_diff(ws.root(), context, &path_filters, true)?);
+        let (text, cap_hit) = run_git_diff(ws.root(), context, &path_filters, true)?;
+        capture_truncated |= cap_hit;
+        chunks.push(text);
     }
     let mut combined = chunks.join("\n");
     if !combined.is_empty() && !combined.ends_with('\n') {
         combined.push('\n');
     }
-    let truncated = combined.len() > max_bytes;
-    let diff_text = if truncated {
-        String::from_utf8_lossy(&combined.as_bytes()[..max_bytes]).into_owned()
+    let truncated = capture_truncated || combined.len() > max_bytes;
+    let diff_text = if combined.len() > max_bytes {
+        truncate_utf8(&combined, max_bytes).to_string()
     } else {
         combined
     };
@@ -206,7 +208,7 @@ pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         cmd_args.push(path_filter.as_str());
     }
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(ws.root(), &cmd_args, DEFAULT_GIT_TIMEOUT)?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }
@@ -266,21 +268,7 @@ pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         .get("include_diff")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-
-    let mut path_filters: Vec<String> = Vec::new();
-    if let Some(p) = args.get("path").and_then(Value::as_str) {
-        path_filters.push(p.to_string());
-    }
-    if let Some(paths) = args.get("paths").and_then(Value::as_array) {
-        for p in paths {
-            if let Some(s) = p.as_str() {
-                path_filters.push(s.to_string());
-            }
-        }
-    }
-    for p in &path_filters {
-        ws.reject_unsafe_text(p)?;
-    }
+    let path_filters = collect_path_filters(ws, args)?;
 
     let unified = format!("--unified={context}");
     let mut cmd_args = vec!["show", "--no-ext-diff", "--format=fuller", unified.as_str()];
@@ -295,16 +283,16 @@ pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         }
     }
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(ws.root(), &cmd_args, DEFAULT_GIT_TIMEOUT)?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }
 
-    let truncated = completed.stdout.len() > max_bytes;
-    let content = if truncated {
-        String::from_utf8_lossy(&completed.stdout.as_bytes()[..max_bytes]).into_owned()
+    let truncated = completed.stdout_truncated || completed.stdout.len() > max_bytes;
+    let content = if completed.stdout.len() > max_bytes {
+        truncate_utf8(&completed.stdout, max_bytes).to_string()
     } else {
-        completed.stdout.clone()
+        completed.stdout
     };
     let files = parse_diff_files(&content);
     Ok(tool_ok(json!({
@@ -380,7 +368,7 @@ pub fn git_blame(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
     cmd_args.push("--");
     cmd_args.push(resolved.display.as_str());
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(ws.root(), &cmd_args, DEFAULT_GIT_TIMEOUT)?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }
@@ -403,6 +391,24 @@ pub fn git_blame(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
     })))
 }
 
+fn collect_path_filters(ws: &Workspace, args: &Value) -> Result<Vec<String>, WorkspaceError> {
+    let mut path_filters = Vec::new();
+    if let Some(p) = args.get("path").and_then(Value::as_str) {
+        path_filters.push(p.to_string());
+    }
+    if let Some(paths) = args.get("paths").and_then(Value::as_array) {
+        for p in paths {
+            if let Some(s) = p.as_str() {
+                path_filters.push(s.to_string());
+            }
+        }
+    }
+    for p in &path_filters {
+        ws.reject_unsafe_text(p)?;
+    }
+    Ok(path_filters)
+}
+
 fn validate_git_ref(ref_name: &str) -> Result<&str, WorkspaceError> {
     if ref_name.is_empty()
         || ref_name.starts_with('-')
@@ -415,14 +421,20 @@ fn validate_git_ref(ref_name: &str) -> Result<&str, WorkspaceError> {
     Ok(ref_name)
 }
 
+fn is_blame_commit_token(token: &str) -> bool {
+    token.len() >= 40
+        && token.as_bytes()[..40]
+            .iter()
+            .all(|byte| byte.is_ascii_hexdigit() || *byte == b'^')
+}
+
 fn parse_git_blame_porcelain(output: &str) -> Vec<Value> {
-    let commit_re = Regex::new(r"^[0-9a-fA-F^]{40}").expect("valid regex");
     let mut rows = Vec::new();
     let mut current: serde_json::Map<String, Value> = serde_json::Map::new();
 
     for raw in output.lines() {
         let parts: Vec<&str> = raw.split_whitespace().collect();
-        if parts.len() >= 3 && commit_re.is_match(parts[0]) {
+        if parts.len() >= 3 && is_blame_commit_token(parts[0]) {
             current = serde_json::Map::new();
             current.insert("commit".into(), json!(parts[0].trim_start_matches('^')));
             if parts[1].chars().all(|c| c.is_ascii_digit()) {
@@ -466,11 +478,13 @@ fn parse_git_blame_porcelain(output: &str) -> Vec<Value> {
     rows
 }
 
+#[derive(Debug)]
 struct GitOutput {
     success: bool,
     exit_code: i32,
     stdout: String,
     stderr: String,
+    stdout_truncated: bool,
 }
 
 fn run_git(
@@ -478,29 +492,108 @@ fn run_git(
     args: &[&str],
     limit: Duration,
 ) -> Result<GitOutput, WorkspaceError> {
-    let mut cmd = Command::new("git");
+    let mut cmd = background_command("git");
     cmd.arg("-C")
         .arg(cwd)
         .args(args)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
-    let output = cmd
-        .output()
+    run_command_with_timeout(cmd, limit, MAX_GIT_STDOUT_BYTES, MAX_GIT_STDERR_BYTES)
+}
+
+fn run_command_with_timeout(
+    mut cmd: std::process::Command,
+    limit: Duration,
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+) -> Result<GitOutput, WorkspaceError> {
+    let mut child = cmd
+        .spawn()
         .map_err(|e| git_error(&format!("git not available: {e}")))?;
-    let _ = limit;
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_reader = thread::spawn(move || {
+        stdout_pipe
+            .map(|pipe| read_bounded_stream(pipe, max_stdout_bytes))
+            .unwrap_or_default()
+    });
+    let stderr_reader = thread::spawn(move || {
+        stderr_pipe
+            .map(|pipe| read_bounded_stream(pipe, max_stderr_bytes))
+            .unwrap_or_default()
+    });
+
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    terminate_child(&mut child);
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(WorkspaceError::Tool {
+                        code: "TIMEOUT",
+                        message: format!("git command timed out after {}ms", limit.as_millis()),
+                        category: "runtime",
+                        retryable: true,
+                    });
+                }
+                thread::sleep(
+                    GIT_WAIT_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(git_error(&format!(
+                    "failed waiting for git process: {error}"
+                )));
+            }
+        }
+    };
+
+    let (stdout_bytes, stdout_truncated) = stdout_reader.join().unwrap_or_default();
+    let (stderr_bytes, _) = stderr_reader.join().unwrap_or_default();
     Ok(GitOutput {
-        success: output.status.success(),
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        success: status.success(),
+        exit_code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        stdout_truncated,
     })
+}
+
+fn terminate_child(child: &mut std::process::Child) {
+    let _ = platform().terminate_process_tree(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn read_bounded_stream<R: Read>(mut reader: R, max_bytes: usize) -> (Vec<u8>, bool) {
+    let mut captured = Vec::new();
+    let mut truncated = false;
+    let mut chunk = [0u8; STREAM_DRAIN_CHUNK_BYTES];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let remaining = max_bytes.saturating_sub(captured.len());
+                if remaining > 0 {
+                    let take = n.min(remaining);
+                    captured.extend_from_slice(&chunk[..take]);
+                    if take < n {
+                        truncated = true;
+                    }
+                } else {
+                    truncated = true;
+                }
+            }
+        }
+    }
+    (captured, truncated)
 }
 
 fn run_git_diff(
@@ -508,7 +601,7 @@ fn run_git_diff(
     context: u64,
     path_filters: &[String],
     cached: bool,
-) -> Result<String, WorkspaceError> {
+) -> Result<(String, bool), WorkspaceError> {
     let unified = format!("--unified={context}");
     let mut args = vec!["diff", unified.as_str()];
     if cached {
@@ -520,21 +613,21 @@ fn run_git_diff(
             args.push(p.as_str());
         }
     }
-    let completed = run_git(root, &args, Duration::from_secs(10))?;
+    let completed = run_git(root, &args, DEFAULT_GIT_TIMEOUT)?;
     if completed.exit_code != 0 && completed.exit_code != 1 {
         return Err(git_error(&completed.stderr));
     }
-    Ok(completed.stdout)
+    Ok((completed.stdout, completed.stdout_truncated))
 }
 
 fn is_git_repo(root: &std::path::Path) -> bool {
-    run_git(root, &["rev-parse", "--git-dir"], Duration::from_secs(5))
+    run_git(root, &["rev-parse", "--git-dir"], DEFAULT_GIT_PROBE_TIMEOUT)
         .map(|o| o.success)
         .unwrap_or(false)
 }
 
 fn git_rev_parse(cwd: &std::path::Path, rev: &str) -> Option<String> {
-    run_git(cwd, &["rev-parse", rev], Duration::from_secs(5))
+    run_git(cwd, &["rev-parse", rev], DEFAULT_GIT_PROBE_TIMEOUT)
         .ok()
         .filter(|o| o.success)
         .map(|o| o.stdout.trim().to_string())
@@ -569,17 +662,20 @@ fn parse_branch_line(line: &str) -> (String, String, i64, i64) {
 
 fn parse_diff_files(diff: &str) -> Vec<Value> {
     let mut files = Vec::new();
+    let mut seen = HashSet::<&str>::new();
     for line in diff.lines() {
         if let Some(path) = line.strip_prefix("+++ b/") {
-            files.push(json!({
-                "path": path,
-                "status": "modified",
-                "binary": false
-            }));
+            if seen.insert(path) {
+                files.push(json!({
+                    "path": path,
+                    "status": "modified",
+                    "binary": false
+                }));
+            }
         } else if line.starts_with("--- /dev/null") {
             continue;
         } else if let Some(path) = line.strip_prefix("--- a/") {
-            if !files.iter().any(|f| f["path"] == path) {
+            if seen.insert(path) {
                 files.push(json!({
                     "path": path,
                     "status": "modified",
@@ -597,5 +693,90 @@ fn git_error(message: &str) -> WorkspaceError {
         message: message.to_string(),
         category: "runtime",
         retryable: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_diff_files_deduplicates_in_linear_time() {
+        let diff = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n--- /dev/null\n+++ b/src/b.rs\n--- a/src/c.rs\n+++ /dev/null\n";
+        let files = parse_diff_files(diff);
+        let paths: Vec<_> = files
+            .iter()
+            .filter_map(|item| item["path"].as_str())
+            .collect();
+        assert_eq!(paths, vec!["src/a.rs", "src/b.rs", "src/c.rs"]);
+    }
+
+    #[test]
+    fn run_command_with_timeout_kills_stalled_process() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = background_command("cmd");
+            c.args(["/C", "ping -n 6 127.0.0.1 >nul"]);
+            c
+        } else {
+            let mut c = background_command("sh");
+            c.args(["-c", "sleep 5"]);
+            c
+        };
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let started = Instant::now();
+        let error = run_command_with_timeout(
+            cmd,
+            Duration::from_millis(80),
+            MAX_GIT_STDOUT_BYTES,
+            MAX_GIT_STDERR_BYTES,
+        )
+        .expect_err("stalled command should time out");
+        assert_eq!(error.to_error_value()["code"], "TIMEOUT");
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn git_diff_truncation_is_utf8_char_boundary_safe() {
+        let dir = tempdir().expect("dir");
+        let init = run_git(dir.path(), &["init"], DEFAULT_GIT_TIMEOUT).expect("git init");
+        assert!(init.success);
+        let _ = run_git(
+            dir.path(),
+            &["config", "user.email", "test@example.com"],
+            DEFAULT_GIT_TIMEOUT,
+        );
+        let _ = run_git(
+            dir.path(),
+            &["config", "user.name", "Tester"],
+            DEFAULT_GIT_TIMEOUT,
+        );
+        fs::write(dir.path().join("note.txt"), "原始\n").expect("write");
+        assert!(
+            run_git(dir.path(), &["add", "note.txt"], DEFAULT_GIT_TIMEOUT)
+                .expect("add")
+                .success
+        );
+        assert!(
+            run_git(dir.path(), &["commit", "-m", "init"], DEFAULT_GIT_TIMEOUT)
+                .expect("commit")
+                .success
+        );
+        fs::write(
+            dir.path().join("note.txt"),
+            "中文内容测试截断边界".repeat(120),
+        )
+        .expect("modify");
+
+        let ws = Workspace::new(dir.path().to_path_buf()).expect("ws");
+        let result = git_diff(&ws, &json!({"max_bytes": 121})).expect("git_diff");
+        assert_eq!(result["truncated"], true);
+        let diff = result["diff"].as_str().expect("diff");
+        assert!(diff.len() <= 121);
+        assert!(!diff.contains('\u{fffd}'));
     }
 }

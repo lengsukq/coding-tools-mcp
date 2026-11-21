@@ -17,7 +17,10 @@ use crate::tools::context::ToolContext;
 use crate::tools::policy::validate_tool_arguments_for_workspace;
 use crate::tools::workspace::{tool_err, WorkspaceError};
 use cwd::apply_default_cwd;
-use gates::{load_planning_state, planning_gate, planning_protected_tool, policy_tool_err};
+use gates::{
+    load_planning_state, mutating_tool_call, planning_gate, planning_protected_tool,
+    policy_tool_err,
+};
 use ledger::{
     attach_harness_status, attach_planning_context, attach_recovery_guidance,
     attach_standalone_metadata, record_execution_ledger, should_attach_planning_context,
@@ -45,7 +48,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     let command_snapshot =
         (name == "exec_command").then(|| crate::review::snapshot_text_files(ctx.workspace.root()));
 
-    let result = routing::execute_tool(ctx, name, &effective_args);
+    let result = routing::execute_tool(ctx, name, &effective_args, operation_id.as_deref());
     let mut output = match result {
         Ok(v) => v,
         Err(e) => tool_err(e),
@@ -57,7 +60,13 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         operation_id.as_deref(),
         &mut output,
     );
-    attach_exec_snapshot_review(ctx, command_snapshot, operation_id.as_deref(), &mut output);
+    attach_exec_snapshot_review(
+        ctx,
+        command_snapshot,
+        operation_id.as_deref(),
+        &effective_args,
+        &mut output,
+    );
     finish_task_tracking(ctx, name, args, task_id.as_deref(), &output);
     finish_operation_tracking(
         ctx,
@@ -68,13 +77,14 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         &output,
     );
     record_execution_ledger(ctx, name, &effective_args, &output, task_id.as_deref());
-    finish_planning_stage(ctx, name, output)
+    finish_planning_stage(ctx, name, &effective_args, planning_state, output)
 }
 
 fn attach_exec_snapshot_review(
     ctx: &ToolContext,
     before_snapshot: Option<std::collections::BTreeMap<String, String>>,
     operation_id: Option<&str>,
+    effective_args: &Value,
     output: &mut Value,
 ) {
     let command_succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
@@ -86,26 +96,23 @@ fn attach_exec_snapshot_review(
     }
     let after = crate::review::snapshot_text_files(ctx.workspace.root());
     let change_id = uuid::Uuid::new_v4().simple().to_string();
-    if let Ok(Some(link)) = crate::review::create_snapshot_review(
+    let session_id = effective_args
+        .get("_review_session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Ok(Some(link)) = crate::review::create_snapshot_review_with_session(
         ctx.workspace.root(),
         &change_id,
         operation_id,
+        session_id,
         "exec_command workspace changes",
         &before,
         &after,
     ) {
-        let settings = crate::settings::AppSettings::load_or_default();
-        let base = settings
-            .global_gateway
-            .public_url
-            .trim()
-            .trim_end_matches('/');
         object.insert("change_id".into(), Value::String(change_id));
-        if !base.is_empty() {
-            object.insert(
-                "review_url".into(),
-                Value::String(format!("{base}/review/{}?t={}", link.change_id, link.token)),
-            );
+        if let Some(url) = crate::tools::patch::build_review_url(&link.change_id, &link.token) {
+            object.insert("review_url".into(), Value::String(url));
         }
     }
 }
@@ -115,6 +122,12 @@ fn prepare_planning_stage(
     name: &str,
     effective_args: &Value,
 ) -> Result<Option<PlanningState>, Value> {
+    if ctx.tool_profile.is_compact()
+        && !planning_protected_tool(name, effective_args)
+        && name != "exec_health_check"
+    {
+        return Ok(None);
+    }
     let state = match load_planning_state(ctx) {
         Ok(state) => Some(state),
         Err(error)
@@ -146,11 +159,13 @@ fn policy_stage(
     )
     .err()?;
     let output = policy_tool_err(error);
-    Some(
-        planning_state
-            .map(|state| attach_planning_context(output.clone(), state))
-            .unwrap_or(output),
-    )
+    if let Some(state) = planning_state {
+        return Some(attach_planning_context(output, state));
+    }
+    if let Ok(state) = load_planning_state(ctx) {
+        return Some(attach_planning_context(output, &state));
+    }
+    Some(output)
 }
 
 fn harness_tool_stage(
@@ -250,12 +265,14 @@ fn enrich_execution_output(
     }
     if let (Some(id), Some(object)) = (operation_id, output.as_object_mut()) {
         object.insert("operation_id".into(), Value::String(id.to_string()));
-        if let Some(change_id) = object
-            .get("change_id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-        {
-            let _ = crate::review::attach_operation(ctx.workspace.root(), &change_id, id);
+        if name != "apply_patch" {
+            if let Some(change_id) = object
+                .get("change_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            {
+                let _ = crate::review::attach_operation(ctx.workspace.root(), &change_id, id);
+            }
         }
     }
     if output.get("ok").and_then(Value::as_bool) == Some(false) {
@@ -311,9 +328,20 @@ fn finish_operation_tracking(
     });
 }
 
-fn finish_planning_stage(ctx: &ToolContext, name: &str, mut output: Value) -> Value {
+fn finish_planning_stage(
+    ctx: &ToolContext,
+    name: &str,
+    effective_args: &Value,
+    planning_state: Option<PlanningState>,
+    mut output: Value,
+) -> Value {
     if should_attach_planning_context(ctx, name, &output) {
-        if let Ok(latest) = PlanningService::new(ctx.workspace.root()).state() {
+        let latest = if !mutating_tool_call(name, effective_args) {
+            planning_state.or_else(|| PlanningService::new(ctx.workspace.root()).state().ok())
+        } else {
+            PlanningService::new(ctx.workspace.root()).state().ok()
+        };
+        if let Some(latest) = latest {
             output = attach_planning_context(output, &latest);
             if let Some(planning) = output.get("planning_context") {
                 ctx.record_context_block("planning_status", planning);

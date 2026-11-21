@@ -145,35 +145,6 @@ pub struct OperationRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerificationRecord {
-    pub id: String,
-    pub task_id: String,
-    pub command: String,
-    pub category: String,
-    pub exit_code: Option<i32>,
-    pub passed: bool,
-    pub change_id: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChangeSet {
-    pub id: String,
-    pub task_id: String,
-    pub objective: String,
-    pub reason: ReasonRecord,
-    #[serde(default)]
-    pub files: Vec<FileChangeRecord>,
-    #[serde(default)]
-    pub command_ids: Vec<String>,
-    #[serde(default)]
-    pub verification_ids: Vec<String>,
-    #[serde(default)]
-    pub risks: Vec<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFileState {
     pub path: String,
     pub status: String,
@@ -203,11 +174,4 @@ pub struct WorkspaceHarnessState {
     #[serde(default)]
     pub recent_task_ids: Vec<String>,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HarnessIndex {
-    pub schema_version: u32,
-    #[serde(default)]
-    pub workspaces: HashMap<String, WorkspaceHarnessState>,
 }

@@ -12,6 +12,34 @@ pub(super) fn create(
     success_criteria: Vec<String>,
     constraints: Vec<String>,
 ) -> AppResult<Goal> {
+    create_with_focus(
+        store,
+        title,
+        objective,
+        success_criteria,
+        constraints,
+        false,
+    )
+}
+
+pub(super) fn create_focused(
+    store: &PlanningStore,
+    title: &str,
+    objective: &str,
+    success_criteria: Vec<String>,
+    constraints: Vec<String>,
+) -> AppResult<Goal> {
+    create_with_focus(store, title, objective, success_criteria, constraints, true)
+}
+
+fn create_with_focus(
+    store: &PlanningStore,
+    title: &str,
+    objective: &str,
+    success_criteria: Vec<String>,
+    constraints: Vec<String>,
+    force_focus: bool,
+) -> AppResult<Goal> {
     let title = required_text(title, "Goal title")?;
     let objective = required_text(objective, "Goal objective")?;
     store.update(|state| {
@@ -41,7 +69,7 @@ pub(super) fn create(
             execution_checkpoint: None,
             extra: Default::default(),
         };
-        if state.focus_goal_id.is_none() {
+        if force_focus || state.focus_goal_id.is_none() {
             state.focus_goal_id = Some(goal.id.clone());
         }
         state.goals.push(goal.clone());

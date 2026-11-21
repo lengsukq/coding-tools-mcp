@@ -1,3 +1,5 @@
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -7,6 +9,31 @@ use super::{ToolAuditFilter, ToolAuditPage, ToolAuditRecord, DAY_MS};
 
 const MAX_PAGE_SIZE: usize = 200;
 const PRUNE_INTERVAL_MS: u64 = 60 * 60 * 1000;
+
+struct OrderedAuditRecord(ToolAuditRecord);
+
+impl PartialEq for OrderedAuditRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.timestamp_ms == other.0.timestamp_ms && self.0.request_id == other.0.request_id
+    }
+}
+
+impl Eq for OrderedAuditRecord {}
+
+impl PartialOrd for OrderedAuditRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedAuditRecord {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .timestamp_ms
+            .cmp(&other.0.timestamp_ms)
+            .then_with(|| self.0.request_id.cmp(&other.0.request_id))
+    }
+}
 
 pub(super) struct ToolAuditStore {
     root: PathBuf,
@@ -24,12 +51,12 @@ impl ToolAuditStore {
     }
 
     pub(super) fn append(&mut self, record: &ToolAuditRecord) -> std::io::Result<()> {
+        let mut payload = serde_json::to_vec(record).map_err(std::io::Error::other)?;
+        payload.push(b'\n');
         fs::create_dir_all(&self.root)?;
         let path = self.event_path(record);
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-        serde_json::to_writer(&mut file, record).map_err(std::io::Error::other)?;
-        file.write_all(b"\n")?;
-        file.flush()?;
+        file.write_all(&payload)?;
         self.last_write_error = None;
         Ok(())
     }
@@ -47,24 +74,9 @@ impl ToolAuditStore {
 
         let offset = filter.offset.unwrap_or(0).min(1_000_000);
         let limit = filter.limit.unwrap_or(50).clamp(1, MAX_PAGE_SIZE);
-        let mut matching = self.read_records(filter)?;
-        matching.sort_by(|left, right| {
-            right
-                .timestamp_ms
-                .cmp(&left.timestamp_ms)
-                .then_with(|| right.request_id.cmp(&left.request_id))
-        });
-        let total = matching.len();
-        let error_count = matching
-            .iter()
-            .filter(|record| record.outcome == "error")
-            .count();
-        let workspace_count = matching
-            .iter()
-            .filter_map(|record| record.workspace_id.as_deref())
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        let records = matching.into_iter().skip(offset).take(limit).collect();
+        let top_k = offset.saturating_add(limit);
+        let (records, total, error_count, workspace_count) =
+            self.scan_records_top_k(filter, offset, top_k)?;
 
         Ok(ToolAuditPage {
             records,
@@ -78,9 +90,14 @@ impl ToolAuditStore {
         })
     }
 
-    fn read_records(&mut self, filter: &ToolAuditFilter) -> std::io::Result<Vec<ToolAuditRecord>> {
+    fn scan_records_top_k(
+        &mut self,
+        filter: &ToolAuditFilter,
+        offset: usize,
+        top_k: usize,
+    ) -> std::io::Result<(Vec<ToolAuditRecord>, usize, usize, usize)> {
         if !self.root.exists() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0, 0, 0));
         }
         let workspace_prefix = filter.workspace_id.as_deref().map(workspace_prefix);
         let search = filter.search.as_deref().map(|value| value.to_lowercase());
@@ -93,8 +110,8 @@ impl ToolAuditStore {
             .as_deref()
             .map(|value| value.to_lowercase());
         let outcome_filter = filter.outcome.as_deref();
-        let mut records = Vec::new();
 
+        let mut files = Vec::new();
         for entry in fs::read_dir(&self.root)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
@@ -113,8 +130,20 @@ impl ToolAuditStore {
             {
                 continue;
             }
+            files.push((file_day(&name).unwrap_or(0), entry.path()));
+        }
+        files.sort_by_key(|right| Reverse(right.0));
 
-            let file = match std::fs::File::open(entry.path()) {
+        // Keep at most `offset + limit` newest records in RAM while computing
+        // exact totals, instead of materializing every historical record.
+        let mut heap: BinaryHeap<Reverse<OrderedAuditRecord>> =
+            BinaryHeap::with_capacity(top_k.min(1024));
+        let mut total = 0usize;
+        let mut error_count = 0usize;
+        let mut workspaces = HashSet::<String>::new();
+
+        for (_, path) in files {
+            let file = match std::fs::File::open(path) {
                 Ok(file) => file,
                 Err(_) => {
                     self.last_write_error =
@@ -142,11 +171,40 @@ impl ToolAuditStore {
                     outcome_filter,
                     search.as_deref(),
                 ) {
-                    records.push(record);
+                    total += 1;
+                    if record.outcome == "error" {
+                        error_count += 1;
+                    }
+                    if let Some(workspace_id) = record.workspace_id.as_deref() {
+                        if !workspaces.contains(workspace_id) {
+                            workspaces.insert(workspace_id.to_owned());
+                        }
+                    }
+                    if top_k > 0 {
+                        if heap.len() < top_k {
+                            heap.push(Reverse(OrderedAuditRecord(record)));
+                        } else if let Some(min_kept) = heap.peek() {
+                            if (record.timestamp_ms, &record.request_id)
+                                > (min_kept.0 .0.timestamp_ms, &min_kept.0 .0.request_id)
+                            {
+                                heap.pop();
+                                heap.push(Reverse(OrderedAuditRecord(record)));
+                            }
+                        }
+                    }
                 }
             }
         }
-        Ok(records)
+
+        let mut top: Vec<ToolAuditRecord> = heap.into_iter().map(|entry| entry.0 .0).collect();
+        top.sort_by(|left, right| {
+            right
+                .timestamp_ms
+                .cmp(&left.timestamp_ms)
+                .then_with(|| right.request_id.cmp(&left.request_id))
+        });
+        let records = top.into_iter().skip(offset).collect();
+        Ok((records, total, error_count, workspaces.len()))
     }
 
     pub(super) fn clear(&mut self, workspace_id: Option<&str>) -> std::io::Result<()> {
@@ -171,7 +229,11 @@ impl ToolAuditStore {
         Ok(())
     }
 
-    pub(super) fn prune_expired(&mut self, now_ms: u64, retention_days: u16) -> std::io::Result<()> {
+    pub(super) fn prune_expired(
+        &mut self,
+        now_ms: u64,
+        retention_days: u16,
+    ) -> std::io::Result<()> {
         if !self.root.exists() {
             return Ok(());
         }

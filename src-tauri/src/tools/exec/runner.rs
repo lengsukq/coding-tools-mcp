@@ -123,30 +123,64 @@ async fn wait_for_command(
     cwd: &Path,
     options: &CommandRunOptions,
 ) -> Result<Value, WorkspaceError> {
-    loop {
-        session.refresh_status().await;
-        if session.has_exited() {
-            session.wait_for_readers().await;
-            let snapshot = session.snapshot(options.max_output);
-            ctx.sessions.remove(&session.session_id);
-            return Ok(merge_exec_result(snapshot, start, cmd, cwd, false));
-        }
-        if !options.tty && Instant::now() >= deadline {
-            return timeout_result(ctx, session, options.max_output).await;
-        }
-        if Instant::now() - start >= options.yield_time || options.tty {
-            return Ok(background_snapshot(
-                ctx,
-                session,
-                start,
-                deadline,
-                cmd,
-                cwd,
-                options.max_output,
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    session.refresh_status().await;
+    if session.has_exited() {
+        return finalize_exited_command(ctx, &session, start, cmd, cwd, options.max_output).await;
     }
+    if options.tty {
+        return Ok(background_snapshot(
+            ctx,
+            session,
+            start,
+            deadline,
+            cmd,
+            cwd,
+            options.max_output,
+        ));
+    }
+
+    let yield_deadline = start + options.yield_time;
+    let wait_until = deadline.min(yield_deadline);
+    let remaining = wait_until.saturating_duration_since(Instant::now());
+
+    tokio::select! {
+        _ = session.wait_until_exited() => {
+            finalize_exited_command(ctx, &session, start, cmd, cwd, options.max_output).await
+        }
+        _ = tokio::time::sleep(remaining) => {
+            session.refresh_status().await;
+            if session.has_exited() {
+                return finalize_exited_command(ctx, &session, start, cmd, cwd, options.max_output).await;
+            }
+            if deadline <= yield_deadline || Instant::now() >= deadline {
+                timeout_result(ctx, session, options.max_output).await
+            } else {
+                Ok(background_snapshot(
+                    ctx,
+                    session,
+                    start,
+                    deadline,
+                    cmd,
+                    cwd,
+                    options.max_output,
+                ))
+            }
+        }
+    }
+}
+
+async fn finalize_exited_command(
+    ctx: &ToolContext,
+    session: &ExecSession,
+    start: Instant,
+    cmd: &str,
+    cwd: &Path,
+    max_output: usize,
+) -> Result<Value, WorkspaceError> {
+    session.wait_for_readers().await;
+    let snapshot = session.snapshot(max_output);
+    ctx.sessions.remove(&session.session_id);
+    Ok(merge_exec_result(snapshot, start, cmd, cwd, false))
 }
 
 async fn timeout_result(
@@ -184,7 +218,13 @@ fn background_snapshot(
     max_output: usize,
 ) -> Value {
     let snapshot = session.snapshot(max_output);
-    spawn_timeout_monitor(ctx.sessions.clone(), session, deadline);
+    if !session.has_exited() {
+        drop(spawn_timeout_monitor(
+            ctx.sessions.clone(),
+            session,
+            deadline,
+        ));
+    }
     merge_exec_result(snapshot, start, cmd, cwd, true)
 }
 
@@ -192,10 +232,14 @@ fn spawn_timeout_monitor(
     sessions: Arc<SessionStore>,
     session: Arc<ExecSession>,
     deadline: Instant,
-) {
-    tauri::async_runtime::spawn(async move {
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        tokio::time::sleep(remaining).await;
+        tokio::select! {
+            // Wake and terminate immediately when the command exits before its deadline.
+            _ = session.wait_until_exited() => return,
+            _ = tokio::time::sleep(remaining) => {}
+        }
         session.refresh_status().await;
         if !session.has_exited() {
             session.mark_termination_reason("timeout");
@@ -204,11 +248,11 @@ fn spawn_timeout_monitor(
             session.wait_for_readers().await;
         }
         schedule_session_eviction(sessions, session.session_id.clone());
-    });
+    })
 }
 
 fn schedule_session_eviction(sessions: Arc<SessionStore>, session_id: String) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         tokio::time::sleep(SESSION_EVICT_AFTER_TIMEOUT).await;
         sessions.remove(&session_id);
     });
@@ -257,4 +301,76 @@ fn merge_exec_result(
     }
     enrich_exec_result(command, &mut snapshot);
     snapshot
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn wait_for_command_wakes_via_notify_without_long_delay() {
+        let workspace = tempdir().expect("workspace");
+        let harness = tempdir().expect("harness");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
+        #[cfg(windows)]
+        let cmd = r#"cmd.exe /d /c "echo notify-ok""#;
+        #[cfg(not(windows))]
+        let cmd = r#"sh -c "printf notify-ok""#;
+
+        let options = CommandRunOptions {
+            limit: Duration::from_secs(10),
+            yield_time: Duration::from_secs(10),
+            max_output: 4096,
+            tty: false,
+            stdin_text: String::new(),
+        };
+        let started = Instant::now();
+        let result = run_command(&ctx, cmd, workspace.path(), &options)
+            .await
+            .expect("command should finish");
+        let elapsed = started.elapsed();
+
+        assert_eq!(result["command_ok"], true);
+        assert_eq!(result["exit_code"], 0);
+        assert!(result["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("notify-ok"));
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "wait_for_command should wake via exit_notify instead of waiting for yield/deadline: {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_monitor_cancels_immediately_when_command_exits_early() {
+        let workspace = tempdir().expect("workspace");
+        let harness = tempdir().expect("harness");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
+        #[cfg(windows)]
+        let cmd = r#"cmd.exe /d /c "exit 0""#;
+        #[cfg(not(windows))]
+        let cmd = r#"sh -c "exit 0""#;
+
+        let session = spawn_session(&ctx, cmd, workspace.path(), false)
+            .await
+            .expect("spawn session");
+        let monitor = spawn_timeout_monitor(
+            ctx.sessions.clone(),
+            Arc::clone(&session),
+            Instant::now() + Duration::from_secs(60),
+        );
+        let finished = tokio::time::timeout(Duration::from_secs(2), monitor).await;
+        assert!(
+            finished.is_ok(),
+            "timeout monitor must cancel promptly once the process exits early"
+        );
+        assert!(session.has_exited());
+        ctx.sessions.remove(&session.session_id);
+    }
 }

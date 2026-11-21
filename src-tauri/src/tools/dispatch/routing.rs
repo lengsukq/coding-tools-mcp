@@ -9,7 +9,12 @@ use crate::tools::{
     exec, file, git, history, image_tool, manage, patch, planning, review_tool, session, skill,
 };
 
-pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> WorkspaceResult<Value> {
+pub(super) fn execute_tool(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    operation_id: Option<&str>,
+) -> WorkspaceResult<Value> {
     let ws = &ctx.workspace;
     match name {
         "history_manage" => manage::history_manage(ctx, args),
@@ -41,7 +46,7 @@ pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> Works
         "list_files" => file::list_files(ws, args),
         "search_text" | "grep_text" | "grep" => file::search_text(ws, args),
         "patch_check" => patch::patch_check(ctx, args),
-        "apply_patch" => patch::apply_patch(ctx, args),
+        "apply_patch" => patch::apply_patch_with_operation(ctx, args, operation_id),
         "exec_command" => exec::exec_command(ctx, args),
         "read_output" => session::read_output(&ctx.sessions, args),
         "write_stdin" => session::write_stdin(&ctx.sessions, args),
@@ -67,7 +72,7 @@ pub(super) fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> Works
 }
 
 fn capability_health_check(ctx: &ToolContext) -> Value {
-    let tools = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
+    let tools = crate::tools::registry::exposed_tool_names_cached(ctx.tool_profile);
     let mut hasher = DefaultHasher::new();
     tools.hash(&mut hasher);
     json!({

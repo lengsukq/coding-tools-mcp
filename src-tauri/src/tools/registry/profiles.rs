@@ -1,6 +1,10 @@
+use std::sync::OnceLock;
+
 use serde_json::{json, Value};
 
 use super::{input_schema, tool_definition, P0_TOOLS};
+
+const TOOL_PROFILE_COUNT: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolProfile {
@@ -29,6 +33,16 @@ impl ToolProfile {
             Self::Advanced => "advanced",
             Self::ReadOnly => "read-only",
             Self::CompatReadonlyAll => "compat-readonly-all",
+        }
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Compact => 0,
+            Self::Core => 1,
+            Self::Advanced => 2,
+            Self::ReadOnly => 3,
+            Self::CompatReadonlyAll => 4,
         }
     }
 
@@ -122,7 +136,6 @@ pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "get_default_cwd",
     "list_skills",
     "get_skill",
-    "set_default_cwd",
     "read_file",
     "list_dir",
     "list_files",
@@ -195,38 +208,25 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "view_image",
 ];
 
-pub const READ_ONLY_TOOLS: &[&str] = &[
-    "harness_status",
-    "operation_log",
-    "server_info",
-    "change_review",
-    "history_session_search",
-    "history_session_read",
-    "planning_state",
-    "check_exec_environment",
-    "exec_health_check",
-    "get_default_cwd",
-    "list_skills",
-    "get_skill",
-    "read_file",
-    "list_dir",
-    "list_files",
-    "search_text",
-    "grep_text",
-    "grep",
-    "read_output",
-    "git_status",
-    "git_diff",
-    "git_log",
-    "git_show",
-    "git_blame",
-    "request_permissions",
-    "view_image",
-    "patch_check",
-    "project_state",
-    "task_context",
-    "list_task_events",
-    "change_summary",
+/// Legacy compatibility tools that remain callable by name but must not be advertised to
+/// MCP clients. `request_permissions` cannot persist a grant for ChatGPT in trusted/safe
+/// mode, so advertising it encourages retry loops after policy errors.
+const CLIENT_HIDDEN_TOOLS: &[&str] = &["request_permissions"];
+
+static EXPOSED_NAMES_CACHE: [OnceLock<Vec<&'static str>>; TOOL_PROFILE_COUNT] = [
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+];
+
+static TOOL_LIST_CACHE: [OnceLock<Vec<Value>>; TOOL_PROFILE_COUNT] = [
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
 ];
 
 pub fn is_allowed_tool(name: &str) -> bool {
@@ -240,12 +240,17 @@ pub fn canonical_tool_name(name: &str) -> &str {
     }
 }
 
-pub fn normalize_tool_profile(profile: &str) -> &'static str {
-    ToolProfile::from_config(profile).as_str()
+pub(crate) fn exposed_tool_names_cached(profile: ToolProfile) -> &'static [&'static str] {
+    EXPOSED_NAMES_CACHE[profile.index()]
+        .get_or_init(|| build_exposed_tool_names(profile))
+        .as_slice()
 }
 
 pub fn exposed_tool_names(tool_profile: &str) -> Vec<&'static str> {
-    let profile = ToolProfile::from_config(tool_profile);
+    exposed_tool_names_cached(ToolProfile::from_config(tool_profile)).to_vec()
+}
+
+fn build_exposed_tool_names(profile: ToolProfile) -> Vec<&'static str> {
     let names = match profile {
         ToolProfile::Compact => COMPACT_TOOLS.to_vec(),
         ToolProfile::ReadOnly => CORE_READ_ONLY_TOOLS.to_vec(),
@@ -261,27 +266,30 @@ pub fn exposed_tool_names(tool_profile: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Legacy compatibility tools that remain callable by name but must not be advertised to
-/// MCP clients. `request_permissions` cannot persist a grant for ChatGPT in trusted/safe
-/// mode, so advertising it encourages retry loops after policy errors.
-const CLIENT_HIDDEN_TOOLS: &[&str] = &["request_permissions"];
-
-pub fn list_tools() -> Vec<Value> {
-    list_tools_for_profile("full")
-}
-
 fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
     match name {
         "server_info" => "Return compact server and workspace metadata.",
-        "change_review" => "Create a frozen Workspace or Session aggregate diff and return a remote review_url.",
+        "change_review" => {
+            "Create a frozen Workspace or Session aggregate diff and return a remote review_url."
+        }
         "history_manage" => "Manage project history through one stable action-based API.",
-        "planning_manage" => "Manage Goal and Plan state through one stable action-based API. Goal/Plan writes remain allowed in Plan mode.",
+        "planning_manage" => {
+            "Manage Goal and Plan state through one stable action-based API. Goal/Plan writes remain allowed in Plan mode."
+        }
         "task_manage" => "Manage durable task state through one stable action-based API.",
-        "history_session_bootstrap" => "Create or resume a history archive when explicitly requested; returns bounded metadata only.",
-        "history_session_checkpoint" => "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization.",
-        "history_session_validate" => "Validate or rebuild history indexes without deleting archives.",
+        "history_session_bootstrap" => {
+            "Create or resume a history archive when explicitly requested; returns bounded metadata only."
+        }
+        "history_session_checkpoint" => {
+            "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization."
+        }
+        "history_session_validate" => {
+            "Validate or rebuild history indexes without deleting archives."
+        }
         "history_session_search" => "Search indexed session archives and return bounded matches.",
-        "history_session_read" => "Read a bounded UTF-8 page from one selected session archive.",
+        "history_session_read" => {
+            "Read a bounded UTF-8 page from one selected session archive."
+        }
         "read_file" => "Read a bounded UTF-8 text range from a workspace file.",
         "search_text" | "grep_text" => "Search workspace text with bounded previews.",
         "apply_patch" => "Apply a workspace patch and return a change summary.",
@@ -295,32 +303,33 @@ fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
 
 pub fn list_tools_for_profile(tool_profile: &str) -> Vec<Value> {
     let profile = ToolProfile::from_config(tool_profile);
+    TOOL_LIST_CACHE[profile.index()]
+        .get_or_init(|| build_tools_for_profile(profile))
+        .clone()
+}
+
+fn build_tools_for_profile(profile: ToolProfile) -> Vec<Value> {
     let compat = profile.is_compat_readonly_all();
-    exposed_tool_names(tool_profile)
-        .into_iter()
-        .filter_map(|name| {
+    exposed_tool_names_cached(profile)
+        .iter()
+        .filter_map(|&name| {
             tool_definition(name).map(|tool| {
-                let name = tool.name;
-                let title = tool.title;
-                let description = tool.description;
-                let (read_only, destructive, open_world) =
-                    (tool.read_only, tool.destructive, tool.open_world);
                 let (read_only, destructive, open_world) = if compat {
                     (true, false, false)
                 } else {
-                    (read_only, destructive, open_world)
+                    (tool.read_only, tool.destructive, tool.open_world)
                 };
                 json!({
-                    "name": name,
-                    "title": title,
+                    "name": tool.name,
+                    "title": tool.title,
                     "description": if profile.is_compact() {
-                        compact_description(name, description)
+                        compact_description(tool.name, tool.description)
                     } else {
-                        description
+                        tool.description
                     },
-                    "inputSchema": input_schema(name),
+                    "inputSchema": input_schema(tool.name),
                     "annotations": {
-                        "title": title,
+                        "title": tool.title,
                         "readOnlyHint": read_only,
                         "destructiveHint": destructive,
                         "idempotentHint": read_only,

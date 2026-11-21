@@ -241,28 +241,14 @@ impl Workspace {
             // 否则 Windows 临时目录等路径会被误判为隐藏目录而无法读取。
             return false;
         };
-        let parts: Vec<String> = scan_path
-            .components()
-            .filter_map(|part| match part {
-                Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect();
-        if !include_hidden {
-            for part in &parts {
-                if part.starts_with('.') && part != "." {
-                    return true;
-                }
-            }
-        }
-        if !include_ignored {
-            for part in &parts {
-                if DEFAULT_EXCLUDED_NAMES.contains(&part.as_str()) {
-                    return true;
-                }
-            }
-        }
-        false
+        scan_path.components().any(|part| match part {
+            Component::Normal(name) => crate::tools::io_util::is_ignored_os_component(
+                name,
+                include_hidden,
+                include_ignored,
+            ),
+            _ => false,
+        })
     }
 
     pub fn is_safe_read_path(&self, path: &Path) -> bool {

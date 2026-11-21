@@ -20,17 +20,13 @@ pub fn planning_state(ctx: &ToolContext, _args: &Value) -> WorkspaceResult<Value
 pub fn create_goal(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let title = required_string(args, "title")?;
     let objective = required_string(args, "objective")?;
-    let planning = service(ctx);
-    let goal = planning
-        .create_goal(
+    let goal = service(ctx)
+        .create_goal_focused(
             title,
             objective,
             string_list(args.get("success_criteria"))?,
             string_list(args.get("constraints"))?,
         )
-        .map_err(storage_error)?;
-    let goal = planning
-        .update_goal(UpdateGoalRequest::focus(&goal.id, true))
         .map_err(storage_error)?;
     Ok(tool_ok(json!({
         "goal": goal,
@@ -69,17 +65,13 @@ pub fn update_goal(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 pub fn create_plan(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let title = required_string(args, "title")?;
     let objective = required_string(args, "objective")?;
-    let planning = service(ctx);
-    let plan = planning
-        .create_plan(
+    let plan = service(ctx)
+        .create_plan_active(
             optional_string(args, "goal_id"),
             title,
             objective,
             string_list(args.get("steps"))?,
         )
-        .map_err(storage_error)?;
-    let plan = planning
-        .update_plan(UpdatePlanRequest::activate(&plan.id))
         .map_err(storage_error)?;
     Ok(tool_ok(json!({
         "plan": plan,

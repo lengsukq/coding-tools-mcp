@@ -1,14 +1,21 @@
+use std::fs;
+
 use super::*;
+
+struct ScoredCandidate<'a> {
+    entry: &'a model::ManifestEntry,
+    content: &'a str,
+    score: u64,
+}
 
 pub fn search(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let history_dir = resolve_dir(ctx, args)?;
     let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let expected_revision = storage::archive_revision(&report);
     let manifest = storage::read_manifest(&history_dir)
         .ok()
         .flatten()
-        .filter(|manifest| {
-            manifest.archive_revision == storage::build_manifest(&report).archive_revision
-        })
+        .filter(|manifest| manifest.archive_revision == expected_revision)
         .unwrap_or_else(|| storage::build_manifest(&report));
     let query = args
         .get("query")
@@ -18,42 +25,51 @@ pub fn search(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let tokens = storage::tokenize(query);
     let limit = bounded_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT)?;
     let cursor = bounded_usize(args, "cursor", 0, usize::MAX)?;
-    let mut hits = manifest
+    let mut candidates = manifest
         .entries
         .iter()
         .filter_map(|entry| {
-            let document = report
+            let index = report
                 .documents
-                .iter()
-                .find(|document| document.number == entry.number)?;
+                .binary_search_by_key(&entry.number, |document| document.number)
+                .ok()?;
+            let document = &report.documents[index];
             let score = search_score(entry, &document.content, &tokens);
             if !tokens.is_empty() && score == 0 {
                 return None;
             }
-            Some(SearchHit {
-                number: entry.number,
-                path: entry.path.clone(),
-                title: entry.title.clone(),
-                updated_at: entry.updated_at.clone(),
-                sha256: entry.sha256.clone(),
+            Some(ScoredCandidate {
+                entry,
+                content: &document.content,
                 score,
-                snippet: search_snippet(&document.content, &tokens),
             })
         })
         .collect::<Vec<_>>();
-    hits.sort_by(|left, right| {
+    candidates.sort_by(|left, right| {
         right
             .score
             .cmp(&left.score)
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
-            .then_with(|| right.number.cmp(&left.number))
+            .then_with(|| right.entry.updated_at.cmp(&left.entry.updated_at))
+            .then_with(|| right.entry.number.cmp(&left.entry.number))
     });
-    let total_matches = hits.len();
+    let total_matches = candidates.len();
     let end = cursor.saturating_add(limit).min(total_matches);
+    // Defer snippet extraction and Unicode offset normalization until after pagination.
     let page = if cursor >= total_matches {
         Vec::new()
     } else {
-        hits.drain(cursor..end).collect()
+        candidates[cursor..end]
+            .iter()
+            .map(|candidate| SearchHit {
+                number: candidate.entry.number,
+                path: candidate.entry.path.clone(),
+                title: candidate.entry.title.clone(),
+                updated_at: candidate.entry.updated_at.clone(),
+                sha256: candidate.entry.sha256.clone(),
+                score: candidate.score,
+                snippet: search_snippet(candidate.content, &tokens),
+            })
+            .collect()
     };
     Ok(tool_ok(json!({
         "query": query,
@@ -169,14 +185,19 @@ fn search_score(entry: &model::ManifestEntry, content: &str, tokens: &[String]) 
         return 1;
     }
     let title = entry.title.to_lowercase();
-    let keywords = entry.keywords.join(" ").to_lowercase();
     let content = content.to_lowercase();
     tokens.iter().fold(0, |score, token| {
         let mut token_score = 0;
         if title.contains(token) {
             token_score += 16;
         }
-        if keywords.contains(token) {
+        if entry.keywords.iter().any(|keyword| {
+            if keyword.chars().any(char::is_uppercase) {
+                keyword.to_lowercase().contains(token)
+            } else {
+                keyword.contains(token)
+            }
+        }) {
             token_score += 10;
         }
         if content.contains(token) {
@@ -190,13 +211,22 @@ fn search_snippet(content: &str, tokens: &[String]) -> String {
     if tokens.is_empty() {
         return storage::truncate_text(content.trim(), 280);
     }
-    let (normalized, source_offsets) = normalized_search_text(content);
-    let start = tokens
-        .iter()
-        .filter_map(|token| normalized.find(token))
-        .filter_map(|offset| source_offsets.get(offset).copied())
-        .min()
-        .unwrap_or(0);
+    let start = if content.is_ascii() {
+        let lower = content.to_ascii_lowercase();
+        tokens
+            .iter()
+            .filter_map(|token| lower.find(token))
+            .min()
+            .unwrap_or(0)
+    } else {
+        let (normalized, source_offsets) = normalized_search_text(content);
+        tokens
+            .iter()
+            .filter_map(|token| normalized.find(token))
+            .filter_map(|offset| source_offsets.get(offset).copied())
+            .min()
+            .unwrap_or(0)
+    };
     let prefix = &content[..start];
     let start = prefix
         .char_indices()

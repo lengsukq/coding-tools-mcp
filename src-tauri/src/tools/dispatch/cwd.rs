@@ -82,7 +82,7 @@ fn prefix_patch_paths(base: &str, patch: &str) -> String {
 }
 
 pub fn server_info(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
-    let tools = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
+    let tools = crate::tools::registry::exposed_tool_names_cached(ctx.tool_profile);
     let history_context = crate::tools::history::context_snapshot(ctx).ok().flatten();
     let known_schema_hash = args.get("known_schema_hash").and_then(Value::as_str);
     let runtime =

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Serialize;
 use tauri::command;
 use tauri::webview::WebviewWindowBuilder;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow};
 
 use crate::error::{AppError, AppResult};
 
@@ -34,12 +34,34 @@ impl Drop for RecreateGuard {
     }
 }
 
+/// Ensures the hidden keepalive window is always destroyed even when recreation
+/// fails midway and returns early via `?`.
+struct KeepaliveWindowGuard {
+    window: Option<WebviewWindow>,
+}
+
+impl KeepaliveWindowGuard {
+    fn new(window: WebviewWindow) -> Self {
+        Self {
+            window: Some(window),
+        }
+    }
+}
+
+impl Drop for KeepaliveWindowGuard {
+    fn drop(&mut self) {
+        if let Some(window) = self.window.take() {
+            let _ = window.destroy();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebviewMemorySample {
     /// Desktop host process working set (MB).
     pub main_mb: f64,
-    /// Sum of msedgewebview2 working sets under this app (MB).
+    /// Sum of msedgewebview2 / WebKit helper working sets under this app (MB).
     pub webview_mb: f64,
     pub webview_process_count: u32,
     /// Whether sampling is supported on this OS.
@@ -60,9 +82,9 @@ fn is_sane_size(size: &PhysicalSize<u32>) -> bool {
     size.width >= 200 && size.height >= 200 && size.width < 20_000 && size.height < 20_000
 }
 
-/// Sample UI-related memory. Does not touch MCP/FRP runtimes.
-#[command]
-pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
+/// Synchronous OS process-tree memory sampler; callers on async/UI threads must
+/// run this inside `spawn_blocking`.
+pub(crate) fn sample_webview_memory() -> AppResult<WebviewMemorySample> {
     #[cfg(windows)]
     {
         let sample = crate::platform::windows::process::sample_process_tree_memory()?;
@@ -92,6 +114,14 @@ pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
             supported: false,
         })
     }
+}
+
+/// Sample UI-related memory off the IPC/UI thread. Does not touch MCP/FRP runtimes.
+#[command]
+pub async fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
+    tauri::async_runtime::spawn_blocking(sample_webview_memory)
+        .await
+        .map_err(|err| AppError::Message(format!("内存采样任务失败: {err}")))?
 }
 
 /// Destroy and recreate the main WebView window so Edge WebView2 processes are
@@ -142,6 +172,7 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     let outer_size = window.outer_size().ok().filter(is_sane_size);
 
     // Keepalive window: ensures destroy(main) is not "close last window → exit".
+    // Declared after `_guard` so it drops (and destroys) before `UI_RECREATING` resets.
     let keepalive =
         WebviewWindowBuilder::new(&app, KEEPALIVE_LABEL, WebviewUrl::App("index.html".into()))
             .visible(false)
@@ -150,6 +181,7 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
             .inner_size(1.0, 1.0)
             .build()
             .map_err(|err| AppError::Message(format!("keepalive window failed: {err}")))?;
+    let _keepalive_guard = KeepaliveWindowGuard::new(keepalive);
 
     window
         .destroy()
@@ -224,9 +256,7 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Remove keepalive only after main is fully restored to its intended state.
-    let _ = keepalive.destroy();
-
+    // `_keepalive_guard` destroys keepalive automatically here, after main is restored.
     Ok(())
 }
 
@@ -235,8 +265,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn get_webview_memory_sample_is_supported_and_reports_main_memory() {
-        let sample = get_webview_memory_sample().expect("采样界面内存不应失败");
+    fn sample_webview_memory_is_supported_and_reports_main_memory() {
+        let sample = sample_webview_memory().expect("采样界面内存不应失败");
         assert!(sample.supported);
         assert!(sample.main_mb > 0.0);
     }

@@ -6,7 +6,9 @@ use serde_json::json;
 
 use super::sanitize::{classify_outcome, file_day, unix_time_ms};
 use super::store::ToolAuditStore;
-use super::{ToolAuditCall, ToolAuditFilter, ToolAuditRecord, DAY_MS, DEFAULT_RETENTION_DAYS};
+use super::{
+    AuditRuntime, ToolAuditCall, ToolAuditFilter, ToolAuditRecord, DAY_MS, DEFAULT_RETENTION_DAYS,
+};
 
 #[test]
 fn computer_audit_records_client_and_action_but_never_user_input_or_tokens() {
@@ -305,4 +307,85 @@ fn records_success_tool_policy_runtime_and_global_outcomes() {
         .records
         .iter()
         .any(|record| record.workspace_id.is_none()));
+}
+
+#[test]
+fn finish_counts_response_bytes_identically_to_compact_json_serialization() {
+    let response = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "message": "中文与ASCII混合",
+                "items": [1, 2, 3, {"nested": true}]
+            }
+        }
+    });
+    let expected = serde_json::to_vec(&response).unwrap().len() as u64;
+    let call = ToolAuditCall::new(
+        &json!(99),
+        "read_file",
+        Some("sess-bytes"),
+        "oauth",
+        None,
+        64,
+        &json!({}),
+    );
+    let finished = call.finish(Some("ws-1".into()), &response);
+    assert_eq!(finished.response_bytes, expected);
+}
+
+#[test]
+fn background_runtime_flushes_queued_records_before_list_clear_and_retention() {
+    let dir = tempfile::tempdir().expect("audit runtime temp dir");
+    let runtime = Arc::new(AuditRuntime::new(dir.path().to_path_buf()));
+    let now = unix_time_ms();
+
+    let mut workers = Vec::new();
+    for worker_index in 0..4 {
+        let runtime = runtime.clone();
+        workers.push(thread::spawn(move || {
+            for offset in 0..25 {
+                let mut item = record(Some("workspace-bg"), now + offset, "success");
+                item.request_id = Some(format!("bg-{worker_index}-{offset}"));
+                runtime.record(item, DEFAULT_RETENTION_DAYS);
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+
+    // Immediate list must act as a synchronous flush barrier and observe all 100 records.
+    let page = runtime
+        .list(&ToolAuditFilter::default(), DEFAULT_RETENTION_DAYS)
+        .unwrap();
+    assert_eq!(page.total, 100);
+
+    // Enqueue an expired record and immediately narrow retention; flush barrier ensures
+    // the expired record is written and then pruned deterministically.
+    runtime.record(
+        record(
+            Some("workspace-bg"),
+            now.saturating_sub(5 * DAY_MS),
+            "success",
+        ),
+        DEFAULT_RETENTION_DAYS,
+    );
+    runtime.set_retention_days(2);
+    let after_prune = runtime.list(&ToolAuditFilter::default(), 2).unwrap();
+    assert_eq!(after_prune.total, 100);
+
+    // Enqueue fresh records and immediately clear; flush barrier ensures no queued writes
+    // leak onto disk after clear returns.
+    for offset in 0..20 {
+        runtime.record(
+            record(Some("workspace-bg"), now + 1000 + offset, "success"),
+            DEFAULT_RETENTION_DAYS,
+        );
+    }
+    runtime.clear(None).unwrap();
+    let after_clear = runtime
+        .list(&ToolAuditFilter::default(), DEFAULT_RETENTION_DAYS)
+        .unwrap();
+    assert_eq!(after_clear.total, 0);
 }

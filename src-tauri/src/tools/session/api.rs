@@ -1,6 +1,15 @@
 use super::store::command_id_arg;
 use super::*;
 
+const DEFAULT_READ_OUTPUT_LIMIT: usize = 4096;
+const MAX_READ_OUTPUT_LIMIT: usize = 1_048_576;
+const DEFAULT_SEARCH_MAX_MATCHES: usize = 50;
+const MAX_SEARCH_MAX_MATCHES: usize = 200;
+const DEFAULT_YIELD_TIME_MS: u64 = 1000;
+const MAX_YIELD_TIME_MS: u64 = 30_000;
+const DEFAULT_KILL_WAIT_MS: u64 = 5000;
+const MAX_KILL_WAIT_MS: u64 = 30_000;
+
 pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, WorkspaceError> {
     let output_ref = args
         .get("output_ref")
@@ -32,8 +41,8 @@ pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, Workspac
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
-        .unwrap_or(4096)
-        .clamp(1, 1_048_576) as usize;
+        .unwrap_or(DEFAULT_READ_OUTPUT_LIMIT as u64)
+        .clamp(1, MAX_READ_OUTPUT_LIMIT as u64) as usize;
 
     let active_session = store.output_read_session(session_id)?;
 
@@ -50,8 +59,8 @@ pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, Workspac
         let max_matches = args
             .get("max_matches")
             .and_then(Value::as_u64)
-            .unwrap_or(50)
-            .clamp(1, 200) as usize;
+            .unwrap_or(DEFAULT_SEARCH_MAX_MATCHES as u64)
+            .clamp(1, MAX_SEARCH_MAX_MATCHES as u64) as usize;
         match store.search_full_output(
             session_id,
             stream,
@@ -82,7 +91,7 @@ pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, Workspac
         }
     }
 
-    if active_session.is_none() {
+    let Some(session) = active_session else {
         if let Ok(Some(page)) = store.full_output_page(session_id, stream, requested_offset, limit)
         {
             let mut warnings = Vec::<String>::new();
@@ -124,12 +133,10 @@ pub fn read_output(store: &SessionStore, args: &Value) -> Result<Value, Workspac
             }),
             Err(error) => Err(error),
         };
-    }
+    };
 
-    let session = active_session.expect("active session checked above");
     tauri::async_runtime::block_on(session.refresh_status());
-    let retained = session.retained_stream(stream);
-    let page = retained.read_page(requested_offset, limit);
+    let page = session.read_retained_page(stream, requested_offset, limit);
     let mut warnings = Vec::<String>::new();
     if ref_stream == "full" {
         warnings.push(
@@ -181,7 +188,7 @@ pub fn write_stdin(store: &SessionStore, args: &Value) -> Result<Value, Workspac
     let max_output_bytes = args
         .get("max_output_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(65_536) as usize;
+        .unwrap_or(DEFAULT_SESSION_MAX_OUTPUT_BYTES as u64) as usize;
 
     let running = tauri::async_runtime::block_on(session.is_running());
     if !running {
@@ -204,7 +211,6 @@ pub fn write_stdin(store: &SessionStore, args: &Value) -> Result<Value, Workspac
             category: "runtime",
             retryable: false,
         })?;
-        use tokio::io::AsyncWriteExt;
         tauri::async_runtime::block_on(async {
             stdin
                 .write_all(chars.as_bytes())
@@ -222,10 +228,19 @@ pub fn write_stdin(store: &SessionStore, args: &Value) -> Result<Value, Workspac
     let yield_ms = args
         .get("yield_time_ms")
         .and_then(Value::as_u64)
-        .unwrap_or(1000)
-        .min(30_000);
-    std::thread::sleep(std::time::Duration::from_millis(yield_ms));
-    tauri::async_runtime::block_on(session.refresh_status());
+        .unwrap_or(DEFAULT_YIELD_TIME_MS)
+        .min(MAX_YIELD_TIME_MS);
+    tauri::async_runtime::block_on(async {
+        if yield_ms > 0 {
+            session
+                .wait_for_exit_timeout(Duration::from_millis(yield_ms))
+                .await;
+        }
+        session.refresh_status().await;
+        if session.has_exited() {
+            session.wait_for_readers().await;
+        }
+    });
     Ok(tool_ok(session.snapshot(max_output_bytes)))
 }
 
@@ -235,12 +250,12 @@ pub fn kill_session(store: &SessionStore, args: &Value) -> Result<Value, Workspa
     let max_output_bytes = args
         .get("max_output_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(65_536) as usize;
+        .unwrap_or(DEFAULT_SESSION_MAX_OUTPUT_BYTES as u64) as usize;
     let wait_ms = args
         .get("wait_ms")
         .and_then(Value::as_u64)
-        .unwrap_or(5000)
-        .min(30_000);
+        .unwrap_or(DEFAULT_KILL_WAIT_MS)
+        .min(MAX_KILL_WAIT_MS);
     let signal = args.get("signal").and_then(Value::as_str).unwrap_or("TERM");
 
     let running = tauri::async_runtime::block_on(session.is_running());
@@ -251,25 +266,14 @@ pub fn kill_session(store: &SessionStore, args: &Value) -> Result<Value, Workspa
     if running {
         session.mark_termination_reason("killed");
         tauri::async_runtime::block_on(async {
-            let pid = {
-                let child = session.child.lock().await;
-                child.id()
-            };
-            if let Some(pid) = pid {
+            if let Some(pid) = session.pid() {
                 send_session_signal(pid, signal);
             } else {
-                let mut child = session.child.lock().await;
-                let _ = child.start_kill();
+                session.request_kill().await;
             }
-            if let Ok(Ok(exit_status)) =
-                tokio::time::timeout(std::time::Duration::from_millis(wait_ms), async {
-                    let mut child = session.child.lock().await;
-                    child.wait().await
-                })
-                .await
-            {
-                session.record_exit_status(exit_status);
-            }
+            session
+                .wait_for_exit_timeout(Duration::from_millis(wait_ms))
+                .await;
         });
         tauri::async_runtime::block_on(session.refresh_status());
         if tauri::async_runtime::block_on(session.is_running()) {

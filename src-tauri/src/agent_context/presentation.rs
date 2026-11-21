@@ -1,4 +1,10 @@
-use super::*;
+use std::fmt::Write as _;
+use std::fs;
+use std::path::Path;
+
+use super::InstructionDocument;
+#[cfg(test)]
+use super::SkillEntry;
 
 pub fn render_instruction_documents(documents: &[InstructionDocument]) -> String {
     if documents.is_empty() {
@@ -6,10 +12,11 @@ pub fn render_instruction_documents(documents: &[InstructionDocument]) -> String
     }
     let mut out = String::from("Repository / IDE instructions:\n");
     for document in documents {
-        out.push_str(&format!(
-            "\n## [{}] {}\n{}\n",
+        let _ = writeln!(
+            out,
+            "\n## [{}] {}\n{}",
             document.provider, document.path, document.content
-        ));
+        );
     }
     out.trim().to_string()
 }
@@ -27,10 +34,11 @@ pub fn render_skill_catalog(skills: &[SkillEntry]) -> String {
             .chars()
             .take(250)
             .collect::<String>();
-        out.push_str(&format!(
-            "- {}: {} (provider: {}, id: {})\n",
+        let _ = writeln!(
+            out,
+            "- {}: {} (provider: {}, id: {})",
             skill.descriptor.name, description, skill.descriptor.provider, skill.descriptor.id
-        ));
+        );
     }
     out.trim().to_string()
 }
@@ -73,14 +81,18 @@ pub(super) fn frontmatter_value(frontmatter: &str, key: &str) -> Option<String> 
     })
 }
 
-pub(super) fn cursor_rule_is_always_apply(path: &Path) -> bool {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return false;
-    };
-    let (frontmatter, _) = split_frontmatter(&raw);
+pub(super) fn cursor_rule_content_is_always_apply(raw: &str) -> bool {
+    let (frontmatter, _) = split_frontmatter(raw);
     frontmatter.lines().any(|line| {
         line.trim()
             .replace(' ', "")
             .eq_ignore_ascii_case("alwaysapply:true")
     })
+}
+
+pub(super) fn cursor_rule_is_always_apply(path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    cursor_rule_content_is_always_apply(&raw)
 }

@@ -1,14 +1,18 @@
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::RegexBuilder;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
+
+use crate::tools::io_util::{sha256_hex, truncate_utf8};
 
 const OUTPUT_TTL: Duration = Duration::from_secs(3 * 24 * 60 * 60);
 const OUTPUT_CAPACITY_BYTES: u64 = 512 * 1024 * 1024;
+const CLEANUP_MIN_INTERVAL_SECS: u64 = 60;
 const SEARCH_PREVIEW_BYTES: usize = 512;
 
 #[derive(Debug, Clone)]
@@ -22,21 +26,26 @@ pub(super) struct FullOutputPage {
 #[derive(Debug)]
 pub(super) struct CommandOutputStore {
     root: PathBuf,
+    last_cleanup_unix: AtomicU64,
+}
+
+pub(super) fn workspace_output_dir(workspace_root: &Path) -> PathBuf {
+    let workspace_key = sha256_hex(workspace_root.to_string_lossy().as_bytes());
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("coding-tools-mcp")
+        .join("command-output")
+        .join(&workspace_key[..16])
 }
 
 impl CommandOutputStore {
     pub(super) fn for_workspace(workspace_root: &Path) -> Self {
-        let digest = Sha256::digest(workspace_root.to_string_lossy().as_bytes());
-        let workspace_key = format!("{digest:x}");
-        let root = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("coding-tools-mcp")
-            .join("command-output")
-            .join(&workspace_key[..16]);
+        let root = workspace_output_dir(workspace_root);
         let _ = fs::create_dir_all(&root);
-        let store = Self { root };
-        store.cleanup_best_effort();
-        store
+        Self {
+            root,
+            last_cleanup_unix: AtomicU64::new(0),
+        }
     }
 
     pub(super) fn prepare_command(&self, command_id: &str) -> bool {
@@ -175,7 +184,36 @@ impl CommandOutputStore {
         })))
     }
 
-    pub(super) fn cleanup_best_effort(&self) {
+    pub(super) fn cleanup_best_effort(self: &Arc<Self>) {
+        if !self.try_claim_cleanup_window() {
+            return;
+        }
+        let store = Arc::clone(self);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || store.cleanup_now());
+        } else {
+            tauri::async_runtime::spawn_blocking(move || store.cleanup_now());
+        }
+    }
+
+    fn try_claim_cleanup_window(&self) -> bool {
+        let now_secs = current_unix_secs().max(1);
+        loop {
+            let last = self.last_cleanup_unix.load(Ordering::Relaxed);
+            if last != 0 && now_secs.saturating_sub(last) < CLEANUP_MIN_INTERVAL_SECS {
+                return false;
+            }
+            if self
+                .last_cleanup_unix
+                .compare_exchange(last, now_secs, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    fn cleanup_now(&self) {
         let Ok(entries) = fs::read_dir(&self.root) else {
             return;
         };
@@ -219,13 +257,16 @@ impl CommandOutputStore {
     fn touch_command(&self, command_id: &str) {
         let _ = fs::write(
             self.command_dir(command_id).join(".access"),
-            unix_timestamp(),
+            current_unix_secs().to_string(),
         );
     }
 
     #[cfg(test)]
     fn at_root(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            last_cleanup_unix: AtomicU64::new(0),
+        }
     }
 }
 
@@ -244,22 +285,21 @@ fn directory_stats(path: &Path) -> (SystemTime, u64) {
     (newest, bytes)
 }
 
-fn unix_timestamp() -> String {
+fn current_unix_secs() -> u64 {
     SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into())
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn utf8_preview(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.trim_end_matches(['\r', '\n']).to_string();
     }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", value[..end].trim_end_matches(['\r', '\n']))
+    format!(
+        "{}…",
+        truncate_utf8(value, max_bytes).trim_end_matches(['\r', '\n'])
+    )
 }
 
 #[cfg(test)]
@@ -278,5 +318,16 @@ mod tests {
             .read_page("command", "stdout", 0, 1024)
             .expect("read fallback")
             .is_none());
+    }
+
+    #[test]
+    fn cleanup_window_throttles_back_to_back_scans() {
+        let root = tempdir().expect("temp");
+        let store = CommandOutputStore::at_root(root.path().to_path_buf());
+        assert!(store.try_claim_cleanup_window());
+        assert!(
+            !store.try_claim_cleanup_window(),
+            "second cleanup inside CLEANUP_MIN_INTERVAL_SECS must be throttled"
+        );
     }
 }

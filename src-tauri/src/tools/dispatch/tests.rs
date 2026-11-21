@@ -169,6 +169,23 @@ fn compact_normal_tool_response_omits_repeated_planning_context() {
 }
 
 #[test]
+fn compact_read_only_tool_skips_planning_state_disk_read() {
+    let (workspace, _harness, ctx) = context();
+    let ctx = ctx.with_tool_profile("compact");
+    let state_path = workspace
+        .path()
+        .join(crate::planning::PLANNING_RELATIVE_PATH);
+    std::fs::create_dir_all(state_path.parent().expect("dir")).expect("mkdir");
+    // Corrupt state.json proves compact read-only tools do not touch planning state on disk.
+    std::fs::write(&state_path, "{broken-json").expect("corrupt");
+    std::fs::write(workspace.path().join("hello.txt"), "world\n").expect("file");
+
+    let output = call_tool(&ctx, "read_file", &json!({"path": "hello.txt"}));
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["content"], "world\n");
+}
+
+#[test]
 fn history_validation_is_mutating_only_when_repairing() {
     assert!(!mutating_tool_call(
         "history_session_validate",

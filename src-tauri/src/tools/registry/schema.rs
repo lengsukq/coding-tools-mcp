@@ -1,5 +1,63 @@
 use serde_json::{json, Value};
 
+pub fn input_schema(name: &str) -> Value {
+    management_schema(name)
+        .or_else(|| history_schema(name))
+        .or_else(|| planning_schema(name))
+        .or_else(|| harness_schema(name))
+        .or_else(|| file_schema(name))
+        .or_else(|| exec_schema(name))
+        .or_else(|| git_schema(name))
+        .or_else(|| misc_schema(name))
+        .unwrap_or_else(empty_object_schema)
+}
+
+fn empty_object_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+    })
+}
+
+fn management_schema(name: &str) -> Option<Value> {
+    match name {
+        "history_manage" => Some(history_manage_schema()),
+        "planning_manage" => Some(planning_manage_schema()),
+        "task_manage" => Some(task_manage_schema()),
+        "server_info" => Some(json!({
+            "type": "object",
+            "properties": {
+                "known_schema_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional schema hash remembered by the client. server_info reports schema_changed/reconnect_recommended when it differs."
+                }
+            },
+            "additionalProperties": false
+        })),
+        "change_review" => Some(json!({
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["workspace", "session"],
+                    "default": "workspace",
+                    "description": "workspace compares the current working tree to HEAD; session aggregates operation reviews attributed to one AI/chat session."
+                },
+                "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional explicit session id. Usually omitted because the Gateway injects the active chat session."
+                },
+                "summary": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+        })),
+        _ => None,
+    }
+}
+
 fn history_manage_schema() -> Value {
     json!({
         "type": "object",
@@ -53,19 +111,7 @@ fn planning_manage_schema() -> Value {
             "status": { "type": "string", "enum": ["draft", "active", "paused", "cancelled"] },
             "focus": { "type": "boolean" },
             "steps": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            "step_updates": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "step_id": { "type": "string", "minLength": 1 },
-                        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "blocked", "skipped"] },
-                        "notes": { "type": "string" }
-                    },
-                    "required": ["step_id", "status"],
-                    "additionalProperties": false
-                }
-            },
+            "step_updates": step_updates_schema(),
             "summary": { "type": "string", "minLength": 1 }
         },
         "required": ["action"],
@@ -95,55 +141,25 @@ fn task_manage_schema() -> Value {
     })
 }
 
-pub fn input_schema(name: &str) -> Value {
+fn step_updates_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "step_id": { "type": "string", "minLength": 1 },
+                "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "blocked", "skipped"] },
+                "notes": { "type": "string" }
+            },
+            "required": ["step_id", "status"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn history_schema(name: &str) -> Option<Value> {
     match name {
-        "server_info" => json!({
-            "type": "object",
-            "properties": {
-                "known_schema_hash": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Optional schema hash remembered by the client. server_info reports schema_changed/reconnect_recommended when it differs."
-                }
-            },
-            "additionalProperties": false
-        }),
-        "change_review" => json!({
-            "type": "object",
-            "properties": {
-                "scope": {
-                    "type": "string",
-                    "enum": ["workspace", "session"],
-                    "default": "workspace",
-                    "description": "workspace compares the current working tree to HEAD; session aggregates operation reviews attributed to one AI/chat session."
-                },
-                "session_id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Optional explicit session id. Usually omitted because the Gateway injects the active chat session."
-                },
-                "summary": { "type": "string", "minLength": 1 }
-            },
-            "additionalProperties": false
-        }),
-        "history_manage" => history_manage_schema(),
-        "planning_manage" => planning_manage_schema(),
-        "task_manage" => task_manage_schema(),
-        "list_skills" => json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        "get_skill" => json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "minLength": 1 },
-                "name": { "type": "string", "minLength": 1 }
-            },
-            "description": "Provide either id or name to load a skill. If both are provided, id takes priority.",
-            "additionalProperties": false
-        }),
-        "history_session_bootstrap" => json!({
+        "history_session_bootstrap" => Some(json!({
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
@@ -154,8 +170,8 @@ pub fn input_schema(name: &str) -> Value {
                 "create_if_missing": { "type": "boolean", "default": true }
             },
             "additionalProperties": false
-        }),
-        "history_session_checkpoint" => json!({
+        })),
+        "history_session_checkpoint" => Some(json!({
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
@@ -176,8 +192,8 @@ pub fn input_schema(name: &str) -> Value {
                 "notes": { "type": "string" }
             },
             "additionalProperties": false
-        }),
-        "history_session_validate" => json!({
+        })),
+        "history_session_validate" => Some(json!({
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
@@ -185,8 +201,8 @@ pub fn input_schema(name: &str) -> Value {
                 "repair": { "type": "boolean", "default": false }
             },
             "additionalProperties": false
-        }),
-        "history_session_search" => json!({
+        })),
+        "history_session_search" => Some(json!({
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
@@ -196,8 +212,8 @@ pub fn input_schema(name: &str) -> Value {
                 "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 5 }
             },
             "additionalProperties": false
-        }),
-        "history_session_read" => json!({
+        })),
+        "history_session_read" => Some(json!({
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
@@ -209,13 +225,15 @@ pub fn input_schema(name: &str) -> Value {
                 "expected_hash": { "type": "string", "minLength": 64, "maxLength": 64 }
             },
             "additionalProperties": false
-        }),
-        "planning_state" => json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        "create_goal" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn planning_schema(name: &str) -> Option<Value> {
+    match name {
+        "planning_state" => Some(empty_object_schema()),
+        "create_goal" => Some(json!({
             "type": "object",
             "properties": {
                 "title": { "type": "string", "minLength": 1 },
@@ -225,8 +243,8 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["title", "objective"],
             "additionalProperties": false
-        }),
-        "update_goal" => json!({
+        })),
+        "update_goal" => Some(json!({
             "type": "object",
             "properties": {
                 "goal_id": { "type": "string", "minLength": 1 },
@@ -239,8 +257,8 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["goal_id"],
             "additionalProperties": false
-        }),
-        "create_plan" => json!({
+        })),
+        "create_plan" => Some(json!({
             "type": "object",
             "properties": {
                 "goal_id": { "type": "string", "minLength": 1 },
@@ -250,31 +268,19 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["title", "objective"],
             "additionalProperties": false
-        }),
-        "update_plan" => json!({
+        })),
+        "update_plan" => Some(json!({
             "type": "object",
             "properties": {
                 "plan_id": { "type": "string", "minLength": 1 },
                 "status": { "type": "string", "enum": ["draft", "active", "paused", "cancelled"] },
                 "focus": { "type": "boolean" },
-                "step_updates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "step_id": { "type": "string", "minLength": 1 },
-                            "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "blocked", "skipped"] },
-                            "notes": { "type": "string" }
-                        },
-                        "required": ["step_id", "status"],
-                        "additionalProperties": false
-                    }
-                }
+                "step_updates": step_updates_schema()
             },
             "required": ["plan_id"],
             "additionalProperties": false
-        }),
-        "request_goal_review" => json!({
+        })),
+        "request_goal_review" => Some(json!({
             "type": "object",
             "properties": {
                 "goal_id": { "type": "string", "minLength": 1 },
@@ -282,8 +288,8 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["goal_id", "summary"],
             "additionalProperties": false
-        }),
-        "request_plan_review" => json!({
+        })),
+        "request_plan_review" => Some(json!({
             "type": "object",
             "properties": {
                 "plan_id": { "type": "string", "minLength": 1 },
@@ -291,41 +297,38 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["plan_id", "summary"],
             "additionalProperties": false
-        }),
-        "harness_status" => json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        "exec_health_check" => json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        "operation_log" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn harness_schema(name: &str) -> Option<Value> {
+    match name {
+        "harness_status" | "exec_health_check" => Some(empty_object_schema()),
+        "operation_log" => Some(json!({
             "type": "object",
             "properties": {
                 "cursor": { "type": "integer", "minimum": 0, "default": 0 },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
             },
             "additionalProperties": false
-        }),
-        "project_state" => json!({
+        })),
+        "project_state" => Some(json!({
             "type": "object",
             "properties": {
                 "max_files": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 200 }
             },
             "additionalProperties": false
-        }),
-        "start_task" => json!({
+        })),
+        "start_task" => Some(json!({
             "type": "object",
             "properties": {
                 "objective": { "type": "string", "minLength": 1 }
             },
             "required": ["objective"],
             "additionalProperties": false
-        }),
-        "update_task" => json!({
+        })),
+        "update_task" => Some(json!({
             "type": "object",
             "properties": {
                 "task_id": { "type": "string", "minLength": 1 },
@@ -334,14 +337,14 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["task_id"],
             "additionalProperties": false
-        }),
-        "pause_task" | "resume_task" => json!({
+        })),
+        "pause_task" | "resume_task" => Some(json!({
             "type": "object",
             "properties": { "task_id": { "type": "string", "minLength": 1 } },
             "required": ["task_id"],
             "additionalProperties": false
-        }),
-        "finish_task" => json!({
+        })),
+        "finish_task" => Some(json!({
             "type": "object",
             "properties": {
                 "task_id": { "type": "string", "minLength": 1 },
@@ -350,16 +353,16 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["task_id"],
             "additionalProperties": false
-        }),
-        "task_context" => json!({
+        })),
+        "task_context" => Some(json!({
             "type": "object",
             "properties": {
                 "task_id": { "type": "string" },
                 "max_bytes": { "type": "integer", "minimum": 8192, "maximum": 131072, "default": 32768 }
             },
             "additionalProperties": false
-        }),
-        "list_task_events" => json!({
+        })),
+        "list_task_events" => Some(json!({
             "type": "object",
             "properties": {
                 "task_id": { "type": "string", "minLength": 1 },
@@ -368,13 +371,19 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["task_id"],
             "additionalProperties": false
-        }),
-        "change_summary" => json!({
+        })),
+        "change_summary" => Some(json!({
             "type": "object",
             "properties": { "task_id": { "type": "string" }, "change_id": { "type": "string" } },
             "additionalProperties": false
-        }),
-        "read_file" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn file_schema(name: &str) -> Option<Value> {
+    match name {
+        "read_file" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "minLength": 1 },
@@ -384,8 +393,8 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["path"],
             "additionalProperties": false
-        }),
-        "list_dir" => json!({
+        })),
+        "list_dir" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "default": "." },
@@ -396,8 +405,8 @@ pub fn input_schema(name: &str) -> Value {
                 "include_ignored": { "type": "boolean", "default": false }
             },
             "additionalProperties": false
-        }),
-        "list_files" => json!({
+        })),
+        "list_files" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "default": "." },
@@ -409,8 +418,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_results": { "type": "integer", "minimum": 1, "maximum": 50000, "default": 5000 }
             },
             "additionalProperties": false
-        }),
-        "search_text" | "grep_text" | "grep" => json!({
+        })),
+        "search_text" | "grep_text" | "grep" => Some(json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string", "minLength": 1 },
@@ -433,8 +442,8 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["query"],
             "additionalProperties": false
-        }),
-        "apply_patch" => json!({
+        })),
+        "apply_patch" => Some(json!({
             "type": "object",
             "properties": {
                 "patch": { "type": "string", "minLength": 1 },
@@ -444,16 +453,22 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["patch"],
             "additionalProperties": false
-        }),
-        "patch_check" => json!({
+        })),
+        "patch_check" => Some(json!({
             "type": "object",
             "properties": {
                 "patch": { "type": "string", "minLength": 1 }
             },
             "required": ["patch"],
             "additionalProperties": false
-        }),
-        "exec_command" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn exec_schema(name: &str) -> Option<Value> {
+    match name {
+        "exec_command" => Some(json!({
             "type": "object",
             "properties": {
                 "action": { "type": "string", "enum": ["run", "quality_gate"], "default": "run", "description": "run executes cmd; quality_gate discovers and runs safe project verification checks without adding another public tool." },
@@ -473,8 +488,8 @@ pub fn input_schema(name: &str) -> Value {
                 "reason": { "type": "string", "default": "" }
             },
             "additionalProperties": false
-        }),
-        "write_stdin" => json!({
+        })),
+        "write_stdin" => Some(json!({
             "type": "object",
             "properties": {
                 "command_id": { "type": "string", "minLength": 1, "description": "Stable workspace-owned command id." },
@@ -484,8 +499,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
             "additionalProperties": false
-        }),
-        "kill_session" => json!({
+        })),
+        "kill_session" => Some(json!({
             "type": "object",
             "properties": {
                 "command_id": { "type": "string", "minLength": 1, "description": "Stable workspace-owned command id." },
@@ -495,8 +510,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 32768 }
             },
             "additionalProperties": false
-        }),
-        "read_output" => json!({
+        })),
+        "read_output" => Some(json!({
             "type": "object",
             "properties": {
                 "output_ref": { "type": "string", "minLength": 1 },
@@ -510,8 +525,14 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["output_ref"],
             "additionalProperties": false
-        }),
-        "git_status" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn git_schema(name: &str) -> Option<Value> {
+    match name {
+        "git_status" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "default": "." },
@@ -519,8 +540,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_entries": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 500 }
             },
             "additionalProperties": false
-        }),
-        "git_diff" => json!({
+        })),
+        "git_diff" => Some(json!({
             "type": "object",
             "properties": {
                 "paths": { "type": "array", "items": { "type": "string" }, "default": [] },
@@ -530,8 +551,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 }
             },
             "additionalProperties": false
-        }),
-        "git_log" => json!({
+        })),
+        "git_log" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "default": "." },
@@ -540,8 +561,8 @@ pub fn input_schema(name: &str) -> Value {
                 "skip": { "type": "integer", "minimum": 0, "maximum": 10000, "default": 0 }
             },
             "additionalProperties": false
-        }),
-        "git_show" => json!({
+        })),
+        "git_show" => Some(json!({
             "type": "object",
             "properties": {
                 "rev": { "type": "string", "default": "HEAD" },
@@ -552,8 +573,8 @@ pub fn input_schema(name: &str) -> Value {
                 "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 65536 }
             },
             "additionalProperties": false
-        }),
-        "git_blame" => json!({
+        })),
+        "git_blame" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "minLength": 1 },
@@ -564,8 +585,24 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["path"],
             "additionalProperties": false
-        }),
-        "request_permissions" => json!({
+        })),
+        _ => None,
+    }
+}
+
+fn misc_schema(name: &str) -> Option<Value> {
+    match name {
+        "list_skills" => Some(empty_object_schema()),
+        "get_skill" => Some(json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 }
+            },
+            "description": "Provide either id or name to load a skill. If both are provided, id takes priority.",
+            "additionalProperties": false
+        })),
+        "request_permissions" => Some(json!({
             "type": "object",
             "properties": {
                 "tool_name": {
@@ -601,15 +638,15 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["tool_name", "permission", "reason", "arguments"],
             "additionalProperties": false
-        }),
-        "set_default_cwd" => json!({
+        })),
+        "set_default_cwd" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "default": "." }
             },
             "additionalProperties": false
-        }),
-        "view_image" => json!({
+        })),
+        "view_image" => Some(json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "minLength": 1 },
@@ -621,11 +658,7 @@ pub fn input_schema(name: &str) -> Value {
             },
             "required": ["path"],
             "additionalProperties": false
-        }),
-        _ => json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
+        })),
+        _ => None,
     }
 }

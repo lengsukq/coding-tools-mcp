@@ -1,16 +1,10 @@
 use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
-use crate::tool_audit::{self, ToolAuditFilter, ToolAuditPage, DEFAULT_RETENTION_DAYS};
+use crate::tool_audit::{self, ToolAuditFilter, ToolAuditPage};
 
 #[tauri::command]
 pub async fn list_tool_audit_records(filter: ToolAuditFilter) -> AppResult<ToolAuditPage> {
     tauri::async_runtime::spawn_blocking(move || {
-        let retention_days = DataStore::read_file(|data| {
-            Ok(data
-                .tool_audit_retention_days
-                .unwrap_or(DEFAULT_RETENTION_DAYS))
-        })?;
-        tool_audit::set_retention_days(retention_days);
         tool_audit::list_tool_calls(&filter).map_err(AppError::from)
     })
     .await

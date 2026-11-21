@@ -13,20 +13,22 @@ mod store;
 mod tests;
 
 pub use diff::snapshot_text_files;
-pub use git_scan::{direct_git_repositories, git_changed_file_count};
+pub use git_scan::direct_git_repositories;
+pub(crate) use store::review_summary;
 pub use store::{
     attach_operation, attach_session, cleanup_expired, delete_review, find_review, issue_token,
-    list_reviews, load_review, storage_bytes, ChangeFile, ChangeSet, ReviewLink,
+    list_review_summaries, load_review, storage_bytes, ChangeFile, ChangeSet, ReviewLink,
 };
 
 use diff::change_file_from_bytes;
 use git_scan::{
-    git_blob_at_head, git_head, git_repo_changes, is_git_repository_root, prefixed_review_path,
+    git_blobs_at_head, git_head, git_repo_changes, is_git_repository_root, prefixed_review_path,
 };
 use store::{fresh_token, persist_change_set, workspace_key, PersistChangeSetInput};
 
 const MAX_WORKSPACE_REVIEW_FILES: usize = 500;
 
+#[cfg(test)]
 pub fn create_snapshot_review(
     root: &Path,
     change_id: &str,
@@ -35,39 +37,81 @@ pub fn create_snapshot_review(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
 ) -> Result<Option<ReviewLink>, String> {
+    create_snapshot_review_with_session(root, change_id, operation_id, None, summary, before, after)
+}
+
+pub fn create_snapshot_review_with_session(
+    root: &Path,
+    change_id: &str,
+    operation_id: Option<&str>,
+    session_id: Option<&str>,
+    summary: &str,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Result<Option<ReviewLink>, String> {
     let paths = before
         .keys()
         .chain(after.keys())
-        .cloned()
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
     let affected = paths
-        .iter()
+        .into_iter()
         .filter_map(|path| {
-            let old = before.get(path).cloned().unwrap_or_default();
-            let new = after.get(path).cloned().unwrap_or_default();
+            let old = before.get(path).map(String::as_str);
+            let new = after.get(path).map(String::as_str);
             if old == new {
                 return None;
             }
-            let status = if !before.contains_key(path) {
-                "add"
-            } else if !after.contains_key(path) {
-                "delete"
-            } else {
-                "update"
+            let status = match (old, new) {
+                (None, Some(_)) => "add",
+                (Some(_), None) => "delete",
+                _ => "update",
             };
-            Some((path.clone(), status.to_string(), old, new))
+            Some((
+                path.to_string(),
+                status.to_string(),
+                old.unwrap_or_default().to_string(),
+                new.unwrap_or_default().to_string(),
+            ))
         })
         .collect::<Vec<_>>();
     if affected.is_empty() {
         return Ok(None);
     }
-    create_patch_review(root, change_id, operation_id, summary, &affected).map(Some)
+    create_patch_review_with_metadata(
+        root,
+        change_id,
+        operation_id,
+        session_id,
+        summary,
+        &affected,
+    )
+    .map(Some)
 }
 
+#[cfg(test)]
 pub fn create_patch_review(
     workspace_root: &Path,
     change_id: &str,
     operation_id: Option<&str>,
+    summary: &str,
+    affected: &[(String, String, String, String)],
+) -> Result<ReviewLink, String> {
+    create_patch_review_with_metadata(
+        workspace_root,
+        change_id,
+        operation_id,
+        None,
+        summary,
+        affected,
+    )
+}
+
+pub fn create_patch_review_with_metadata(
+    workspace_root: &Path,
+    change_id: &str,
+    operation_id: Option<&str>,
+    session_id: Option<&str>,
     summary: &str,
     affected: &[(String, String, String, String)],
 ) -> Result<ReviewLink, String> {
@@ -84,7 +128,7 @@ pub fn create_patch_review(
         token_hash,
         workspace_key: workspace_key(workspace_root),
         scope: "operation",
-        session_id: None,
+        session_id: session_id.map(str::to_string),
         operation_ids: operation_id.into_iter().map(str::to_string).collect(),
         base_revision: git_head(workspace_root),
         summary,
@@ -133,17 +177,28 @@ pub fn create_workspace_review(
             &[]
         };
         let changes = git_repo_changes(&repo_root, ignored)?;
+        if files.len() + changes.len() > MAX_WORKSPACE_REVIEW_FILES {
+            return Err(format!(
+                "workspace review has more than {MAX_WORKSPACE_REVIEW_FILES} changed files"
+            ));
+        }
+
+        let head_paths = changes
+            .iter()
+            .filter(|(status, _, _)| status.chars().next().unwrap_or('M') != 'A')
+            .map(|(_, old_path, _)| old_path.as_str())
+            .collect::<Vec<_>>();
+        let head_blobs = git_blobs_at_head(&repo_root, &head_paths);
+
         for (status, old_path, new_path) in changes {
-            if files.len() >= MAX_WORKSPACE_REVIEW_FILES {
-                return Err(format!(
-                    "workspace review has more than {MAX_WORKSPACE_REVIEW_FILES} changed files"
-                ));
-            }
             let code = status.chars().next().unwrap_or('M');
             let before = if code == 'A' {
-                Vec::new()
+                &[][..]
             } else {
-                git_blob_at_head(&repo_root, &old_path)
+                head_blobs
+                    .get(old_path.as_str())
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
             };
             let after = if code == 'D' {
                 Vec::new()
@@ -161,7 +216,7 @@ pub fn create_workspace_review(
             files.push(change_file_from_bytes(
                 &display_path,
                 file_status,
-                &before,
+                before,
                 &after,
             ));
         }
@@ -192,13 +247,20 @@ pub fn create_session_review(
     session_id: &str,
     summary: &str,
 ) -> Result<Option<ReviewLink>, String> {
-    let mut reviews = list_reviews(workspace_root)
+    let mut matching_headers = list_review_summaries(workspace_root)
         .into_iter()
         .filter(|review| {
             review.scope == "operation" && review.session_id.as_deref() == Some(session_id)
         })
         .collect::<Vec<_>>();
-    reviews.sort_by_key(|review| review.created_at);
+    matching_headers.sort_by_key(|review| review.created_at);
+    if matching_headers.is_empty() {
+        return Ok(None);
+    }
+    let reviews = matching_headers
+        .into_iter()
+        .filter_map(|header| store::read_change_set_by_id(workspace_root, &header.id).ok())
+        .collect::<Vec<_>>();
     if reviews.is_empty() {
         return Ok(None);
     }

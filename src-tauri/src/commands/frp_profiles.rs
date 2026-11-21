@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Manager};
 
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
@@ -15,32 +15,36 @@ pub struct FrpProfileDto {
 }
 
 #[tauri::command]
-pub fn list_frp_profiles(state: State<'_, AppState>) -> AppResult<Vec<FrpProfileDto>> {
-    state.with_settings(|store| {
-        Ok(store
-            .data()
-            .frp_profiles
-            .iter()
-            .map(|profile| {
-                let has_token = store
-                    .get_app_secret("frp_profile_token", &profile.id)
-                    .is_some_and(|value| !value.trim().is_empty());
+pub async fn list_frp_profiles(app: AppHandle) -> AppResult<Vec<FrpProfileDto>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_settings(|store| {
+            Ok(store
+                .data()
+                .frp_profiles
+                .iter()
+                .map(|profile| {
+                    let has_token = store
+                        .get_app_secret("frp_profile_token", &profile.id)
+                        .is_some_and(|value| !value.trim().is_empty());
 
-                FrpProfileDto {
-                    id: profile.id.clone(),
-                    name: profile.name.clone(),
-                    server: profile.server.clone(),
-                    server_port: profile.server_port,
-                    has_token,
-                }
-            })
-            .collect())
+                    FrpProfileDto {
+                        id: profile.id.clone(),
+                        name: profile.name.clone(),
+                        server: profile.server.clone(),
+                        server_port: profile.server_port,
+                        has_token,
+                    }
+                })
+                .collect())
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("读取 FRP 配置失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn save_frp_profile(
-    state: State<'_, AppState>,
+pub async fn save_frp_profile(
+    app: AppHandle,
     profile: FrpProfile,
     token: Option<String>,
 ) -> AppResult<FrpProfileDto> {
@@ -56,74 +60,77 @@ pub fn save_frp_profile(
         saved.id = uuid::Uuid::new_v4().to_string().replace('-', "");
     }
 
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        if let Some(existing) = settings
-            .frp_profiles
-            .iter_mut()
-            .find(|item| item.id == saved.id)
-        {
-            *existing = saved.clone();
-        } else {
-            settings.frp_profiles.push(saved.clone());
-        }
-        store.update_settings(settings)?;
-
-        if let Some(token) = token.filter(|value| !value.trim().is_empty()) {
-            store.set_app_secret("frp_profile_token", &saved.id, token.trim())?;
-        }
-        Ok(())
-    })?;
-
-    let has_token = state.with_settings(|store| {
-        Ok(store
-            .get_app_secret("frp_profile_token", &saved.id)
-            .is_some_and(|value| !value.trim().is_empty()))
-    })?;
-
-    Ok(FrpProfileDto {
-        id: saved.id.clone(),
-        name: saved.name,
-        server: saved.server,
-        server_port: saved.server_port,
-        has_token,
+    tauri::async_runtime::spawn_blocking(move || {
+        let has_token = app
+            .state::<AppState>()
+            .with_settings(|store| store.save_frp_profile(saved.clone(), token.as_deref()))?;
+        Ok(FrpProfileDto {
+            id: saved.id,
+            name: saved.name,
+            server: saved.server,
+            server_port: saved.server_port,
+            has_token,
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("保存 FRP 配置任务失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn delete_frp_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        settings.frp_profiles.retain(|profile| profile.id != id);
-        store.update_settings(settings)?;
-        store.delete_app_secret("frp_profile_token", &id)
+pub async fn delete_frp_profile(app: AppHandle, id: String) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .with_settings(|store| store.delete_frp_profile(&id))
     })
+    .await
+    .map_err(|err| AppError::Message(format!("删除 FRP 配置任务失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn get_proxy(state: State<'_, AppState>) -> AppResult<ProxyConfig> {
-    state.with_settings(|store| Ok(store.settings().proxy))
-}
-
-#[tauri::command]
-pub fn set_proxy(state: State<'_, AppState>, proxy: ProxyConfig) -> AppResult<()> {
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        settings.proxy = proxy;
-        store.update_settings(settings)
+pub async fn get_proxy(app: AppHandle) -> AppResult<ProxyConfig> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .with_settings(|store| Ok(store.settings().proxy))
     })
+    .await
+    .map_err(|err| AppError::Message(format!("读取代理配置失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn set_last_workspace(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        settings.last_workspace_id = id;
-        store.update_settings(settings)
+pub async fn set_proxy(app: AppHandle, proxy: ProxyConfig) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_settings(|store| {
+            let mut settings = store.settings();
+            settings.proxy = proxy;
+            store.update_settings(settings)
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("保存代理配置失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn get_last_workspace_id(state: State<'_, AppState>) -> AppResult<String> {
-    state.with_settings(|store| Ok(store.settings().last_workspace_id))
+pub async fn set_last_workspace(app: AppHandle, id: String) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().with_settings(|store| {
+            if store.data().last_workspace_id == id {
+                return Ok(());
+            }
+            let mut settings = store.settings();
+            settings.last_workspace_id = id;
+            store.update_settings(settings)
+        })
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("更新最近工作区失败: {err}")))?
+}
+
+#[tauri::command]
+pub async fn get_last_workspace_id(app: AppHandle) -> AppResult<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .with_settings(|store| Ok(store.data().last_workspace_id.clone()))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("读取最近工作区失败: {err}")))?
 }

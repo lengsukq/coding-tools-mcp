@@ -3,20 +3,28 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use walkdir::WalkDir;
+
+use crate::tools::io_util::{sha256_hex, truncate_utf8};
 
 mod discovery;
 mod presentation;
 
-use discovery::*;
+use discovery::{
+    add_auto_instruction_candidates, add_instruction_candidates_for_provider, add_skill_root,
+    add_skill_roots_for_provider, collect_auto_workspace_skills, collect_skill_candidates,
+    discover_global_instruction_paths, discover_global_skill_paths, display_path,
+    effective_sources, normalize_provider, normalized_source_list, resolve_config_path,
+    split_config_paths, InstructionCandidate,
+};
+use presentation::parse_skill;
 pub use presentation::render_instruction_documents;
 #[cfg(test)]
 pub use presentation::render_skill_catalog;
-use presentation::{cursor_rule_is_always_apply, parse_skill};
 
 pub const AUTO_SOURCE: &str = "auto";
 const DISABLED_SOURCE: &str = "disabled";
+const MAX_SKILL_BYTES: usize = 100 * 1024;
+const COMPACT_WORKSPACE_INSTRUCTION_FILES: &[&str] = &["AGENTS.override.md", "AGENTS.md"];
 const DISCOVERABLE_SOURCES: &[&str] = &[
     "codex", "claude", "cursor", "copilot", "opencode", "zcode", "reasonix",
 ];
@@ -178,13 +186,57 @@ fn scan_global_agent_context_at(home: &Path) -> GlobalAgentContextScan {
     }
 }
 
+pub fn discover_compact_workspace_instructions(
+    workspace_root: &Path,
+    sources: &[String],
+) -> Vec<InstructionDocument> {
+    let (effective, auto_enabled) = effective_sources(sources);
+    if !auto_enabled && effective.iter().any(|source| source == DISABLED_SOURCE) {
+        return Vec::new();
+    }
+
+    let provider = effective
+        .iter()
+        .find(|source| {
+            matches!(
+                source.as_str(),
+                "codex" | "opencode" | "zcode" | "cursor" | "reasonix"
+            )
+        })
+        .cloned()
+        .unwrap_or_else(|| "workspace".to_string());
+
+    for filename in COMPACT_WORKSPACE_INSTRUCTION_FILES {
+        let candidate = workspace_root.join(filename);
+        if !candidate.is_file() {
+            continue;
+        }
+        let canonical = candidate.canonicalize().unwrap_or(candidate);
+        let Ok(raw) = fs::read_to_string(&canonical) else {
+            continue;
+        };
+        let content = raw.trim().to_string();
+        if content.is_empty() {
+            continue;
+        }
+        return vec![InstructionDocument {
+            provider,
+            path: display_path(workspace_root, &canonical),
+            scope: "workspace".into(),
+            content,
+        }];
+    }
+
+    Vec::new()
+}
+
 pub fn discover_instructions(
     workspace_root: &Path,
     sources: &[String],
     custom_paths: &str,
 ) -> Vec<InstructionDocument> {
     let (sources, auto_enabled) = effective_sources(sources);
-    let mut candidates = Vec::<(String, PathBuf, &'static str)>::new();
+    let mut candidates = Vec::<InstructionCandidate>::new();
     for raw_source in &sources {
         let provider = normalize_provider(raw_source);
         add_instruction_candidates_for_provider(&mut candidates, &provider, workspace_root);
@@ -200,8 +252,8 @@ pub fn discover_instructions(
         || (auto_enabled && !custom_paths.trim().is_empty())
     {
         for path in split_config_paths(custom_paths) {
-            candidates.push((
-                "custom".into(),
+            candidates.push(InstructionCandidate::deferred(
+                "custom",
                 resolve_config_path(workspace_root, &path),
                 "custom",
             ));
@@ -211,26 +263,35 @@ pub fn discover_instructions(
     let mut seen_paths = HashSet::new();
     let mut seen_content = HashSet::new();
     let mut result = Vec::new();
-    for (provider, path, scope) in candidates {
-        if !path.is_file() {
+    for candidate in candidates {
+        if !candidate.path.is_file() {
             continue;
         }
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let canonical = candidate
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.path.clone());
         let path_key = canonical.to_string_lossy().to_string();
         if !seen_paths.insert(path_key) {
             continue;
         }
-        let Ok(content) = fs::read_to_string(&canonical) else {
-            continue;
+        let content = match candidate.preloaded_content {
+            Some(content) => content,
+            None => {
+                let Ok(content) = fs::read_to_string(&canonical) else {
+                    continue;
+                };
+                content
+            }
         };
         let content = content.trim().to_string();
-        if content.is_empty() || !seen_content.insert(hex_hash(content.as_bytes())) {
+        if content.is_empty() || !seen_content.insert(sha256_hex(content.as_bytes())) {
             continue;
         }
         result.push(InstructionDocument {
-            provider,
+            provider: candidate.provider,
             path: display_path(workspace_root, &canonical),
-            scope: scope.into(),
+            scope: candidate.scope.into(),
             content,
         });
     }
@@ -264,9 +325,19 @@ pub fn discover_skills(
         }
     }
 
+    // Deduplicate shared provider skill roots (e.g. .agents/skills, .claude/skills)
+    // before walking so each directory tree is traversed at most once.
+    let mut seen_roots = HashSet::new();
     let mut candidates = Vec::<(String, PathBuf, &'static str)>::new();
     for (provider, root, scope) in roots {
-        collect_skill_candidates(&mut candidates, &provider, &root, scope, 4);
+        if !root.is_dir() {
+            continue;
+        }
+        let canonical_root = root.canonicalize().unwrap_or(root);
+        if !seen_roots.insert(canonical_root.clone()) {
+            continue;
+        }
+        collect_skill_candidates(&mut candidates, &provider, &canonical_root, scope, 4);
     }
     if auto_enabled {
         collect_auto_workspace_skills(&mut candidates, workspace_root);
@@ -281,19 +352,17 @@ pub fn discover_skills(
         if !seen_paths.insert(path_key.clone()) {
             continue;
         }
-        let Ok(mut raw) = fs::read_to_string(&canonical) else {
+        let Ok(raw) = fs::read_to_string(&canonical) else {
             continue;
         };
-        if raw.len() > 100 * 1024 {
-            raw = raw.chars().take(100 * 1024).collect();
-        }
-        let Some((name, description, body)) = parse_skill(&raw, &canonical) else {
+        let raw = truncate_utf8(&raw, MAX_SKILL_BYTES);
+        let Some((name, description, body)) = parse_skill(raw, &canonical) else {
             continue;
         };
-        if !seen_content.insert(hex_hash(raw.as_bytes())) {
+        if !seen_content.insert(sha256_hex(raw.as_bytes())) {
             continue;
         }
-        let id = hex_hash(path_key.as_bytes())[..16].to_string();
+        let id = sha256_hex(path_key.as_bytes())[..16].to_string();
         result.push(SkillEntry {
             descriptor: SkillDescriptor {
                 id,
@@ -307,11 +376,6 @@ pub fn discover_skills(
         });
     }
     result
-}
-
-fn hex_hash(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -488,5 +552,93 @@ mod tests {
         assert!(!skills
             .iter()
             .any(|skill| skill.descriptor.name == "ignored-dependency"));
+    }
+
+    #[test]
+    fn compact_workspace_instructions_respect_disabled_priority_and_scope() {
+        let root = tempfile::tempdir().expect("root");
+        let root_path = root.path().canonicalize().expect("canonical root");
+        fs::write(root_path.join("AGENTS.md"), "base agents rules").expect("agents");
+        fs::write(root_path.join("CLAUDE.md"), "claude rules").expect("claude");
+        fs::write(root_path.join("GEMINI.md"), "gemini rules").expect("gemini");
+
+        assert!(
+            discover_compact_workspace_instructions(&root_path, &[DISABLED_SOURCE.into()])
+                .is_empty()
+        );
+
+        let base_docs = discover_compact_workspace_instructions(&root_path, &[AUTO_SOURCE.into()]);
+        assert_eq!(base_docs.len(), 1);
+        assert_eq!(base_docs[0].scope, "workspace");
+        assert_eq!(base_docs[0].path, "AGENTS.md");
+        assert_eq!(base_docs[0].content, "base agents rules");
+
+        fs::write(
+            root_path.join("AGENTS.override.md"),
+            "override agents rules",
+        )
+        .expect("agents override");
+        let override_docs = discover_compact_workspace_instructions(&root_path, &[]);
+        assert_eq!(override_docs.len(), 1);
+        assert_eq!(override_docs[0].scope, "workspace");
+        assert_eq!(override_docs[0].path, "AGENTS.override.md");
+        assert_eq!(override_docs[0].content, "override agents rules");
+
+        // When only non-AGENTS provider files exist, compact discovery returns empty
+        // and never pulls home-directory or other provider instructions.
+        fs::remove_file(root_path.join("AGENTS.override.md")).expect("remove override");
+        fs::remove_file(root_path.join("AGENTS.md")).expect("remove agents");
+        assert!(discover_compact_workspace_instructions(&root_path, &[]).is_empty());
+    }
+
+    #[test]
+    fn discover_skills_truncates_multibyte_utf8_at_byte_boundary() {
+        let root = tempfile::tempdir().expect("root");
+        let skill_dir = root.path().join(".agents/skills/utf8-large");
+        fs::create_dir_all(&skill_dir).expect("skill dir");
+
+        let header =
+            "---\nname: utf8-large\ndescription: Multibyte truncation boundary test\n---\n\n";
+        // Pad with 1 byte so 3-byte Chinese chars straddle the 100 KiB byte boundary.
+        let body = format!("a{}", "中".repeat(45_000));
+        let full_content = format!("{header}{body}");
+        assert!(full_content.len() > MAX_SKILL_BYTES);
+        fs::write(skill_dir.join("SKILL.md"), &full_content).expect("skill");
+
+        let skills = discover_skills(root.path(), &["custom".into()], ".agents/skills");
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].descriptor.name, "utf8-large");
+        assert!(skills[0].body.len() <= MAX_SKILL_BYTES - header.len());
+        assert!(skills[0].body.ends_with('中'));
+    }
+
+    #[test]
+    fn discover_skills_deduplicates_shared_provider_roots() {
+        let root = tempfile::tempdir().expect("root");
+        let skill_dir = root.path().join(".agents/skills/shared-check");
+        fs::create_dir_all(&skill_dir).expect("skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: shared-check\ndescription: Shared across providers\n---\nCheck once.",
+        )
+        .expect("skill");
+
+        let skills = discover_skills(
+            root.path(),
+            &[
+                "codex".into(),
+                "claude".into(),
+                "cursor".into(),
+                "copilot".into(),
+                "opencode".into(),
+            ],
+            "",
+        );
+        let matching = skills
+            .iter()
+            .filter(|skill| skill.descriptor.name == "shared-check")
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].descriptor.provider, "codex");
     }
 }

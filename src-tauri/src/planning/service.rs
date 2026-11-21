@@ -136,6 +136,16 @@ impl PlanningService {
         goal::create(&self.store, title, objective, success_criteria, constraints)
     }
 
+    pub fn create_goal_focused(
+        &self,
+        title: &str,
+        objective: &str,
+        success_criteria: Vec<String>,
+        constraints: Vec<String>,
+    ) -> AppResult<Goal> {
+        goal::create_focused(&self.store, title, objective, success_criteria, constraints)
+    }
+
     pub fn update_goal(&self, request: UpdateGoalRequest) -> AppResult<Goal> {
         goal::update(&self.store, request)
     }
@@ -148,6 +158,16 @@ impl PlanningService {
         steps: Vec<String>,
     ) -> AppResult<Plan> {
         plan::create(&self.store, goal_id, title, objective, steps)
+    }
+
+    pub fn create_plan_active(
+        &self,
+        goal_id: Option<String>,
+        title: &str,
+        objective: &str,
+        steps: Vec<String>,
+    ) -> AppResult<Plan> {
+        plan::create_active(&self.store, goal_id, title, objective, steps)
     }
 
     pub fn update_plan(&self, request: UpdatePlanRequest) -> AppResult<Plan> {
@@ -401,5 +421,58 @@ mod tests {
         assert_eq!(state.execution.plan_id, None);
         assert_eq!(state.execution.step_id, None);
         assert_eq!(state.focus_goal_id.as_deref(), Some(goal.id.as_str()));
+    }
+
+    #[test]
+    fn create_goal_focused_and_create_plan_active_commit_atomically() {
+        let workspace = tempdir().expect("workspace");
+        let service = PlanningService::new(workspace.path());
+
+        let first_goal = service
+            .create_goal("First", "Initial goal", Vec::new(), Vec::new())
+            .expect("first goal");
+        assert_eq!(service.state().unwrap().revision, 1);
+
+        let focused_goal = service
+            .create_goal_focused(
+                "Focused",
+                "Take focus immediately",
+                vec!["Focused in one update".into()],
+                Vec::new(),
+            )
+            .expect("focused goal");
+        let after_goal = service.state().expect("state after goal");
+        assert_eq!(after_goal.revision, 2);
+        assert_eq!(
+            after_goal.focus_goal_id.as_deref(),
+            Some(focused_goal.id.as_str())
+        );
+
+        let active_plan = service
+            .create_plan_active(
+                Some(first_goal.id.clone()),
+                "Active Plan",
+                "Activate and focus immediately",
+                vec!["Step A".into()],
+            )
+            .expect("active plan");
+        assert_eq!(active_plan.status, PlanStatus::Active);
+
+        let after_plan = service.state().expect("state after plan");
+        assert_eq!(after_plan.revision, 3);
+        assert_eq!(
+            after_plan.focus_plan_id.as_deref(),
+            Some(active_plan.id.as_str())
+        );
+        assert_eq!(
+            after_plan.focus_goal_id.as_deref(),
+            Some(first_goal.id.as_str())
+        );
+        let linked_goal = after_plan
+            .goals
+            .iter()
+            .find(|goal| goal.id == first_goal.id)
+            .expect("first goal");
+        assert_eq!(linked_goal.plan_ids, vec![active_plan.id]);
     }
 }

@@ -2,10 +2,12 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::tools::registry::{exposed_tool_names, input_schema, tool_definition};
+use crate::tools::io_util::hash_and_count_json;
+use crate::tools::registry::{
+    exposed_tool_names_cached, input_schema, tool_definition, ToolProfile,
+};
 
 pub const TOOL_SCHEMA_VERSION: u32 = 1;
 
@@ -16,6 +18,13 @@ struct RuntimeIdentity {
 }
 
 static RUNTIME_IDENTITY: OnceLock<RuntimeIdentity> = OnceLock::new();
+static SCHEMA_HASH_CACHE: [OnceLock<String>; 5] = [
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+];
 
 pub fn fingerprint(tool_profile: &str, known_schema_hash: Option<&str>) -> Value {
     let identity = RUNTIME_IDENTITY.get_or_init(|| RuntimeIdentity {
@@ -42,9 +51,16 @@ pub fn fingerprint(tool_profile: &str, known_schema_hash: Option<&str>) -> Value
 }
 
 pub fn schema_hash(tool_profile: &str) -> String {
-    let tools = exposed_tool_names(tool_profile)
-        .into_iter()
-        .filter_map(|name| {
+    let profile = ToolProfile::from_config(tool_profile);
+    SCHEMA_HASH_CACHE[profile.index()]
+        .get_or_init(|| compute_schema_hash(profile))
+        .clone()
+}
+
+fn compute_schema_hash(profile: ToolProfile) -> String {
+    let tools = exposed_tool_names_cached(profile)
+        .iter()
+        .filter_map(|&name| {
             tool_definition(name).map(|definition| {
                 json!({
                     "name": definition.name,
@@ -58,13 +74,14 @@ pub fn schema_hash(tool_profile: &str) -> String {
             })
         })
         .collect::<Vec<_>>();
-    let canonical = serde_json::to_vec(&json!({
+    let payload = json!({
         "version": TOOL_SCHEMA_VERSION,
-        "profile": tool_profile,
+        "profile": profile.as_str(),
         "tools": tools
-    }))
-    .expect("tool schema fingerprint serialization");
-    format!("sha256:{:x}", Sha256::digest(canonical))
+    });
+    hash_and_count_json(&payload)
+        .map(|(_, hash)| hash)
+        .unwrap_or_else(|| "sha256:unavailable".into())
 }
 
 fn build_git_sha() -> &'static str {

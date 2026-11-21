@@ -6,93 +6,133 @@ use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
 use crate::planning::{Goal, Plan, PlanningMode, PlanningService, PlanningState};
 
-#[tauri::command]
-pub fn get_planning_state(
-    state: State<'_, AppState>,
-    workspace_id: String,
-) -> AppResult<PlanningState> {
-    service_for_workspace(&state, &workspace_id)?.state()
+async fn run_planning_blocking<T, F>(
+    state: &AppState,
+    workspace_id: &str,
+    label: &'static str,
+    f: F,
+) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(PathBuf, PlanningService) -> AppResult<T> + Send + 'static,
+{
+    let raw_path = state.workspace_path(workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let canonical = raw_path.canonicalize().map_err(AppError::from)?;
+        let service = PlanningService::new(&canonical);
+        f(canonical, service)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("{label}任务失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn reset_planning_state(
+pub async fn get_planning_state(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> AppResult<PlanningState> {
-    service_for_workspace(&state, &workspace_id)?.reset_state()
+    run_planning_blocking(&state, &workspace_id, "读取规划状态", |_, service| {
+        service.state()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_plan(
+pub async fn reset_planning_state(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> AppResult<PlanningState> {
+    run_planning_blocking(&state, &workspace_id, "重置规划状态", |_, service| {
+        service.reset_state()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_plan(
     state: State<'_, AppState>,
     workspace_id: String,
     plan_id: String,
 ) -> AppResult<PlanningState> {
-    service_for_workspace(&state, &workspace_id)?.delete_plan(&plan_id)
+    run_planning_blocking(&state, &workspace_id, "删除计划", move |_, service| {
+        service.delete_plan(&plan_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_planning_mode(
+pub async fn set_planning_mode(
     state: State<'_, AppState>,
     workspace_id: String,
     mode: PlanningMode,
 ) -> AppResult<PlanningState> {
-    let path = workspace_path(&state, &workspace_id)?;
-    let planning = PlanningService::new(&path).set_mode(mode)?;
-    if mode == PlanningMode::Plan {
-        crate::tools::session::kill_workspace_sessions(&path);
-    }
-    Ok(planning)
+    run_planning_blocking(
+        &state,
+        &workspace_id,
+        "切换规划模式",
+        move |path, service| {
+            let planning = service.set_mode(mode)?;
+            if mode == PlanningMode::Plan {
+                crate::tools::session::kill_workspace_sessions(&path);
+            }
+            Ok(planning)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
-pub fn accept_goal_review(
+pub async fn accept_goal_review(
     state: State<'_, AppState>,
     workspace_id: String,
     goal_id: String,
 ) -> AppResult<Goal> {
-    service_for_workspace(&state, &workspace_id)?.accept_goal_review(&goal_id)
+    run_planning_blocking(&state, &workspace_id, "验收目标", move |_, service| {
+        service.accept_goal_review(&goal_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn reject_goal_review(
+pub async fn reject_goal_review(
     state: State<'_, AppState>,
     workspace_id: String,
     goal_id: String,
     feedback: Option<String>,
 ) -> AppResult<Goal> {
-    service_for_workspace(&state, &workspace_id)?.reject_goal_review(&goal_id, feedback)
+    run_planning_blocking(
+        &state,
+        &workspace_id,
+        "退回目标验收",
+        move |_, service| service.reject_goal_review(&goal_id, feedback),
+    )
+    .await
 }
 
 #[tauri::command]
-pub fn accept_plan_review(
+pub async fn accept_plan_review(
     state: State<'_, AppState>,
     workspace_id: String,
     plan_id: String,
 ) -> AppResult<Plan> {
-    service_for_workspace(&state, &workspace_id)?.accept_plan_review(&plan_id)
+    run_planning_blocking(&state, &workspace_id, "验收计划", move |_, service| {
+        service.accept_plan_review(&plan_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn reject_plan_review(
+pub async fn reject_plan_review(
     state: State<'_, AppState>,
     workspace_id: String,
     plan_id: String,
     feedback: Option<String>,
 ) -> AppResult<Plan> {
-    service_for_workspace(&state, &workspace_id)?.reject_plan_review(&plan_id, feedback)
-}
-
-fn service_for_workspace(state: &AppState, workspace_id: &str) -> AppResult<PlanningService> {
-    Ok(PlanningService::new(&workspace_path(state, workspace_id)?))
-}
-
-fn workspace_path(state: &AppState, workspace_id: &str) -> AppResult<PathBuf> {
-    let path = state.with_workspaces(|store| {
-        store
-            .get(workspace_id)
-            .map(|profile| PathBuf::from(&profile.path))
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
-    })?;
-    path.canonicalize().map_err(AppError::from)
+    run_planning_blocking(
+        &state,
+        &workspace_id,
+        "退回计划验收",
+        move |_, service| service.reject_plan_review(&plan_id, feedback),
+    )
+    .await
 }

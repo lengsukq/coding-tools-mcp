@@ -6,12 +6,12 @@ mod query;
 mod storage;
 mod validation;
 
-use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
+use crate::tools::io_util::serialized_json_bytes;
 use crate::tools::workspace::{
     relative_display, tool_ok, Workspace, WorkspaceError, WorkspaceResult,
 };
@@ -34,8 +34,7 @@ const CONTEXT_SNIPPET_MAX_CHARS: usize = 512;
 /// Return the small, UI-safe session catalog used by the desktop history picker.
 /// The catalog contains metadata and bounded focus text, never the archive body.
 fn bound_bootstrap_result(result: &mut Value) {
-    let mut encoded = serde_json::to_vec(result).unwrap_or_default();
-    if encoded.len() <= BOOTSTRAP_RESPONSE_BUDGET {
+    if serialized_json_bytes(result).unwrap_or(0) <= BOOTSTRAP_RESPONSE_BUDGET {
         return;
     }
     if let Some(state) = result.get_mut("state").and_then(Value::as_object_mut) {
@@ -50,8 +49,7 @@ fn bound_bootstrap_result(result: &mut Value) {
     if let Some(object) = result.as_object_mut() {
         object.insert("state_truncated".into(), Value::Bool(true));
     }
-    encoded = serde_json::to_vec(result).unwrap_or_default();
-    if encoded.len() > BOOTSTRAP_RESPONSE_BUDGET {
+    if serialized_json_bytes(result).unwrap_or(0) > BOOTSTRAP_RESPONSE_BUDGET {
         if let Some(object) = result.as_object_mut() {
             object.insert("assistant_instructions".into(), Value::String("Use history_session_search and history_session_read for exact archive context; checkpoint raw_user_input before final response.".into()));
             object.insert(
@@ -62,8 +60,15 @@ fn bound_bootstrap_result(result: &mut Value) {
     }
 }
 
-fn derived_file_warnings(history_dir: &std::path::Path) -> Vec<String> {
+fn derived_file_warnings(history_dir: &std::path::Path) -> (Vec<String>, u64) {
     let mut warnings = Vec::new();
+    let state_result = storage::read_state(history_dir);
+    let previous_state_revision = state_result
+        .as_ref()
+        .ok()
+        .and_then(|state| state.as_ref())
+        .map(|state| state.state_revision)
+        .unwrap_or(0);
     for (label, result) in [
         (
             "历史索引",
@@ -75,7 +80,7 @@ fn derived_file_warnings(history_dir: &std::path::Path) -> Vec<String> {
         ),
         (
             "memory/state.json",
-            storage::read_state(history_dir).map(|value| value.is_some()),
+            state_result.map(|value| value.is_some()),
         ),
     ] {
         match result {
@@ -84,14 +89,10 @@ fn derived_file_warnings(history_dir: &std::path::Path) -> Vec<String> {
             Err(_) => warnings.push(format!("{label} 损坏，已根据 Markdown 档案重建。")),
         }
     }
-    let readme = history_dir.join("README.md");
-    if readme.exists() {
-        let _ = fs::read_to_string(readme);
-    }
-    warnings
+    (warnings, previous_state_revision)
 }
 
-fn derived_status<T>(result: WorkspaceResult<Option<T>>) -> &'static str {
+fn derived_status<T>(result: &WorkspaceResult<Option<T>>) -> &'static str {
     match result {
         Ok(Some(_)) => "valid",
         Ok(None) => "missing",
@@ -146,16 +147,6 @@ fn reject_ambiguous_history(report: &model::ScanReport) -> WorkspaceResult<()> {
     ))
 }
 
-fn session_not_bootstrapped() -> WorkspaceError {
-    history_error(
-        "SESSION_NOT_BOOTSTRAPPED",
-        "The session_key has not been bootstrapped.",
-        "not_found",
-        false,
-        json!({}),
-    )
-}
-
 fn history_error(
     code: &'static str,
     message: &str,
@@ -170,10 +161,6 @@ fn history_error(
         retryable,
         details,
     }
-}
-
-fn history_dir_display(ctx: &ToolContext, path: &std::path::Path) -> String {
-    crate::tools::workspace::relative_display(ctx.workspace.root(), path)
 }
 
 fn now_timestamp() -> String {

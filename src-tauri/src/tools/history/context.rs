@@ -3,14 +3,14 @@ use super::*;
 pub fn list_sessions_for_workspace(workspace: &Workspace) -> WorkspaceResult<Value> {
     let history_dir = storage::resolve_history_dir(workspace, None, None)?;
     let report = storage::scan(workspace, &history_dir)?;
-    let manifest = storage::build_manifest(&report);
+    let context_revision = storage::archive_revision(&report);
     let sessions = report
         .documents
         .iter()
-        .map(|document| session_summary(document, true))
+        .map(|document| session_summary(document, true).0)
         .collect::<Vec<_>>();
     Ok(json!({
-        "context_revision": manifest.archive_revision,
+        "context_revision": context_revision,
         "history_count": sessions.len(),
         "sessions": sessions
     }))
@@ -25,34 +25,19 @@ pub fn context_snapshot(ctx: &ToolContext) -> WorkspaceResult<Option<Value>> {
     }
     let history_dir = resolve_dir(ctx, &json!({}))?;
     let report = storage::scan(&ctx.workspace, &history_dir)?;
-    let selected = ctx
-        .history_context_sessions
-        .iter()
-        .filter_map(|number| {
-            report
-                .documents
-                .iter()
-                .find(|document| document.number == *number)
-        })
-        .map(|document| session_summary(document, false))
-        .collect::<Vec<_>>();
-    let selected_snippets = ctx
-        .history_context_sessions
-        .iter()
-        .filter_map(|number| {
-            report
-                .documents
-                .iter()
-                .find(|document| document.number == *number)
-        })
-        .flat_map(|document| {
-            session_summary(document, true)
-                .get("snippets")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>();
+    let mut selected = Vec::new();
+    let mut selected_snippets = Vec::new();
+    for number in &ctx.history_context_sessions {
+        let Ok(index) = report
+            .documents
+            .binary_search_by_key(number, |document| document.number)
+        else {
+            continue;
+        };
+        let (summary, snippets) = session_summary(&report.documents[index], false);
+        selected.push(summary);
+        selected_snippets.extend(snippets);
+    }
     let latest_checkpoints = selected
         .iter()
         .map(|session| {
@@ -94,7 +79,10 @@ pub fn context_snapshot(ctx: &ToolContext) -> WorkspaceResult<Option<Value>> {
     })))
 }
 
-fn session_summary(document: &self::model::HistoryDocument, include_snippets: bool) -> Value {
+fn session_summary(
+    document: &self::model::HistoryDocument,
+    embed_snippets: bool,
+) -> (Value, Vec<Value>) {
     let checkpoints = markdown::parse_checkpoint_records(&document.content);
     let latest = checkpoints.iter().max_by_key(|record| record.revision);
     let focus = latest
@@ -127,48 +115,52 @@ fn session_summary(document: &self::model::HistoryDocument, include_snippets: bo
             break;
         }
     }
-    let snippets = if include_snippets {
-        checkpoints
-            .iter()
-            .rev()
-            .take(CONTEXT_SESSION_SNIPPET_LIMIT)
-            .map(|record| {
-                let mut parts = Vec::new();
-                let text = if record.raw_user_input.trim().is_empty() {
-                    record.user_intent.trim()
-                } else {
-                    record.raw_user_input.trim()
-                };
-                if !text.is_empty() {
-                    parts.push(text.to_string());
-                }
-                if !record.decisions.is_empty() {
-                    parts.push(format!("决策：{}", record.decisions.join("；")));
-                }
-                if !record.files_changed.is_empty() {
-                    parts.push(format!("文件：{}", record.files_changed.join("、")));
-                }
-                json!({
-                    "turn_id": record.turn_id,
-                    "timestamp": record.timestamp,
-                    "text": storage::truncate_text(&parts.join(" "), CONTEXT_SNIPPET_MAX_CHARS)
-                })
+    let snippets = checkpoints
+        .iter()
+        .rev()
+        .take(CONTEXT_SESSION_SNIPPET_LIMIT)
+        .map(|record| {
+            let mut parts = Vec::new();
+            let text = if record.raw_user_input.trim().is_empty() {
+                record.user_intent.trim()
+            } else {
+                record.raw_user_input.trim()
+            };
+            if !text.is_empty() {
+                parts.push(text.to_string());
+            }
+            if !record.decisions.is_empty() {
+                parts.push(format!("决策：{}", record.decisions.join("；")));
+            }
+            if !record.files_changed.is_empty() {
+                parts.push(format!("文件：{}", record.files_changed.join("、")));
+            }
+            json!({
+                "turn_id": record.turn_id,
+                "timestamp": record.timestamp,
+                "text": storage::truncate_text(&parts.join(" "), CONTEXT_SNIPPET_MAX_CHARS)
             })
-            .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let (embedded_snippets, detached_snippets) = if embed_snippets {
+        (snippets, Vec::new())
     } else {
-        Vec::new()
+        (Vec::new(), snippets)
     };
-    json!({
-        "number": document.number,
-        "path": document.path,
-        "title": markdown::document_title(&document.content, document.number),
-        "session_key": document.session_key,
-        "created_at": document.created_at,
-        "updated_at": document.updated_at,
-        "bytes": document.content.len(),
-        "entry_count": checkpoints.len(),
-        "latest_focus": storage::truncate_text(&focus, CONTEXT_SNIPPET_MAX_CHARS),
-        "key_files": key_files,
-        "snippets": snippets
-    })
+    (
+        json!({
+            "number": document.number,
+            "path": document.path,
+            "title": markdown::document_title(&document.content, document.number),
+            "session_key": document.session_key,
+            "created_at": document.created_at,
+            "updated_at": document.updated_at,
+            "bytes": document.content.len(),
+            "entry_count": checkpoints.len(),
+            "latest_focus": storage::truncate_text(&focus, CONTEXT_SNIPPET_MAX_CHARS),
+            "key_files": key_files,
+            "snippets": embedded_snippets
+        }),
+        detached_snippets,
+    )
 }

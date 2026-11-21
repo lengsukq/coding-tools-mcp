@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
 use crate::tools::workspace::{tool_ok, WorkspaceError};
@@ -22,16 +22,20 @@ mod store;
 pub use api::{kill_session, read_output, write_stdin};
 pub use process::ExecSession;
 use signal::send_session_signal;
+#[cfg(test)]
 use store::EvictedCommand;
-pub use store::{
-    drop_workspace_session_store, kill_workspace_sessions, workspace_session_store,
-};
+use store::EvictedTombstones;
+pub use store::{drop_workspace_session_store, kill_workspace_sessions, workspace_session_store};
 
 const SESSION_BUFFER_BYTES: usize = 1_048_576;
 const SESSION_HEAD_BYTES: usize = 128 * 1024;
 const SESSION_TAIL_BYTES: usize = SESSION_BUFFER_BYTES - SESSION_HEAD_BYTES;
 const MAX_EVICTED_TOMBSTONES: usize = 256;
-const FINISHED_COMMAND_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+pub(crate) const DEFAULT_SESSION_MAX_OUTPUT_BYTES: usize = 32_768;
+// Completed commands persist full output to CommandOutputStore on disk; keep
+// in-memory buffers only briefly so idle finished commands do not hold up to
+// 2 MB each in RAM.
+const FINISHED_COMMAND_IDLE_TTL: Duration = Duration::from_secs(3 * 60);
 
 /// One command runtime per workspace for the lifetime of the desktop process.
 ///
@@ -44,8 +48,14 @@ static WORKSPACE_SESSION_STORES: OnceLock<Mutex<HashMap<PathBuf, Arc<SessionStor
 
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<ExecSession>>>,
-    evicted: Mutex<HashMap<String, EvictedCommand>>,
+    evicted: Mutex<EvictedTombstones>,
     output_store: Arc<output_store::CommandOutputStore>,
+}
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Drop only completed, unreferenced command sessions. A live child is
@@ -54,9 +64,7 @@ pub async fn reap_idle_command_sessions() -> usize {
     let stores = WORKSPACE_SESSION_STORES
         .get()
         .map(|registry| {
-            registry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+            lock_unpoisoned(registry)
                 .values()
                 .cloned()
                 .collect::<Vec<_>>()
@@ -80,7 +88,7 @@ impl SessionStore {
     fn for_workspace(workspace_root: &Path) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
-            evicted: Mutex::new(HashMap::new()),
+            evicted: Mutex::new(EvictedTombstones::default()),
             output_store: Arc::new(output_store::CommandOutputStore::for_workspace(
                 workspace_root,
             )),
@@ -138,7 +146,9 @@ mod tests {
         assert_eq!(buffer.tail.len(), SESSION_TAIL_BYTES);
         assert!(buffer.evicted_bytes() > 0);
         assert!(String::from_utf8_lossy(&buffer.head).contains("UNIQUE_HEAD_ERROR"));
-        assert!(String::from_utf8_lossy(&buffer.tail).contains("UNIQUE_TAIL_ERROR"));
+        assert!(
+            String::from_utf8_lossy(buffer.tail.make_contiguous()).contains("UNIQUE_TAIL_ERROR")
+        );
 
         let preview = buffer.preview(64 * 1024);
         assert!(preview.truncated);
@@ -202,7 +212,7 @@ mod tests {
         tauri::async_runtime::block_on(writer.write_all(&payload)).expect("write full output");
         tauri::async_runtime::block_on(writer.flush()).expect("flush full output");
         drop(writer);
-        store.evicted.lock().expect("evicted lock").insert(
+        lock_unpoisoned(&store.evicted).insert_with_limit(
             command_id.to_string(),
             EvictedCommand {
                 command_id: command_id.to_string(),
@@ -210,6 +220,7 @@ mod tests {
                 termination_reason: "exited".into(),
                 exit_code: Some(0),
             },
+            MAX_EVICTED_TOMBSTONES,
         );
 
         let page = api::read_output(
@@ -254,5 +265,59 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("FULL_MIDDLE_MARKER"));
+    }
+
+    #[test]
+    fn remember_evicted_evicts_oldest_entries_in_fifo_order() {
+        let mut evicted = EvictedTombstones::default();
+        let total = MAX_EVICTED_TOMBSTONES + 3;
+        for index in 0..total {
+            let id = format!("cmd-{index}");
+            evicted.insert_with_limit(
+                id.clone(),
+                EvictedCommand {
+                    command_id: id,
+                    evicted_at: unix_timestamp(),
+                    termination_reason: "exited".into(),
+                    exit_code: Some(0),
+                },
+                MAX_EVICTED_TOMBSTONES,
+            );
+        }
+
+        assert_eq!(evicted.len(), MAX_EVICTED_TOMBSTONES);
+        for evicted_index in 0..3 {
+            assert!(
+                evicted.get(&format!("cmd-{evicted_index}")).is_none(),
+                "oldest tombstone cmd-{evicted_index} should be evicted first"
+            );
+        }
+        for retained_index in 3..total {
+            assert!(
+                evicted.get(&format!("cmd-{retained_index}")).is_some(),
+                "newer tombstone cmd-{retained_index} should remain retained"
+            );
+        }
+    }
+
+    #[test]
+    fn kill_workspace_sessions_does_not_create_empty_store_or_directory() {
+        let workspace = tempdir().expect("workspace");
+        let output_dir = output_store::workspace_output_dir(workspace.path());
+        assert!(!output_dir.exists());
+
+        let killed = kill_workspace_sessions(workspace.path());
+        assert_eq!(killed, 0);
+        assert!(
+            !output_dir.exists(),
+            "kill_workspace_sessions must not create command output cache dir for unseen workspace"
+        );
+        let registered = WORKSPACE_SESSION_STORES
+            .get()
+            .is_some_and(|registry| lock_unpoisoned(registry).contains_key(workspace.path()));
+        assert!(
+            !registered,
+            "kill_workspace_sessions must not register an empty SessionStore"
+        );
     }
 }

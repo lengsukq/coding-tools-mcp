@@ -26,13 +26,19 @@ pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceErro
         return Err(WorkspaceError::invalid_argument("id or name is required"));
     }
     let skills = ctx.current_skills();
-    let matches = skills
-        .iter()
-        .filter(|skill| {
-            id.is_some_and(|value| skill.descriptor.id == value)
-                || name.is_some_and(|value| skill.descriptor.name.eq_ignore_ascii_case(value))
-        })
-        .collect::<Vec<_>>();
+    let matches = if let Some(target_id) = id {
+        skills
+            .iter()
+            .filter(|skill| skill.descriptor.id == target_id)
+            .collect::<Vec<_>>()
+    } else if let Some(target_name) = name {
+        skills
+            .iter()
+            .filter(|skill| skill.descriptor.name.eq_ignore_ascii_case(target_name))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     match matches.as_slice() {
         [] => Err(WorkspaceError::Tool {
             code: "SKILL_NOT_FOUND",
@@ -112,5 +118,47 @@ mod tests {
         let refreshed = list_skills(&ctx, &json!({})).expect("refreshed skills");
         assert_eq!(refreshed["count"], 1);
         assert_eq!(refreshed["skills"][0]["name"], "live-refresh");
+    }
+
+    #[test]
+    fn get_skill_prioritizes_id_when_both_id_and_name_are_provided() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let harness = tempfile::tempdir().expect("harness");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context")
+                .with_skills(vec![
+                    SkillEntry {
+                        descriptor: SkillDescriptor {
+                            id: "skill-first".into(),
+                            name: "release".into(),
+                            description: "First release skill".into(),
+                            provider: "codex".into(),
+                            path: ".agents/skills/release/SKILL.md".into(),
+                            scope: "workspace".into(),
+                        },
+                        body: "First body".into(),
+                    },
+                    SkillEntry {
+                        descriptor: SkillDescriptor {
+                            id: "skill-second".into(),
+                            name: "release".into(),
+                            description: "Second release skill".into(),
+                            provider: "claude".into(),
+                            path: ".claude/skills/release/SKILL.md".into(),
+                            scope: "workspace".into(),
+                        },
+                        body: "Second body".into(),
+                    },
+                ]);
+
+        let by_both = get_skill(&ctx, &json!({"id": "skill-second", "name": "release"}))
+            .expect("id should disambiguate duplicate name");
+        assert_eq!(by_both["skill"]["id"], "skill-second");
+        assert_eq!(by_both["content"], "Second body");
+
+        let ambiguous = get_skill(&ctx, &json!({"name": "release"}))
+            .expect_err("name-only duplicate should remain ambiguous");
+        assert_eq!(ambiguous.to_error_value()["code"], "AMBIGUOUS_SKILL");
     }
 }

@@ -24,6 +24,7 @@ pub mod tools;
 mod tunnel;
 mod update;
 pub(crate) mod usage;
+pub mod util;
 mod workspace;
 
 use app_state::AppState;
@@ -51,9 +52,8 @@ use commands::{
     save_frp_profile, save_lan_federation_settings, scan_agent_context, scan_global_agent_context,
     scan_lan_peers, set_download_config, set_global_gateway_config, set_global_runtime_settings,
     set_lan_paired_peer_enabled, set_last_workspace, set_planning_mode, set_proxy,
-    set_shared_secret, set_shared_secrets, set_tool_audit_retention_days, show_main_window,
-    start_global_gateway, start_runtime, stop_global_gateway, stop_runtime, uninstall_software,
-    update_workspace,
+    set_shared_secret, set_shared_secrets, set_tool_audit_retention_days, start_global_gateway,
+    start_runtime, stop_global_gateway, stop_runtime, uninstall_software, update_workspace,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -68,24 +68,15 @@ struct TrayDashboard {
     sessions: MenuItem<tauri::Wry>,
 }
 
-/// Update native menu items without ever instantiating another WebView.
-fn update_tray_dashboard(app: &AppHandle) {
-    let Some(menu) = app.try_state::<TrayDashboard>() else {
-        return;
-    };
+struct TraySnapshot {
+    compact: bool,
+    status_text: String,
+    sessions_text: String,
+    memory_sample: Result<commands::ui_memory::WebviewMemorySample, ()>,
+}
+
+fn collect_tray_snapshot(app: &AppHandle) -> TraySnapshot {
     let compact = commands::window_chrome::is_compact_mode();
-    // Check Tauri's window registry, not a cached compact-mode flag.
-    let main_webview_exists = app.get_webview_window("main").is_some();
-    let ui_status = if compact && !main_webview_exists {
-        "主界面：已卸载（无活动主 WebView）"
-    } else if compact {
-        "主界面：正在卸载…"
-    } else if main_webview_exists {
-        "主界面：已加载"
-    } else {
-        "主界面：未找到窗口"
-    };
-    let _ = menu.ui_status.set_text(ui_status);
     let runtime = app.state::<AppState>().with_runtime(|runtime| {
         runtime.refresh_mcp();
         Ok(runtime.mcp_status().state)
@@ -97,7 +88,6 @@ fn update_tray_dashboard(app: &AppHandle) {
         Ok("error") => "异常",
         _ => "未知",
     };
-    let _ = menu.status.set_text(format!("MCP 服务：{status}"));
     let workspaces = app
         .state::<AppState>()
         .gateway
@@ -108,19 +98,46 @@ fn update_tray_dashboard(app: &AppHandle) {
     let session_store = &app.state::<AppState>().gateway.sessions;
     let active_connections = session_store.active_session_count();
     let reclaimed = session_store.maintenance_stats();
-    let _ = menu.sessions.set_text(format!(
-        "工作区：{workspaces} · 会话：{active_connections} · 定时回收：{}",
-        reclaimed.reclaimed_sessions
-    ));
+    let memory_sample = commands::ui_memory::sample_webview_memory().map_err(|_| ());
 
-    if let Ok(sample) = commands::ui_memory::get_webview_memory_sample() {
-        if sample.supported {
+    TraySnapshot {
+        compact,
+        status_text: format!("MCP 服务：{status}"),
+        sessions_text: format!(
+            "工作区：{workspaces} · 会话：{active_connections} · 定时回收：{}",
+            reclaimed.reclaimed_sessions
+        ),
+        memory_sample,
+    }
+}
+
+fn apply_tray_snapshot(app: &AppHandle, snapshot: TraySnapshot) {
+    let Some(menu) = app.try_state::<TrayDashboard>() else {
+        return;
+    };
+    // Check Tauri's window registry, not a cached compact-mode flag.
+    let main_webview_exists = app.get_webview_window("main").is_some();
+    let ui_status = if snapshot.compact && !main_webview_exists {
+        "主界面：已卸载（无活动主 WebView）"
+    } else if snapshot.compact {
+        "主界面：正在卸载…"
+    } else if main_webview_exists {
+        "主界面：已加载"
+    } else {
+        "主界面：未找到窗口"
+    };
+    let _ = menu.ui_status.set_text(ui_status);
+    let _ = menu.status.set_text(&snapshot.status_text);
+    let _ = menu.sessions.set_text(&snapshot.sessions_text);
+
+    match snapshot.memory_sample {
+        Ok(sample) if sample.supported => {
             let total = sample.main_mb + sample.webview_mb;
             let _ = menu.memory.set_text(format!(
                 "内存估算：{total:.0} MB（主进程 {:.0} MB）",
                 sample.main_mb
             ));
-            let label = if compact && !main_webview_exists {
+            let label = if snapshot.compact && !main_webview_exists {
                 "WebKit 辅助进程（可能滞留）"
             } else {
                 "WebKit 辅助进程"
@@ -129,13 +146,15 @@ fn update_tray_dashboard(app: &AppHandle) {
                 "{label}：{} 个 / {:.0} MB",
                 sample.webview_process_count, sample.webview_mb
             ));
-        } else {
+        }
+        Ok(_) => {
             let _ = menu.memory.set_text("当前平台暂不支持内存采样");
         }
-    } else {
-        let _ = menu.memory.set_text("内存采样暂不可用，可点击刷新重试");
+        Err(()) => {
+            let _ = menu.memory.set_text("内存采样暂不可用，可点击刷新重试");
+        }
     }
-    let _ = menu.compact_action.set_text(if compact {
+    let _ = menu.compact_action.set_text(if snapshot.compact {
         "已启用轻量驻留"
     } else if cfg!(target_os = "macos") {
         "轻量驻留（释放界面内存）"
@@ -144,7 +163,26 @@ fn update_tray_dashboard(app: &AppHandle) {
     });
     let _ = menu
         .compact_action
-        .set_enabled(cfg!(target_os = "macos") && !compact);
+        .set_enabled(cfg!(target_os = "macos") && !snapshot.compact);
+}
+
+/// Sample tray state off the main UI thread, then apply menu text updates on
+/// the main thread without ever instantiating another WebView.
+fn update_tray_dashboard(app: &AppHandle) {
+    let app_for_sample = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let sample_handle = app_for_sample.clone();
+        let Ok(snapshot) =
+            tauri::async_runtime::spawn_blocking(move || collect_tray_snapshot(&sample_handle))
+                .await
+        else {
+            return;
+        };
+        let app_for_ui = app_for_sample.clone();
+        let _ = app_for_sample.run_on_main_thread(move || {
+            apply_tray_snapshot(&app_for_ui, snapshot);
+        });
+    });
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -249,14 +287,24 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     {
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            // Tray clicks and menu actions already refresh on demand; keep a
+            // low-frequency background tick to avoid scanning all OS PIDs every 15s.
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             interval.tick().await;
             loop {
                 interval.tick().await;
+                let sample_handle = app_handle.clone();
+                let Ok(snapshot) = tauri::async_runtime::spawn_blocking(move || {
+                    collect_tray_snapshot(&sample_handle)
+                })
+                .await
+                else {
+                    break;
+                };
                 let app_for_ui = app_handle.clone();
                 if app_handle
-                    .run_on_main_thread(move || update_tray_dashboard(&app_for_ui))
+                    .run_on_main_thread(move || apply_tray_snapshot(&app_for_ui, snapshot))
                     .is_err()
                 {
                     break;
@@ -283,6 +331,8 @@ fn spawn_memory_maintenance(app_handle: AppHandle) {
                 .maintenance_sweep();
             let completed_commands = crate::tools::session::reap_idle_command_sessions().await;
             crate::lan_peer::prune_caches();
+            #[cfg(target_os = "macos")]
+            crate::platform::macos::process::trim_process_heap();
             if sessions > 0 || capabilities > 0 || completed_commands > 0 {
                 eprintln!(
                     "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands}"
@@ -301,6 +351,20 @@ pub fn run() {
     }
     if !platform::acquire_single_instance() {
         return;
+    }
+    // Cap Tokio worker & blocking threads so the resident local gateway does
+    // not allocate per-core thread stacks and allocator arenas on 10-16 core hosts.
+    let worker_threads = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(2, 4))
+        .unwrap_or(2);
+    let _tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(16)
+        .enable_all()
+        .build()
+        .ok();
+    if let Some(rt) = _tokio_runtime.as_ref() {
+        tauri::async_runtime::set(rt.handle().clone());
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -402,7 +466,6 @@ pub fn run() {
             recreate_ui_webview,
             enter_compact_mode,
             hide_to_tray,
-            show_main_window,
             quit_app,
         ])
         .build(tauri::generate_context!())

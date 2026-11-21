@@ -5,7 +5,7 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let history_dir = resolve_dir(ctx, args)?;
     storage::ensure_directory(&history_dir)?;
     let _lock = storage::lock_directory(&history_dir)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let mut report = storage::scan(&ctx.workspace, &history_dir)?;
     reject_ambiguous_history(&report)?;
     if !report.missing_numbers.is_empty() {
         return Err(history_error(
@@ -17,18 +17,19 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         ));
     }
 
-    let mut warnings = derived_file_warnings(&history_dir);
+    let (mut warnings, previous_state_revision) = derived_file_warnings(&history_dir);
     let requested_initial_input = args
         .get("initial_user_input")
         .and_then(Value::as_str)
         .map(str::to_string)
         .filter(|value| !value.is_empty());
-    let existing = report
+    let existing_index = report
         .documents
         .iter()
-        .find(|document| document.session_key.as_deref() == Some(session_key.as_str()));
+        .position(|document| document.session_key.as_deref() == Some(session_key.as_str()));
     let (current_number, current_path, created, resumed, initial_input_captured) =
-        if let Some(document) = existing {
+        if let Some(index) = existing_index {
+            let document = report.documents[index].clone();
             let initial_records = markdown::parse_initial_input_records(&document.content);
             let initial_input_captured = !initial_records.is_empty();
             let initial_input_supplied = requested_initial_input.is_some();
@@ -53,10 +54,23 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
                         content_hash,
                     };
                     let content = markdown::with_updated_at(&document.content, &record.captured_at);
+                    let updated_content =
+                        markdown::append_initial_input_revision(&content, &record);
                     storage::write_markdown(
                         &history_dir.join(format!("{}.md", document.number)),
-                        &markdown::append_initial_input_revision(&content, &record),
+                        &updated_content,
                     )?;
+                    storage::upsert_document(
+                        &mut report,
+                        model::HistoryDocument {
+                            number: document.number,
+                            path: document.path.clone(),
+                            content: updated_content,
+                            session_key: document.session_key.clone(),
+                            created_at: document.created_at.clone(),
+                            updated_at: Some(record.captured_at),
+                        },
+                    );
                 }
             } else if !initial_input_captured {
                 warnings.push(
@@ -66,7 +80,7 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             }
             (
                 document.number,
-                document.path.clone(),
+                document.path,
                 false,
                 true,
                 initial_input_captured || initial_input_supplied,
@@ -86,7 +100,8 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
                 ));
             }
             let number = report.latest_number().unwrap_or(0) + 1;
-            let relative_path = format!("{}/{number}.md", history_dir_display(ctx, &history_dir));
+            let doc_path = history_dir.join(format!("{number}.md"));
+            let relative_path = relative_display(ctx.workspace.root(), &doc_path);
             let timestamp = now_timestamp();
             let title = args
                 .get("title")
@@ -118,26 +133,30 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
                 &timestamp,
                 initial_input.as_ref(),
             );
-            storage::write_markdown(&history_dir.join(format!("{number}.md")), &content)?;
+            storage::write_markdown(&doc_path, &content)?;
+            storage::upsert_document(
+                &mut report,
+                model::HistoryDocument {
+                    number,
+                    path: relative_path.clone(),
+                    content,
+                    session_key: Some(session_key.clone()),
+                    created_at: Some(timestamp.clone()),
+                    updated_at: Some(timestamp),
+                },
+            );
             (number, relative_path, true, false, initial_input.is_some())
         };
 
-    let refreshed = storage::scan(&ctx.workspace, &history_dir)?;
-    reject_ambiguous_history(&refreshed)?;
-    let manifest = storage::build_manifest(&refreshed);
-    let previous_state_revision = storage::read_state(&history_dir)
-        .ok()
-        .flatten()
-        .map(|state| state.state_revision)
-        .unwrap_or(0);
+    let manifest = storage::build_manifest(&report);
     let state = storage::build_state(
-        &refreshed,
+        &report,
         &manifest,
         Some(current_number),
         &now_timestamp(),
         previous_state_revision + 1,
     );
-    storage::write_index(&history_dir, &storage::rebuild_index(&refreshed))?;
+    storage::write_index(&history_dir, &storage::rebuild_index(&report))?;
     storage::write_manifest(&history_dir, &manifest)?;
     storage::write_state(&history_dir, &state)?;
 
@@ -153,9 +172,9 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             "created": created,
             "resumed": resumed,
             "initial_input_captured": initial_input_captured,
-            "sequence_valid": refreshed.sequence_valid(),
-            "history_count": refreshed.documents.len(),
-            "total_history_bytes": refreshed.total_bytes(),
+            "sequence_valid": report.sequence_valid(),
+            "history_count": report.documents.len(),
+            "total_history_bytes": report.total_bytes(),
             "state_revision": state.state_revision,
             "archive_revision": manifest.archive_revision,
             "warnings": warnings
@@ -172,9 +191,9 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         "created": created,
         "resumed": resumed,
         "initial_input_captured": initial_input_captured,
-        "sequence_valid": refreshed.sequence_valid(),
-        "history_count": refreshed.documents.len(),
-        "total_history_bytes": refreshed.total_bytes(),
+        "sequence_valid": report.sequence_valid(),
+        "history_count": report.documents.len(),
+        "total_history_bytes": report.total_bytes(),
         "state_revision": state.state_revision,
         "archive_revision": manifest.archive_revision,
         "state": state,
@@ -217,63 +236,55 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let session_key = resolve_session_key(ctx, args)?.0;
     let history_dir = resolve_dir(ctx, args)?;
     storage::ensure_directory(&history_dir)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
-    reject_ambiguous_history(&report)?;
-    let document = report
-        .documents
-        .iter()
-        .find(|document| document.session_key.as_deref() == Some(session_key.as_str()));
-    if document.is_none() {
-        let bootstrap_result = bootstrap(
-            ctx,
-            &json!({
-                "session_key": session_key,
-                "history_dir": args.get("history_dir"),
-                "workspace_root": args.get("workspace_root"),
-                "title": "开发会话",
-                "create_if_missing": true
-            }),
-        )?;
-        let expected_path = bootstrap_result
-            .get("current_path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                history_error(
-                    "SESSION_TARGET_UNAVAILABLE",
-                    "Unable to create a lazy history target.",
-                    "internal",
-                    true,
-                    json!({}),
-                )
-            })?;
-        let mut retry_args = args.clone();
-        if let Some(object) = retry_args.as_object_mut() {
-            object.insert("session_key".into(), Value::String(session_key.clone()));
-            object.insert(
-                "expected_path".into(),
-                Value::String(expected_path.to_string()),
-            );
-        }
-        return checkpoint(ctx, &retry_args);
-    }
-    let expected_path = args
-        .get("expected_path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| document.expect("checked above").path.as_str())
-        .to_string();
-    let host_session_key_mismatch = host_session_key(args)
-        .map(|host| host != session_key.as_str())
-        .unwrap_or(false);
     let _lock = storage::lock_directory(&history_dir)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let mut report = storage::scan(&ctx.workspace, &history_dir)?;
     reject_ambiguous_history(&report)?;
-    let document = report
+
+    let existing_index = report
         .documents
         .iter()
-        .find(|document| document.session_key.as_deref() == Some(session_key.as_str()))
-        .ok_or_else(session_not_bootstrapped)?;
+        .position(|document| document.session_key.as_deref() == Some(session_key.as_str()));
+
+    let timestamp = now_timestamp();
+    let (document, lazily_created) = if let Some(index) = existing_index {
+        (report.documents[index].clone(), false)
+    } else {
+        if !report.missing_numbers.is_empty() {
+            return Err(history_error(
+                "HISTORY_SEQUENCE_CONFLICT",
+                "History numbering contains gaps; run history_session_validate before creating a session.",
+                "validation",
+                true,
+                json!({"missing_numbers": report.missing_numbers}),
+            ));
+        }
+        let number = report.latest_number().unwrap_or(0) + 1;
+        let doc_path = history_dir.join(format!("{number}.md"));
+        let relative_path = relative_display(ctx.workspace.root(), &doc_path);
+        let content = markdown::render_document(number, "开发会话", &session_key, &timestamp, None);
+        (
+            model::HistoryDocument {
+                number,
+                path: relative_path,
+                content,
+                session_key: Some(session_key.clone()),
+                created_at: Some(timestamp.clone()),
+                updated_at: Some(timestamp.clone()),
+            },
+            true,
+        )
+    };
+
+    let expected_path = if lazily_created {
+        document.path.clone()
+    } else {
+        args.get("expected_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(document.path.as_str())
+            .to_string()
+    };
     if document.path != expected_path {
         return Err(history_error(
             "SESSION_TARGET_MISMATCH",
@@ -288,7 +299,6 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         ));
     }
 
-    let timestamp = now_timestamp();
     let mut record = markdown::checkpoint_from_args(args, &timestamp)
         .map_err(WorkspaceError::invalid_argument)?;
     let user_input_captured = !record.raw_user_input.trim().is_empty();
@@ -317,28 +327,38 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         let content = markdown::with_updated_at(&document.content, &record.timestamp);
         (true, markdown::append_checkpoint_record(&content, &record))
     };
-    if updated {
+    if updated || lazily_created {
         storage::write_markdown(
             &history_dir.join(format!("{}.md", document.number)),
             &final_content,
         )?;
+        storage::upsert_document(
+            &mut report,
+            model::HistoryDocument {
+                number: document.number,
+                path: document.path.clone(),
+                content: final_content.clone(),
+                session_key: document.session_key.clone(),
+                created_at: document.created_at.clone(),
+                updated_at: Some(record.timestamp.clone()),
+            },
+        );
     }
 
-    let refreshed = storage::scan(&ctx.workspace, &history_dir)?;
-    let manifest = storage::build_manifest(&refreshed);
+    let manifest = storage::build_manifest(&report);
     let state_revision = storage::read_state(&history_dir)
         .ok()
         .flatten()
         .map(|state| state.state_revision + 1)
         .unwrap_or(1);
     let state = storage::build_state(
-        &refreshed,
+        &report,
         &manifest,
         Some(document.number),
         &now_timestamp(),
         state_revision,
     );
-    storage::write_index(&history_dir, &storage::rebuild_index(&refreshed))?;
+    storage::write_index(&history_dir, &storage::rebuild_index(&report))?;
     storage::write_manifest(&history_dir, &manifest)?;
     storage::write_state(&history_dir, &state)?;
 
@@ -349,9 +369,6 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     }
     if redacted {
         warnings.push("检测到疑似敏感信息，归档内容已脱敏。".into());
-    }
-    if host_session_key_mismatch {
-        warnings.push("宿主会话标识已变化；本次仍使用解析出的稳定目标，未切换历史文件。".into());
     }
     if ctx.tool_profile.is_compact() {
         return Ok(tool_ok(json!({
@@ -373,7 +390,6 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         "path": document.path,
         "session_key": session_key,
         "expected_path": expected_path,
-        "host_session_key_mismatch": host_session_key_mismatch,
         "turn_id": record.turn_id,
         "revision": record.revision,
         "supersedes": record.supersedes,

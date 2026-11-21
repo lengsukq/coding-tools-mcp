@@ -8,6 +8,9 @@ use crate::tools::workspace::Workspace;
 static NETWORK_COMMAND_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DANGEROUS_COMMAND_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static INTERPRETER_MUTATION_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static EXTERNAL_POSIX_PATH_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static EXTERNAL_WINDOWS_DRIVE_PATTERN: std::sync::OnceLock<regex::Regex> =
+    std::sync::OnceLock::new();
 
 const BASIC_READ_ONLY_COMMANDS: &[&str] = &[
     "pwd", "ls", "dir", "cat", "head", "tail", "grep", "find", "which", "echo",
@@ -256,21 +259,22 @@ pub fn validate_command_for_workspace(
             "Shell chaining, redirection and expansion are not allowed".into(),
         ));
     }
-    if (dangerous_command_pattern().is_match(command)
-        || interpreter_mutation_pattern().is_match(command))
+    let is_dangerous = dangerous_command_pattern().is_match(command);
+    let is_interpreter_mutation = interpreter_mutation_pattern().is_match(command);
+    if (is_dangerous || is_interpreter_mutation)
         && command_targets_protected_repository_asset(command)
     {
         return Err(PolicyError(
             "PROTECTED_REPOSITORY_ASSET: 禁止删除或递归清空 .git/.github".into(),
         ));
     }
-    if interpreter_mutation_pattern().is_match(command) && command_contains_external_path(command) {
+    if is_interpreter_mutation && command_contains_external_path(command) {
         return Err(PolicyError(
             "WORKSPACE_PATH_PROTECTED: workspace scope 禁止通过子进程写入 Workspace 外部路径"
                 .into(),
         ));
     }
-    if dangerous_command_pattern().is_match(command)
+    if is_dangerous
         && !arguments
             .get("confirm")
             .and_then(Value::as_bool)
@@ -402,13 +406,19 @@ pub fn validate_patch(arguments: &Value, policy: &PolicySettings) -> Result<(), 
     Ok(())
 }
 
+#[derive(Copy, Clone)]
+enum ShellQuote {
+    Single,
+    Double,
+}
+
 fn has_forbidden_shell_syntax(command: &str) -> bool {
     if command.contains(['\r', '\n']) {
         return true;
     }
 
     let chars: Vec<char> = command.chars().collect();
-    let mut quote = None;
+    let mut quote: Option<ShellQuote> = None;
     let mut escaped = false;
     let mut index = 0;
     while index < chars.len() {
@@ -420,24 +430,25 @@ fn has_forbidden_shell_syntax(command: &str) -> bool {
         }
 
         match quote {
-            Some('\'') => {
+            Some(ShellQuote::Single) => {
                 if ch == '\'' {
                     quote = None;
                 }
             }
-            Some('"') => {
+            Some(ShellQuote::Double) => {
                 if ch == '\\' {
                     escaped = true;
                 } else if ch == '"' {
                     quote = None;
                 }
             }
-            Some(_) => {}
             None => {
                 if ch == '\\' {
                     escaped = true;
-                } else if ch == '\'' || ch == '"' {
-                    quote = Some(ch);
+                } else if ch == '\'' {
+                    quote = Some(ShellQuote::Single);
+                } else if ch == '"' {
+                    quote = Some(ShellQuote::Double);
                 } else if matches!(ch, ';' | '&' | '|' | '>' | '<' | '`')
                     || (ch == '$'
                         && chars
@@ -482,14 +493,11 @@ fn interpreter_mutation_pattern() -> &'static regex::Regex {
 
 fn command_contains_external_path(command: &str) -> bool {
     let normalized = command.replace('\\', "/");
-    normalized.contains("../")
-        || normalized.contains("..\\")
-        || regex::Regex::new(r#"(?i)(^|["'\s])/[^"]"#)
-            .expect("valid regex")
-            .is_match(&normalized)
-        || regex::Regex::new(r"(?i)\b[A-Z]:/")
-            .expect("valid regex")
-            .is_match(&normalized)
+    let posix_re = EXTERNAL_POSIX_PATH_PATTERN
+        .get_or_init(|| regex::Regex::new(r#"(?i)(^|["'\s])/[^"]"#).expect("valid regex"));
+    let drive_re = EXTERNAL_WINDOWS_DRIVE_PATTERN
+        .get_or_init(|| regex::Regex::new(r"(?i)\b[A-Z]:/").expect("valid regex"));
+    normalized.contains("../") || posix_re.is_match(&normalized) || drive_re.is_match(&normalized)
 }
 
 fn command_targets_protected_repository_asset(command: &str) -> bool {

@@ -1,8 +1,15 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use super::model::{HarnessEvent, OperationRecord, TaskSession, WorkspaceHarnessState};
+use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes, FileLock};
+
+use super::model::{
+    HarnessEvent, OperationRecord, TaskSession, WorkspaceHarnessState, SCHEMA_VERSION,
+};
+
+const STORE_LOCK_FILE: &str = ".store.lock";
+const MAX_RECENT_TASK_IDS: usize = 20;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
@@ -46,6 +53,18 @@ impl HarnessStore {
         self.root.join("workspaces").join(workspace_id)
     }
 
+    fn workspace_lock_path(&self, workspace_id: &str) -> PathBuf {
+        self.workspace_dir(workspace_id).join(STORE_LOCK_FILE)
+    }
+
+    fn lock_workspace(&self, workspace_id: &str) -> HarnessResult<FileLock> {
+        acquire_file_lock(&self.workspace_lock_path(workspace_id)).map_err(io_error)
+    }
+
+    fn workspace_state_path(&self, workspace_id: &str) -> PathBuf {
+        self.workspace_dir(workspace_id).join("state.json")
+    }
+
     fn tasks_dir(&self, workspace_id: &str) -> PathBuf {
         self.workspace_dir(workspace_id).join("tasks")
     }
@@ -59,9 +78,11 @@ impl HarnessStore {
     }
 
     pub fn save_task(&self, task: &TaskSession) -> HarnessResult<()> {
-        let dir = self.tasks_dir(&task.workspace_id);
-        fs::create_dir_all(&dir).map_err(io_error)?;
-        atomic_write_json(&dir.join(format!("{}.json", task.id)), task)
+        let _lock = self.lock_workspace(&task.workspace_id)?;
+        let path = self
+            .tasks_dir(&task.workspace_id)
+            .join(format!("{}.json", task.id));
+        atomic_write_json(&path, task)
     }
 
     pub fn load_task(&self, workspace_id: &str, task_id: &str) -> HarnessResult<TaskSession> {
@@ -87,14 +108,64 @@ impl HarnessStore {
         Ok(tasks)
     }
 
+    pub(super) fn load_workspace_state(
+        &self,
+        workspace_id: &str,
+    ) -> HarnessResult<Option<WorkspaceHarnessState>> {
+        self.load_workspace_state_unlocked(workspace_id)
+    }
+
+    fn load_workspace_state_unlocked(
+        &self,
+        workspace_id: &str,
+    ) -> HarnessResult<Option<WorkspaceHarnessState>> {
+        let path = self.workspace_state_path(workspace_id);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        };
+        let state = serde_json::from_slice(&bytes)
+            .map_err(|e| HarnessError::new("STORE_CORRUPT", format!("{}: {e}", path.display())))?;
+        Ok(Some(state))
+    }
+
     pub fn save_workspace_state(
         &self,
         workspace_id: &str,
         state: &WorkspaceHarnessState,
     ) -> HarnessResult<()> {
-        let dir = self.workspace_dir(workspace_id);
-        fs::create_dir_all(&dir).map_err(io_error)?;
-        atomic_write_json(&dir.join("state.json"), state)
+        let _lock = self.lock_workspace(workspace_id)?;
+        atomic_write_json(&self.workspace_state_path(workspace_id), state)
+    }
+
+    pub(super) fn update_workspace_state(
+        &self,
+        workspace_id: &str,
+        active_task_id: Option<&str>,
+        touched_task_id: Option<&str>,
+        updated_at: &str,
+    ) -> HarnessResult<WorkspaceHarnessState> {
+        let _lock = self.lock_workspace(workspace_id)?;
+        let mut recent_task_ids = self
+            .load_workspace_state_unlocked(workspace_id)
+            .ok()
+            .flatten()
+            .map(|existing| existing.recent_task_ids)
+            .unwrap_or_default();
+        if let Some(task_id) = touched_task_id.or(active_task_id) {
+            recent_task_ids.retain(|existing| existing != task_id);
+            recent_task_ids.insert(0, task_id.to_string());
+            recent_task_ids.truncate(MAX_RECENT_TASK_IDS);
+        }
+        let next = WorkspaceHarnessState {
+            schema_version: SCHEMA_VERSION,
+            active_task_id: active_task_id.map(str::to_string),
+            recent_task_ids,
+            updated_at: updated_at.to_string(),
+        };
+        atomic_write_json(&self.workspace_state_path(workspace_id), &next)?;
+        Ok(next)
     }
 
     pub fn append_event_for_workspace(
@@ -102,17 +173,11 @@ impl HarnessStore {
         workspace_id: &str,
         event: &HarnessEvent,
     ) -> HarnessResult<()> {
-        let dir = self.events_dir(workspace_id);
-        fs::create_dir_all(&dir).map_err(io_error)?;
-        let path = dir.join(format!("{}.jsonl", event.task_id));
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(io_error)?;
-        let line = serde_json::to_string(event)
-            .map_err(|e| HarnessError::new("STORE_SERIALIZE_FAILED", e.to_string()))?;
-        writeln!(file, "{line}").map_err(io_error)
+        let _lock = self.lock_workspace(workspace_id)?;
+        let path = self
+            .events_dir(workspace_id)
+            .join(format!("{}.jsonl", event.task_id));
+        append_jsonl_unlocked(&path, event)
     }
 
     pub fn append_operation(
@@ -120,16 +185,8 @@ impl HarnessStore {
         workspace_id: &str,
         operation: &OperationRecord,
     ) -> HarnessResult<()> {
-        let dir = self.workspace_dir(workspace_id);
-        fs::create_dir_all(&dir).map_err(io_error)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.operations_path(workspace_id))
-            .map_err(io_error)?;
-        let line = serde_json::to_string(operation)
-            .map_err(|e| HarnessError::new("STORE_SERIALIZE_FAILED", e.to_string()))?;
-        writeln!(file, "{line}").map_err(io_error)
+        let _lock = self.lock_workspace(workspace_id)?;
+        append_jsonl_unlocked(&self.operations_path(workspace_id), operation)
     }
 
     pub fn list_operations(
@@ -193,7 +250,20 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> HarnessResult<T> {
 fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> HarnessResult<()> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| HarnessError::new("STORE_SERIALIZE_FAILED", e.to_string()))?;
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, bytes).map_err(io_error)?;
-    fs::rename(&temp, path).map_err(io_error)
+    atomic_write_bytes(path, &bytes).map_err(io_error)
+}
+
+fn append_jsonl_unlocked<T: serde::Serialize>(path: &Path, value: &T) -> HarnessResult<()> {
+    let mut payload = serde_json::to_vec(value)
+        .map_err(|e| HarnessError::new("STORE_SERIALIZE_FAILED", e.to_string()))?;
+    payload.push(b'\n');
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(io_error)?;
+    file.write_all(&payload).map_err(io_error)
 }

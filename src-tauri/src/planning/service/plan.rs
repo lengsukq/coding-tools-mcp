@@ -12,6 +12,44 @@ pub(super) fn create(
     objective: &str,
     steps: Vec<String>,
 ) -> AppResult<Plan> {
+    create_with_options(
+        store,
+        goal_id,
+        title,
+        objective,
+        steps,
+        PlanStatus::Draft,
+        false,
+    )
+}
+
+pub(super) fn create_active(
+    store: &PlanningStore,
+    goal_id: Option<String>,
+    title: &str,
+    objective: &str,
+    steps: Vec<String>,
+) -> AppResult<Plan> {
+    create_with_options(
+        store,
+        goal_id,
+        title,
+        objective,
+        steps,
+        PlanStatus::Active,
+        true,
+    )
+}
+
+fn create_with_options(
+    store: &PlanningStore,
+    goal_id: Option<String>,
+    title: &str,
+    objective: &str,
+    steps: Vec<String>,
+    initial_status: PlanStatus,
+    focus: bool,
+) -> AppResult<Plan> {
     let title = required_text(title, "Plan title")?;
     let objective = required_text(objective, "Plan objective")?;
     store.update(|state| {
@@ -26,7 +64,7 @@ pub(super) fn create(
             goal_id: goal_id.clone(),
             title,
             objective,
-            status: PlanStatus::Draft,
+            status: initial_status,
             steps: steps
                 .into_iter()
                 .filter_map(non_empty)
@@ -40,7 +78,7 @@ pub(super) fn create(
             task_ids: Vec::new(),
             revision: 1,
             created_at: now.clone(),
-            updated_at: now,
+            updated_at: now.clone(),
             archived_at: None,
             review_requested_at: None,
             review_summary: None,
@@ -50,7 +88,13 @@ pub(super) fn create(
         if let Some(id) = goal_id.as_deref() {
             if let Some(goal) = state.goals.iter_mut().find(|goal| goal.id == id) {
                 goal.plan_ids.push(plan.id.clone());
-                goal.updated_at = timestamp();
+                goal.updated_at = now;
+            }
+        }
+        if focus {
+            state.focus_plan_id = Some(plan.id.clone());
+            if let Some(id) = goal_id.as_ref() {
+                state.focus_goal_id = Some(id.clone());
             }
         }
         state.plans.push(plan.clone());

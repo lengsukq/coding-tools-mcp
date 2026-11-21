@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
+use crate::tools::io_util::truncate_utf8;
+
 const MAX_HIGHLIGHTS: usize = 10;
 const HIGHLIGHT_BYTES: usize = 512;
+const PACKAGE_MANAGERS: &[&str] = &["npm", "pnpm", "yarn", "bun"];
 
 pub(super) fn enrich_exec_result(command: &str, result: &mut Value) {
     let stdout = result.get("stdout").and_then(Value::as_str).unwrap_or("");
@@ -10,9 +13,7 @@ pub(super) fn enrich_exec_result(command: &str, result: &mut Value) {
     let stderr_total = retention_total(result, "stderr_retention");
     let command_ok = result.get("command_ok").and_then(Value::as_bool);
     let kind = command_kind(command);
-    let combined = [stdout, stderr].join("\n");
-    let counters = output_counters(&combined);
-    let highlights = important_lines(&combined);
+    let (counters, highlights) = analyze_output_streams(stdout, stderr);
     let returned_bytes = stdout.len().saturating_add(stderr.len());
     let original_bytes = stdout_total.saturating_add(stderr_total);
 
@@ -53,10 +54,16 @@ struct Counters {
     passed: usize,
 }
 
-fn output_counters(output: &str) -> Counters {
+fn analyze_output_streams(stdout: &str, stderr: &str) -> (Counters, Vec<String>) {
     let mut counters = Counters::default();
-    for line in output.lines() {
-        let lower = line.to_ascii_lowercase();
+    let mut highlights = Vec::new();
+    let mut lower = String::new();
+
+    for line in stdout.lines().chain(stderr.lines()) {
+        lower.clear();
+        lower.push_str(line);
+        lower.make_ascii_lowercase();
+
         if contains_signal(&lower, &["error:", "error[", " errors", "error "]) {
             counters.errors += 1;
         }
@@ -69,16 +76,8 @@ fn output_counters(output: &str) -> Counters {
         if contains_signal(&lower, &[" passed", "passed:", " success", "succeeded"]) {
             counters.passed += 1;
         }
-    }
-    counters
-}
-
-fn important_lines(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            contains_signal(
+        if highlights.len() < MAX_HIGHLIGHTS
+            && contains_signal(
                 &lower,
                 &[
                     "error",
@@ -90,10 +89,12 @@ fn important_lines(output: &str) -> Vec<String> {
                     "tests ",
                 ],
             )
-        })
-        .take(MAX_HIGHLIGHTS)
-        .map(|line| preview(line.trim(), HIGHLIGHT_BYTES))
-        .collect()
+        {
+            highlights.push(preview(line.trim(), HIGHLIGHT_BYTES));
+        }
+    }
+
+    (counters, highlights)
 }
 
 fn contains_signal(value: &str, needles: &[&str]) -> bool {
@@ -110,17 +111,17 @@ fn retention_total(result: &Value, key: &str) -> usize {
 
 fn command_kind(command: &str) -> &'static str {
     let lower = command.to_ascii_lowercase();
-    if lower.contains("cargo test") || contains_package_action(&lower, "test") {
+    if lower.contains("cargo test") || contains_package_action(&lower, " test") {
         "test"
-    } else if lower.contains("cargo clippy") || contains_package_action(&lower, "lint") {
+    } else if lower.contains("cargo clippy") || contains_package_action(&lower, " lint") {
         "lint"
-    } else if lower.contains("cargo fmt") || contains_package_action(&lower, "format") {
+    } else if lower.contains("cargo fmt") || contains_package_action(&lower, " format") {
         "format"
-    } else if lower.contains("cargo build") || contains_package_action(&lower, "build") {
+    } else if lower.contains("cargo build") || contains_package_action(&lower, " build") {
         "build"
     } else if lower.contains("cargo check")
-        || contains_package_action(&lower, "check")
-        || contains_package_action(&lower, "typecheck")
+        || contains_package_action(&lower, " check")
+        || contains_package_action(&lower, " typecheck")
     {
         "check"
     } else if lower.starts_with("git ") {
@@ -132,23 +133,18 @@ fn command_kind(command: &str) -> &'static str {
     }
 }
 
-fn contains_package_action(command: &str, action: &str) -> bool {
-    ["npm", "pnpm", "yarn", "bun"].iter().any(|manager| {
-        command.starts_with(manager)
-            && (command.contains(&format!(" run {action}"))
-                || command.contains(&format!(" {action}")))
-    })
+fn contains_package_action(command: &str, spaced_action: &str) -> bool {
+    PACKAGE_MANAGERS
+        .iter()
+        .any(|manager| command.starts_with(manager))
+        && command.contains(spaced_action)
 }
 
 fn preview(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
     }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &value[..end])
+    format!("{}…", truncate_utf8(value, max_bytes))
 }
 
 #[cfg(test)]

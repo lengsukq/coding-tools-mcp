@@ -1,6 +1,9 @@
+use std::fmt::Write as _;
+
 use serde_json::{json, Value};
 
 use crate::tools::error::WorkspaceError;
+use crate::tools::io_util::truncate_utf8;
 
 pub fn tool_ok(mut value: Value) -> Value {
     if value.get("ok").is_none() {
@@ -18,7 +21,7 @@ fn quality_gate_content(structured: &Value) -> String {
     let duration = u64_field(structured, "duration_ms");
     let mut out = format!("Quality Gate {status}: {summary}");
     if duration > 0 {
-        out.push_str(&format!(" ({duration}ms)"));
+        let _ = write!(out, " ({duration}ms)");
     }
     if let Some(checks) = structured.get("checks").and_then(Value::as_array) {
         for check in checks {
@@ -26,21 +29,21 @@ fn quality_gate_content(structured: &Value) -> String {
             let step_status = str_field(check, "status");
             let command = str_field(check, "command");
             if step_status.is_empty() {
-                out.push_str(&format!("\n- {id}: {command}"));
+                let _ = write!(out, "\n- {id}: {command}");
                 continue;
             }
-            out.push_str(&format!("\n- {step_status} {id}: {command}"));
+            let _ = write!(out, "\n- {step_status} {id}: {command}");
             if let Some(summary) = check.get("summary") {
                 let text = str_field(summary, "summary");
                 if !text.is_empty() {
-                    out.push_str(&format!(" — {text}"));
+                    let _ = write!(out, " — {text}");
                 }
             }
             if let Some(refs) = check.get("output_refs") {
                 let stdout_ref = str_field(refs, "stdout");
                 let stderr_ref = str_field(refs, "stderr");
                 if !stdout_ref.is_empty() || !stderr_ref.is_empty() {
-                    out.push_str(&format!("\n  refs stdout={stdout_ref} stderr={stderr_ref}"));
+                    let _ = write!(out, "\n  refs stdout={stdout_ref} stderr={stderr_ref}");
                 }
             }
         }
@@ -65,7 +68,7 @@ const EXEC_STREAM_PREVIEW_BYTES: usize = 2 * 1024;
 const CONTENT_TRUNCATION_MARKER: &str =
     "\n...[content budget truncated; full result available in structuredContent]";
 
-pub fn wrap_mcp_tool_result(tool_name: &str, args: &Value, structured: Value) -> Value {
+pub fn wrap_mcp_tool_result(tool_name: &str, args: &Value, mut structured: Value) -> Value {
     let is_error = structured.get("ok").and_then(Value::as_bool) == Some(false);
     let content = if tool_name == "view_image"
         && args
@@ -75,13 +78,21 @@ pub fn wrap_mcp_tool_result(tool_name: &str, args: &Value, structured: Value) ->
             == "mcp_image"
         && !is_error
     {
+        // Move base64 out of structuredContent into content[0].data so large images
+        // are not duplicated across content and structuredContent.
+        let data = structured
+            .as_object_mut()
+            .and_then(|object| object.remove("base64"))
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let mime_type = structured
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("application/octet-stream");
         vec![json!({
             "type": "image",
-            "data": structured.get("base64").and_then(Value::as_str).unwrap_or(""),
-            "mimeType": structured
-                .get("mime_type")
-                .and_then(Value::as_str)
-                .unwrap_or("application/octet-stream")
+            "data": data,
+            "mimeType": mime_type
         })]
     } else {
         let text = concise_content(tool_name, &structured);
@@ -105,7 +116,7 @@ fn concise_content(tool_name: &str, structured: &Value) -> String {
     }
     let body = match tool_name {
         "read_file" => read_file_content(structured),
-        "search_text" | "grep_text" => search_text_content(structured),
+        "search_text" | "grep_text" | "grep" => search_text_content(structured),
         "list_dir" | "list_files" => listing_content(structured),
         "exec_command" | "write_stdin" | "read_output" | "kill_session" => exec_content(structured),
         "git_status" => git_status_content(structured),
@@ -113,7 +124,7 @@ fn concise_content(tool_name: &str, structured: &Value) -> String {
         "git_log" => git_log_content(structured),
         "git_show" => git_show_content(structured),
         "git_blame" => git_blame_content(structured),
-        "apply_patch" => patch_content(structured),
+        "apply_patch" | "patch_check" => patch_content(tool_name, structured),
         _ => structured.to_string(),
     };
     apply_content_budget(body)
@@ -124,11 +135,11 @@ fn apply_content_budget(body: String) -> String {
     if body.len() <= limit {
         return body;
     }
-    let mut end = limit;
-    while end > 0 && !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{}", &body[..end], CONTENT_TRUNCATION_MARKER)
+    format!(
+        "{}{}",
+        truncate_utf8(&body, limit),
+        CONTENT_TRUNCATION_MARKER
+    )
 }
 
 fn str_field<'a>(structured: &'a Value, key: &str) -> &'a str {
@@ -171,25 +182,24 @@ fn error_content(tool_name: &str, structured: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("");
 
-    let mut lines = Vec::new();
+    let mut out = String::with_capacity(256);
     if summary.is_empty() && code.is_empty() {
-        lines.push(format!("{tool_name} failed"));
+        let _ = write!(out, "{tool_name} failed");
     } else if code.is_empty() {
-        lines.push(format!("{tool_name} failed: {summary}"));
+        let _ = write!(out, "{tool_name} failed: {summary}");
     } else {
-        lines.push(format!("{tool_name} failed [{code}]: {summary}"));
+        let _ = write!(out, "{tool_name} failed [{code}]: {summary}");
     }
-    lines.push(format!("Category: {category}"));
-    lines.push(format!("Retryable: {retryable}"));
+    let _ = write!(out, "\nCategory: {category}\nRetryable: {retryable}");
     if !instruction.is_empty() {
-        lines.push(format!("Recovery: {instruction}"));
+        let _ = write!(out, "\nRecovery: {instruction}");
     }
     if !retry_when.is_empty() {
-        lines.push(format!("Retry when: {retry_when}"));
+        let _ = write!(out, "\nRetry when: {retry_when}");
     } else if !retryable {
-        lines.push("Do not repeat this call unchanged.".to_string());
+        out.push_str("\nDo not repeat this call unchanged.");
     }
-    lines.join("\n")
+    out
 }
 
 fn read_file_content(structured: &Value) -> String {
@@ -197,18 +207,19 @@ fn read_file_content(structured: &Value) -> String {
     let start = u64_field(structured, "start_line");
     let end = u64_field(structured, "end_line");
     let total = u64_field(structured, "total_lines");
-    let mut out = format!("{path} (lines {start}-{end} of {total}):\n");
-    out.push_str(str_field(structured, "content"));
+    let content = str_field(structured, "content");
+    let mut out = String::with_capacity(content.len() + path.len() + 96);
+    let _ = write!(out, "{path} (lines {start}-{end} of {total}):\n{content}");
     if bool_field(structured, "truncated") {
         let next = u64_field(structured, "next_start_line");
-        let hint = if next > 0 {
-            format!(" continue with start_line={next}")
+        if next > 0 {
+            let _ = write!(
+                out,
+                "\n[content truncated; continue with start_line={next} full metadata in structuredContent]"
+            );
         } else {
-            String::new()
-        };
-        out.push_str(&format!(
-            "\n[content truncated;{hint} full metadata in structuredContent]"
-        ));
+            out.push_str("\n[content truncated; full metadata in structuredContent]");
+        }
     }
     out
 }
@@ -222,7 +233,7 @@ fn search_text_content(structured: &Value) -> String {
             let path = str_field(matched, "path");
             let line = u64_field(matched, "line");
             let preview = str_field(matched, "preview");
-            out.push_str(&format!("\n{path}:{line}: {preview}"));
+            let _ = write!(out, "\n{path}:{line}: {preview}");
         }
     }
     if bool_field(structured, "truncated") {
@@ -233,18 +244,19 @@ fn search_text_content(structured: &Value) -> String {
 
 fn listing_content(structured: &Value) -> String {
     let path = str_field(structured, "path");
-    let items = structured
+    let items: &[Value] = structured
         .get("entries")
         .or_else(|| structured.get("files"))
         .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut out = format!("{path}: {} item(s)", items.len());
-    for item in &items {
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut out = String::with_capacity(path.len() + 32 + items.len().saturating_mul(48));
+    let _ = write!(out, "{path}: {} item(s)", items.len());
+    for item in items {
         let item_path = str_field(item, "path");
         let item_type = str_field(item, "type");
         let size = u64_field(item, "size_bytes");
-        out.push_str(&format!("\n{item_type} {item_path} ({size}B)"));
+        let _ = write!(out, "\n{item_type} {item_path} ({size}B)");
     }
     if bool_field(structured, "truncated") {
         out.push_str("\n[listing truncated by limit]");
@@ -285,12 +297,13 @@ fn exec_content(structured: &Value) -> String {
         let returned = u64_field(summary, "returned_preview_bytes");
         let errors = u64_field(summary, "errors");
         let warnings = u64_field(summary, "warnings");
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "\nsummary={text} kind={kind} errors={errors} warnings={warnings} bytes={returned}/{original}"
-        ));
+        );
         if let Some(highlights) = summary.get("highlights").and_then(Value::as_array) {
             for line in highlights.iter().filter_map(Value::as_str).take(10) {
-                out.push_str(&format!("\n! {line}"));
+                let _ = write!(out, "\n! {line}");
             }
         }
     }
@@ -300,9 +313,7 @@ fn exec_content(structured: &Value) -> String {
         let stdout_ref = str_field(refs, "stdout");
         let stderr_ref = str_field(refs, "stderr");
         if !stdout_ref.is_empty() || !stderr_ref.is_empty() {
-            out.push_str(&format!(
-                "\noutput_refs stdout={stdout_ref} stderr={stderr_ref}"
-            ));
+            let _ = write!(out, "\noutput_refs stdout={stdout_ref} stderr={stderr_ref}");
         }
     }
     out
@@ -318,7 +329,7 @@ fn output_search_content(structured: &Value) -> String {
             let line = u64_field(matched, "line");
             let offset = u64_field(matched, "offset");
             let preview = str_field(matched, "preview");
-            out.push_str(&format!("\nline {line} @ {offset}: {preview}"));
+            let _ = write!(out, "\nline {line} @ {offset}: {preview}");
         }
     }
     if bool_field(structured, "truncated") {
@@ -332,30 +343,35 @@ fn append_stream_section(out: &mut String, stream: &str, structured: &Value) {
     if text.is_empty() {
         return;
     }
-    let truncated_flag = bool_field(structured, &format!("{stream}_truncated"));
-    out.push_str(&format!("\n--- {stream} ({}B) ---\n", text.len()));
+    let truncated_key = match stream {
+        "stdout" => "stdout_truncated",
+        "stderr" => "stderr_truncated",
+        _ => "",
+    };
+    let truncated_flag = !truncated_key.is_empty() && bool_field(structured, truncated_key);
+    let _ = write!(out, "\n--- {stream} ({}B) ---\n", text.len());
     if text.len() > EXEC_STREAM_PREVIEW_BYTES {
         let head_budget = EXEC_STREAM_PREVIEW_BYTES / 4;
         let tail_budget = EXEC_STREAM_PREVIEW_BYTES - head_budget;
-        let mut head_end = head_budget.min(text.len());
-        while head_end > 0 && !text.is_char_boundary(head_end) {
-            head_end -= 1;
-        }
+        let head = truncate_utf8(text, head_budget);
         let mut tail_start = text.len().saturating_sub(tail_budget);
         while tail_start < text.len() && !text.is_char_boundary(tail_start) {
             tail_start += 1;
         }
-        let omitted = tail_start.saturating_sub(head_end);
-        out.push_str(&format!(
-            "{}\n...[{omitted}B omitted from middle; showing head+tail of {stream}]...\n{}",
-            &text[..head_end],
+        let omitted = tail_start.saturating_sub(head.len());
+        let _ = write!(
+            out,
+            "{head}\n...[{omitted}B omitted from middle; showing head+tail of {stream}]...\n{}",
             &text[tail_start..]
-        ));
+        );
     } else {
         out.push_str(text);
     }
     if truncated_flag {
-        out.push_str(&format!("\n[{stream} truncated; command runtime retains head+tail. Use read_output and next_offset to page retained segments]"));
+        let _ = write!(
+            out,
+            "\n[{stream} truncated; command runtime retains head+tail. Use read_output and next_offset to page retained segments]"
+        );
     }
 }
 
@@ -369,7 +385,7 @@ fn git_status_content(structured: &Value) -> String {
             let index_status = str_field(entry, "index_status");
             let worktree_status = str_field(entry, "worktree_status");
             let path = str_field(entry, "path");
-            out.push_str(&format!("\n{index_status}{worktree_status} {path}"));
+            let _ = write!(out, "\n{index_status}{worktree_status} {path}");
         }
     }
     out
@@ -401,7 +417,7 @@ fn git_log_content(structured: &Value) -> String {
             let date = str_field(commit, "author_date");
             let author = str_field(commit, "author_name");
             let subject = str_field(commit, "subject");
-            out.push_str(&format!("\n{short_hash} {date} {author}: {subject}"));
+            let _ = write!(out, "\n{short_hash} {date} {author}: {subject}");
         }
     }
     out
@@ -430,31 +446,25 @@ fn git_blame_content(structured: &Value) -> String {
             let author = str_field(row, "author");
             let commit = str_field(row, "commit");
             let short = &commit[..commit.len().min(8)];
-            out.push_str(&format!("\n{line}: {text} ({short} {author})"));
+            let _ = write!(out, "\n{line}: {text} ({short} {author})");
         }
     }
     out
 }
 
-fn patch_content(structured: &Value) -> String {
-    let dry_run = bool_field(structured, "dry_run");
+fn patch_content(tool_name: &str, structured: &Value) -> String {
+    let dry_run = bool_field(structured, "dry_run") || tool_name == "patch_check";
     let mode = if dry_run { "preflight" } else { "applied" };
     let change_id = str_field(structured, "change_id");
     let mut out = if change_id.is_empty() {
-        format!("apply_patch {mode}")
+        format!("{tool_name} {mode}")
     } else {
-        format!("apply_patch {mode} change_id={change_id}")
+        format!("{tool_name} {mode} change_id={change_id}")
     };
     let summary = str_field(structured, "summary");
     if !summary.is_empty() {
-        out.push_str(&format!("\n{summary}"));
-    }
-    if let Some(files) = structured.get("affected_files").and_then(Value::as_array) {
-        for file in files {
-            if let Some(path) = file.as_str() {
-                out.push_str(&format!("\n- {path}"));
-            }
-        }
+        out.push('\n');
+        out.push_str(summary);
     }
     out
 }
@@ -542,6 +552,21 @@ mod tests {
             text,
             "search \"needle\": 1 match(es)\nsrc/lib.rs:42: let needle = 1;"
         );
+        assert_eq!(concise_content("grep", &structured), text);
+    }
+
+    #[test]
+    fn patch_check_renders_concise_preflight_summary() {
+        let structured = json!({
+            "ok": true,
+            "dry_run": true,
+            "preflight": true,
+            "summary": "M src/main.rs"
+        });
+        assert_eq!(
+            concise_content("patch_check", &structured),
+            "patch_check preflight\nM src/main.rs"
+        );
     }
 
     #[test]
@@ -593,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn view_image_branch_is_unchanged() {
+    fn view_image_branch_moves_base64_into_mcp_image_content() {
         let structured = json!({
             "ok": true,
             "base64": "aGVsbG8=",
@@ -602,6 +627,7 @@ mod tests {
         let result = wrap_mcp_tool_result("view_image", &json!({}), structured);
         assert_eq!(result["content"][0]["type"], "image");
         assert_eq!(result["content"][0]["data"], "aGVsbG8=");
+        assert!(result["structuredContent"].get("base64").is_none());
     }
 
     #[test]

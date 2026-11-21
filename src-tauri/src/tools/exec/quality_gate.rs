@@ -11,6 +11,14 @@ use crate::tools::workspace::{tool_ok, WorkspaceError};
 use super::request::{filesystem_scope, resolve_workdir, CommandRunOptions};
 use super::runner::run_command;
 
+const PACKAGE_CHECK_CANDIDATES: &[(&str, &[&str])] = &[
+    ("lint", &["lint"]),
+    ("typecheck", &["typecheck", "type-check", "check:types"]),
+    ("check", &["check"]),
+    ("test", &["test"]),
+    ("build", &["build"]),
+];
+
 #[derive(Debug, Clone)]
 struct GateCheck {
     id: String,
@@ -206,19 +214,12 @@ fn discover_package_checks(workdir: &Path) -> Vec<GateCheck> {
         return Vec::new();
     };
     let manager = package_manager(workdir);
-    let candidates = [
-        ("lint", ["lint", "lint", "lint"]),
-        ("typecheck", ["typecheck", "type-check", "check:types"]),
-        ("check", ["check", "check", "check"]),
-        ("test", ["test", "test", "test"]),
-        ("build", ["build", "build", "build"]),
-    ];
     let mut output = Vec::new();
     let mut seen = HashSet::new();
-    for (category, aliases) in candidates {
-        if let Some(script) = aliases.into_iter().find(|script| {
+    for &(category, aliases) in PACKAGE_CHECK_CANDIDATES {
+        if let Some(&script) = aliases.iter().find(|&&script| {
             scripts
-                .get(*script)
+                .get(script)
                 .and_then(Value::as_str)
                 .is_some_and(safe_package_script)
         }) {

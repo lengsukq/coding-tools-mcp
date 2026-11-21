@@ -1,25 +1,80 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
 use similar::{ChangeTag, TextDiff};
 
+use crate::tools::io_util::is_default_excluded_os;
+
 use super::store::ChangeFile;
 
 pub(super) const MAX_FILE_BYTES: usize = 512 * 1024;
 
+fn is_review_extra_excluded_os(name: &OsStr) -> bool {
+    matches!(
+        name.to_str(),
+        Some(".coding-tools" | ".local-build" | ".scratch")
+    )
+}
+
+fn is_review_excluded_os(name: &OsStr) -> bool {
+    is_default_excluded_os(name) || is_review_extra_excluded_os(name)
+}
+
+fn starts_with_ascii_ignore_case(value: &str, prefix: &str) -> bool {
+    value.len() >= prefix.len()
+        && value.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+fn ends_with_ascii_ignore_case(value: &str, suffix: &str) -> bool {
+    value.len() >= suffix.len()
+        && value.as_bytes()[value.len() - suffix.len()..].eq_ignore_ascii_case(suffix.as_bytes())
+}
+
+fn contains_ascii_ignore_case(value: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle = needle.as_bytes();
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn is_sensitive_component(part: &str) -> bool {
+    part.eq_ignore_ascii_case(".env")
+        || starts_with_ascii_ignore_case(part, ".env.")
+        || contains_ascii_ignore_case(part, "credential")
+        || contains_ascii_ignore_case(part, "secret")
+        || ends_with_ascii_ignore_case(part, ".pem")
+        || ends_with_ascii_ignore_case(part, ".key")
+        || ends_with_ascii_ignore_case(part, "id_rsa")
+        || ends_with_ascii_ignore_case(part, "id_ed25519")
+}
+
+fn is_sensitive_os_component(name: &OsStr) -> bool {
+    match name.to_str() {
+        Some(text) => is_sensitive_component(text),
+        None => is_sensitive_component(&name.to_string_lossy()),
+    }
+}
+
 fn review_snapshot_entry_allowed(entry: &walkdir::DirEntry) -> bool {
-    entry.depth() == 0
-        || (!review_path_excluded(&entry.file_name().to_string_lossy())
-            && !sensitive_path(&entry.file_name().to_string_lossy()))
+    if entry.depth() == 0 {
+        return true;
+    }
+    let name = entry.file_name();
+    !is_review_excluded_os(name) && !is_sensitive_os_component(name)
 }
 
 pub fn snapshot_text_files(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     // Do not descend into trees that can never contribute a review file.
-    // Filtering only at the leaf used to traverse every node_modules/target
-    // entry before discarding it, making even a read-only command expensive.
+    // Zero-allocation OsStr pruning keeps directory walks cheap on large repos.
     for entry in walkdir::WalkDir::new(root)
+        .follow_links(false)
         .into_iter()
         .filter_entry(review_snapshot_entry_allowed)
         .filter_map(Result::ok)
@@ -28,14 +83,11 @@ pub fn snapshot_text_files(root: &Path) -> BTreeMap<String, String> {
         let Ok(rel) = entry.path().strip_prefix(root) else {
             continue;
         };
-        let path = rel.to_string_lossy().replace('\\', "/");
-        if review_path_excluded(&path) || sensitive_path(&path) {
-            continue;
-        }
         let Ok(meta) = entry.metadata() else { continue };
         if meta.len() as usize > MAX_FILE_BYTES {
             continue;
         }
+        let path = rel.to_string_lossy().replace('\\', "/");
         if let Ok(bytes) = fs::read(entry.path()) {
             if !bytes.contains(&0) {
                 if let Ok(text) = String::from_utf8(bytes) {
@@ -49,7 +101,7 @@ pub fn snapshot_text_files(root: &Path) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 pub(super) fn snapshot_walk_count(root: &Path, prune_excluded: bool) -> usize {
-    let walker = walkdir::WalkDir::new(root).into_iter();
+    let walker = walkdir::WalkDir::new(root).follow_links(false).into_iter();
     if prune_excluded {
         walker
             .filter_entry(review_snapshot_entry_allowed)
@@ -78,7 +130,7 @@ pub(super) fn change_file_from_bytes(
     let (Ok(before), Ok(after)) = (std::str::from_utf8(before), std::str::from_utf8(after)) else {
         return ChangeFile::redacted(path, status, "Binary file — content not rendered");
     };
-    let patch = unified_patch(path, before, after, false);
+    let patch = unified_patch(path, before, after);
     let additions = patch
         .lines()
         .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
@@ -98,61 +150,18 @@ pub(super) fn change_file_from_bytes(
 }
 
 pub(super) fn review_path_excluded(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    normalized.split('/').any(|part| {
-        matches!(
-            part,
-            ".git"
-                | ".coding-tools"
-                | ".local-build"
-                | ".scratch"
-                | "node_modules"
-                | "target"
-                | "build"
-                | "dist"
-                | ".venv"
-        )
-    })
+    path.split(['/', '\\'])
+        .any(|part| is_review_excluded_os(OsStr::new(part)))
 }
 
 pub(super) fn sensitive_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.split('/').any(|part| {
-        part == ".env"
-            || part.starts_with(".env.")
-            || part.contains("credential")
-            || part.contains("secret")
-    }) || lower.ends_with(".pem")
-        || lower.ends_with(".key")
-        || lower.ends_with("id_rsa")
-        || lower.ends_with("id_ed25519")
+    path.split(['/', '\\']).any(is_sensitive_component)
 }
 
-pub(super) fn unified_patch(
-    path: &str,
-    before: &str,
-    after: &str,
-    ignore_whitespace: bool,
-) -> String {
+pub(super) fn unified_patch(path: &str, before: &str, after: &str) -> String {
     if before == after {
         return String::new();
     }
-    let (old, new);
-    let (before, after) = if ignore_whitespace {
-        old = before
-            .lines()
-            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>()
-            .join("\n");
-        new = after
-            .lines()
-            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>()
-            .join("\n");
-        (old.as_str(), new.as_str())
-    } else {
-        (before, after)
-    };
     let diff = TextDiff::from_lines(before, after);
     let mut out = format!("--- a/{path}\n+++ b/{path}\n");
     for group in diff.grouped_ops(3) {

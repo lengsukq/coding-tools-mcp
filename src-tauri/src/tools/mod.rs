@@ -6,6 +6,7 @@ pub mod file;
 pub mod git;
 pub mod history;
 mod image_tool;
+pub(crate) mod io_util;
 pub mod manage;
 pub mod patch;
 pub mod planning;
@@ -22,5 +23,5 @@ pub use context::{SharedToolContext, ToolContext};
 /// 唯一工具执行入口；MCP 必须调用此函数，不得分叉实现。
 pub use dispatch::call_tool;
 pub use policy::PolicySettings;
-pub use registry::{exposed_tool_names, is_allowed_tool, list_tools, list_tools_for_profile};
+pub use registry::{exposed_tool_names, is_allowed_tool, list_tools_for_profile};
 pub use workspace::{wrap_mcp_tool_result, Workspace};

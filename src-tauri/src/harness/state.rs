@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::baseline::{capture_baseline, timestamp, workspace_id};
+use super::baseline::{capture_baseline, git_branch_and_head, timestamp, workspace_id};
 use super::model::{
     CapabilityStatus, FileChangeRecord, HarnessEvent, HarnessStatus, OperationRecord,
-    ProjectFileState, ProjectState, TaskSession, TaskStatus, WorkspaceHarnessState, SCHEMA_VERSION,
+    ProjectFileState, ProjectState, TaskSession, TaskStatus, SCHEMA_VERSION,
 };
 use super::store::{HarnessError, HarnessResult, HarnessStore};
 
@@ -83,7 +83,7 @@ impl Harness {
             updated_at: now,
         };
         self.store.save_task(&task)?;
-        self.save_workspace_state(Some(&task.id), &task.updated_at)?;
+        self.save_workspace_state(Some(&task.id), Some(&task.id), &task.updated_at)?;
         self.record_event(
             &task.id,
             "task_started",
@@ -95,6 +95,14 @@ impl Harness {
     }
 
     pub fn current_task(&self) -> HarnessResult<Option<TaskSession>> {
+        if let Some(state) = self.store.load_workspace_state(&self.workspace_id)? {
+            let Some(active_id) = state.active_task_id else {
+                return Ok(None);
+            };
+            if let Ok(task) = self.store.load_task(&self.workspace_id, &active_id) {
+                return Ok(task.status.is_writable().then_some(task));
+            }
+        }
         Ok(self
             .store
             .list_tasks(&self.workspace_id)?
@@ -117,9 +125,8 @@ impl Harness {
         task.status = next;
         task.updated_at = timestamp();
         self.store.save_task(&task)?;
-        if !task.status.is_writable() {
-            self.save_workspace_state(None, &task.updated_at)?;
-        }
+        let active_id = task.status.is_writable().then_some(task.id.as_str());
+        self.save_workspace_state(active_id, Some(&task.id), &task.updated_at)?;
         self.record_event(
             task_id,
             "task_status_changed",
@@ -262,28 +269,28 @@ impl Harness {
                 t.baseline
                     .entries
                     .iter()
-                    .map(|e| (e.path.clone(), e))
+                    .map(|e| (e.path.as_str(), e))
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
-        let current_map: HashMap<_, _> = current
+        let current_map: HashMap<&str, _> = current
             .entries
             .iter()
-            .map(|e| (e.path.clone(), e))
+            .map(|e| (e.path.as_str(), e))
             .collect();
-        let mut paths: Vec<String> = baseline_map
+        let mut paths: Vec<&str> = baseline_map
             .keys()
             .chain(current_map.keys())
-            .cloned()
+            .copied()
             .collect();
-        paths.sort();
+        paths.sort_unstable();
         paths.dedup();
         let total_files = paths.len();
         let files = paths
             .into_iter()
             .map(|path| {
-                let before = baseline_map.get(&path).map(|e| e.sha256.clone());
-                let entry = current_map.get(&path);
+                let before = baseline_map.get(path).map(|e| e.sha256.as_str());
+                let entry = current_map.get(path);
                 let status = match (before, entry) {
                     (Some(before), Some(entry)) if before == entry.sha256 => "unchanged",
                     (Some(_), Some(_)) => "modified",
@@ -292,15 +299,18 @@ impl Harness {
                     (None, None) => "unknown",
                 };
                 ProjectFileState {
-                    path,
+                    path: path.to_string(),
                     status: status.to_string(),
                     sha256: entry.map(|e| e.sha256.clone()).unwrap_or_default(),
                     bytes: entry.map(|e| e.bytes).unwrap_or(0),
                 }
             })
             .collect::<Vec<_>>();
-        let truncated = files.len() > max_files.max(1);
-        let files = files.into_iter().take(max_files.max(1)).collect::<Vec<_>>();
+        // Compute cleanliness over the full file set before applying max_files truncation.
+        let clean = files.iter().all(|f| f.status == "unchanged");
+        let max_files = max_files.max(1);
+        let truncated = files.len() > max_files;
+        let files = files.into_iter().take(max_files).collect::<Vec<_>>();
         let active_task_id = task.as_ref().map(|t| t.id.clone());
         let recent_events = task
             .as_ref()
@@ -312,7 +322,7 @@ impl Harness {
             workspace_id: self.workspace_id.clone(),
             branch: current.branch,
             head: current.head,
-            clean: files.iter().all(|f| f.status == "unchanged"),
+            clean,
             files,
             total_files,
             truncated,
@@ -323,37 +333,54 @@ impl Harness {
     }
 
     pub fn status(&self) -> HarnessResult<HarnessStatus> {
-        let current = capture_baseline(&self.workspace_root);
         let task = self.current_task()?;
-        let (task_id, task_state, task_updated_at, writable, baseline_matches, reason) =
-            match task.as_ref() {
-                Some(task) => {
-                    let matches = task.baseline.branch == current.branch
-                        && task.baseline.head == current.head
-                        && task.expected_fingerprint == current.worktree_fingerprint;
-                    let reason = if matches {
-                        "任务可继续执行"
-                    } else {
-                        "工作区基线已变化，写入和执行已暂停"
-                    };
-                    (
-                        Some(task.id.clone()),
-                        Some(task.status),
-                        Some(task.updated_at.clone()),
-                        matches && task.status.is_writable(),
-                        Some(matches),
-                        reason.to_string(),
-                    )
-                }
-                None => (
+        let (
+            branch,
+            head,
+            task_id,
+            task_state,
+            task_updated_at,
+            writable,
+            baseline_matches,
+            reason,
+        ) = match task.as_ref() {
+            Some(task) => {
+                let current = capture_baseline(&self.workspace_root);
+                let matches = task.baseline.branch == current.branch
+                    && task.baseline.head == current.head
+                    && task.expected_fingerprint == current.worktree_fingerprint;
+                let reason = if matches {
+                    "任务可继续执行"
+                } else {
+                    "工作区基线已变化，写入和执行已暂停"
+                };
+                (
+                    current.branch,
+                    current.head,
+                    Some(task.id.clone()),
+                    Some(task.status),
+                    Some(task.updated_at.clone()),
+                    matches && task.status.is_writable(),
+                    Some(matches),
+                    reason.to_string(),
+                )
+            }
+            None => {
+                // Avoid scanning and hashing the entire repository on status checks
+                // when no task is active (especially on every tool error attachment).
+                let (branch, head) = git_branch_and_head(&self.workspace_root);
+                (
+                    branch,
+                    head,
                     None,
                     None,
                     None,
                     true,
                     None,
                     "当前没有活动任务，工作区采用无任务模式；修改不会进入任务事件流".to_string(),
-                ),
-            };
+                )
+            }
+        };
 
         let mut capabilities = HashMap::new();
         capabilities.insert(
@@ -401,13 +428,13 @@ impl Harness {
         capabilities.insert(
             "git".into(),
             CapabilityStatus {
-                status: if current.branch.is_some() && current.head.is_some() {
+                status: if branch.is_some() && head.is_some() {
                     "available"
                 } else {
                     "degraded"
                 }
                 .into(),
-                reason: if current.branch.is_some() && current.head.is_some() {
+                reason: if branch.is_some() && head.is_some() {
                     "已读取当前分支和 HEAD"
                 } else {
                     "当前工作区不是可读取 Git 状态的仓库"
@@ -431,7 +458,6 @@ impl Harness {
         } else if baseline_matches == Some(false) {
             next_actions.push("project_state".into());
             next_actions.push("git_diff".into());
-            next_actions.push("refresh_baseline".into());
         } else if !writable {
             next_actions.push("resume_task".into());
         }
@@ -447,8 +473,8 @@ impl Harness {
             writable,
             reason,
             recoverable: true,
-            branch: current.branch,
-            head: current.head,
+            branch,
+            head,
             baseline_matches,
             capabilities,
             next_actions,
@@ -458,23 +484,17 @@ impl Harness {
     fn save_workspace_state(
         &self,
         active_task_id: Option<&str>,
+        touched_task_id: Option<&str>,
         updated_at: &str,
     ) -> HarnessResult<()> {
-        self.store.save_workspace_state(
-            &self.workspace_id,
-            &WorkspaceHarnessState {
-                schema_version: SCHEMA_VERSION,
-                active_task_id: active_task_id.map(str::to_string),
-                recent_task_ids: self
-                    .store
-                    .list_tasks(&self.workspace_id)?
-                    .into_iter()
-                    .take(20)
-                    .map(|t| t.id)
-                    .collect(),
-                updated_at: updated_at.to_string(),
-            },
-        )
+        self.store
+            .update_workspace_state(
+                &self.workspace_id,
+                active_task_id,
+                touched_task_id,
+                updated_at,
+            )
+            .map(|_| ())
     }
 }
 
@@ -590,5 +610,129 @@ mod tests {
             .check_baseline(&task.id)
             .expect_err("真实项目文件变化必须使 baseline 失效");
         assert_eq!(error.code(), "FILE_CHANGED_EXTERNALLY");
+    }
+
+    #[test]
+    fn status_without_active_task_skips_baseline_scan() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+
+        super::super::baseline::reset_baseline_capture_calls();
+        let idle_status = harness.status().expect("idle status");
+        assert_eq!(super::super::baseline::baseline_capture_calls(), 0);
+        assert!(idle_status.writable);
+        assert_eq!(idle_status.baseline_matches, None);
+
+        let task = harness.start_task("验证状态扫描").expect("start task");
+        super::super::baseline::reset_baseline_capture_calls();
+        let active_status = harness.status().expect("active status");
+        assert_eq!(super::super::baseline::baseline_capture_calls(), 1);
+        assert_eq!(active_status.baseline_matches, Some(true));
+
+        // External modification makes baseline mismatch, and next_actions must not
+        // suggest the removed nonexistent "refresh_baseline" tool.
+        fs::write(
+            workspace.path().join("main.rs"),
+            "fn main() { /* dirty */ }\n",
+        )
+        .expect("dirty");
+        let stale_status = harness.status().expect("stale status");
+        assert_eq!(stale_status.baseline_matches, Some(false));
+        assert!(!stale_status
+            .next_actions
+            .contains(&"refresh_baseline".to_string()));
+        assert_eq!(stale_status.task_id.as_deref(), Some(task.id.as_str()));
+    }
+
+    #[test]
+    fn project_state_computes_clean_before_truncating_files() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("a.rs"), "fn a() {}\n").expect("file a");
+        fs::write(workspace.path().join("b.rs"), "fn b() {}\n").expect("file b");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+
+        harness
+            .start_task("验证 clean 截断前计算")
+            .expect("start task");
+        fs::write(workspace.path().join("b.rs"), "fn b() { /* changed */ }\n").expect("modify b");
+
+        let state = harness.project_state(1).expect("project state");
+        assert_eq!(state.total_files, 2);
+        assert_eq!(state.files.len(), 1);
+        assert!(state.truncated);
+        assert_eq!(state.files[0].path, "a.rs");
+        assert_eq!(state.files[0].status, "unchanged");
+        assert!(
+            !state.clean,
+            "truncated modified file must mark state dirty"
+        );
+    }
+
+    #[test]
+    fn current_task_recovers_in_o1_from_state_json_and_falls_back_when_absent() {
+        let workspace = tempdir().expect("workspace");
+        let harness_root = tempdir().expect("harness");
+        fs::write(workspace.path().join("main.rs"), "fn main() {}\n").expect("file");
+        let harness = Harness::new(
+            workspace.path().to_path_buf(),
+            harness_root.path().to_path_buf(),
+        )
+        .expect("harness");
+
+        let task = harness.start_task("验证 O(1) 恢复").expect("start task");
+        let state_json = harness
+            .store_root()
+            .join("workspaces")
+            .join(harness.workspace_id())
+            .join("state.json");
+        assert!(state_json.exists());
+
+        // Plant an extra corrupt task file in tasks/ to confirm O(1) lookup via state.json
+        // succeeds cleanly without scanning the whole directory.
+        let tasks_dir = harness
+            .store_root()
+            .join("workspaces")
+            .join(harness.workspace_id())
+            .join("tasks");
+        fs::write(tasks_dir.join("zzz-corrupt.json"), "{broken").expect("corrupt task");
+
+        let active = harness
+            .current_task()
+            .expect("current task from state.json")
+            .expect("active task");
+        assert_eq!(active.id, task.id);
+
+        // Removing state.json falls back to scanning tasks/.
+        fs::remove_file(&state_json).expect("remove state.json");
+        let recovered = harness
+            .current_task()
+            .expect("fallback scan")
+            .expect("recovered active task");
+        assert_eq!(recovered.id, task.id);
+
+        // Finishing the task clears active_task_id in state.json so current_task returns None.
+        harness
+            .transition(&task.id, TaskStatus::CompletedUnverified)
+            .expect("complete task");
+        assert!(harness.current_task().expect("no active task").is_none());
+        let saved_state: super::super::model::WorkspaceHarnessState =
+            serde_json::from_slice(&fs::read(&state_json).expect("read state.json"))
+                .expect("parse state.json");
+        assert_eq!(saved_state.active_task_id, None);
+        assert_eq!(
+            saved_state.recent_task_ids.first().map(String::as_str),
+            Some(task.id.as_str())
+        );
     }
 }

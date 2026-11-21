@@ -27,8 +27,8 @@ pub use computer::{
     resume_computer_access, revoke_computer_screen_access,
 };
 pub use frp_profiles::{
-    delete_frp_profile, get_last_workspace_id, get_proxy, list_frp_profiles,
-    save_frp_profile, set_last_workspace, set_proxy,
+    delete_frp_profile, get_last_workspace_id, get_proxy, list_frp_profiles, save_frp_profile,
+    set_last_workspace, set_proxy,
 };
 pub use global_gateway::{
     check_global_gateway_health, get_gemini_local_bridge_status, get_global_gateway_config,
@@ -63,7 +63,7 @@ pub use tool_audit::{
 };
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use usage::get_service_usage_stats;
-pub use window_chrome::{enter_compact_mode, hide_to_tray, quit_app, show_main_window};
+pub use window_chrome::{enter_compact_mode, hide_to_tray, quit_app};
 pub use workspace::{
     create_session_review_url, create_workspace, create_workspace_review_url, delete_workspace,
     delete_workspace_review, detect_installed_ides, get_workspace_activity_metrics,

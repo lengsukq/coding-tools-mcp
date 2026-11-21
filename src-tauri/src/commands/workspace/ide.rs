@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 
 #[derive(Clone, serde::Serialize)]
@@ -65,92 +67,140 @@ const IDE_DEFINITIONS: &[IdeDefinition] = &[
     },
 ];
 
-fn command_exists(command: &str) -> bool {
-    #[cfg(target_os = "windows")]
-    let probe = background_command("where").arg(command).output();
-    #[cfg(not(target_os = "windows"))]
-    let probe = Command::new("sh")
-        .args(["-lc", &format!("command -v {command}")])
-        .output();
-    probe.map(|output| output.status.success()).unwrap_or(false)
+#[cfg(target_os = "macos")]
+fn mac_app_installed(mac_app: &str) -> bool {
+    let app = format!("{mac_app}.app");
+    PathBuf::from("/Applications").join(&app).exists()
+        || dirs::home_dir().is_some_and(|home| home.join("Applications").join(&app).exists())
 }
 
-fn ide_installed(ide: &IdeDefinition) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let app = format!("{}.app", ide.mac_app);
-        if PathBuf::from("/Applications").join(&app).exists()
-            || dirs::home_dir().is_some_and(|home| home.join("Applications").join(&app).exists())
-        {
-            return true;
+fn native_cli_path(cli: &str) -> Option<PathBuf> {
+    which::which(cli).ok()
+}
+
+/// Probe multiple CLI names in a single login shell invocation for GUI apps
+/// launched on macOS/Linux whose inherited `PATH` omits shell-configured dirs.
+#[cfg(not(target_os = "windows"))]
+fn batch_shell_probe_clis(clis: &[&str]) -> HashSet<String> {
+    if clis.is_empty() {
+        return HashSet::new();
+    }
+    let list = clis.join(" ");
+    let script = format!(
+        "for c in {list}; do command -v \"$c\" >/dev/null 2>&1 && printf '%s\\n' \"$c\"; done"
+    );
+    let Ok(output) = Command::new("sh").args(["-lc", &script]).output() else {
+        return HashSet::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_cli_via_login_shell(cli: &str) -> Option<PathBuf> {
+    let script = format!("command -v {cli}");
+    let output = Command::new("sh").args(["-lc", &script]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!resolved.is_empty()).then(|| PathBuf::from(resolved))
+}
+
+fn detect_installed_ides_blocking() -> Vec<DetectedIde> {
+    let mut installed_ids: HashSet<&'static str> = HashSet::new();
+    let mut unchecked_clis: Vec<&'static str> = Vec::new();
+
+    for ide in IDE_DEFINITIONS {
+        #[cfg(target_os = "macos")]
+        if mac_app_installed(ide.mac_app) {
+            installed_ids.insert(ide.id);
+            continue;
+        }
+        if native_cli_path(ide.cli).is_some() {
+            installed_ids.insert(ide.id);
+        } else {
+            unchecked_clis.push(ide.cli);
         }
     }
-    command_exists(ide.cli)
+
+    #[cfg(not(target_os = "windows"))]
+    if !unchecked_clis.is_empty() {
+        let shell_hits = batch_shell_probe_clis(&unchecked_clis);
+        for ide in IDE_DEFINITIONS {
+            if shell_hits.contains(ide.cli) {
+                installed_ids.insert(ide.id);
+            }
+        }
+    }
+
+    IDE_DEFINITIONS
+        .iter()
+        .filter(|ide| installed_ids.contains(ide.id))
+        .map(|ide| DetectedIde {
+            id: ide.id,
+            name: ide.name,
+        })
+        .collect()
 }
 
 #[tauri::command]
 pub async fn detect_installed_ides() -> AppResult<Vec<DetectedIde>> {
-    tauri::async_runtime::spawn_blocking(|| {
-        IDE_DEFINITIONS
-            .iter()
-            .filter(|ide| ide_installed(ide))
-            .map(|ide| DetectedIde {
-                id: ide.id,
-                name: ide.name,
-            })
-            .collect()
-    })
-    .await
-    .map_err(|err| AppError::Message(format!("检测 IDE 失败: {err}")))
+    tauri::async_runtime::spawn_blocking(detect_installed_ides_blocking)
+        .await
+        .map_err(|err| AppError::Message(format!("检测 IDE 失败: {err}")))
 }
 
 #[tauri::command]
-pub fn open_workspace_in_ide(
+pub async fn open_workspace_in_ide(
     state: State<'_, AppState>,
     workspace_id: String,
     ide_id: String,
 ) -> AppResult<()> {
-    let profile = state.with_workspaces(|store| {
-        store
-            .get(&workspace_id)
-            .cloned()
-            .ok_or_else(|| AppError::Message(format!("workspace not found: {workspace_id}")))
-    })?;
-    let root = PathBuf::from(profile.path);
-    if !root.is_dir() {
-        return Err(AppError::Message(format!(
-            "工作区目录不存在: {}",
-            root.display()
-        )));
-    }
+    let root = state.workspace_path(&workspace_id)?;
     let ide = IDE_DEFINITIONS
         .iter()
         .find(|ide| ide.id == ide_id)
         .ok_or_else(|| AppError::Message(format!("不支持的 IDE: {ide_id}")))?;
-    if !ide_installed(ide) {
-        return Err(AppError::Message(format!("未检测到 {}", ide.name)));
-    }
 
-    #[cfg(target_os = "macos")]
-    if PathBuf::from("/Applications")
-        .join(format!("{}.app", ide.mac_app))
-        .exists()
-        || dirs::home_dir().is_some_and(|home| {
-            home.join("Applications")
-                .join(format!("{}.app", ide.mac_app))
-                .exists()
-        })
-    {
-        return Command::new("open")
-            .args(["-a", ide.mac_app])
+    tauri::async_runtime::spawn_blocking(move || {
+        if !root.is_dir() {
+            return Err(AppError::Message(format!(
+                "工作区目录不存在: {}",
+                root.display()
+            )));
+        }
+
+        #[cfg(target_os = "macos")]
+        if mac_app_installed(ide.mac_app) {
+            return Command::new("open")
+                .args(["-a", ide.mac_app])
+                .arg(&root)
+                .spawn()
+                .map(|_| ())
+                .map_err(|err| {
+                    AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name))
+                });
+        }
+
+        let cli_path = native_cli_path(ide.cli);
+        #[cfg(not(target_os = "windows"))]
+        let cli_path = cli_path.or_else(|| resolve_cli_via_login_shell(ide.cli));
+
+        let Some(executable) = cli_path else {
+            return Err(AppError::Message(format!("未检测到 {}", ide.name)));
+        };
+
+        background_command(&executable)
             .arg(&root)
             .spawn()
             .map(|_| ())
-            .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)));
-    }
-    background_command(ide.cli)
-        .arg(&root)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)))
+            .map_err(|err| AppError::Message(format!("无法使用 {} 打开工作区: {err}", ide.name)))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("打开 IDE 任务失败: {err}")))?
 }

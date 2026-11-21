@@ -1,9 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::thread;
 
 use crate::platform::background_command;
 
-use super::diff::review_path_excluded;
+use super::diff::{review_path_excluded, MAX_FILE_BYTES};
 
 pub fn direct_git_repositories(workspace_root: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = fs::read_dir(workspace_root) else {
@@ -26,12 +30,6 @@ pub fn direct_git_repositories(workspace_root: &Path) -> Vec<(String, PathBuf)> 
         .collect::<Vec<_>>();
     repositories.sort_by(|left, right| left.0.cmp(&right.0));
     repositories
-}
-
-pub fn git_changed_file_count(repo_root: &Path, ignored_prefixes: &[String]) -> usize {
-    git_repo_changes(repo_root, ignored_prefixes)
-        .map(|changes| changes.len())
-        .unwrap_or(0)
 }
 
 pub(super) fn git_repo_changes(
@@ -136,7 +134,132 @@ pub(super) fn is_git_repository_root(path: &Path) -> bool {
     }
 }
 
-pub(super) fn git_blob_at_head(root: &Path, path: &str) -> Vec<u8> {
+/// Read multiple blob contents at `HEAD` in a single `git cat-file --batch`
+/// invocation to avoid spawning one `git show` subprocess per changed file.
+pub(super) fn git_blobs_at_head(root: &Path, paths: &[&str]) -> HashMap<String, Vec<u8>> {
+    let mut blobs = HashMap::new();
+    let mut seen = HashSet::new();
+    let mut batch_paths = Vec::with_capacity(paths.len());
+
+    for &path in paths {
+        if !seen.insert(path) {
+            continue;
+        }
+        // Paths containing raw line breaks cannot use the line-delimited batch protocol.
+        if path.contains('\n') || path.contains('\r') {
+            blobs.insert(path.to_string(), git_blob_at_head(root, path));
+        } else {
+            batch_paths.push(path);
+        }
+    }
+
+    if batch_paths.is_empty() {
+        return blobs;
+    }
+
+    let Ok(mut child) = background_command("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return blobs;
+    };
+
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.wait();
+        return blobs;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        drop(stdin);
+        let _ = child.wait();
+        return blobs;
+    };
+
+    // Feed stdin concurrently while draining stdout to avoid OS pipe buffer deadlocks.
+    let batch_paths_ref = batch_paths.as_slice();
+    thread::scope(|scope| {
+        let writer = scope.spawn(move || {
+            for path in batch_paths_ref {
+                if writeln!(stdin, "HEAD:{path}").is_err() {
+                    break;
+                }
+            }
+            let _ = stdin.flush();
+        });
+
+        let mut reader = BufReader::new(stdout);
+        let mut header_buf = Vec::new();
+        for &path in batch_paths_ref {
+            header_buf.clear();
+            let Ok(read) = reader.read_until(b'\n', &mut header_buf) else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            let header = String::from_utf8_lossy(&header_buf);
+            let Some((obj_type, size)) =
+                parse_cat_file_header(header.trim_end_matches(['\r', '\n']))
+            else {
+                continue;
+            };
+            let Ok(content) = read_cat_file_body(&mut reader, size) else {
+                break;
+            };
+            if obj_type == "blob" {
+                blobs.insert(path.to_string(), content);
+            }
+        }
+
+        drop(reader);
+        let _ = writer.join();
+    });
+
+    let _ = child.wait();
+    blobs
+}
+
+fn parse_cat_file_header(header: &str) -> Option<(&str, u64)> {
+    let mut parts = header.split(' ');
+    let oid = parts.next()?;
+    let obj_type = parts.next()?;
+    let size = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if oid.len() < 40 || !oid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if !matches!(obj_type, "blob" | "tree" | "commit" | "tag") {
+        return None;
+    }
+    let size = size.parse::<u64>().ok()?;
+    Some((obj_type, size))
+}
+
+fn read_cat_file_body<R: Read>(reader: &mut R, size: u64) -> io::Result<Vec<u8>> {
+    // Retain at most MAX_FILE_BYTES + 1 bytes so oversized blobs still trigger
+    // "File too large to render" redaction without allocating unbounded memory.
+    let capture_limit = (MAX_FILE_BYTES + 1) as u64;
+    let capture_len = size.min(capture_limit) as usize;
+    let mut content = vec![0u8; capture_len];
+    reader.read_exact(&mut content)?;
+
+    let remaining = size.saturating_sub(capture_len as u64);
+    if remaining > 0 {
+        io::copy(&mut reader.by_ref().take(remaining), &mut io::sink())?;
+    }
+
+    // Consume the single LF separator emitted by `git cat-file --batch` after each object.
+    let mut separator = [0u8; 1];
+    reader.read_exact(&mut separator)?;
+    Ok(content)
+}
+
+fn git_blob_at_head(root: &Path, path: &str) -> Vec<u8> {
     background_command("git")
         .args(["show", &format!("HEAD:{path}")])
         .current_dir(root)

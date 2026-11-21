@@ -1,4 +1,49 @@
-use super::*;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use walkdir::WalkDir;
+
+use crate::tools::io_util::is_default_excluded_os;
+
+use super::presentation::{cursor_rule_content_is_always_apply, cursor_rule_is_always_apply};
+use super::{AUTO_SOURCE, DISCOVERABLE_SOURCES};
+
+pub(super) struct InstructionCandidate {
+    pub(super) provider: String,
+    pub(super) path: PathBuf,
+    pub(super) scope: &'static str,
+    pub(super) preloaded_content: Option<String>,
+}
+
+impl InstructionCandidate {
+    pub(super) fn deferred(
+        provider: impl Into<String>,
+        path: PathBuf,
+        scope: &'static str,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            path,
+            scope,
+            preloaded_content: None,
+        }
+    }
+
+    fn preloaded(
+        provider: impl Into<String>,
+        path: PathBuf,
+        scope: &'static str,
+        content: String,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            path,
+            scope,
+            preloaded_content: Some(content),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ProviderDescriptor {
@@ -79,7 +124,7 @@ fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
 }
 
 pub(super) fn add_instruction_candidates_for_provider(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    candidates: &mut Vec<InstructionCandidate>,
     provider: &str,
     workspace_root: &Path,
 ) {
@@ -87,8 +132,8 @@ pub(super) fn add_instruction_candidates_for_provider(
         "codex" => {
             add_home_candidate(candidates, provider, ".codex/AGENTS.md");
             let override_path = workspace_root.join("AGENTS.override.md");
-            candidates.push((
-                provider.to_string(),
+            candidates.push(InstructionCandidate::deferred(
+                provider,
                 if override_path.is_file() {
                     override_path
                 } else {
@@ -101,10 +146,15 @@ pub(super) fn add_instruction_candidates_for_provider(
         "opencode" => {
             add_home_candidate(candidates, provider, ".config/opencode/AGENTS.md");
             let agents = workspace_root.join("AGENTS.md");
-            candidates.push((provider.to_string(), agents.clone(), "workspace"));
-            if !agents.is_file() {
-                candidates.push((
-                    provider.to_string(),
+            let agents_exists = agents.is_file();
+            candidates.push(InstructionCandidate::deferred(
+                provider,
+                agents,
+                "workspace",
+            ));
+            if !agents_exists {
+                candidates.push(InstructionCandidate::deferred(
+                    provider,
                     workspace_root.join("CLAUDE.md"),
                     "workspace",
                 ));
@@ -120,7 +170,11 @@ pub(super) fn add_instruction_candidates_for_provider(
                 add_home_candidate(candidates, provider, path);
             }
             if let Some(path) = descriptor.workspace_instruction {
-                candidates.push((provider.to_string(), workspace_root.join(path), "workspace"));
+                candidates.push(InstructionCandidate::deferred(
+                    provider,
+                    workspace_root.join(path),
+                    "workspace",
+                ));
             }
         }
     }
@@ -144,7 +198,7 @@ pub(super) fn add_skill_roots_for_provider(
 }
 
 fn add_cursor_instruction_candidates(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    candidates: &mut Vec<InstructionCandidate>,
     workspace_root: &Path,
 ) {
     if let Some(rules) = dirs::home_dir()
@@ -153,13 +207,13 @@ fn add_cursor_instruction_candidates(
     {
         add_cursor_rule_files(candidates, "cursor", &rules, "global");
     }
-    candidates.push((
-        "cursor".into(),
+    candidates.push(InstructionCandidate::deferred(
+        "cursor",
         workspace_root.join("AGENTS.md"),
         "workspace",
     ));
-    candidates.push((
-        "cursor".into(),
+    candidates.push(InstructionCandidate::deferred(
+        "cursor",
         workspace_root.join(".cursorrules"),
         "workspace",
     ));
@@ -170,7 +224,7 @@ fn add_cursor_instruction_candidates(
 }
 
 fn add_cursor_rule_files(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    candidates: &mut Vec<InstructionCandidate>,
     provider: &str,
     root: &Path,
     scope: &'static str,
@@ -181,28 +235,46 @@ fn add_cursor_rule_files(
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if path.is_file()
-            && matches!(
+        if !path.is_file()
+            || !matches!(
                 path.extension().and_then(|value| value.to_str()),
                 Some("mdc") | Some("md")
             )
-            && cursor_rule_is_always_apply(path)
         {
-            candidates.push((provider.to_string(), path.to_path_buf(), scope));
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(path) else {
+            continue;
+        };
+        if cursor_rule_content_is_always_apply(&raw) {
+            candidates.push(InstructionCandidate::preloaded(
+                provider,
+                path.to_path_buf(),
+                scope,
+                raw,
+            ));
         }
     }
 }
 
 fn add_reasonix_instruction_candidates(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    candidates: &mut Vec<InstructionCandidate>,
     workspace_root: &Path,
 ) {
     for name in ["REASONIX.md", "AGENTS.md", "CLAUDE.md"] {
         add_home_candidate(candidates, "reasonix", &format!(".reasonix/{name}"));
         let local = name.trim_end_matches(".md").to_string() + ".local.md";
         add_home_candidate(candidates, "reasonix", &format!(".reasonix/{local}"));
-        candidates.push(("reasonix".into(), workspace_root.join(name), "workspace"));
-        candidates.push(("reasonix".into(), workspace_root.join(local), "workspace"));
+        candidates.push(InstructionCandidate::deferred(
+            "reasonix",
+            workspace_root.join(name),
+            "workspace",
+        ));
+        candidates.push(InstructionCandidate::deferred(
+            "reasonix",
+            workspace_root.join(local),
+            "workspace",
+        ));
     }
 }
 
@@ -235,11 +307,15 @@ pub(super) fn normalized_source_list(sources: &[String]) -> Vec<String> {
 }
 
 pub(super) fn add_auto_instruction_candidates(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
+    candidates: &mut Vec<InstructionCandidate>,
     workspace_root: &Path,
 ) {
     for (provider, relative) in [("auto", "GEMINI.md"), ("auto", ".windsurfrules")] {
-        candidates.push((provider.into(), workspace_root.join(relative), "workspace"));
+        candidates.push(InstructionCandidate::deferred(
+            provider,
+            workspace_root.join(relative),
+            "workspace",
+        ));
     }
 }
 
@@ -291,23 +367,16 @@ pub(super) fn auto_scan_entry_allowed(entry: &walkdir::DirEntry) -> bool {
     if !entry.file_type().is_dir() {
         return true;
     }
-    let Some(name) = entry.file_name().to_str() else {
+    let file_name = entry.file_name();
+    if is_default_excluded_os(file_name) {
+        return false;
+    }
+    let Some(name) = file_name.to_str() else {
         return true;
     };
     !matches!(
         name,
-        ".git"
-            | ".coding-tools"
-            | "node_modules"
-            | "target"
-            | "build"
-            | "dist"
-            | ".next"
-            | ".svelte-kit"
-            | "coverage"
-            | "vendor"
-            | ".venv"
-            | "venv"
+        ".coding-tools" | ".next" | ".svelte-kit" | "coverage" | "vendor"
     )
 }
 
@@ -353,13 +422,13 @@ pub(super) fn normalize_provider(value: &str) -> String {
     }
 }
 
-pub(super) fn add_home_candidate(
-    candidates: &mut Vec<(String, PathBuf, &'static str)>,
-    provider: &str,
-    path: &str,
-) {
+fn add_home_candidate(candidates: &mut Vec<InstructionCandidate>, provider: &str, path: &str) {
     if let Some(home) = dirs::home_dir() {
-        candidates.push((provider.to_string(), home.join(path), "global"));
+        candidates.push(InstructionCandidate::deferred(
+            provider,
+            home.join(path),
+            "global",
+        ));
     }
 }
 
@@ -372,7 +441,7 @@ pub(super) fn add_skill_root(
     roots.push((provider.to_string(), path, scope));
 }
 
-pub(super) fn add_home_skill_root(
+fn add_home_skill_root(
     roots: &mut Vec<(String, PathBuf, &'static str)>,
     provider: &str,
     path: &str,
@@ -463,7 +532,7 @@ pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<St
     result
 }
 
-pub(super) fn display_home_path(home: &Path, path: &Path) -> String {
+fn display_home_path(home: &Path, path: &Path) -> String {
     let canonical_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     canonical_path

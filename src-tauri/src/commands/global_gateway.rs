@@ -3,7 +3,7 @@ use std::path::Path;
 
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_state::AppState;
 use crate::auth::{external_base_url, issue_scoped_access_token, verify_scoped_access_token};
@@ -11,8 +11,8 @@ use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
 use crate::global_gateway::{self, GatewayHealthItem, GlobalGatewayStatusDto};
 use crate::mcp::stdio_bridge::{
-    format_mcp_stdio_command, gemini_stdio_auth_file_path, gemini_stdio_bin_path,
-    read_auth_file, remove_auth_file_if_exists, write_private_auth_file, GeminiStdioAuthFile,
+    format_mcp_stdio_command, gemini_stdio_auth_file_path, gemini_stdio_bin_path, read_auth_file,
+    remove_auth_file_if_exists, write_private_auth_file, GeminiStdioAuthFile,
     GEMINI_STDIO_CLIENT_ID,
 };
 use crate::secret::SecretStore;
@@ -32,20 +32,50 @@ pub struct GeminiLocalBridgeStatusDto {
 }
 
 #[tauri::command]
-pub fn get_global_gateway_config(_state: State<'_, AppState>) -> AppResult<GlobalGatewayConfig> {
-    DataStore::read_file(|data| Ok(AppSettings::from_data(data).global_gateway))
+pub async fn get_global_gateway_config() -> AppResult<GlobalGatewayConfig> {
+    tauri::async_runtime::spawn_blocking(|| {
+        DataStore::read_file(|data| Ok(AppSettings::from_data(data).global_gateway))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("读取网关配置失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn set_global_gateway_config(
+pub async fn set_global_gateway_config(
+    app: AppHandle,
     state: State<'_, AppState>,
     config: GlobalGatewayConfig,
 ) -> AppResult<()> {
-    state.with_settings(|store| {
-        let mut settings = store.settings();
-        settings.global_gateway = config;
-        store.update_settings(settings)
+    let app_for_save = app.clone();
+    let tunnel_changed = tauri::async_runtime::spawn_blocking(move || {
+        app_for_save.state::<AppState>().with_settings(|store| {
+            let mut settings = store.settings();
+            let prev = &settings.global_gateway;
+            let tunnel_diff = prev.enabled != config.enabled
+                || prev.tunnel_type != config.tunnel_type
+                || prev.cloudflare_mode != config.cloudflare_mode
+                || prev.frp_profile_id != config.frp_profile_id
+                || prev.frp_server != config.frp_server
+                || prev.frp_subdomain != config.frp_subdomain
+                || prev.frp_server_port != config.frp_server_port
+                || prev.use_proxy != config.use_proxy;
+            settings.global_gateway = config;
+            store.update_settings(settings)?;
+            Ok(tunnel_diff)
+        })
     })
+    .await
+    .map_err(|err| AppError::Message(format!("保存网关配置任务失败: {err}")))??;
+
+    if let Err(error) =
+        crate::commands::runtime::apply_live_runtime_changes(&state, tunnel_changed).await
+    {
+        eprintln!("Global MCP live reload after gateway config save failed: {error}");
+        return Err(AppError::Message(format!(
+            "网关配置已保存，但热重载 Global MCP 失败，请手动重启服务：{error}"
+        )));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -74,53 +104,61 @@ pub async fn check_global_gateway_health() -> AppResult<Vec<GatewayHealthItem>> 
 }
 
 #[tauri::command]
-pub fn get_gemini_local_bridge_status(
+pub async fn get_gemini_local_bridge_status(
     state: State<'_, AppState>,
 ) -> AppResult<GeminiLocalBridgeStatusDto> {
     let settings = state.with_settings(|store| Ok(store.settings()))?;
-    let oauth_secret = if settings.global_mcp_auth_type.trim() == "oauth" {
-        SecretStore::get_shared("oauth_token_secret")?.unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let bin_path = gemini_stdio_bin_path().map_err(AppError::Message)?;
-    let auth_path = gemini_stdio_auth_file_path().map_err(AppError::Message)?;
-    let current_exe = std::env::current_exe().ok();
-    Ok(build_bridge_status_with_paths(
-        &settings,
-        &oauth_secret,
-        &bin_path,
-        current_exe.as_deref(),
-        &auth_path,
-    ))
+    tauri::async_runtime::spawn_blocking(move || {
+        let oauth_secret = if settings.global_mcp_auth_type.trim() == "oauth" {
+            SecretStore::get_shared("oauth_token_secret")?.unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let bin_path = gemini_stdio_bin_path().map_err(AppError::Message)?;
+        let auth_path = gemini_stdio_auth_file_path().map_err(AppError::Message)?;
+        let current_exe = std::env::current_exe().ok();
+        Ok(build_bridge_status_with_paths(
+            &settings,
+            &oauth_secret,
+            &bin_path,
+            current_exe.as_deref(),
+            &auth_path,
+        ))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("检测 Gemini 本地桥接状态失败: {err}")))?
 }
 
 #[tauri::command]
-pub fn prepare_gemini_local_bridge(
+pub async fn prepare_gemini_local_bridge(
     state: State<'_, AppState>,
 ) -> AppResult<GeminiLocalBridgeStatusDto> {
     let settings = state.with_settings(|store| Ok(store.settings()))?;
-    let auth_type = settings.global_mcp_auth_type.trim();
-    let oauth_secret = match auth_type {
-        "oauth" => SecretStore::get_shared("oauth_token_secret")?.unwrap_or_default(),
-        "noauth" => String::new(),
-        "bearer" if settings.allow_local_noauth => String::new(),
-        "bearer" => {
-            return Err(AppError::Message(
-                "Bearer 模式不支持自动生成本地桥接凭据，请开启本机回环免授权直连，或切换到 OAuth / 无认证模式。".into(),
-            ))
-        }
-        _ => {
-            return Err(AppError::Message(
-                "未知 Global MCP 认证模式，无法生成 Gemini 本地桥接配置。".into(),
-            ))
-        }
-    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let auth_type = settings.global_mcp_auth_type.trim();
+        let oauth_secret = match auth_type {
+            "oauth" => SecretStore::get_shared("oauth_token_secret")?.unwrap_or_default(),
+            "noauth" => String::new(),
+            "bearer" if settings.allow_local_noauth => String::new(),
+            "bearer" => {
+                return Err(AppError::Message(
+                    "Bearer 模式不支持自动生成本地桥接凭据，请开启本机回环免授权直连，或切换到 OAuth / 无认证模式。".into(),
+                ))
+            }
+            _ => {
+                return Err(AppError::Message(
+                    "未知 Global MCP 认证模式，无法生成 Gemini 本地桥接配置。".into(),
+                ))
+            }
+        };
 
-    let bin_path = gemini_stdio_bin_path().map_err(AppError::Message)?;
-    let auth_path = gemini_stdio_auth_file_path().map_err(AppError::Message)?;
-    let current_exe = std::env::current_exe()?;
-    prepare_bridge_with_paths(&settings, &oauth_secret, &bin_path, &current_exe, &auth_path)
+        let bin_path = gemini_stdio_bin_path().map_err(AppError::Message)?;
+        let auth_path = gemini_stdio_auth_file_path().map_err(AppError::Message)?;
+        let current_exe = std::env::current_exe()?;
+        prepare_bridge_with_paths(&settings, &oauth_secret, &bin_path, &current_exe, &auth_path)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("生成 Gemini 本地桥接配置失败: {err}")))?
 }
 
 fn prepare_bridge_with_paths(
@@ -141,11 +179,8 @@ fn prepare_bridge_with_paths(
             );
             let (token, expires_at) =
                 issue_scoped_access_token(&server_url, oauth_secret, GEMINI_STDIO_CLIENT_ID)
-                    .map_err(|()| {
-                        AppError::Message("生成 Gemini 本地 OAuth 凭据失败。".into())
-                    })?;
-            let payload =
-                GeminiStdioAuthFile::new_oauth(endpoint, server_url, token, expires_at);
+                    .map_err(|()| AppError::Message("生成 Gemini 本地 OAuth 凭据失败。".into()))?;
+            let payload = GeminiStdioAuthFile::new_oauth(endpoint, server_url, token, expires_at);
             write_private_auth_file(auth_path, &payload).map_err(AppError::Message)?;
         }
         "noauth" => {
@@ -243,7 +278,8 @@ fn evaluate_credentials(
         "bearer" if settings.allow_local_noauth => (true, String::new()),
         "bearer" => (
             false,
-            "当前是 Bearer 模式；为避免在命令或明文文件外暴露密钥，请切换到 OAuth 或无认证模式。".into(),
+            "当前是 Bearer 模式；为避免在命令或明文文件外暴露密钥，请切换到 OAuth 或无认证模式。"
+                .into(),
         ),
         "oauth" => {
             let server_url = external_base_url(
@@ -255,10 +291,9 @@ fn evaluate_credentials(
                 Ok(Some(file))
                     if file.auth_type == "oauth"
                         && file.endpoint == endpoint
-                        && file
-                            .access_token
-                            .as_deref()
-                            .is_some_and(|token| verify_scoped_access_token(token, oauth_secret, &server_url)) =>
+                        && file.access_token.as_deref().is_some_and(|token| {
+                            verify_scoped_access_token(token, oauth_secret, &server_url)
+                        }) =>
                 {
                     (true, String::new())
                 }
@@ -270,10 +305,7 @@ fn evaluate_credentials(
                     false,
                     "尚未生成本地 OAuth 凭据，请点击“生成凭据并复制命令”。".into(),
                 ),
-                Err(_) => (
-                    false,
-                    "本地 OAuth 凭据文件损坏，请点击重新生成。".into(),
-                ),
+                Err(_) => (false, "本地 OAuth 凭据文件损坏，请点击重新生成。".into()),
             }
         }
         _ => (
@@ -350,8 +382,13 @@ mod tests {
         let auth_path = root.join("share").join("gemini-stdio-auth.json");
         let settings = test_settings("oauth", "https://mcp.example.com");
 
-        let before =
-            build_bridge_status_with_paths(&settings, "secret-123", &bin_path, Some(&fake_exe), &auth_path);
+        let before = build_bridge_status_with_paths(
+            &settings,
+            "secret-123",
+            &bin_path,
+            Some(&fake_exe),
+            &auth_path,
+        );
         assert!(!before.binary_ready);
         assert!(!before.credentials_ready);
 
@@ -370,16 +407,14 @@ mod tests {
             assert!(!symlink_status.binary_ready);
         }
 
-        let after = prepare_bridge_with_paths(
-            &settings,
-            "secret-123",
-            &bin_path,
-            &fake_exe,
-            &auth_path,
-        )
-        .expect("prepare oauth bridge");
+        let after =
+            prepare_bridge_with_paths(&settings, "secret-123", &bin_path, &fake_exe, &auth_path)
+                .expect("prepare oauth bridge");
         assert!(after.binary_ready);
-        assert!(!fs::symlink_metadata(&bin_path).unwrap().file_type().is_symlink());
+        assert!(!fs::symlink_metadata(&bin_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert!(after.credentials_ready);
         assert!(after.issue.is_empty());
         assert_eq!(
@@ -389,8 +424,13 @@ mod tests {
 
         // Changing public_url invalidates previously minted audience/issuer cleanly.
         let changed = test_settings("oauth", "https://other.example.com");
-        let invalidated =
-            build_bridge_status_with_paths(&changed, "secret-123", &bin_path, Some(&fake_exe), &auth_path);
+        let invalidated = build_bridge_status_with_paths(
+            &changed,
+            "secret-123",
+            &bin_path,
+            Some(&fake_exe),
+            &auth_path,
+        );
         assert!(!invalidated.credentials_ready);
 
         let _ = fs::remove_dir_all(&root);

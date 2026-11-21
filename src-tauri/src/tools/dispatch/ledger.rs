@@ -244,7 +244,7 @@ pub(super) fn attach_standalone_metadata(output: &mut Value, recovery_hint: &str
 }
 
 fn filter_exposed_actions(ctx: &ToolContext, actions: Vec<String>) -> Vec<String> {
-    let exposed = crate::tools::registry::exposed_tool_names(ctx.tool_profile.as_str());
+    let exposed = crate::tools::registry::exposed_tool_names_cached(ctx.tool_profile);
     actions
         .into_iter()
         .filter(|action| exposed.contains(&action.as_str()))

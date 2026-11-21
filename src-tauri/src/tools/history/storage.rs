@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 
+use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes, sha256_hex, FileLock};
 use crate::tools::workspace::{relative_display, Workspace, WorkspaceError, WorkspaceResult};
 
 use super::markdown;
@@ -21,13 +21,7 @@ const STATE_FOCUS_LIMIT: usize = 2_048;
 const STATE_REFERENCE_LIMIT: usize = 8;
 
 pub struct HistoryLock {
-    file: File,
-}
-
-impl Drop for HistoryLock {
-    fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
-    }
+    _lock: FileLock,
 }
 
 pub fn resolve_history_dir(
@@ -99,15 +93,9 @@ pub fn ensure_directory(path: &Path) -> WorkspaceResult<()> {
 pub fn lock_directory(path: &Path) -> WorkspaceResult<HistoryLock> {
     ensure_directory(path)?;
     let lock_path = path.join(".history.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_path)
+    let lock = acquire_file_lock(&lock_path)
         .map_err(|error| io_error("HISTORY_LOCK_FAILED", error, true))?;
-    FileExt::lock_exclusive(&file).map_err(|error| io_error("HISTORY_LOCK_FAILED", error, true))?;
-    Ok(HistoryLock { file })
+    Ok(HistoryLock { _lock: lock })
 }
 
 pub fn scan(workspace: &Workspace, history_dir: &Path) -> WorkspaceResult<ScanReport> {
@@ -129,6 +117,7 @@ pub fn scan(workspace: &Workspace, history_dir: &Path) -> WorkspaceResult<ScanRe
         let name = entry.file_name().to_string_lossy().into_owned();
         if matches!(name.as_str(), "README.md" | "index.json" | ".history.lock")
             || name.starts_with(".history-tmp-")
+            || name.starts_with(".tmp-")
         {
             continue;
         }
@@ -273,6 +262,36 @@ pub fn write_state(history_dir: &Path, state: &MemoryState) -> WorkspaceResult<(
         state,
         "history state",
     )
+}
+
+pub fn upsert_document(report: &mut ScanReport, document: HistoryDocument) {
+    let file_name = format!("{}.md", document.number);
+    if !document.content.trim().is_empty() {
+        report.empty_files.retain(|name| name != &file_name);
+    }
+    match report
+        .documents
+        .binary_search_by_key(&document.number, |existing| existing.number)
+    {
+        Ok(index) => {
+            report.documents[index] = document;
+        }
+        Err(index) => {
+            let number = document.number;
+            report.documents.insert(index, document);
+            report.numbers.insert(index, number);
+            report.missing_numbers.retain(|missing| *missing != number);
+        }
+    }
+}
+
+pub fn archive_revision(report: &ScanReport) -> String {
+    let mut digest = Sha256::new();
+    for document in &report.documents {
+        digest.update(document.number.to_le_bytes());
+        digest.update(sha256(document.content.as_bytes()).as_bytes());
+    }
+    format!("sha256:{:x}", digest.finalize())
 }
 
 pub fn build_manifest(report: &ScanReport) -> MemoryManifest {
@@ -469,7 +488,7 @@ pub fn write_markdown(path: &Path, content: &str) -> WorkspaceResult<()> {
 }
 
 pub fn sha256(content: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(content))
+    sha256_hex(content)
 }
 
 fn read_json<T>(path: &Path, invalid_code: &'static str, label: &str) -> WorkspaceResult<Option<T>>
@@ -505,62 +524,13 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T, label: &str) -> Works
 }
 
 fn atomic_write(target: &Path, content: &[u8]) -> WorkspaceResult<()> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| WorkspaceError::invalid_argument("History target has no parent"))?;
-    ensure_directory(parent)?;
-    let temp = parent.join(format!(".history-tmp-{}", uuid::Uuid::new_v4()));
-    let result = (|| -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        atomic_replace(&temp, target)?;
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
+    if target.parent().is_none() {
+        return Err(WorkspaceError::invalid_argument(
+            "History target has no parent",
+        ));
     }
-    result.map_err(|error| io_error("HISTORY_WRITE_FAILED", error, true))
-}
-
-#[cfg(not(windows))]
-fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
-    fs::rename(source, target)
-}
-
-#[cfg(windows)]
-fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let target = target
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    unsafe {
-        MoveFileExW(
-            PCWSTR(source.as_ptr()),
-            PCWSTR(target.as_ptr()),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-        .map_err(|error| io::Error::other(error.to_string()))
-    }
+    atomic_write_bytes(target, content)
+        .map_err(|error| io_error("HISTORY_WRITE_FAILED", error, true))
 }
 
 fn io_error(code: &'static str, error: io::Error, retryable: bool) -> WorkspaceError {

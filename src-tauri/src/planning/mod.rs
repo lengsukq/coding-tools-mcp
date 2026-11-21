@@ -1,3 +1,4 @@
+mod migration;
 mod model;
 mod service;
 mod store;
