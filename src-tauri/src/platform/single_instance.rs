@@ -55,10 +55,21 @@ pub fn acquire_single_instance() -> bool {
     // Pass the handle as usize so the waiter thread is Send (HANDLE is !Send).
     let event_bits = event.0 as usize;
     std::thread::spawn(move || {
+        use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
         use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
         let event = HANDLE(event_bits as *mut std::ffi::c_void);
         loop {
-            let _ = unsafe { WaitForSingleObject(event, INFINITE) };
+            let status = unsafe { WaitForSingleObject(event, INFINITE) };
+            if status == WAIT_FAILED {
+                eprintln!(
+                    "single-instance WaitForSingleObject failed ({:?}); stopping show-window listener",
+                    unsafe { GetLastError() }
+                );
+                break;
+            }
+            if status != WAIT_OBJECT_0 {
+                continue;
+            }
             if let Some(app) = SHOW_APP_HANDLE.get() {
                 let _ = crate::commands::window_chrome::show_main_window(app.clone());
             }

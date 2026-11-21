@@ -199,6 +199,27 @@ pub(crate) fn default_allow_local_noauth() -> bool {
     true
 }
 
+pub const DEFAULT_MCP_SERVER_NAME: &str = "coding-tools-mcp";
+pub const DEFAULT_MCP_SERVER_TITLE: &str = "Coding Tools MCP";
+
+pub fn resolved_mcp_server_name(configured: &str) -> String {
+    let trimmed = configured.trim();
+    if trimmed.is_empty() {
+        DEFAULT_MCP_SERVER_NAME.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn resolved_mcp_server_title(configured: &str) -> String {
+    let trimmed = configured.trim();
+    if trimmed.is_empty() {
+        DEFAULT_MCP_SERVER_TITLE.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -216,6 +237,9 @@ pub struct AppSettings {
     /// Authentication used by the single 0.3 Global MCP endpoint.
     #[serde(default = "default_global_mcp_auth_type")]
     pub global_mcp_auth_type: String,
+    /// Optional custom display name advertised by Global MCP (`serverInfo` and discovery).
+    #[serde(default)]
+    pub global_mcp_server_name: String,
     /// Global execution permission mode inherited by workspaces that opt in.
     #[serde(default = "default_global_permission_mode")]
     pub global_permission_mode: String,
@@ -464,6 +488,7 @@ impl AppSettings {
             } else {
                 data.global_mcp_auth_type.clone()
             },
+            global_mcp_server_name: data.global_mcp_server_name.clone(),
             global_permission_mode: data.global_permission_mode.clone(),
             global_allowed_commands: data.global_allowed_commands.clone(),
             global_ai_instructions: data.global_ai_instructions.clone(),
@@ -492,6 +517,7 @@ impl AppSettings {
         data.proxy = self.proxy.clone();
         data.global_executable_paths = self.global_executable_paths.clone();
         data.global_mcp_auth_type = self.global_mcp_auth_type.clone();
+        data.global_mcp_server_name = self.global_mcp_server_name.clone();
         data.global_permission_mode = self.global_permission_mode.clone();
         data.global_allowed_commands = self.global_allowed_commands.clone();
         data.global_ai_instructions = self.global_ai_instructions.clone();

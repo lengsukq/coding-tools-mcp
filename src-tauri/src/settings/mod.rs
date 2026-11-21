@@ -6,6 +6,6 @@ pub(crate) use model::{
     GLOBAL_RUNTIME_DEFAULTS_VERSION,
 };
 pub use model::{
-    AppSettings, DownloadConfig, FrpProfile, GlobalGatewayConfig, LanFederationConfig,
-    PairedPeerConfig, ProxyConfig,
+    resolved_mcp_server_name, resolved_mcp_server_title, AppSettings, DownloadConfig, FrpProfile,
+    GlobalGatewayConfig, LanFederationConfig, PairedPeerConfig, ProxyConfig,
 };

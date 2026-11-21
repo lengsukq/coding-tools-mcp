@@ -100,41 +100,12 @@ pub fn parse_latest_release(body: &str, current_version: &str) -> AppResult<Upda
 }
 
 fn build_update_client(settings: &AppSettings) -> AppResult<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent(format!(
-            "CodingToolsMCP/{} (+{})",
-            current_app_version(),
-            REPO_URL
-        ));
-
-    let mode = settings.download.proxy_mode.trim();
-    match mode {
-        "" | "none" => {
-            builder = builder.no_proxy();
-        }
-        "system" => {}
-        "manual" => {
-            let proxy_url = settings.download.proxy_url.trim();
-            if proxy_url.is_empty() {
-                return Err(AppError::Message(
-                    "下载代理模式为手动，但未填写代理地址。".into(),
-                ));
-            }
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|err| AppError::Message(format!("代理地址无效: {err}")))?;
-            builder = builder.proxy(proxy);
-        }
-        url => {
-            let proxy = reqwest::Proxy::all(url)
-                .map_err(|err| AppError::Message(format!("代理地址无效: {err}")))?;
-            builder = builder.proxy(proxy);
-        }
-    }
-
-    builder
-        .build()
-        .map_err(|err| AppError::Message(err.to_string()))
+    let user_agent = format!("CodingToolsMCP/{} (+{})", current_app_version(), REPO_URL);
+    crate::util::http::build_download_client_with_user_agent(
+        &settings.download,
+        Duration::from_secs(15),
+        Some(&user_agent),
+    )
 }
 
 pub async fn check_app_update(settings: &AppSettings) -> AppResult<UpdateCheckResult> {

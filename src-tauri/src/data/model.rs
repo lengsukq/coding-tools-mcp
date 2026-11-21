@@ -24,6 +24,8 @@ pub struct AppData {
     #[serde(default)]
     pub global_mcp_auth_type: String,
     #[serde(default)]
+    pub global_mcp_server_name: String,
+    #[serde(default)]
     pub global_permission_mode: String,
     #[serde(default)]
     pub global_allowed_commands: String,

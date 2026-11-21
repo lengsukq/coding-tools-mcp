@@ -1,25 +1,95 @@
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::platform::platform;
 use crate::settings::{
     default_global_allowed_commands, default_global_executable_paths, default_global_mcp_auth_type,
     default_global_permission_mode, AppSettings, GLOBAL_MCP_MIGRATION_VERSION,
     GLOBAL_RUNTIME_DEFAULTS_VERSION,
 };
+use crate::util::fs::atomic_write_json;
+use crate::util::time::unix_now_secs;
+use crate::workspace::legacy_import::import_legacy_profiles_if_empty;
 
 use super::model::{AppData, LegacyProfilesOnlyFile};
 
 const LEGACY_PROFILES_FILE: &str = "profiles.json";
 const LEGACY_SETTINGS_FILE: &str = "app_settings.json";
 
+pub(super) const OBSOLETE_ACTIONS_SECRET_KEYS: &[&str] = &[
+    "actions_cloudflare_token",
+    "actions_api_key",
+    "actions_oauth_client_secret",
+    "actions_oauth_password",
+    "actions_oauth_token_secret",
+    "actions_oauth_dynamic_clients",
+    "actions_frp_token",
+];
+
+pub(super) struct LoadedAppData {
+    pub data: AppData,
+    pub existed_before: bool,
+    pub needs_persist: bool,
+}
+
 pub fn data_file_path() -> AppResult<PathBuf> {
     Ok(platform()
         .app_config_dir()?
         .join("data")
         .join("profiles.json"))
+}
+
+pub(super) fn strip_obsolete_actions_secrets(data: &mut AppData) -> bool {
+    let mut changed = false;
+    for key in OBSOLETE_ACTIONS_SECRET_KEYS {
+        changed |= data.shared_secrets.remove(*key).is_some();
+    }
+    for secrets in data.workspace_secrets.values_mut() {
+        for key in OBSOLETE_ACTIONS_SECRET_KEYS {
+            changed |= secrets.remove(*key).is_some();
+        }
+    }
+    changed
+}
+
+pub(super) fn contains_obsolete_actions_json(value: &serde_json::Value) -> bool {
+    let Some(root) = value.as_object() else {
+        return false;
+    };
+    if root.contains_key("restore_actions_workspace_ids") {
+        return true;
+    }
+    if root
+        .get("profiles")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|profiles| {
+            profiles.iter().any(|profile| {
+                profile
+                    .as_object()
+                    .is_some_and(|object| object.contains_key("actions"))
+            })
+        })
+    {
+        return true;
+    }
+    ["shared_secrets", "workspace_secrets"]
+        .into_iter()
+        .filter_map(|key| root.get(key))
+        .any(value_contains_obsolete_actions_secret)
+}
+
+fn value_contains_obsolete_actions_secret(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
+            OBSOLETE_ACTIONS_SECRET_KEYS.contains(&key.as_str())
+                || value_contains_obsolete_actions_secret(value)
+        }),
+        serde_json::Value::Array(values) => {
+            values.iter().any(value_contains_obsolete_actions_secret)
+        }
+        _ => false,
+    }
 }
 
 fn migrate_global_auth_credentials(data: &mut AppData, notices: &mut Vec<String>) {
@@ -159,18 +229,72 @@ fn apply_global_mcp_migration(data: &mut AppData) -> bool {
     true
 }
 
-pub fn load_or_migrate() -> AppResult<AppData> {
-    let path = data_file_path()?;
+fn backup_corrupt_profiles(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let ts = unix_now_secs();
+    let mut candidate = parent.join(format!("profiles.json.corrupt.{ts}"));
+    let mut suffix = 1u32;
+    while candidate.exists() {
+        candidate = parent.join(format!("profiles.json.corrupt.{ts}.{suffix}"));
+        suffix = suffix.saturating_add(1);
+    }
+    let _ = fs::copy(path, &candidate);
+    candidate
+}
+
+pub(super) fn load_for_store() -> AppResult<(PathBuf, LoadedAppData)> {
+    let app_root = platform().app_config_dir()?;
+    let path = app_root.join("data").join("profiles.json");
+    let loaded = load_for_store_at(&app_root, &path, true)?;
+    Ok((path, loaded))
+}
+
+pub(super) fn load_for_store_at(
+    app_root: &Path,
+    path: &Path,
+    allow_legacy_home_import: bool,
+) -> AppResult<LoadedAppData> {
     if path.exists() {
-        let raw = fs::read_to_string(&path)?;
-        let mut data: AppData = serde_json::from_str(&raw).unwrap_or_default();
-        if apply_global_runtime_defaults(&mut data) | apply_global_mcp_migration(&mut data) {
-            write_data(&path, &data)?;
+        let raw = fs::read_to_string(path)?;
+        let mut data: AppData = match serde_json::from_str(&raw) {
+            Ok(parsed) => parsed,
+            Err(parse_err) => {
+                let backup = backup_corrupt_profiles(path);
+                return Err(AppError::Message(format!(
+                    "配置文件 {} 解析失败（{parse_err}）。原始数据未覆盖并已备份至 {}，请检查或恢复该备份文件后重试。",
+                    path.display(),
+                    backup.display()
+                )));
+            }
+        };
+        let had_obsolete_actions_json = raw.contains("actions")
+            && serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .is_some_and(|value| contains_obsolete_actions_json(&value));
+
+        let imported = if allow_legacy_home_import {
+            import_legacy_profiles_if_empty(&mut data)?
+        } else {
+            0
+        };
+        if imported > 0 {
+            data.global_runtime_defaults_version = 0;
+            data.global_mcp_migration_version = 0;
         }
-        return Ok(data);
+
+        let migrated =
+            apply_global_runtime_defaults(&mut data) | apply_global_mcp_migration(&mut data);
+        let removed_obsolete_actions = strip_obsolete_actions_secrets(&mut data);
+        let needs_persist =
+            migrated || imported > 0 || had_obsolete_actions_json || removed_obsolete_actions;
+
+        return Ok(LoadedAppData {
+            data,
+            existed_before: true,
+            needs_persist,
+        });
     }
 
-    let app_root = platform().app_config_dir()?;
     let mut data = AppData {
         allow_local_noauth: true,
         ..AppData::default()
@@ -192,10 +316,31 @@ pub fn load_or_migrate() -> AppResult<AppData> {
         }
     }
 
+    if allow_legacy_home_import {
+        let _ = import_legacy_profiles_if_empty(&mut data)?;
+    }
+
     apply_global_runtime_defaults(&mut data);
     apply_global_mcp_migration(&mut data);
+    strip_obsolete_actions_secrets(&mut data);
 
-    Ok(data)
+    Ok(LoadedAppData {
+        data,
+        existed_before: false,
+        needs_persist: true,
+    })
+}
+
+pub(super) fn load_or_migrate_at(
+    app_root: &Path,
+    path: &Path,
+    allow_legacy_home_import: bool,
+) -> AppResult<AppData> {
+    let loaded = load_for_store_at(app_root, path, allow_legacy_home_import)?;
+    if loaded.existed_before && loaded.needs_persist {
+        write_data(path, &loaded.data)?;
+    }
+    Ok(loaded.data)
 }
 
 fn apply_global_runtime_defaults(data: &mut AppData) -> bool {
@@ -223,24 +368,8 @@ fn apply_global_runtime_defaults(data: &mut AppData) -> bool {
     true
 }
 
-pub fn save(data: &AppData) -> AppResult<()> {
-    let path = data_file_path()?;
-    write_data(&path, data)
-}
-
-fn write_data(path: &Path, data: &AppData) -> AppResult<()> {
-    let parent = path.parent().ok_or_else(|| {
-        crate::error::AppError::Message("data file path has no parent directory".into())
-    })?;
-    fs::create_dir_all(parent)?;
-    let text = serde_json::to_string_pretty(data)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(format!("{text}\n").as_bytes())?;
-    temp.as_file_mut().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
-    #[cfg(unix)]
-    fs::File::open(parent)?.sync_all()?;
-    Ok(())
+pub(super) fn write_data(path: &Path, data: &AppData) -> AppResult<()> {
+    atomic_write_json(path, data)
 }
 
 pub fn maybe_backup_legacy_files(path: &Path) -> AppResult<()> {
@@ -267,6 +396,7 @@ fn merge_settings(data: &mut AppData, settings: AppSettings) {
     data.proxy = settings.proxy;
     data.global_executable_paths = settings.global_executable_paths;
     data.global_mcp_auth_type = settings.global_mcp_auth_type;
+    data.global_mcp_server_name = settings.global_mcp_server_name;
     data.global_permission_mode = settings.global_permission_mode;
     data.global_allowed_commands = settings.global_allowed_commands;
     data.global_ai_instructions = settings.global_ai_instructions;
@@ -312,6 +442,82 @@ mod tests {
             1,
             "temporary file should be removed after persist"
         );
+    }
+
+    #[test]
+    fn corrupt_profiles_json_is_backed_up_and_returns_error_without_overwriting() {
+        let dir = tempfile::tempdir().expect("temp app root");
+        let data_dir = dir.path().join("data");
+        fs::create_dir_all(&data_dir).expect("create data dir");
+        let path = data_dir.join("profiles.json");
+        let broken = "{ \"profiles\": [ truncated";
+        fs::write(&path, broken).expect("write corrupt json");
+
+        let err = load_or_migrate_at(dir.path(), &path, false)
+            .expect_err("corrupt profiles.json must return an explicit error");
+        assert!(err.to_string().contains("profiles.json.corrupt."));
+        assert_eq!(
+            fs::read_to_string(&path).expect("original corrupt file must remain intact"),
+            broken
+        );
+
+        let backups = fs::read_dir(&data_dir)
+            .expect("list data dir")
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("profiles.json.corrupt.")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            backups.len(),
+            1,
+            "exactly one corrupt backup should be created"
+        );
+        assert_eq!(
+            fs::read_to_string(backups[0].path()).expect("read backup"),
+            broken
+        );
+    }
+
+    #[test]
+    fn legacy_profiles_at_app_root_receive_0_3_migrations_before_completion() {
+        let dir = tempfile::tempdir().expect("temp app root");
+        let legacy_profiles = dir.path().join(LEGACY_PROFILES_FILE);
+        let mut legacy_ws =
+            crate::workspace::WorkspaceProfile::new("/tmp/legacy-ws".into(), Some("legacy".into()));
+        legacy_ws.auth.auth_type = "bearer".into();
+        legacy_ws.runtime.inherit_global_execution_policy = false;
+        let payload = serde_json::json!({
+            "profiles": [
+                {
+                    "id": legacy_ws.id,
+                    "name": legacy_ws.name,
+                    "path": legacy_ws.path,
+                    "auth": { "type": "bearer", "use_shared_secrets": false },
+                    "tunnel": { "type": "none" },
+                    "runtime": legacy_ws.runtime
+                }
+            ]
+        });
+        fs::write(&legacy_profiles, payload.to_string()).expect("write legacy profiles");
+
+        let target = dir.path().join("data").join("profiles.json");
+        let loaded = load_or_migrate_at(dir.path(), &target, false)
+            .expect("legacy load_or_migrate should succeed");
+        assert_eq!(loaded.profiles.len(), 1);
+        assert_eq!(
+            loaded.global_runtime_defaults_version,
+            GLOBAL_RUNTIME_DEFAULTS_VERSION
+        );
+        assert_eq!(
+            loaded.global_mcp_migration_version,
+            GLOBAL_MCP_MIGRATION_VERSION
+        );
+        assert_eq!(loaded.global_mcp_auth_type, "bearer");
+        assert!(loaded.profiles[0].runtime.inherit_global_execution_policy);
     }
 
     #[test]

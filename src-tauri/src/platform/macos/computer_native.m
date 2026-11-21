@@ -49,7 +49,8 @@ static void findPressTargets(AXUIElementRef element, NSString *wantedLabel, NSSt
 
 static char *failure(NSString *code, NSString *details);
 static BOOL isScreenLocked(void);
-static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID);
+static CFArrayRef copyOnScreenWindowList(void);
+static BOOL pointHitsApprovedWindowInList(CGPoint point, pid_t approvedPID, NSArray *windows);
 
 // No capture or Accessibility traversal is performed here. This reports the
 // CURRENT process identity used by macOS TCC, which can differ between
@@ -263,6 +264,279 @@ static void postMouse(CGEventType type, CGPoint point, CGMouseButton button) {
     if (event) { CGEventPost(kCGHIDEventTap, event); CFRelease(event); }
 }
 
+static NSSet *supportedBrowserBundles(void) {
+    static NSSet *browsers;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        browsers = [NSSet setWithArray:@[
+            @"com.microsoft.edgemac", @"com.google.Chrome", @"com.apple.Safari",
+            @"org.mozilla.firefox", @"com.brave.Browser", @"company.thebrowser.Browser",
+            @"com.vivaldi.Vivaldi", @"com.operasoftware.Opera"
+        ]];
+    });
+    return browsers;
+}
+
+static NSArray *dangerousPressKeywords(void) {
+    static NSArray *keywords;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        keywords = @[@"delete", @"remove", @"pay", @"purchase", @"submit", @"send",
+                     @"erase", @"transfer", @"删除", @"支付", @"付款", @"购买", @"提交",
+                     @"发送", @"转账", @"移除", @"清空", @"确认订单", @"卸载", @"永久"];
+    });
+    return keywords;
+}
+
+static NSRunningApplication *findRunningRegularApp(NSString *bundleID) {
+    if (![bundleID isKindOfClass:NSString.class] || bundleID.length == 0) return nil;
+    for (NSRunningApplication *candidate in NSWorkspace.sharedWorkspace.runningApplications) {
+        if ([candidate.bundleIdentifier isEqualToString:bundleID] &&
+            candidate.activationPolicy == NSApplicationActivationPolicyRegular) {
+            return candidate;
+        }
+    }
+    return nil;
+}
+
+static char *handleFocusAppAction(NSString *action, NSString *target) {
+    NSRunningApplication *candidate = findRunningRegularApp(target);
+    if (!candidate) return failure(@"APP_NOT_FOUND", @"Approved application is not running");
+    if (![candidate activateWithOptions:NSApplicationActivateAllWindows])
+        return failure(@"APP_ACTIVATION_FAILED", @"Unable to activate selected application");
+    return reply(@{@"ok": @YES, @"action": action, @"bundle_id": target});
+}
+
+static char *handleOpenUrlAction(NSDictionary *args, NSString *target) {
+    // Local CONTROL already limits the target bundle. This operation
+    // may only navigate an explicitly supported browser, never an
+    // arbitrary application, shell handler, file or custom scheme.
+    if (![supportedBrowserBundles() containsObject:target])
+        return failure(@"BROWSER_ONLY", @"open_url requires locally approved browser control");
+    NSString *rawURL = args[@"url"];
+    if (![rawURL isKindOfClass:NSString.class] || rawURL.length == 0 ||
+        rawURL.length > 2048 || [rawURL rangeOfCharacterFromSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound)
+        return failure(@"INVALID_BROWSER_URL", @"Expected a short HTTP(S) URL without whitespace");
+    NSURLComponents *parts = [NSURLComponents componentsWithString:rawURL];
+    if (!parts || ![@[@"https", @"http"] containsObject:parts.scheme.lowercaseString] ||
+        parts.host.length == 0 || parts.user.length > 0 || parts.password.length > 0)
+        return failure(@"INVALID_BROWSER_URL", @"Only HTTP(S) URLs without embedded credentials are accepted");
+    NSURL *url = parts.URL;
+    if (!url) return failure(@"INVALID_BROWSER_URL", @"Invalid URL");
+    NSRunningApplication *browser = findRunningRegularApp(target);
+    if (!browser.bundleURL)
+        return failure(@"BROWSER_NOT_RUNNING", @"The approved browser is not running");
+    dispatch_semaphore_t completion = dispatch_semaphore_create(0);
+    __block NSError *openError = nil;
+    NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+    configuration.activates = YES;
+    [NSWorkspace.sharedWorkspace openURLs:@[url]
+                     withApplicationAtURL:browser.bundleURL
+                           configuration:configuration
+                       completionHandler:^(NSRunningApplication *openedApp, NSError *error) {
+        (void)openedApp;
+        openError = error;
+        dispatch_semaphore_signal(completion);
+    }];
+    if (dispatch_semaphore_wait(completion, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC)) != 0)
+        return failure(@"BROWSER_OPEN_TIMEOUT", @"Browser did not acknowledge URL navigation");
+    if (openError)
+        return failure(@"BROWSER_OPEN_FAILED", openError.localizedDescription ?: @"Browser refused URL");
+    return reply(@{@"ok": @YES, @"action": @"open_url", @"bundle_id": target,
+                   @"dispatched": @YES});
+}
+
+static char *handlePressElementAction(NSDictionary *args, NSRunningApplication *app) {
+    NSString *label = args[@"label"];
+    NSString *role = args[@"role"];
+    if (![label isKindOfClass:NSString.class] || label.length == 0 || label.length > 160)
+        return failure(@"INVALID_ARGUMENT", @"Element label must be 1–160 characters");
+    if (role && ![role isKindOfClass:NSString.class])
+        return failure(@"INVALID_ARGUMENT", @"Invalid element role");
+    // Explicit high-risk approval is supplied ONLY by the Rust lease
+    // manager after consuming a one-time locally approved permit.
+    BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
+    NSString *normalized = label.lowercaseString;
+    for (NSString *dangerous in dangerousPressKeywords()) {
+        if ([normalized containsString:dangerous] && !confirmed)
+            return failure(@"CONFIRMATION_REQUIRED", @"Potentially destructive or financial AX actions are not enabled");
+    }
+    AXUIElementRef root = AXUIElementCreateApplication(app.processIdentifier);
+    if (!root) return failure(@"AX_UNAVAILABLE", @"Cannot read current application controls");
+    AXUIElementSetMessagingTimeout(root, 1.0);
+    NSUInteger budget = 200;
+    NSMutableArray *matches = [NSMutableArray array];
+    findPressTargets(root, label, role ?: @"", 0, &budget, matches);
+    CFRelease(root);
+    if (matches.count != 1)
+        return failure(@"ELEMENT_NOT_UNIQUE", @"Element not found or not unique; refresh UI tree first");
+    AXError result = AXUIElementPerformAction((__bridge AXUIElementRef)matches.firstObject, kAXPressAction);
+    if (result != kAXErrorSuccess)
+        return failure(@"AX_PRESS_FAILED", @"The selected control does not support AXPress");
+    return reply(@{@"ok": @YES, @"action": @"press_element"});
+}
+
+static char *handleTypeAction(NSDictionary *args, NSRunningApplication *app) {
+    NSString *value = args[@"text"];
+    if (![value isKindOfClass:NSString.class] || value.length > 2000)
+        return failure(@"INVALID_ARGUMENT", @"Text must be under 2000 UTF-16 characters");
+    if (isSecureFocusedField(app.processIdentifier))
+        return failure(@"SECURE_INPUT_REJECTED", @"Cannot type into a secure password field");
+    // Some Chromium text fields silently drop a single synthetic event containing
+    // the entire string. Emit each composed Unicode character as its own key
+    // down/up inside ONE native invocation to preserve emoji/surrogate pairs.
+    __block BOOL failed = NO;
+    [value enumerateSubstringsInRange:NSMakeRange(0, value.length)
+        options:NSStringEnumerationByComposedCharacterSequences
+        usingBlock:^(NSString *substring, NSRange range, NSRange enclosingRange, BOOL *stop) {
+            (void)range; (void)enclosingRange;
+            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
+            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
+            if (!down || !up) {
+                if (down) CFRelease(down);
+                if (up) CFRelease(up);
+                failed = YES;
+                *stop = YES;
+                return;
+            }
+            UniChar units[16];
+            if (substring.length > 16) {
+                failed = YES;
+                CFRelease(down); CFRelease(up);
+                *stop = YES;
+                return;
+            }
+            [substring getCharacters:units range:NSMakeRange(0, substring.length)];
+            CGEventKeyboardSetUnicodeString(down, substring.length, units);
+            CGEventKeyboardSetUnicodeString(up, substring.length, units);
+            CGEventPost(kCGHIDEventTap, down);
+            CGEventPost(kCGHIDEventTap, up);
+            CFRelease(down); CFRelease(up);
+        }];
+    if (failed) return failure(@"EVENT_CREATE_FAILED", @"Unable to synthesize Unicode character");
+    return reply(@{@"ok": @YES, @"action": @"type"});
+}
+
+static char *handleKeyAction(NSDictionary *args, NSRunningApplication *app) {
+    if (isSecureFocusedField(app.processIdentifier))
+        return failure(@"SECURE_INPUT_REJECTED", @"Keyboard actions are disabled for secure or inaccessible focused fields");
+    NSString *key = args[@"key"];
+    int keyCode = codeForKey(key ?: @"");
+    if (keyCode < 0) return failure(@"UNSUPPORTED_KEY", @"Unsupported key code");
+    NSArray *mods = args[@"modifiers"];
+    if (![mods isKindOfClass:NSArray.class]) mods = @[];
+    CGEventFlags flags = flagsFor(mods);
+    BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
+    if ((flags & kCGEventFlagMaskCommand) &&
+        [@[@"q", @"w", @"v", @"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
+        return failure(@"CONFIRMATION_REQUIRED", @"This shortcut needs a one-time local confirmation");
+    if ((flags & kCGEventFlagMaskControl) &&
+        [@[@"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
+        return failure(@"CONFIRMATION_REQUIRED", @"This control shortcut needs a one-time local confirmation");
+    CGEventRef down = CGEventCreateKeyboardEvent(NULL, keyCode, true);
+    CGEventRef up = CGEventCreateKeyboardEvent(NULL, keyCode, false);
+    if (!down || !up) {
+        if (down) CFRelease(down);
+        if (up) CFRelease(up);
+        return failure(@"EVENT_CREATE_FAILED", @"Cannot create key event");
+    }
+    CGEventSetFlags(down, flags); CGEventSetFlags(up, flags);
+    CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
+    CFRelease(down); CFRelease(up);
+    return reply(@{@"ok": @YES, @"action": @"key"});
+}
+
+static char *handleScrollAction(NSDictionary *args) {
+    int amount = [args[@"amount"] intValue];
+    if (amount < -15 || amount > 15) return failure(@"INVALID_ARGUMENT", @"Scroll amount exceeds limit");
+    CGEventRef event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, amount);
+    if (event) { CGEventPost(kCGHIDEventTap, event); CFRelease(event); }
+    return reply(@{@"ok": @YES, @"action": @"scroll"});
+}
+
+static BOOL pointInsideAnyDisplay(CGPoint point, const CGDirectDisplayID *displays, uint32_t displayCount) {
+    for (uint32_t i = 0; i < displayCount; i++) {
+        if (CGRectContainsPoint(CGDisplayBounds(displays[i]), point)) return YES;
+    }
+    return NO;
+}
+
+static char *handlePointerAction(NSString *action, NSDictionary *args, NSRunningApplication *app) {
+    double x = [args[@"x"] doubleValue], y = [args[@"y"] doubleValue];
+    if (!isfinite(x) || !isfinite(y)) return failure(@"INVALID_COORDINATE", @"Coordinates must be finite");
+    uint32_t displayCount = 0;
+    CGDirectDisplayID displays[16] = {0};
+    CGGetActiveDisplayList(16, displays, &displayCount);
+    CGPoint location = CGPointMake(x, y);
+    if (!pointInsideAnyDisplay(location, displays, displayCount))
+        return failure(@"OUTSIDE_SCREEN", @"Coordinate is outside active displays");
+
+    // Fetch the on-screen window list once per pointer invocation so drag
+    // path checks do not trigger 12 WindowServer IPC round-trips.
+    CFArrayRef windowList = copyOnScreenWindowList();
+    if (!windowList)
+        return failure(@"TARGET_WINDOW_MISMATCH", @"Unable to inspect visible windows");
+    NSArray *windows = (__bridge NSArray *)windowList;
+    if (!pointHitsApprovedWindowInList(location, app.processIdentifier, windows)) {
+        CFRelease(windowList);
+        return failure(@"TARGET_WINDOW_MISMATCH", @"Pointer coordinate does not hit an unobstructed window of the locally approved application");
+    }
+
+    if ([action isEqualToString:@"move"]) {
+        CFRelease(windowList);
+        postMouse(kCGEventMouseMoved, location, kCGMouseButtonLeft);
+        return reply(@{@"ok": @YES, @"action": action});
+    }
+
+    if ([action isEqualToString:@"drag"]) {
+        double endX = [args[@"end_x"] doubleValue], endY = [args[@"end_y"] doubleValue];
+        CGPoint endLocation = CGPointMake(endX, endY);
+        if (!isfinite(endX) || !isfinite(endY) || !pointInsideAnyDisplay(endLocation, displays, displayCount)) {
+            CFRelease(windowList);
+            return failure(@"OUTSIDE_SCREEN", @"Drag endpoint is outside active displays");
+        }
+        for (int step = 1; step <= 10; step++) {
+            CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
+            if (!pointHitsApprovedWindowInList(next, app.processIdentifier, windows)) {
+                CFRelease(windowList);
+                return failure(@"TARGET_WINDOW_MISMATCH", @"Drag path crosses another application's window or a protected overlay");
+            }
+        }
+        CFRelease(windowList);
+        postMouse(kCGEventLeftMouseDown, location, kCGMouseButtonLeft);
+        for (int step = 1; step <= 10; step++) {
+            CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
+            postMouse(kCGEventLeftMouseDragged, next, kCGMouseButtonLeft);
+        }
+        postMouse(kCGEventLeftMouseUp, endLocation, kCGMouseButtonLeft);
+        return reply(@{@"ok": @YES, @"action": action});
+    }
+
+    CFRelease(windowList);
+    BOOL right = [action isEqualToString:@"right_click"];
+    CGEventType down = right ? kCGEventRightMouseDown : kCGEventLeftMouseDown;
+    CGEventType up = right ? kCGEventRightMouseUp : kCGEventLeftMouseUp;
+    CGMouseButton button = right ? kCGMouseButtonRight : kCGMouseButtonLeft;
+    int clicks = [action isEqualToString:@"double_click"] ? 2 : 1;
+    for (int n = 1; n <= clicks; n++) {
+        CGEventRef downEvent = CGEventCreateMouseEvent(NULL, down, location, button);
+        CGEventRef upEvent = CGEventCreateMouseEvent(NULL, up, location, button);
+        if (!downEvent || !upEvent) {
+            if (downEvent) CFRelease(downEvent);
+            if (upEvent) CFRelease(upEvent);
+            return failure(@"EVENT_CREATE_FAILED", @"Cannot create mouse event");
+        }
+        CGEventSetIntegerValueField(downEvent, kCGMouseEventClickState, n);
+        CGEventSetIntegerValueField(upEvent, kCGMouseEventClickState, n);
+        CGEventPost(kCGHIDEventTap, downEvent);
+        CGEventPost(kCGHIDEventTap, upEvent);
+        CFRelease(downEvent);
+        CFRelease(upEvent);
+    }
+    return reply(@{@"ok": @YES, @"action": action});
+}
+
 char *computer_native_action(const char *request) {
     @autoreleasepool {
         if (isScreenLocked()) return failure(@"SCREEN_LOCKED", @"Unlock the desktop before controlling applications");
@@ -271,221 +545,20 @@ char *computer_native_action(const char *request) {
         NSDictionary *args = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
         if (![args isKindOfClass:NSDictionary.class]) return failure(@"INVALID_ARGUMENT", @"Invalid input action");
         NSString *action = args[@"action"];
-        NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
         NSString *target = args[@"bundle_id"];
-        if ([action isEqualToString:@"focus_app"]) {
-            for (NSRunningApplication *candidate in NSWorkspace.sharedWorkspace.runningApplications) {
-                if ([candidate.bundleIdentifier isEqualToString:target] &&
-                    candidate.activationPolicy == NSApplicationActivationPolicyRegular) {
-                    BOOL activated = [candidate activateWithOptions:NSApplicationActivateAllWindows];
-                    if (!activated) return failure(@"APP_ACTIVATION_FAILED", @"Unable to activate selected application");
-                    return reply(@{@"ok": @YES, @"action": action, @"bundle_id": target});
-                }
-            }
-            return failure(@"APP_NOT_FOUND", @"Approved application is not running");
-        }
-        if ([action isEqualToString:@"open_url"]) {
-            // Local CONTROL already limits the target bundle. This operation
-            // may only navigate an explicitly supported browser, never an
-            // arbitrary application, shell handler, file or custom scheme.
-            NSSet *browsers = [NSSet setWithArray:@[
-                @"com.microsoft.edgemac", @"com.google.Chrome", @"com.apple.Safari",
-                @"org.mozilla.firefox", @"com.brave.Browser", @"company.thebrowser.Browser",
-                @"com.vivaldi.Vivaldi", @"com.operasoftware.Opera"
-            ]];
-            if (![browsers containsObject:target])
-                return failure(@"BROWSER_ONLY", @"open_url requires locally approved browser control");
-            NSString *rawURL = args[@"url"];
-            if (![rawURL isKindOfClass:NSString.class] || rawURL.length == 0 ||
-                rawURL.length > 2048 || [rawURL rangeOfCharacterFromSet:
-                    NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound)
-                return failure(@"INVALID_BROWSER_URL", @"Expected a short HTTP(S) URL without whitespace");
-            NSURLComponents *parts = [NSURLComponents componentsWithString:rawURL];
-            if (!parts || ![@[@"https", @"http"] containsObject:parts.scheme.lowercaseString] ||
-                parts.host.length == 0 || parts.user.length > 0 || parts.password.length > 0)
-                return failure(@"INVALID_BROWSER_URL", @"Only HTTP(S) URLs without embedded credentials are accepted");
-            NSURL *url = parts.URL;
-            if (!url) return failure(@"INVALID_BROWSER_URL", @"Invalid URL");
-            NSRunningApplication *browser = nil;
-            for (NSRunningApplication *candidate in NSWorkspace.sharedWorkspace.runningApplications) {
-                if ([candidate.bundleIdentifier isEqualToString:target] &&
-                    candidate.activationPolicy == NSApplicationActivationPolicyRegular) {
-                    browser = candidate;
-                    break;
-                }
-            }
-            if (!browser.bundleURL)
-                return failure(@"BROWSER_NOT_RUNNING", @"The approved browser is not running");
-            dispatch_semaphore_t completion = dispatch_semaphore_create(0);
-            __block NSError *openError = nil;
-            NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
-            configuration.activates = YES;
-            [NSWorkspace.sharedWorkspace openURLs:@[url]
-                             withApplicationAtURL:browser.bundleURL
-                                   configuration:configuration
-                               completionHandler:^(NSRunningApplication *openedApp, NSError *error) {
-                (void)openedApp;
-                openError = error;
-                dispatch_semaphore_signal(completion);
-            }];
-            if (dispatch_semaphore_wait(completion, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC)) != 0)
-                return failure(@"BROWSER_OPEN_TIMEOUT", @"Browser did not acknowledge URL navigation");
-            if (openError)
-                return failure(@"BROWSER_OPEN_FAILED", openError.localizedDescription ?: @"Browser refused URL");
-            return reply(@{@"ok": @YES, @"action": @"open_url", @"bundle_id": target,
-                           @"dispatched": @YES});
-        }
+        if ([action isEqualToString:@"focus_app"]) return handleFocusAppAction(action, target);
+        if ([action isEqualToString:@"open_url"]) return handleOpenUrlAction(args, target);
+
+        NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
         if (!app || !target || ![app.bundleIdentifier isEqualToString:target])
             return failure(@"FOREGROUND_APP_CHANGED", @"Foreground app differs from the one approved locally");
-        if ([action isEqualToString:@"press_element"]) {
-            NSString *label = args[@"label"];
-            NSString *role = args[@"role"];
-            if (![label isKindOfClass:NSString.class] || label.length == 0 || label.length > 160)
-                return failure(@"INVALID_ARGUMENT", @"Element label must be 1–160 characters");
-            if (role && ![role isKindOfClass:NSString.class]) return failure(@"INVALID_ARGUMENT", @"Invalid element role");
-            // Explicit high-risk approval is supplied ONLY by the Rust lease
-            // manager after consuming a one-time locally approved permit.
-            BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
-            NSString *normalized = label.lowercaseString;
-            for (NSString *dangerous in @[@"delete", @"remove", @"pay", @"purchase", @"submit", @"send",
-                                           @"erase", @"transfer", @"删除", @"支付", @"付款", @"购买", @"提交",
-                                           @"发送", @"转账", @"移除", @"清空", @"确认订单", @"卸载", @"永久"]) {
-                if ([normalized containsString:dangerous] && !confirmed)
-                    return failure(@"CONFIRMATION_REQUIRED", @"Potentially destructive or financial AX actions are not enabled");
-            }
-            AXUIElementRef root = AXUIElementCreateApplication(app.processIdentifier);
-            if (!root) return failure(@"AX_UNAVAILABLE", @"Cannot read current application controls");
-            AXUIElementSetMessagingTimeout(root, 1.0);
-            NSUInteger budget = 200;
-            NSMutableArray *matches = [NSMutableArray array];
-            findPressTargets(root, label, role ?: @"", 0, &budget, matches);
-            CFRelease(root);
-            if (matches.count != 1) return failure(@"ELEMENT_NOT_UNIQUE", @"Element not found or not unique; refresh UI tree first");
-            AXError result = AXUIElementPerformAction((__bridge AXUIElementRef)matches.firstObject, kAXPressAction);
-            if (result != kAXErrorSuccess) return failure(@"AX_PRESS_FAILED", @"The selected control does not support AXPress");
-        } else if ([action isEqualToString:@"type"]) {
-            NSString *value = args[@"text"];
-            if (![value isKindOfClass:NSString.class] || value.length > 2000)
-                return failure(@"INVALID_ARGUMENT", @"Text must be under 2000 UTF-16 characters");
-            if (isSecureFocusedField(app.processIdentifier))
-                return failure(@"SECURE_INPUT_REJECTED", @"Cannot type into a secure password field");
-            // Some Chromium text fields silently drop a single synthetic
-            // event containing the entire string. Emit each composed Unicode
-            // character as its own key down/up inside ONE native invocation.
-            // This preserves emoji/surrogate pairs and avoids MCP roundtrips
-            // per character. The secure-field check above remains mandatory.
-            __block BOOL failed = NO;
-            [value enumerateSubstringsInRange:NSMakeRange(0, value.length)
-                options:NSStringEnumerationByComposedCharacterSequences
-                usingBlock:^(NSString *substring, NSRange range, NSRange enclosingRange, BOOL *stop) {
-                    (void)range; (void)enclosingRange;
-                    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
-                    CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
-                    if (!down || !up) {
-                        if (down) CFRelease(down);
-                        if (up) CFRelease(up);
-                        failed = YES;
-                        *stop = YES;
-                        return;
-                    }
-                    UniChar units[16];
-                    if (substring.length > 16) {
-                        failed = YES;
-                        CFRelease(down); CFRelease(up);
-                        *stop = YES;
-                        return;
-                    }
-                    [substring getCharacters:units range:NSMakeRange(0, substring.length)];
-                    CGEventKeyboardSetUnicodeString(down, substring.length, units);
-                    CGEventKeyboardSetUnicodeString(up, substring.length, units);
-                    CGEventPost(kCGHIDEventTap, down);
-                    CGEventPost(kCGHIDEventTap, up);
-                    CFRelease(down); CFRelease(up);
-                }];
-            if (failed) return failure(@"EVENT_CREATE_FAILED", @"Unable to synthesize Unicode character");
-        } else if ([action isEqualToString:@"key"]) {
-            if (isSecureFocusedField(app.processIdentifier))
-                return failure(@"SECURE_INPUT_REJECTED", @"Keyboard actions are disabled for secure or inaccessible focused fields");
-            NSString *key = args[@"key"];
-            int keyCode = codeForKey(key ?: @"");
-            if (keyCode < 0) return failure(@"UNSUPPORTED_KEY", @"Unsupported key code");
-            NSArray *mods = args[@"modifiers"];
-            if (![mods isKindOfClass:NSArray.class]) mods = @[];
-            CGEventFlags flags = flagsFor(mods);
-            BOOL confirmed = [args[@"high_risk_confirmed"] boolValue];
-            if (flags & kCGEventFlagMaskCommand &&
-                [@[@"q", @"w", @"v", @"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
-                return failure(@"CONFIRMATION_REQUIRED", @"This shortcut needs a one-time local confirmation");
-            if (flags & kCGEventFlagMaskControl &&
-                [@[@"delete", @"backspace"] containsObject:key.lowercaseString] && !confirmed)
-                return failure(@"CONFIRMATION_REQUIRED", @"This control shortcut needs a one-time local confirmation");
-            CGEventRef down = CGEventCreateKeyboardEvent(NULL, keyCode, true);
-            CGEventRef up = CGEventCreateKeyboardEvent(NULL, keyCode, false);
-            if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return failure(@"EVENT_CREATE_FAILED", @"Cannot create key event"); }
-            CGEventSetFlags(down, flags); CGEventSetFlags(up, flags);
-            CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
-            CFRelease(down); CFRelease(up);
-        } else if ([action isEqualToString:@"scroll"]) {
-            int amount = [args[@"amount"] intValue];
-            if (amount < -15 || amount > 15) return failure(@"INVALID_ARGUMENT", @"Scroll amount exceeds limit");
-            CGEventRef event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, amount);
-            if (event) { CGEventPost(kCGHIDEventTap, event); CFRelease(event); }
-        } else if ([@[@"click", @"double_click", @"right_click", @"move", @"drag"] containsObject:action]) {
-            double x = [args[@"x"] doubleValue], y = [args[@"y"] doubleValue];
-            if (!isfinite(x) || !isfinite(y)) return failure(@"INVALID_COORDINATE", @"Coordinates must be finite");
-            CGRect bounds = CGRectNull;
-            uint32_t displayCount = 0;
-            CGDirectDisplayID displays[16] = {0};
-            CGGetActiveDisplayList(16, displays, &displayCount);
-            for (uint32_t i = 0; i < displayCount; i++) {
-                CGRect frame = CGDisplayBounds(displays[i]);
-                if (CGRectContainsPoint(frame, CGPointMake(x, y))) { bounds = frame; break; }
-            }
-            if (CGRectIsNull(bounds)) return failure(@"OUTSIDE_SCREEN", @"Coordinate is outside active displays");
-            CGPoint location = CGPointMake(x, y);
-            if (!pointHitsApprovedWindow(location, app.processIdentifier))
-                return failure(@"TARGET_WINDOW_MISMATCH", @"Pointer coordinate does not hit an unobstructed window of the locally approved application");
-            if ([action isEqualToString:@"move"]) {
-                postMouse(kCGEventMouseMoved, location, kCGMouseButtonLeft);
-            } else if ([action isEqualToString:@"drag"]) {
-                double endX = [args[@"end_x"] doubleValue], endY = [args[@"end_y"] doubleValue];
-                BOOL targetInside = NO;
-                for (uint32_t i = 0; i < displayCount; i++) {
-                    if (CGRectContainsPoint(CGDisplayBounds(displays[i]), CGPointMake(endX, endY))) targetInside = YES;
-                }
-                if (!isfinite(endX) || !isfinite(endY) || !targetInside)
-                    return failure(@"OUTSIDE_SCREEN", @"Drag endpoint is outside active displays");
-                for (int step = 0; step <= 10; step++) {
-                    CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
-                    if (!pointHitsApprovedWindow(next, app.processIdentifier))
-                        return failure(@"TARGET_WINDOW_MISMATCH", @"Drag path crosses another application's window or a protected overlay");
-                }
-                postMouse(kCGEventLeftMouseDown, location, kCGMouseButtonLeft);
-                for (int step = 1; step <= 10; step++) {
-                    CGPoint next = CGPointMake(x + (endX - x) * step / 10.0, y + (endY - y) * step / 10.0);
-                    postMouse(kCGEventLeftMouseDragged, next, kCGMouseButtonLeft);
-                }
-                postMouse(kCGEventLeftMouseUp, CGPointMake(endX, endY), kCGMouseButtonLeft);
-            } else {
-                BOOL right = [action isEqualToString:@"right_click"];
-                CGEventType down = right ? kCGEventRightMouseDown : kCGEventLeftMouseDown;
-                CGEventType up = right ? kCGEventRightMouseUp : kCGEventLeftMouseUp;
-                CGMouseButton button = right ? kCGMouseButtonRight : kCGMouseButtonLeft;
-                int clicks = [action isEqualToString:@"double_click"] ? 2 : 1;
-                for (int n = 1; n <= clicks; n++) {
-                    CGEventRef downEvent = CGEventCreateMouseEvent(NULL, down, location, button);
-                    CGEventRef upEvent = CGEventCreateMouseEvent(NULL, up, location, button);
-                    if (!downEvent || !upEvent) { if (downEvent) CFRelease(downEvent); if (upEvent) CFRelease(upEvent); return failure(@"EVENT_CREATE_FAILED", @"Cannot create mouse event"); }
-                    CGEventSetIntegerValueField(downEvent, kCGMouseEventClickState, n);
-                    CGEventSetIntegerValueField(upEvent, kCGMouseEventClickState, n);
-                    CGEventPost(kCGHIDEventTap, downEvent); CGEventPost(kCGHIDEventTap, upEvent);
-                    CFRelease(downEvent); CFRelease(upEvent);
-                }
-            }
-        } else {
-            return failure(@"INVALID_ACTION", @"Unsupported computer action");
-        }
-        return reply(@{@"ok": @YES, @"action": action ?: @""});
+        if ([action isEqualToString:@"press_element"]) return handlePressElementAction(args, app);
+        if ([action isEqualToString:@"type"]) return handleTypeAction(args, app);
+        if ([action isEqualToString:@"key"]) return handleKeyAction(args, app);
+        if ([action isEqualToString:@"scroll"]) return handleScrollAction(args);
+        if ([@[@"click", @"double_click", @"right_click", @"move", @"drag"] containsObject:action])
+            return handlePointerAction(action, args, app);
+        return failure(@"INVALID_ACTION", @"Unsupported computer action");
     }
 }
 
@@ -512,16 +585,17 @@ static BOOL isScreenLocked(void) {
     return locked;
 }
 
+static CFArrayRef copyOnScreenWindowList(void) {
+    return CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID);
+}
+
 // CGWindowListCopyWindowInfo returns windows in front-to-back order. Only
 // deliver pointer events to a visible window owned by the app selected locally
 // for this grant. An unrelated overlay/window above it is a hard deny.
-static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID) {
-    CFArrayRef windowList = CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-        kCGNullWindowID);
-    if (!windowList) return NO;
-    BOOL approved = NO;
-    for (NSDictionary *window in (__bridge NSArray *)windowList) {
+static BOOL pointHitsApprovedWindowInList(CGPoint point, pid_t approvedPID, NSArray *windows) {
+    for (NSDictionary *window in windows) {
         NSNumber *layer = window[(__bridge NSString *)kCGWindowLayer];
         if (!layer) continue;
         NSDictionary *rect = window[(__bridge NSString *)kCGWindowBounds];
@@ -531,12 +605,10 @@ static BOOL pointHitsApprovedWindow(CGPoint point, pid_t approvedPID) {
             !CGRectContainsPoint(bounds, point)) continue;
         // A surface above the app, including an overlay, must never be clicked
         // under another app's authorization.
-        approved = layer.integerValue == 0 &&
+        return layer.integerValue == 0 &&
             [window[(__bridge NSString *)kCGWindowOwnerPID] intValue] == approvedPID;
-        break;
     }
-    CFRelease(windowList);
-    return approved;
+    return NO;
 }
 
 static SCShareableContent *shareableContent(NSError **failureOut) {

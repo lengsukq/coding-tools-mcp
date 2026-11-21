@@ -1,9 +1,13 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use crate::error::{AppError, AppResult};
-use crate::workspace::legacy_import::import_legacy_profiles_if_empty;
+use crate::error::AppResult;
+use crate::platform::platform;
 
-use super::migrate::{data_file_path, load_or_migrate, maybe_backup_legacy_files, save};
+use super::migrate::{
+    data_file_path, load_for_store, load_or_migrate_at, maybe_backup_legacy_files, write_data,
+};
 use super::model::AppData;
 
 mod secrets;
@@ -11,8 +15,12 @@ mod settings;
 mod workspaces;
 
 static DATA_FILE_LOCK: Mutex<()> = Mutex::new(());
+/// Path-keyed process cache so concurrent tests with isolated temp paths never pollute each other,
+/// while production hot-path reads (`read_file`, `AppSettings::load_or_default`, `SecretStore`)
+/// hit `Arc<AppData>` with zero disk I/O.
+static CACHED_DATA: OnceLock<RwLock<HashMap<PathBuf, Arc<AppData>>>> = OnceLock::new();
 
-const SHARED_KEYS: &[&str] = &[
+pub(crate) const SHARED_KEYS: &[&str] = &[
     "oauth_client_id",
     "bearer_token",
     "oauth_client_secret",
@@ -20,147 +28,230 @@ const SHARED_KEYS: &[&str] = &[
     "oauth_token_secret",
 ];
 
-const OBSOLETE_ACTIONS_SECRET_KEYS: &[&str] = &[
-    "actions_cloudflare_token",
-    "actions_api_key",
-    "actions_oauth_client_secret",
-    "actions_oauth_password",
-    "actions_oauth_token_secret",
-    "actions_oauth_dynamic_clients",
-    "actions_frp_token",
-];
-
 #[derive(Debug)]
 pub struct DataStore {
+    path: PathBuf,
     data: AppData,
 }
 
-fn strip_obsolete_actions_secrets(data: &mut AppData) -> bool {
-    let mut changed = false;
-    for key in OBSOLETE_ACTIONS_SECRET_KEYS {
-        changed |= data.shared_secrets.remove(*key).is_some();
-    }
-    for secrets in data.workspace_secrets.values_mut() {
-        for key in OBSOLETE_ACTIONS_SECRET_KEYS {
-            changed |= secrets.remove(*key).is_some();
-        }
-    }
-    changed
+fn data_cache() -> &'static RwLock<HashMap<PathBuf, Arc<AppData>>> {
+    CACHED_DATA.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn contains_obsolete_actions_json(value: &serde_json::Value) -> bool {
-    let Some(root) = value.as_object() else {
-        return false;
-    };
-    if root.contains_key("restore_actions_workspace_ids") {
-        return true;
-    }
-    if root
-        .get("profiles")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|profiles| {
-            profiles.iter().any(|profile| {
-                profile
-                    .as_object()
-                    .is_some_and(|object| object.contains_key("actions"))
-            })
-        })
-    {
-        return true;
-    }
-    ["shared_secrets", "workspace_secrets"]
-        .into_iter()
-        .filter_map(|key| root.get(key))
-        .any(value_contains_obsolete_actions_secret)
+fn cache_get(path: &Path) -> Option<Arc<AppData>> {
+    let guard = data_cache()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.get(path).cloned()
 }
 
-fn value_contains_obsolete_actions_secret(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
-            OBSOLETE_ACTIONS_SECRET_KEYS.contains(&key.as_str())
-                || value_contains_obsolete_actions_secret(value)
-        }),
-        serde_json::Value::Array(values) => {
-            values.iter().any(value_contains_obsolete_actions_secret)
+fn cache_put(path: &Path, data: Arc<AppData>) {
+    let mut guard = data_cache()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.insert(path.to_path_buf(), data);
+}
+
+fn lock_data_file() -> std::sync::MutexGuard<'static, ()> {
+    DATA_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn app_root_for_path(path: &Path) -> AppResult<PathBuf> {
+    if let Some(root) = path.parent().and_then(Path::parent) {
+        if !root.as_os_str().is_empty() {
+            return Ok(root.to_path_buf());
         }
-        _ => false,
     }
+    platform().app_config_dir()
 }
 
 impl DataStore {
     pub fn load() -> AppResult<Self> {
-        let _guard = lock_data_file()?;
-        let path = data_file_path()?;
-        let existed_before = path.exists();
-        let had_obsolete_actions_json = if existed_before {
-            std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                .is_some_and(|value| contains_obsolete_actions_json(&value))
-        } else {
-            false
-        };
-        let mut data = load_or_migrate()?;
-        let imported = import_legacy_profiles_if_empty(&mut data)?;
-        let removed_obsolete_actions_secrets = strip_obsolete_actions_secrets(&mut data);
-        let store = Self { data };
-        if !existed_before
-            || imported > 0
-            || had_obsolete_actions_json
-            || removed_obsolete_actions_secrets
-        {
-            store.persist_unlocked()?;
+        let _guard = lock_data_file();
+        let (path, loaded) = load_for_store()?;
+        if !loaded.existed_before || loaded.needs_persist {
+            write_data(&path, &loaded.data)?;
         }
-        if !existed_before {
+        if !loaded.existed_before {
             maybe_backup_legacy_files(&path)?;
         }
-        Ok(store)
+        cache_put(&path, Arc::new(loaded.data.clone()));
+        Ok(Self {
+            path,
+            data: loaded.data,
+        })
     }
 
     pub fn read_file<R>(f: impl FnOnce(&AppData) -> AppResult<R>) -> AppResult<R> {
-        let _guard = lock_data_file()?;
-        let data = load_or_migrate()?;
-        f(&data)
+        let path = data_file_path()?;
+        Self::read_file_at(&path, true, f)
     }
 
     pub fn update_file<R>(f: impl FnOnce(&mut AppData) -> AppResult<R>) -> AppResult<R> {
-        let _guard = lock_data_file()?;
-        let mut data = load_or_migrate()?;
-        let result = f(&mut data)?;
-        save(&data)?;
-        Ok(result)
+        Self::update_file_if_changed(|data| f(data).map(|result| (true, result)))
+    }
+
+    /// Mutate `AppData` under the file lock and write to disk only when `f` reports `changed == true`.
+    pub fn update_file_if_changed<R>(
+        f: impl FnOnce(&mut AppData) -> AppResult<(bool, R)>,
+    ) -> AppResult<R> {
+        let path = data_file_path()?;
+        Self::update_file_if_changed_at(&path, true, f)
     }
 
     pub fn data(&self) -> &AppData {
         &self.data
     }
 
-    fn update_latest<R>(&mut self, f: impl FnOnce(&mut AppData) -> AppResult<R>) -> AppResult<R> {
-        let _guard = lock_data_file()?;
-        let mut data = load_or_migrate()?;
-        let result = f(&mut data)?;
-        save(&data)?;
-        self.data = data;
+    fn read_file_at<R>(
+        path: &Path,
+        allow_legacy_home_import: bool,
+        f: impl FnOnce(&AppData) -> AppResult<R>,
+    ) -> AppResult<R> {
+        if let Some(cached) = cache_get(path) {
+            return f(cached.as_ref());
+        }
+        let snapshot = {
+            let _guard = lock_data_file();
+            if let Some(cached) = cache_get(path) {
+                cached
+            } else {
+                let app_root = app_root_for_path(path)?;
+                let loaded = load_or_migrate_at(&app_root, path, allow_legacy_home_import)?;
+                let arc = Arc::new(loaded);
+                cache_put(path, Arc::clone(&arc));
+                arc
+            }
+        };
+        f(snapshot.as_ref())
+    }
+
+    fn update_file_if_changed_at<R>(
+        path: &Path,
+        allow_legacy_home_import: bool,
+        f: impl FnOnce(&mut AppData) -> AppResult<(bool, R)>,
+    ) -> AppResult<R> {
+        let _guard = lock_data_file();
+        let (mut data, was_cached) = if let Some(cached) = cache_get(path) {
+            ((*cached).clone(), true)
+        } else {
+            let app_root = app_root_for_path(path)?;
+            (
+                load_or_migrate_at(&app_root, path, allow_legacy_home_import)?,
+                false,
+            )
+        };
+        let (changed, result) = f(&mut data)?;
+        if changed {
+            write_data(path, &data)?;
+            cache_put(path, Arc::new(data));
+        } else if !was_cached {
+            cache_put(path, Arc::new(data));
+        }
         Ok(result)
     }
 
-    fn persist_unlocked(&self) -> AppResult<()> {
-        save(&self.data)
+    fn update_latest<R>(&mut self, f: impl FnOnce(&mut AppData) -> AppResult<R>) -> AppResult<R> {
+        self.update_latest_if_changed(|data| f(data).map(|result| (true, result)))
     }
-}
 
-fn lock_data_file() -> AppResult<std::sync::MutexGuard<'static, ()>> {
-    DATA_FILE_LOCK
-        .lock()
-        .map_err(|_| AppError::Message("data file lock poisoned".into()))
+    fn update_latest_if_changed<R>(
+        &mut self,
+        f: impl FnOnce(&mut AppData) -> AppResult<(bool, R)>,
+    ) -> AppResult<R> {
+        let _guard = lock_data_file();
+        let (mut data, was_cached) = if let Some(cached) = cache_get(&self.path) {
+            ((*cached).clone(), true)
+        } else {
+            let app_root = app_root_for_path(&self.path)?;
+            (load_or_migrate_at(&app_root, &self.path, true)?, false)
+        };
+        let (changed, result) = f(&mut data)?;
+        if changed {
+            write_data(&self.path, &data)?;
+            cache_put(&self.path, Arc::new(data.clone()));
+        } else if !was_cached {
+            cache_put(&self.path, Arc::new(data.clone()));
+        }
+        self.data = data;
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::migrate::{contains_obsolete_actions_json, strip_obsolete_actions_secrets};
     use super::secrets::shared_value_for_key;
     use super::settings::apply_settings_update;
     use super::*;
     use crate::settings::AppSettings;
+
+    #[test]
+    fn cache_serves_reads_without_re_reading_disk_and_refreshes_on_write() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("data").join("profiles.json");
+        let initial = AppData {
+            last_workspace_id: "ws-initial".into(),
+            ..AppData::default()
+        };
+        write_data(&path, &initial).expect("seed file");
+
+        let first = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
+            .expect("initial read");
+        assert_eq!(first, "ws-initial");
+
+        // Remove the underlying file: a cached read must succeed purely from RAM.
+        std::fs::remove_file(&path).expect("remove underlying file");
+        let cached = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
+            .expect("cached read should not hit disk");
+        assert_eq!(cached, "ws-initial");
+
+        // Conditional write with changed == false must not recreate the deleted file.
+        DataStore::update_file_if_changed_at(&path, false, |_| Ok((false, ())))
+            .expect("no-op update");
+        assert!(!path.exists(), "unchanged update must skip disk write");
+
+        // Conditional write with changed == true writes to disk and refreshes cache.
+        DataStore::update_file_if_changed_at(&path, false, |data| {
+            data.last_workspace_id = "ws-updated".into();
+            Ok((true, ()))
+        })
+        .expect("changed update");
+        assert!(path.exists(), "changed update must persist to disk");
+        let after = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
+            .expect("read after write");
+        assert_eq!(after, "ws-updated");
+    }
+
+    #[test]
+    fn init_shared_secrets_writes_only_when_keys_are_missing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("data").join("profiles.json");
+        let initial = AppData::default();
+        write_data(&path, &initial).expect("seed file");
+        cache_put(&path, Arc::new(initial.clone()));
+
+        let mut store = DataStore {
+            path: path.clone(),
+            data: initial,
+        };
+        store.init_shared_secrets().expect("populate missing keys");
+        for key in SHARED_KEYS {
+            assert!(store.get_shared_secret(key).is_some());
+        }
+
+        // Remove the file on disk to prove the second call performs zero disk writes.
+        std::fs::remove_file(&path).expect("remove file");
+        store
+            .init_shared_secrets()
+            .expect("idempotent init should succeed without writing");
+        assert!(
+            !path.exists(),
+            "init_shared_secrets must skip disk write when all keys already exist"
+        );
+    }
 
     #[test]
     fn settings_update_preserves_newer_global_oauth_registry() {

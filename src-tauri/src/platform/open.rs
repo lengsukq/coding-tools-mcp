@@ -1,7 +1,5 @@
 use std::process::Command;
 
-#[cfg(target_os = "windows")]
-use super::background_command;
 use crate::error::{AppError, AppResult};
 
 pub fn open_path_in_file_manager(path: &std::path::Path) -> AppResult<()> {
@@ -57,12 +55,36 @@ pub fn open_url(url: &str) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
-        // `start` needs an empty window title when the URL may contain `&`.
-        background_command("cmd")
-            .args(["/C", "start", "", url])
-            .spawn()
-            .map_err(|err| AppError::Message(format!("无法打开链接: {err}")))
-            .map(|_| ())
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        use windows::core::{w, PCWSTR};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        // Avoid `cmd /C start` so `&` and shell metacharacters in URLs cannot be
+        // interpreted or truncated by cmd.exe.
+        let wide_url: Vec<u16> = OsStr::new(url)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let instance = unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                PCWSTR(wide_url.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        let code = instance.0 as isize;
+        if code <= 32 {
+            return Err(AppError::Message(format!(
+                "无法打开链接（ShellExecuteW 返回错误码 {code}）"
+            )));
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]

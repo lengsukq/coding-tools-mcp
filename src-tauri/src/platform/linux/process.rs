@@ -1,7 +1,11 @@
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
 use crate::error::{AppError, AppResult};
+
+const TERM_WAIT_STEP_MS: u64 = 20;
+const TERM_WAIT_MAX_STEPS: usize = 10;
 
 pub fn is_process_alive(pid: u32) -> bool {
     Path::new("/proc").join(pid.to_string()).is_dir()
@@ -21,10 +25,17 @@ pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
         signal_pid(pid, libc::SIGTERM)?;
     }
     signal_pid(root_pid, libc::SIGTERM)?;
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    for pid in &children {
-        if is_process_alive(*pid) {
-            let _ = signal_pid(*pid, libc::SIGKILL);
+
+    for _ in 0..TERM_WAIT_MAX_STEPS {
+        if !is_process_alive(root_pid) && children.iter().all(|&pid| !is_process_alive(pid)) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(TERM_WAIT_STEP_MS));
+    }
+
+    for &pid in &children {
+        if is_process_alive(pid) {
+            let _ = signal_pid(pid, libc::SIGKILL);
         }
     }
     if is_process_alive(root_pid) {
@@ -34,9 +45,7 @@ pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
 }
 
 fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
-    let mut pending = vec![root_pid];
-    let mut seen = std::collections::HashSet::from([root_pid]);
-    let mut ordered = Vec::new();
+    let mut children_by_parent: HashMap<u32, Vec<u32>> = HashMap::new();
     let proc = Path::new("/proc");
 
     for entry in fs::read_dir(proc)
@@ -53,14 +62,29 @@ fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
         let Ok(pid) = pid_str.parse::<u32>() else {
             continue;
         };
-        let stat = fs::read_to_string(entry.path().join("stat"))
-            .map_err(|err| AppError::Message(format!("read stat failed: {err}")))?;
+        // Short-lived processes can exit between read_dir and reading stat; skip them.
+        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
         let Some(parent) = parent_pid_from_stat(&stat) else {
             continue;
         };
-        if pending.contains(&parent) && seen.insert(pid) {
-            ordered.push(pid);
-            pending.push(pid);
+        if parent != pid {
+            children_by_parent.entry(parent).or_default().push(pid);
+        }
+    }
+
+    let mut queue = VecDeque::from([root_pid]);
+    let mut seen = HashSet::from([root_pid]);
+    let mut ordered = Vec::new();
+    while let Some(parent) = queue.pop_front() {
+        if let Some(children) = children_by_parent.get(&parent) {
+            for &child in children {
+                if seen.insert(child) {
+                    ordered.push(child);
+                    queue.push_back(child);
+                }
+            }
         }
     }
     Ok(ordered)

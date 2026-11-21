@@ -22,14 +22,6 @@ impl TunnelType {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    pub fn is_frp(&self) -> bool {
-        self.as_str() == "frp"
-    }
-
-    pub fn is_cloudflare(&self) -> bool {
-        self.as_str() == "cloudflare"
-    }
 }
 
 impl From<String> for TunnelType {
@@ -106,7 +98,7 @@ pub struct TunnelConfig {
 pub struct AuthConfig {
     #[serde(rename = "type", default = "default_auth_type")]
     pub auth_type: AuthType,
-    #[serde(default = "default_oauth_client_id")]
+    #[serde(default)]
     pub oauth_client_id: String,
     #[serde(default)]
     pub use_shared_secrets: bool,
@@ -114,10 +106,6 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
-    /// 0.2 legacy per-workspace listener port. Global MCP owns the only port in 0.3.
-    #[serde(default = "default_mcp_port")]
-    #[serde(skip_serializing)]
-    pub local_port: u16,
     #[serde(default = "default_tool_profile")]
     pub tool_profile: String,
     /// Persist the current MCP conversation through explicit checkpoint calls.
@@ -193,14 +181,6 @@ fn default_frp_server_port() -> u16 {
     7000
 }
 
-fn default_oauth_client_id() -> String {
-    format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12])
-}
-
-fn default_mcp_port() -> u16 {
-    28766
-}
-
 fn default_tool_profile() -> String {
     "compact".to_string()
 }
@@ -252,7 +232,7 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             auth_type: default_auth_type(),
-            oauth_client_id: default_oauth_client_id(),
+            oauth_client_id: String::new(),
             use_shared_secrets: false,
         }
     }
@@ -261,7 +241,6 @@ impl Default for AuthConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            local_port: default_mcp_port(),
             tool_profile: default_tool_profile(),
             history_recording: default_history_recording(),
             history_context_sessions: Vec::new(),

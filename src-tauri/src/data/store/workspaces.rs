@@ -33,13 +33,13 @@ impl DataStore {
     }
 
     pub fn remove(&mut self, id: &str) -> AppResult<Option<WorkspaceProfile>> {
-        self.update_latest(|data| {
+        self.update_latest_if_changed(|data| {
             let Some(index) = data.profiles.iter().position(|item| item.id == id) else {
-                return Ok(None);
+                return Ok((false, None));
             };
             let removed = data.profiles.remove(index);
             data.workspace_secrets.remove(id);
-            Ok(Some(removed))
+            Ok((true, Some(removed)))
         })
     }
 }

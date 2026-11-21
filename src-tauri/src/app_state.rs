@@ -1,11 +1,12 @@
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::data::DataStore;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::mcp::gateway::GatewayState;
 use crate::runtime::RuntimeSupervisor;
+use crate::workspace::WorkspaceProfile;
 
 pub struct AppState {
     pub data: Mutex<DataStore>,
@@ -39,7 +40,7 @@ impl AppState {
         let mut guard = self
             .data
             .lock()
-            .map_err(|_| crate::error::AppError::Message("data store poisoned".into()))?;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut guard)
     }
 
@@ -52,6 +53,24 @@ impl AppState {
 
     pub fn with_settings<R>(&self, f: impl FnOnce(&mut DataStore) -> AppResult<R>) -> AppResult<R> {
         self.with_data(f)
+    }
+
+    pub fn workspace_profile(&self, id: &str) -> AppResult<WorkspaceProfile> {
+        self.with_workspaces(|store| {
+            store
+                .get(id)
+                .cloned()
+                .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
+        })
+    }
+
+    pub fn workspace_path(&self, id: &str) -> AppResult<PathBuf> {
+        self.with_workspaces(|store| {
+            store
+                .get(id)
+                .map(|profile| PathBuf::from(&profile.path))
+                .ok_or_else(|| AppError::Message(format!("workspace not found: {id}")))
+        })
     }
 
     pub fn with_runtime<R>(
@@ -70,8 +89,4 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new().expect("failed to initialize app state")
     }
-}
-
-pub fn teardown_workspace(store: &mut DataStore, profile_id: &str) -> AppResult<()> {
-    store.remove_workspace_secrets(profile_id)
 }

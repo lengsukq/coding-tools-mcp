@@ -1,15 +1,21 @@
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
-
 use std::path::Path;
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, INVALID_HANDLE_VALUE,
+    WAIT_OBJECT_0,
+};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
     PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
 };
 
 use crate::error::{AppError, AppResult};
+
+const STACK_IMAGE_PATH_LEN: usize = 512;
+const MAX_IMAGE_PATH_LEN: usize = 32_768;
 
 pub fn is_process_alive(pid: u32) -> bool {
     unsafe {
@@ -42,20 +48,39 @@ pub fn process_image_path(pid: u32) -> AppResult<Option<String>> {
             return Ok(None);
         }
 
-        let mut size = 32_768u32;
-        let mut buffer = vec![0u16; size as usize];
+        let mut stack_buf = [0u16; STACK_IMAGE_PATH_LEN];
+        let mut size = stack_buf.len() as u32;
+        if QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(stack_buf.as_mut_ptr()),
+            &mut size,
+        )
+        .is_ok()
+        {
+            let _ = CloseHandle(handle);
+            return Ok(Some(String::from_utf16_lossy(&stack_buf[..size as usize])));
+        }
+
+        if GetLastError() != ERROR_INSUFFICIENT_BUFFER {
+            let _ = CloseHandle(handle);
+            return Ok(None);
+        }
+
+        let mut size = MAX_IMAGE_PATH_LEN as u32;
+        let mut heap_buf = vec![0u16; MAX_IMAGE_PATH_LEN];
         let ok = QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_FORMAT(0),
-            PWSTR(buffer.as_mut_ptr()),
+            PWSTR(heap_buf.as_mut_ptr()),
             &mut size,
         );
         let _ = CloseHandle(handle);
         if ok.is_err() {
             return Ok(None);
         }
-        buffer.truncate(size as usize);
-        Ok(Some(String::from_utf16_lossy(&buffer)))
+        heap_buf.truncate(size as usize);
+        Ok(Some(String::from_utf16_lossy(&heap_buf)))
     }
 }
 
@@ -70,12 +95,25 @@ pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
 /// 只终止镜像路径完全匹配的进程，避免误杀用户自行运行的其它 frpc。
 pub fn terminate_processes_by_image_path(image_path: &Path) -> AppResult<usize> {
     let expected = normalize_image_path(image_path);
+    let expected_name = Path::new(&expected)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_ascii_lowercase);
     let mut matched = Vec::new();
 
     for pid in process_ids()? {
         // System/protected processes may deny PROCESS_QUERY_LIMITED_INFORMATION.
         // They cannot be the managed frpc, so skip them without failing restart.
         if let Ok(Some(actual)) = process_image_path(pid) {
+            if let Some(expected_name) = expected_name.as_deref() {
+                let actual_name = Path::new(&actual)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_ascii_lowercase);
+                if actual_name.as_deref() != Some(expected_name) {
+                    continue;
+                }
+            }
             if normalize_image_path(Path::new(&actual)) == expected {
                 matched.push(pid);
             }
@@ -145,9 +183,7 @@ fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
         TH32CS_SNAPPROCESS,
     };
 
-    let mut pending = vec![root_pid];
-    let mut seen = std::collections::HashSet::from([root_pid]);
-    let mut ordered = Vec::new();
+    let mut children_by_parent: HashMap<u32, Vec<u32>> = HashMap::new();
 
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
@@ -165,9 +201,8 @@ fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
             loop {
                 let parent = entry.th32ParentProcessID;
                 let pid = entry.th32ProcessID;
-                if pending.contains(&parent) && seen.insert(pid) {
-                    ordered.push(pid);
-                    pending.push(pid);
+                if pid != parent {
+                    children_by_parent.entry(parent).or_default().push(pid);
                 }
                 if Process32NextW(snapshot, &mut entry).is_err() {
                     break;
@@ -175,6 +210,20 @@ fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
             }
         }
         let _ = CloseHandle(snapshot);
+    }
+
+    let mut queue = VecDeque::from([root_pid]);
+    let mut seen = HashSet::from([root_pid]);
+    let mut ordered = Vec::new();
+    while let Some(parent) = queue.pop_front() {
+        if let Some(children) = children_by_parent.get(&parent) {
+            for &child in children {
+                if seen.insert(child) {
+                    ordered.push(child);
+                    queue.push_back(child);
+                }
+            }
+        }
     }
 
     Ok(ordered)
@@ -213,11 +262,15 @@ pub struct ProcessTreeMemory {
 pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
     let root = std::process::id();
     let descendants = collect_child_pids(root)?;
-    let mut sample = ProcessTreeMemory::default();
-    sample.main_bytes = working_set_bytes(root).unwrap_or(0);
+    let mut sample = ProcessTreeMemory {
+        main_bytes: working_set_bytes(root).unwrap_or(0),
+        webview_bytes: 0,
+        webview_process_count: 0,
+    };
 
     for pid in descendants {
-        let Some(path) = process_image_path(pid)? else {
+        // Exited or access-denied children must not abort the entire memory sample.
+        let Ok(Some(path)) = process_image_path(pid) else {
             continue;
         };
         let name = Path::new(&path)

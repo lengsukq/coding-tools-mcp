@@ -1,8 +1,11 @@
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
 const RUSAGE_INFO_V2: libc::c_int = 2;
+const TERM_WAIT_STEP_MS: u64 = 20;
+const TERM_WAIT_MAX_STEPS: usize = 10;
 
 #[repr(C)]
 struct RUsageInfoV2 {
@@ -39,6 +42,14 @@ extern "C" {
 
 extern "C" {
     fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
+}
+
+/// Ask macOS libmalloc to release unused heap pages back to the OS.
+pub fn trim_process_heap() {
+    unsafe {
+        let _ = malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+    }
 }
 
 /// Memory footprint sample for the desktop process tree (main + WKWebView XPC helpers).
@@ -50,9 +61,14 @@ pub struct ProcessTreeMemory {
 }
 
 pub fn is_process_alive(pid: u32) -> bool {
-    let mut buffer = [0u8; libc::PATH_MAX as usize];
-    let size = unsafe { proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
-    size > 0
+    let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if raw_pid <= 0 {
+        return false;
+    }
+    let result = unsafe { libc::kill(raw_pid, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 pub fn process_image_path(pid: u32) -> AppResult<Option<String>> {
@@ -74,10 +90,17 @@ pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
         signal_pid(pid, libc::SIGTERM)?;
     }
     signal_pid(root_pid, libc::SIGTERM)?;
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    for pid in &children {
-        if is_process_alive(*pid) {
-            let _ = signal_pid(*pid, libc::SIGKILL);
+
+    for _ in 0..TERM_WAIT_MAX_STEPS {
+        if !is_process_alive(root_pid) && children.iter().all(|&pid| !is_process_alive(pid)) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(TERM_WAIT_STEP_MS));
+    }
+
+    for &pid in &children {
+        if is_process_alive(pid) {
+            let _ = signal_pid(pid, libc::SIGKILL);
         }
     }
     if is_process_alive(root_pid) {
@@ -88,6 +111,8 @@ pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
 
 pub fn terminate_processes_by_image_path(image_path: &Path) -> AppResult<usize> {
     let expected = normalized_image_path(image_path);
+    let expected_name = expected.file_name();
+    let input_name = image_path.file_name();
     let current_pid = std::process::id();
     let mut terminated = 0;
 
@@ -99,7 +124,12 @@ pub fn terminate_processes_by_image_path(image_path: &Path) -> AppResult<usize> 
         let Some(actual) = process_image_path(pid)? else {
             continue;
         };
-        if normalized_image_path(Path::new(&actual)) != expected {
+        let actual_path = Path::new(&actual);
+        let actual_name = actual_path.file_name();
+        if expected_name.is_some() && actual_name != expected_name && actual_name != input_name {
+            continue;
+        }
+        if normalized_image_path(actual_path) != expected {
             continue;
         }
         terminate_process_tree(pid)?;
@@ -117,8 +147,9 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
         .map(|info| info.ri_proc_start_abstime)
         .unwrap_or(0);
     let all_pids = super::net::all_pids()?;
-    let descendants: std::collections::HashSet<u32> =
-        collect_child_pids_from(root, &all_pids)?.into_iter().collect();
+    let descendants: HashSet<u32> = collect_child_pids_from(root, &all_pids)?
+        .into_iter()
+        .collect();
 
     let mut sample = ProcessTreeMemory {
         main_bytes: root_rusage.as_ref().map(rusage_memory_bytes).unwrap_or(0),
@@ -132,12 +163,10 @@ pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
             continue;
         }
         let is_descendant = descendants.contains(&pid);
-        // A process can have the same "responsible process" as this app while
-        // belonging to a different application (for example when both are
-        // launched from the same terminal / launcher). Require the current
-        // app's exact PID rather than comparing inherited responsibility.
-        let belongs_to_this_app = responsible_pid(pid) == Some(root);
-        if !is_descendant && !belongs_to_this_app {
+        // Short-circuit: avoid the extra responsibility lookup when already a direct descendant.
+        // Require the current app's exact PID so processes launched by the same terminal/launcher
+        // are not misattributed to this desktop app.
+        if !is_descendant && responsible_pid(pid) != Some(root) {
             continue;
         }
         let Ok(Some(path)) = process_image_path(pid) else {
@@ -207,19 +236,36 @@ fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
 }
 
 fn collect_child_pids_from(root_pid: u32, pids: &[i32]) -> AppResult<Vec<u32>> {
-    let mut seen = std::collections::HashSet::from([root_pid]);
-    let mut ordered = Vec::new();
-
-    for &pid in pids {
-        let pid = pid as u32;
-        let Some(parent) = super::net::parent_pid(pid)? else {
+    let mut children_by_parent: HashMap<u32, Vec<u32>> = HashMap::with_capacity(pids.len());
+    for &raw_pid in pids {
+        let Ok(pid) = u32::try_from(raw_pid) else {
             continue;
         };
-        if seen.contains(&parent) && seen.insert(pid) {
-            ordered.push(pid);
+        let Ok(Some(parent)) = super::net::parent_pid(pid) else {
+            continue;
+        };
+        if parent != pid {
+            children_by_parent.entry(parent).or_default().push(pid);
         }
     }
-    Ok(ordered)
+    Ok(collect_descendants_bfs(root_pid, &children_by_parent))
+}
+
+fn collect_descendants_bfs(root_pid: u32, children_by_parent: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
+    let mut queue = VecDeque::from([root_pid]);
+    let mut seen = HashSet::from([root_pid]);
+    let mut ordered = Vec::new();
+    while let Some(parent) = queue.pop_front() {
+        if let Some(children) = children_by_parent.get(&parent) {
+            for &child in children {
+                if seen.insert(child) {
+                    ordered.push(child);
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+    ordered
 }
 
 fn signal_pid(pid: u32, signal: i32) -> AppResult<()> {
@@ -247,9 +293,26 @@ mod tests {
     }
 
     #[test]
+    fn is_process_alive_detects_current_process_and_rejects_zero() {
+        assert!(is_process_alive(std::process::id()));
+        assert!(!is_process_alive(0));
+    }
+
+    #[test]
     fn sample_process_tree_memory_reads_current_process_footprint() {
         let sample = sample_process_tree_memory().expect("采样当前进程树内存不应失败");
         assert!(sample.main_bytes > 0, "当前主进程内存应大于 0");
+    }
+
+    #[test]
+    fn collect_descendants_bfs_handles_out_of_order_grandchildren() {
+        // Grandchild 50 has a lower PID than its parent 200; single-pass iteration would miss it.
+        let mut map: HashMap<u32, Vec<u32>> = HashMap::new();
+        map.insert(200, vec![50, 51]);
+        map.insert(100, vec![200]);
+        map.insert(50, vec![25]);
+
+        assert_eq!(collect_descendants_bfs(100, &map), vec![200, 50, 51, 25]);
     }
 
     #[test]

@@ -4,20 +4,16 @@ use super::{DataStore, SHARED_KEYS};
 
 impl DataStore {
     pub fn init_shared_secrets(&mut self) -> AppResult<()> {
-        self.update_latest(|data| {
+        self.update_latest_if_changed(|data| {
+            let mut changed = false;
             for key in SHARED_KEYS {
-                data.shared_secrets
-                    .entry((*key).to_string())
-                    .or_insert_with(|| shared_value_for_key(key));
+                if !data.shared_secrets.contains_key(*key) {
+                    data.shared_secrets
+                        .insert((*key).to_string(), shared_value_for_key(key));
+                    changed = true;
+                }
             }
-            Ok(())
-        })
-    }
-
-    pub fn remove_workspace_secrets(&mut self, profile_id: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.workspace_secrets.remove(profile_id);
-            Ok(())
+            Ok((changed, ()))
         })
     }
 
@@ -53,28 +49,6 @@ impl DataStore {
             .and_then(|items| items.get(item_id))
             .filter(|value| !value.is_empty())
             .cloned()
-    }
-
-    pub fn set_app_secret(&mut self, scope: &str, item_id: &str, value: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.app_secrets
-                .entry(scope.to_string())
-                .or_default()
-                .insert(item_id.to_string(), value.to_string());
-            Ok(())
-        })
-    }
-
-    pub fn delete_app_secret(&mut self, scope: &str, item_id: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            if let Some(items) = data.app_secrets.get_mut(scope) {
-                items.remove(item_id);
-                if items.is_empty() {
-                    data.app_secrets.remove(scope);
-                }
-            }
-            Ok(())
-        })
     }
 }
 
