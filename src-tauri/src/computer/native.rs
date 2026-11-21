@@ -12,13 +12,26 @@ unsafe extern "C" {
     fn computer_native_accessibility_granted() -> bool;
     fn computer_native_request_accessibility() -> bool;
 }
+struct NativeOwnedString(*mut c_char);
+
+impl Drop for NativeOwnedString {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { computer_native_free(self.0) };
+        }
+    }
+}
+
 fn decode(pointer: *mut c_char) -> Result<Value, String> {
     if pointer.is_null() {
         return Err("COMPUTER_NATIVE_ERROR: native bridge returned null".into());
     }
-    let data = unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec();
-    unsafe { computer_native_free(pointer) };
-    let value: Value = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
+    // RAII guard ensures `computer_native_free` always runs even on parse error,
+    // while allowing zero-copy deserialization directly from the C buffer.
+    let owned = NativeOwnedString(pointer);
+    let bytes = unsafe { CStr::from_ptr(owned.0) }.to_bytes();
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    drop(owned);
     if value["ok"] != true {
         return Err(format!(
             "{}: {}",

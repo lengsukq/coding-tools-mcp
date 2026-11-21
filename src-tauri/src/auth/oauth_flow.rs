@@ -20,7 +20,7 @@ mod runtime;
 mod token;
 
 pub use handlers::{
-    authorize_get, authorize_post, token_exchange, verify_oauth_bearer_header, AuthorizeForm,
+    authenticate_oauth_bearer_header, authorize_get, authorize_post, token_exchange, AuthorizeForm,
     AuthorizeParams, TokenForm,
 };
 use login::{html_error, login_page, urlencoding_encode, LoginPage};
@@ -42,6 +42,7 @@ pub struct OAuthRuntime {
     pub token_secret: String,
     pending: Arc<Mutex<HashMap<String, PendingCode>>>,
     clients: Arc<Mutex<HashMap<String, RegisteredClient>>>,
+    persist_lock: Arc<Mutex<()>>,
     client_registry: Option<ClientRegistryPersistence>,
     recovery_notice: Option<String>,
 }
@@ -156,7 +157,6 @@ mod tests {
         use axum::http::HeaderMap;
 
         let oauth = OAuthRuntime::new(
-            "https://lb.example.com".into(),
             "chatgpt-client-test".into(),
             None,
             "test-password".into(),
@@ -203,7 +203,6 @@ mod tests {
     #[test]
     fn refresh_token_cannot_authenticate_as_an_access_token() {
         let oauth = OAuthRuntime::new(
-            "https://lb.example.com".into(),
             "chatgpt-client-test".into(),
             None,
             "test-password".into(),
@@ -248,7 +247,6 @@ mod tests {
     #[test]
     fn dynamic_registration_restricts_redirect_uri() {
         let oauth = OAuthRuntime::new(
-            "https://lb.example.com".into(),
             "legacy-client".into(),
             None,
             "test-password".into(),
@@ -277,7 +275,6 @@ mod tests {
         let workspace_id = format!("oauth-dcr-{}", uuid::Uuid::new_v4().simple());
         let registry_key = "oauth_dynamic_clients".to_string();
         let oauth = OAuthRuntime::new_persistent(
-            "https://lb.example.com".into(),
             "legacy-client".into(),
             None,
             "test-password".into(),
@@ -308,7 +305,6 @@ mod tests {
         drop(oauth);
 
         let restarted = OAuthRuntime::new_persistent(
-            "https://lb.example.com".into(),
             "legacy-client".into(),
             None,
             "test-password".into(),
@@ -326,7 +322,6 @@ mod tests {
     #[test]
     fn refresh_token_issues_a_new_token_pair() {
         let oauth = OAuthRuntime::new(
-            "https://lb.example.com".into(),
             "chatgpt-client-test".into(),
             None,
             "test-password".into(),
@@ -367,5 +362,39 @@ mod tests {
             server_url: "https://mcp.example.com",
         });
         assert!(html.contains("action='https://mcp.example.com/oauth/authorize'"));
+    }
+
+    #[test]
+    fn dynamic_registration_enforces_client_capacity_limit() {
+        let oauth = OAuthRuntime::new(
+            "legacy-client".into(),
+            None,
+            "test-password".into(),
+            "token-signing-secret".into(),
+        );
+        for index in 0..runtime::MAX_REGISTERED_CLIENTS {
+            let response = register_client(
+                &oauth,
+                ClientRegistrationRequest {
+                    redirect_uris: vec![format!("https://client-{index}.example/cb")],
+                    token_endpoint_auth_method: "none".into(),
+                    grant_types: vec!["authorization_code".into()],
+                    response_types: vec!["code".into()],
+                    client_name: format!("Client {index}"),
+                },
+            );
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        let overflow = register_client(
+            &oauth,
+            ClientRegistrationRequest {
+                redirect_uris: vec!["https://overflow.example/cb".into()],
+                token_endpoint_auth_method: "none".into(),
+                grant_types: vec!["authorization_code".into()],
+                response_types: vec!["code".into()],
+                client_name: "Overflow".into(),
+            },
+        );
+        assert_eq!(overflow.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }

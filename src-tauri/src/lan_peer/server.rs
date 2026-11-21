@@ -10,8 +10,11 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::local_network;
-use crate::mcp::gateway::{GatewayError, GatewayState};
+use crate::local_network::{self, has_proxy_forwarded_headers, PeerConnectAddr};
+use crate::mcp::gateway::{GatewayError, GatewayState, WorkspaceRegistry};
+use crate::mcp::server::{
+    inject_workspace_session_args, review_error_status, truncate_utf8_with_ellipsis,
+};
 use crate::settings::{AppSettings, PairedPeerConfig};
 use crate::tool_audit::{record_tool_call, ToolAuditCall};
 use crate::tools::workspace::{tool_err, WorkspaceError};
@@ -20,8 +23,7 @@ use crate::tools::{call_tool, wrap_mcp_tool_result};
 use super::crypto::{unix_time_ms, verify_peer_request_signature, ReplayGuard};
 use super::discovery::PeerHelloDto;
 use super::identity::{
-    get_peer_secret, identity_from_settings, is_workspace_shared, remove_peer_secret,
-    valid_device_id,
+    get_peer_secret, identity_from_settings, is_workspace_shared, valid_device_id,
 };
 use super::pairing::{
     accept_pair_complete, is_pairing_pin_active, remove_local_paired_peer, PairCompleteRequest,
@@ -31,36 +33,11 @@ use super::{
     TIMESTAMP_HEADER,
 };
 
-const PROXY_FORBIDDEN_HEADERS: &[&str] = &[
-    "cf-connecting-ip",
-    "cf-ray",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-    "forwarded",
-];
+const MAX_SELECT_PROBE_INSTRUCTIONS_BYTES: usize = 16 * 1024;
 
 #[derive(Clone)]
 struct LanServerState {
     gateway: Arc<GatewayState>,
-}
-
-struct MaybeConnectInfo(Option<SocketAddr>);
-
-impl<S: Send + Sync> axum::extract::FromRequestParts<S> for MaybeConnectInfo {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let addr = parts
-            .extensions
-            .get::<axum::extract::ConnectInfo<SocketAddr>>()
-            .map(|ci| ci.0);
-        Ok(Self(addr))
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +104,24 @@ pub struct PeerRpcResponse {
     pub peer_review: Option<PeerReviewTokenDto>,
 }
 
+impl PeerRpcResponse {
+    fn ok(result: Value, peer_review: Option<PeerReviewTokenDto>) -> Self {
+        Self {
+            result: Some(result),
+            rpc_error: None,
+            peer_review,
+        }
+    }
+
+    fn err(rpc_error: Value) -> Self {
+        Self {
+            result: None,
+            rpc_error: Some(rpc_error),
+            peer_review: None,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct PeerReviewQuery {
     t: String,
@@ -181,15 +176,13 @@ fn verify_lan_surface(
     state: &LanServerState,
     headers: &HeaderMap,
     remote: Option<SocketAddr>,
-) -> Result<AppSettings, Response> {
-    for forbidden in PROXY_FORBIDDEN_HEADERS {
-        if headers.contains_key(*forbidden) {
-            return Err(json_err(
-                StatusCode::FORBIDDEN,
-                "PUBLIC_TUNNEL_FORBIDDEN",
-                "局域网配对与联邦接口禁止通过公网隧道或反向代理访问",
-            ));
-        }
+) -> Result<AppSettings, Box<Response>> {
+    if has_proxy_forwarded_headers(headers) {
+        return Err(Box::new(json_err(
+            StatusCode::FORBIDDEN,
+            "PUBLIC_TUNNEL_FORBIDDEN",
+            "局域网配对与联邦接口禁止通过公网隧道或反向代理访问",
+        )));
     }
     let settings = effective_settings(state);
     if let Some(addr) = remote {
@@ -204,19 +197,19 @@ fn verify_lan_surface(
             &settings.lan_federation.extra_subnets,
             &paired_hosts,
         ) {
-            return Err(json_err(
+            return Err(Box::new(json_err(
                 StatusCode::FORBIDDEN,
                 "NON_LAN_ORIGIN_FORBIDDEN",
                 "仅允许局域网私网、EasyTier/Tailscale 等组网地址或已配置的自定义子网访问此接口",
-            ));
+            )));
         }
     }
     if !settings.lan_federation.enabled {
-        return Err(json_err(
+        return Err(Box::new(json_err(
             StatusCode::SERVICE_UNAVAILABLE,
             "LAN_FEDERATION_DISABLED",
             "目标设备尚未开启局域网配对互联功能",
-        ));
+        )));
     }
     Ok(settings)
 }
@@ -227,18 +220,18 @@ fn authenticate_peer_request(
     method: &str,
     path_and_query: &str,
     body: &[u8],
-) -> Result<PairedPeerConfig, Response> {
+) -> Result<PairedPeerConfig, Box<Response>> {
     let hop = headers
         .get(HOP_HEADER)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.trim().parse::<u8>().ok())
         .unwrap_or(0);
     if hop != 1 {
-        return Err(json_err(
+        return Err(Box::new(json_err(
             StatusCode::BAD_REQUEST,
             "FEDERATION_LOOP_DENIED",
             "局域网联邦仅允许单跳直连调用（hop=1），拒绝多跳转发",
-        ));
+        )));
     }
 
     let caller_id = headers
@@ -246,22 +239,46 @@ fn authenticate_peer_request(
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|s| valid_device_id(s))
-        .ok_or_else(|| json_err(StatusCode::UNAUTHORIZED, "MISSING_PEER_ID", "缺少有效的对等设备标识"))?;
+        .ok_or_else(|| {
+            Box::new(json_err(
+                StatusCode::UNAUTHORIZED,
+                "MISSING_PEER_ID",
+                "缺少有效的对等设备标识",
+            ))
+        })?;
     let timestamp_ms = headers
         .get(TIMESTAMP_HEADER)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .ok_or_else(|| json_err(StatusCode::UNAUTHORIZED, "MISSING_TIMESTAMP", "缺少请求时间戳"))?;
+        .ok_or_else(|| {
+            Box::new(json_err(
+                StatusCode::UNAUTHORIZED,
+                "MISSING_TIMESTAMP",
+                "缺少请求时间戳",
+            ))
+        })?;
     let nonce = headers
         .get(NONCE_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .ok_or_else(|| json_err(StatusCode::UNAUTHORIZED, "MISSING_NONCE", "缺少防重放 Nonce"))?;
+        .ok_or_else(|| {
+            Box::new(json_err(
+                StatusCode::UNAUTHORIZED,
+                "MISSING_NONCE",
+                "缺少防重放 Nonce",
+            ))
+        })?;
     let signature = headers
         .get(SIGNATURE_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .ok_or_else(|| json_err(StatusCode::UNAUTHORIZED, "MISSING_SIGNATURE", "缺少请求签名"))?;
+        .ok_or_else(|| {
+            Box::new(json_err(
+                StatusCode::UNAUTHORIZED,
+                "MISSING_SIGNATURE",
+                "缺少请求签名",
+            ))
+        })?;
 
     let peer = settings
         .lan_federation
@@ -269,27 +286,27 @@ fn authenticate_peer_request(
         .iter()
         .find(|p| p.device_id == caller_id)
         .ok_or_else(|| {
-            json_err(
+            Box::new(json_err(
                 StatusCode::UNAUTHORIZED,
                 "UNKNOWN_PEER",
                 format!("设备 {caller_id} 未与当前主机配对"),
-            )
+            ))
         })?;
     if !peer.enabled {
-        return Err(json_err(
+        return Err(Box::new(json_err(
             StatusCode::FORBIDDEN,
             "PEER_DISABLED",
             "当前主机已停用来自该配对设备的访问",
-        ));
+        )));
     }
     let secret = get_peer_secret(caller_id, Some(settings))
         .or_else(|| get_peer_secret(caller_id, None))
         .ok_or_else(|| {
-            json_err(
+            Box::new(json_err(
                 StatusCode::UNAUTHORIZED,
                 "PEER_SECRET_MISSING",
                 "本地缺少该配对设备的共享密钥，请重新配对",
-            )
+            ))
         })?;
 
     let now_ms = unix_time_ms();
@@ -304,19 +321,19 @@ fn authenticate_peer_request(
         signature,
         now_ms,
     ) {
-        return Err(json_err(
+        return Err(Box::new(json_err(
             StatusCode::UNAUTHORIZED,
             reason,
             format!("对等请求签名校验未通过: {reason}"),
-        ));
+        )));
     }
 
     if !replay_guard().check_and_record(caller_id, nonce, now_ms) {
-        return Err(json_err(
+        return Err(Box::new(json_err(
             StatusCode::UNAUTHORIZED,
             "REPLAY_DETECTED",
             "检测到重复的 Nonce 请求，已拒绝重放",
-        ));
+        )));
     }
 
     Ok(peer.clone())
@@ -324,12 +341,12 @@ fn authenticate_peer_request(
 
 async fn lan_hello(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
 ) -> Response {
     let settings = match verify_lan_surface(&state, &headers, remote) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let override_snap = state.gateway.settings_snapshot();
     let (lan, fingerprint) = identity_from_settings(override_snap.as_ref());
@@ -353,51 +370,66 @@ async fn lan_hello(
 
 async fn lan_pair_complete(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
     Json(req): Json<PairCompleteRequest>,
 ) -> Response {
     if let Err(resp) = verify_lan_surface(&state, &headers, remote) {
-        return resp;
+        return *resp;
     }
     let override_snap = state.gateway.settings_snapshot();
-    match accept_pair_complete(&req, remote.map(|s| s.ip()), override_snap.as_ref()) {
-        Ok((ack, peer_record, shared_secret)) => {
+    let remote_ip = remote.map(|s| s.ip());
+    let result = tokio::task::spawn_blocking(move || {
+        accept_pair_complete(&req, remote_ip, override_snap.as_ref())
+    })
+    .await;
+    match result {
+        Ok(Ok((ack, _peer_record, _shared_secret))) => {
+            #[cfg(test)]
             if state.gateway.is_test_override() {
-                state.gateway.register_test_paired_peer(peer_record, shared_secret);
+                state
+                    .gateway
+                    .register_test_paired_peer(_peer_record, _shared_secret);
             }
             ([(CACHE_CONTROL, "no-store")], Json(ack)).into_response()
         }
-        Err((status, code, message)) => json_err(
+        Ok(Err((status, code, message))) => json_err(
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
             code,
             message,
+        ),
+        Err(err) => json_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PAIR_WORKER_FAILED",
+            format!("处理配对请求失败: {err}"),
         ),
     }
 }
 
 async fn lan_catalog(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
 ) -> Response {
     let settings = match verify_lan_surface(&state, &headers, remote) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if let Err(resp) =
         authenticate_peer_request(&settings, &headers, "GET", "/api/lan/v1/catalog", &[])
     {
-        return resp;
+        return *resp;
     }
 
     let override_snap = state.gateway.settings_snapshot();
     let (lan, fingerprint) = identity_from_settings(override_snap.as_ref());
-    let descriptors = state
+    let local_descriptors = state
         .gateway
         .registry
         .local_descriptors()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let revision = WorkspaceRegistry::revision_for(&local_descriptors);
+    let workspaces = local_descriptors
         .into_iter()
         .filter(|ws| is_workspace_shared(&lan, &ws.id))
         .map(|ws| PeerWorkspaceWireDto {
@@ -406,7 +438,6 @@ async fn lan_catalog(
             path: ws.path,
         })
         .collect();
-    let revision = state.gateway.registry.revision().unwrap_or_default();
 
     let payload = PeerCatalogResponse {
         protocol: LAN_PROTOCOL_VERSION.to_string(),
@@ -423,25 +454,25 @@ async fn lan_catalog(
             && lan.allow_computer_use
             && crate::computer::local_policy_present(),
         registry_revision: revision,
-        workspaces: descriptors,
+        workspaces,
     };
     ([(CACHE_CONTROL, "no-store")], Json(payload)).into_response()
 }
 
 async fn lan_rpc(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let settings = match verify_lan_surface(&state, &headers, remote) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let caller_peer =
         match authenticate_peer_request(&settings, &headers, "POST", "/api/lan/v1/rpc", &body) {
             Ok(peer) => peer,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
 
     let rpc_req: PeerRpcRequest = match serde_json::from_slice(&body) {
@@ -486,277 +517,268 @@ fn execute_local_peer_rpc(
         PeerRpcRequest::SelectProbe {
             workspace_id,
             caller_session_id,
-        } => {
-            if !is_workspace_shared(lan, &workspace_id) {
-                return PeerRpcResponse {
-                    result: None,
-                    rpc_error: Some(
-                        GatewayError::not_found(
-                            "WORKSPACE_NOT_SHARED",
-                            format!("目标设备未向局域网共享该工作区: {workspace_id}"),
-                        )
-                        .to_rpc_error(),
-                    ),
-                    peer_review: None,
-                };
-            }
-            let scoped_session = format!("lan:{}:{caller_session_id}", caller_peer.device_id);
-            match gateway.workspace_by_id(&scoped_session, &workspace_id) {
-                Ok(ctx) => {
-                    let instructions =
-                        truncate_utf8(&ctx.tools.current_ai_instructions(), 16 * 1024);
-                    PeerRpcResponse {
-                        result: Some(json!({
-                            "workspace": {
-                                "id": ctx.profile.id,
-                                "name": ctx.profile.name,
-                                "path": ctx.profile.path,
-                            },
-                            "tool_profile": ctx.tools.tool_profile.as_str(),
-                            "permission_mode": if lan.trust_level == "readonly" {
-                                "readonly"
-                            } else {
-                                ctx.tools.policy.permission_mode.as_str()
-                            },
-                            "trust_level": lan.trust_level,
-                            "history_recording": ctx.tools.history_recording,
-                            "agent_instructions": instructions,
-                        })),
-                        rpc_error: None,
-                        peer_review: None,
-                    }
-                }
-                Err(err) => PeerRpcResponse {
-                    result: None,
-                    rpc_error: Some(err.to_rpc_error()),
-                    peer_review: None,
-                },
-            }
-        }
+        } => execute_select_probe(gateway, lan, caller_peer, &workspace_id, &caller_session_id),
         PeerRpcRequest::WorkspaceTool {
             workspace_id,
             tool,
-            mut arguments,
+            arguments,
             caller_session_id,
             request_id,
-        } => {
-            if !is_workspace_shared(lan, &workspace_id) {
-                return PeerRpcResponse {
-                    result: None,
-                    rpc_error: Some(
-                        GatewayError::not_found(
-                            "WORKSPACE_NOT_SHARED",
-                            format!("目标设备未向局域网共享该工作区: {workspace_id}"),
-                        )
-                        .to_rpc_error(),
-                    ),
-                    peer_review: None,
-                };
-            }
-            let canonical_name = crate::tools::registry::canonical_tool_name(&tool);
-            let logical_session = format!(
-                "lan:{}:{}",
-                caller_peer.device_id,
-                caller_session_id.as_deref().unwrap_or("stateless")
-            );
-            let audit_body = json!({
-                "params": { "name": canonical_name, "arguments": &arguments }
-            });
-            let audit_call = ToolAuditCall::new_with_peer_context(
-                &request_id,
-                canonical_name,
-                Some(&logical_session),
-                "lan_peer",
-                Some(&caller_peer.device_id),
-                request_bytes,
-                &audit_body,
-                Some("local".into()),
-                Some(source_label),
-            );
-
-            let ctx = match gateway.workspace_by_id(&logical_session, &workspace_id) {
-                Ok(ctx) => ctx,
-                Err(err) => {
-                    let rpc_err = err.to_rpc_error();
-                    record_tool_call(
-                        audit_call,
-                        Some(workspace_id),
-                        &json!({ "error": &rpc_err }),
-                    );
-                    return PeerRpcResponse {
-                        result: None,
-                        rpc_error: Some(rpc_err),
-                        peer_review: None,
-                    };
-                }
-            };
-
-            let gateway_surface = crate::tools::registry::exposed_tool_names("compact");
-            let workspace_surface =
-                crate::tools::registry::exposed_tool_names(ctx.tools.tool_profile.as_str());
-            if !gateway_surface.contains(&canonical_name)
-                || !workspace_surface.contains(&canonical_name)
-            {
-                let rpc_err = GatewayError::invalid(
-                    "TOOL_NOT_AVAILABLE_IN_WORKSPACE",
-                    format!(
-                        "工具 {canonical_name} 不在目标设备工作区的可用档位 {} 中。",
-                        ctx.tools.tool_profile.as_str()
-                    ),
-                )
-                .to_rpc_error();
-                record_tool_call(
-                    audit_call,
-                    Some(ctx.workspace_id),
-                    &json!({ "error": &rpc_err }),
-                );
-                return PeerRpcResponse {
-                    result: None,
-                    rpc_error: Some(rpc_err),
-                    peer_review: None,
-                };
-            }
-
-            if lan.trust_level == "readonly" && !is_readonly_peer_tool(canonical_name, &arguments) {
-                let denied = wrap_mcp_tool_result(
-                    canonical_name,
-                    &arguments,
-                    tool_err(WorkspaceError::Tool {
-                        code: "PEER_READONLY_POLICY",
-                        message: format!(
-                            "目标设备 {} 已将局域网共享权限设为只读，拒绝执行写入或命令工具 {canonical_name}",
-                            lan.device_name
-                        ),
-                        category: "policy",
-                        retryable: false,
-                    }),
-                );
-                record_tool_call(
-                    audit_call,
-                    Some(ctx.workspace_id),
-                    &json!({ "result": &denied }),
-                );
-                return PeerRpcResponse {
-                    result: Some(denied),
-                    rpc_error: None,
-                    peer_review: None,
-                };
-            }
-
-            if let Some(obj) = arguments.as_object_mut() {
-                obj.remove("workspace_id");
-                obj.remove("device_id");
-            }
-            if canonical_name == "history_manage" && arguments.get("_host_session_key").is_none() {
-                arguments["_host_session_key"] = Value::String(logical_session.clone());
-            }
-            if canonical_name == "change_review"
-                && arguments.get("scope").and_then(Value::as_str) == Some("session")
-                && arguments.get("session_id").is_none()
-            {
-                if !arguments.is_object() {
-                    arguments = json!({});
-                }
-                arguments["_review_session_id"] = Value::String(logical_session.clone());
-            }
-
-            let structured = call_tool(ctx.tools.as_ref(), canonical_name, &arguments);
-            let mut peer_review = None;
-            if let Some(change_id) = structured.get("change_id").and_then(Value::as_str) {
-                let _ = crate::review::attach_session(
-                    ctx.tools.workspace.root(),
-                    change_id,
-                    &logical_session,
-                );
-                if let Ok(link) = crate::review::issue_token(ctx.tools.workspace.root(), change_id)
-                {
-                    peer_review = Some(PeerReviewTokenDto {
-                        change_id: link.change_id,
-                        token: link.token,
-                    });
-                }
-            }
-            let result = wrap_mcp_tool_result(canonical_name, &arguments, structured);
-            ctx.tools.record_context_block("tool_return", &result);
-            record_tool_call(
-                audit_call,
-                Some(ctx.workspace_id),
-                &json!({ "result": &result }),
-            );
-            PeerRpcResponse {
-                result: Some(result),
-                rpc_error: None,
-                peer_review,
-            }
-        }
+        } => execute_workspace_tool_rpc(
+            gateway,
+            lan,
+            caller_peer,
+            source_label,
+            workspace_id,
+            &tool,
+            arguments,
+            caller_session_id.as_deref(),
+            &request_id,
+            request_bytes,
+        ),
         PeerRpcRequest::ComputerTool {
             tool,
-            mut arguments,
+            arguments,
             caller_session_id,
             request_id,
-        } => {
-            let owner = format!("lan_peer:{}:{caller_session_id}", caller_peer.device_id);
-            let session = gateway.sessions.computer_auto_session(&owner);
-            if let Some(obj) = arguments.as_object_mut() {
-                obj.remove("device_id");
-                obj.remove("session_token");
-            }
-            let audit_body = json!({
-                "params": { "name": &tool, "arguments": &arguments }
-            });
-            let audit_call = ToolAuditCall::new_with_peer_context(
-                &request_id,
-                &tool,
-                Some(&session),
-                "lan_peer",
-                Some(&caller_peer.device_id),
-                request_bytes,
-                &audit_body,
-                Some("local".into()),
-                Some(source_label),
+        } => execute_computer_tool_rpc(
+            gateway,
+            lan,
+            caller_peer,
+            source_label,
+            &tool,
+            arguments,
+            &caller_session_id,
+            &request_id,
+            request_bytes,
+        ),
+    }
+}
+
+fn workspace_not_shared_error(workspace_id: &str) -> PeerRpcResponse {
+    PeerRpcResponse::err(
+        GatewayError::not_found(
+            "WORKSPACE_NOT_SHARED",
+            format!("目标设备未向局域网共享该工作区: {workspace_id}"),
+        )
+        .to_rpc_error(),
+    )
+}
+
+fn execute_select_probe(
+    gateway: &GatewayState,
+    lan: &crate::settings::LanFederationConfig,
+    caller_peer: &PairedPeerConfig,
+    workspace_id: &str,
+    caller_session_id: &str,
+) -> PeerRpcResponse {
+    if !is_workspace_shared(lan, workspace_id) {
+        return workspace_not_shared_error(workspace_id);
+    }
+    let scoped_session = format!("lan:{}:{caller_session_id}", caller_peer.device_id);
+    match gateway.workspace_by_id(&scoped_session, workspace_id) {
+        Ok(ctx) => {
+            let instructions = truncate_utf8_with_ellipsis(
+                &ctx.tools.current_ai_instructions(),
+                MAX_SELECT_PROBE_INSTRUCTIONS_BYTES,
             );
+            PeerRpcResponse::ok(
+                json!({
+                    "workspace": {
+                        "id": ctx.profile.id,
+                        "name": ctx.profile.name,
+                        "path": ctx.profile.path,
+                    },
+                    "tool_profile": ctx.tools.tool_profile.as_str(),
+                    "permission_mode": if lan.trust_level == "readonly" {
+                        "readonly"
+                    } else {
+                        ctx.tools.policy.permission_mode.as_str()
+                    },
+                    "trust_level": lan.trust_level,
+                    "history_recording": ctx.tools.history_recording,
+                    "agent_instructions": instructions,
+                }),
+                None,
+            )
+        }
+        Err(err) => PeerRpcResponse::err(err.to_rpc_error()),
+    }
+}
 
-            if !lan.allow_computer_use {
-                let denied = json!({
-                    "isError": true,
-                    "content": [{ "type": "text", "text": "COMPUTER_LAN_DISABLED: 目标电脑已在局域网互联设置中关闭跨设备屏幕访问" }],
-                    "structuredContent": { "ok": false, "error": "COMPUTER_LAN_DISABLED" }
-                });
-                record_tool_call(audit_call, None, &json!({ "result": &denied }));
-                return PeerRpcResponse {
-                    result: Some(denied),
-                    rpc_error: None,
-                    peer_review: None,
-                };
-            }
+#[allow(clippy::too_many_arguments)]
+fn execute_workspace_tool_rpc(
+    gateway: &GatewayState,
+    lan: &crate::settings::LanFederationConfig,
+    caller_peer: &PairedPeerConfig,
+    source_label: String,
+    workspace_id: String,
+    tool: &str,
+    mut arguments: Value,
+    caller_session_id: Option<&str>,
+    request_id: &Value,
+    request_bytes: usize,
+) -> PeerRpcResponse {
+    if !is_workspace_shared(lan, &workspace_id) {
+        return workspace_not_shared_error(&workspace_id);
+    }
+    let canonical_name = crate::tools::registry::canonical_tool_name(tool);
+    let logical_session = format!(
+        "lan:{}:{}",
+        caller_peer.device_id,
+        caller_session_id.unwrap_or("stateless")
+    );
+    let audit_body = json!({
+        "params": { "name": canonical_name, "arguments": &arguments }
+    });
+    let audit_call = ToolAuditCall::new_with_peer_context(
+        request_id,
+        canonical_name,
+        Some(&logical_session),
+        "lan_peer",
+        Some(&caller_peer.device_id),
+        request_bytes,
+        &audit_body,
+        Some("local".into()),
+        Some(source_label),
+    );
 
-            let result = crate::computer::call_tool(&tool, Some(&session), &arguments);
-            record_tool_call(audit_call, None, &json!({ "result": &result }));
-            PeerRpcResponse {
-                result: Some(result),
-                rpc_error: None,
-                peer_review: None,
-            }
+    let ctx = match gateway.workspace_by_id(&logical_session, &workspace_id) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            let rpc_err = err.to_rpc_error();
+            record_tool_call(
+                audit_call,
+                Some(workspace_id),
+                &json!({ "error": &rpc_err }),
+            );
+            return PeerRpcResponse::err(rpc_err);
+        }
+    };
+
+    let gateway_surface = crate::tools::registry::exposed_tool_names("compact");
+    let workspace_surface =
+        crate::tools::registry::exposed_tool_names(ctx.tools.tool_profile.as_str());
+    if !gateway_surface.contains(&canonical_name) || !workspace_surface.contains(&canonical_name) {
+        let rpc_err = GatewayError::invalid(
+            "TOOL_NOT_AVAILABLE_IN_WORKSPACE",
+            format!(
+                "工具 {canonical_name} 不在目标设备工作区的可用档位 {} 中。",
+                ctx.tools.tool_profile.as_str()
+            ),
+        )
+        .to_rpc_error();
+        record_tool_call(
+            audit_call,
+            Some(ctx.workspace_id),
+            &json!({ "error": &rpc_err }),
+        );
+        return PeerRpcResponse::err(rpc_err);
+    }
+
+    if lan.trust_level == "readonly" && !is_readonly_peer_tool(canonical_name, &arguments) {
+        let denied = wrap_mcp_tool_result(
+            canonical_name,
+            &arguments,
+            tool_err(WorkspaceError::Tool {
+                code: "PEER_READONLY_POLICY",
+                message: format!(
+                    "目标设备 {} 已将局域网共享权限设为只读，拒绝执行写入或命令工具 {canonical_name}",
+                    lan.device_name
+                ),
+                category: "policy",
+                retryable: false,
+            }),
+        );
+        record_tool_call(
+            audit_call,
+            Some(ctx.workspace_id),
+            &json!({ "result": &denied }),
+        );
+        return PeerRpcResponse::ok(denied, None);
+    }
+
+    if let Some(obj) = arguments.as_object_mut() {
+        obj.remove("workspace_id");
+        obj.remove("device_id");
+    }
+    inject_workspace_session_args(canonical_name, &mut arguments, Some(&logical_session));
+
+    let structured = call_tool(ctx.tools.as_ref(), canonical_name, &arguments);
+    let mut peer_review = None;
+    if let Some(change_id) = structured.get("change_id").and_then(Value::as_str) {
+        let _ =
+            crate::review::attach_session(ctx.tools.workspace.root(), change_id, &logical_session);
+        if let Ok(link) = crate::review::issue_token(ctx.tools.workspace.root(), change_id) {
+            peer_review = Some(PeerReviewTokenDto {
+                change_id: link.change_id,
+                token: link.token,
+            });
         }
     }
+    let result = wrap_mcp_tool_result(canonical_name, &arguments, structured);
+    ctx.tools.record_context_block("tool_return", &result);
+    record_tool_call(
+        audit_call,
+        Some(ctx.workspace_id),
+        &json!({ "result": &result }),
+    );
+    PeerRpcResponse::ok(result, peer_review)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_computer_tool_rpc(
+    gateway: &GatewayState,
+    lan: &crate::settings::LanFederationConfig,
+    caller_peer: &PairedPeerConfig,
+    source_label: String,
+    tool: &str,
+    mut arguments: Value,
+    caller_session_id: &str,
+    request_id: &Value,
+    request_bytes: usize,
+) -> PeerRpcResponse {
+    let owner = format!("lan_peer:{}:{caller_session_id}", caller_peer.device_id);
+    let session = gateway.sessions.computer_auto_session(&owner);
+    if let Some(obj) = arguments.as_object_mut() {
+        obj.remove("device_id");
+        obj.remove("session_token");
+    }
+    let audit_body = json!({
+        "params": { "name": tool, "arguments": &arguments }
+    });
+    let audit_call = ToolAuditCall::new_with_peer_context(
+        request_id,
+        tool,
+        Some(&session),
+        "lan_peer",
+        Some(&caller_peer.device_id),
+        request_bytes,
+        &audit_body,
+        Some("local".into()),
+        Some(source_label),
+    );
+
+    if !lan.allow_computer_use {
+        let denied = json!({
+            "isError": true,
+            "content": [{ "type": "text", "text": "COMPUTER_LAN_DISABLED: 目标电脑已在局域网互联设置中关闭跨设备屏幕访问" }],
+            "structuredContent": { "ok": false, "error": "COMPUTER_LAN_DISABLED" }
+        });
+        record_tool_call(audit_call, None, &json!({ "result": &denied }));
+        return PeerRpcResponse::ok(denied, None);
+    }
+
+    let result = crate::computer::call_tool(tool, Some(&session), &arguments);
+    record_tool_call(audit_call, None, &json!({ "result": &result }));
+    PeerRpcResponse::ok(result, None)
 }
 
 fn is_readonly_peer_tool(canonical_name: &str, args: &Value) -> bool {
     match canonical_name {
-        "server_info"
-        | "read_file"
-        | "list_dir"
-        | "list_files"
-        | "search_text"
-        | "grep_text"
-        | "patch_check"
-        | "git_status"
-        | "git_diff"
-        | "git_log"
-        | "git_show"
-        | "git_blame"
-        | "view_image"
-        | "change_review" => true,
+        "server_info" | "read_file" | "list_dir" | "list_files" | "search_text" | "grep_text"
+        | "patch_check" | "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame"
+        | "view_image" | "change_review" => true,
         "planning_manage" => matches!(
             args.get("action").and_then(Value::as_str),
             Some("get" | "status" | "list")
@@ -771,68 +793,65 @@ fn is_readonly_peer_tool(canonical_name: &str, args: &Value) -> bool {
 
 async fn lan_review(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<PeerReviewQuery>,
 ) -> Response {
     let settings = match verify_lan_surface(&state, &headers, remote) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let path_and_query = format!("/api/lan/v1/review/{id}?t={}", query.t);
     if let Err(resp) = authenticate_peer_request(&settings, &headers, "GET", &path_and_query, &[]) {
-        return resp;
+        return *resp;
     }
 
-    let lan = &settings.lan_federation;
-    let roots = match state.gateway.registry.list() {
-        Ok(profiles) => profiles
+    let gateway = state.gateway.clone();
+    let token = query.t;
+    let found = tokio::task::spawn_blocking(move || {
+        let lan = &settings.lan_federation;
+        let roots = gateway
+            .registry
+            .list()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .into_iter()
             .filter(|p| is_workspace_shared(lan, &p.id))
-            .map(|p| std::path::PathBuf::from(p.path)),
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
+            .map(|p| std::path::PathBuf::from(p.path));
+        crate::review::find_review(roots, &id, &token).map_err(|msg| review_error_status(&msg))
+    })
+    .await;
 
-    match crate::review::find_review(roots, &id, &query.t) {
-        Ok(review) => ([(CACHE_CONTROL, "no-store")], Json(review)).into_response(),
-        Err(msg) => match msg.as_str() {
-            "invalid review token" => StatusCode::UNAUTHORIZED.into_response(),
-            "review expired" => StatusCode::GONE.into_response(),
-            _ => StatusCode::NOT_FOUND.into_response(),
-        },
+    match found {
+        Ok(Ok(review)) => ([(CACHE_CONTROL, "no-store")], Json(review)).into_response(),
+        Ok(Err(status)) => status.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
 async fn lan_unpair(
     State(state): State<LanServerState>,
-    MaybeConnectInfo(remote): MaybeConnectInfo,
+    PeerConnectAddr(remote): PeerConnectAddr,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let settings = match verify_lan_surface(&state, &headers, remote) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let caller =
         match authenticate_peer_request(&settings, &headers, "POST", "/api/lan/v1/unpair", &body) {
             Ok(peer) => peer,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
-    if !state.gateway.is_test_override() {
-        let _ = remove_local_paired_peer(&caller.device_id);
-        let _ = remove_peer_secret(&caller.device_id);
+    #[cfg(test)]
+    let skip_disk_unpair = state.gateway.is_test_override();
+    #[cfg(not(test))]
+    let skip_disk_unpair = false;
+
+    if !skip_disk_unpair {
+        let device_id = caller.device_id;
+        let _ = tokio::task::spawn_blocking(move || remove_local_paired_peer(&device_id)).await;
     }
     ([(CACHE_CONTROL, "no-store")], Json(json!({ "ok": true }))).into_response()
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}\n…[truncated]", &value[..end])
 }

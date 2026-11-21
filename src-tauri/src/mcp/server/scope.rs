@@ -6,7 +6,7 @@ use crate::lan_peer::{
 use crate::settings::AppSettings;
 
 pub(super) enum ResolvedToolWorkspace {
-    Local(WorkspaceRequestContext),
+    Local(Box<WorkspaceRequestContext>),
     Remote {
         session_id: String,
         device_id: String,
@@ -16,12 +16,22 @@ pub(super) enum ResolvedToolWorkspace {
 }
 
 fn self_device_id(state: &GatewayState) -> (AppSettings, String) {
-    let override_snap = state.settings_snapshot();
-    let settings = override_snap
-        .clone()
-        .unwrap_or_else(AppSettings::load_or_default);
-    let (lan, _) = identity_from_settings(override_snap.as_ref());
-    (settings, lan.device_id)
+    match state.settings_snapshot() {
+        Some(settings) => {
+            let (lan, _) = identity_from_settings(Some(&settings));
+            (settings, lan.device_id)
+        }
+        None => {
+            let settings = AppSettings::load_or_default();
+            let device_id =
+                if crate::lan_peer::identity::valid_device_id(&settings.lan_federation.device_id) {
+                    settings.lan_federation.device_id.clone()
+                } else {
+                    identity_from_settings(None).0.device_id
+                };
+            (settings, device_id)
+        }
+    }
 }
 
 /// Best-effort routing attribution for a tools/call audit record. This helper
@@ -139,7 +149,7 @@ pub(super) fn resolve_tool_workspace(
         return match target {
             WorkspaceTarget::Local(local_id) => state
                 .workspace_by_id(session_id.unwrap_or("request-scoped"), &local_id)
-                .map(ResolvedToolWorkspace::Local)
+                .map(|ctx| ResolvedToolWorkspace::Local(Box::new(ctx)))
                 .map_err(|error| error.to_rpc_error()),
             WorkspaceTarget::Remote {
                 device_id,
@@ -157,7 +167,7 @@ pub(super) fn resolve_tool_workspace(
         if let Some(selected) = state.sessions.current(session_id).active_workspace_id {
             match parse_workspace_scope(&selected, &self_id) {
                 Ok(WorkspaceTarget::Local(_)) => match state.active_workspace(session_id) {
-                    Ok(request) => return Ok(ResolvedToolWorkspace::Local(request)),
+                    Ok(request) => return Ok(ResolvedToolWorkspace::Local(Box::new(request))),
                     Err(error) if error.code != "WORKSPACE_NOT_SELECTED" => {
                         return Err(error.to_rpc_error())
                     }
@@ -209,7 +219,7 @@ pub(super) fn resolve_tool_workspace(
         if let [profile] = workspaces.as_slice() {
             return state
                 .workspace_by_id(session_id.unwrap_or("single-workspace"), &profile.id)
-                .map(ResolvedToolWorkspace::Local)
+                .map(|ctx| ResolvedToolWorkspace::Local(Box::new(ctx)))
                 .map_err(|error| error.to_rpc_error());
         }
     } else {
@@ -218,14 +228,13 @@ pub(super) fn resolve_tool_workspace(
             .map(crate::mcp::gateway::WorkspaceDescriptor::from)
             .collect();
         let override_snap = state.settings_snapshot();
-        let (all_desc, _) =
-            federated_workspace_descriptors(local_desc, override_snap.as_ref());
+        let (all_desc, _) = federated_workspace_descriptors(local_desc, override_snap.as_ref());
         if let [sole] = all_desc.as_slice() {
             if let Ok(target) = parse_workspace_scope(&sole.id, &self_id) {
                 return match target {
                     WorkspaceTarget::Local(local_id) => state
                         .workspace_by_id(session_id.unwrap_or("single-workspace"), &local_id)
-                        .map(ResolvedToolWorkspace::Local)
+                        .map(|ctx| ResolvedToolWorkspace::Local(Box::new(ctx)))
                         .map_err(|error| error.to_rpc_error()),
                     WorkspaceTarget::Remote {
                         device_id,
@@ -283,16 +292,20 @@ pub(super) fn attach_gateway_server_info(
     else {
         return;
     };
-    let override_snap = state.settings_snapshot();
-    let (lan, _) = identity_from_settings(override_snap.as_ref());
+    let (settings, self_id) = self_device_id(state);
+    let device_name = if !settings.lan_federation.device_name.trim().is_empty() {
+        settings.lan_federation.device_name
+    } else {
+        crate::local_network::default_device_name()
+    };
     structured.insert(
         "gateway".into(),
         json!({
             "mode": "global-multi-workspace",
             "session_id": request.session_id,
             "device": {
-                "id": lan.device_id,
-                "name": lan.device_name,
+                "id": self_id,
+                "name": device_name,
                 "isLocal": true,
                 "os": std::env::consts::OS,
             },

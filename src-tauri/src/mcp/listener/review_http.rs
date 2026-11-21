@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{
     header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS},
@@ -7,29 +9,31 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 
 use super::ListenerState;
+use crate::mcp::gateway::GatewayState;
+use crate::mcp::server::review_error_status;
 
 #[derive(serde::Deserialize)]
 pub(super) struct ReviewQuery {
     t: String,
 }
 
-fn review_from_request(
-    state: &ListenerState,
-    id: &str,
-    token: &str,
+async fn review_from_request(
+    gateway: Arc<GatewayState>,
+    id: String,
+    token: String,
 ) -> Result<crate::review::ChangeSet, StatusCode> {
-    let roots = state
-        .gateway
-        .registry
-        .list()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter()
-        .map(|profile| std::path::PathBuf::from(profile.path));
-    crate::review::find_review(roots, id, token).map_err(|message| match message.as_str() {
-        "invalid review token" => StatusCode::UNAUTHORIZED,
-        "review expired" => StatusCode::GONE,
-        _ => StatusCode::NOT_FOUND,
+    tokio::task::spawn_blocking(move || {
+        let roots = gateway
+            .registry
+            .list()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .into_iter()
+            .map(|profile| std::path::PathBuf::from(profile.path));
+        crate::review::find_review(roots, &id, &token)
+            .map_err(|message| review_error_status(&message))
     })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 fn render_review_html_response(review: &crate::review::ChangeSet) -> Response {
@@ -54,7 +58,7 @@ pub(super) async fn review_api(
     Path(id): Path<String>,
     Query(query): Query<ReviewQuery>,
 ) -> Response {
-    match review_from_request(&state, &id, &query.t) {
+    match review_from_request(Arc::clone(&state.gateway), id, query.t).await {
         Ok(review) => (
             [
                 (CACHE_CONTROL, "no-store"),
@@ -73,7 +77,7 @@ pub(super) async fn review_page(
     Path(id): Path<String>,
     Query(query): Query<ReviewQuery>,
 ) -> Response {
-    match review_from_request(&state, &id, &query.t) {
+    match review_from_request(Arc::clone(&state.gateway), id, query.t).await {
         Ok(review) => render_review_html_response(&review),
         Err(status) => status.into_response(),
     }

@@ -1,24 +1,28 @@
 use super::*;
 
-pub fn verify_oauth_bearer_header(
+pub fn authenticate_oauth_bearer_header(
     headers: &HeaderMap,
     oauth: &OAuthRuntime,
     server_url: &str,
-) -> Option<Response> {
+) -> Result<String, Box<Response>> {
     let Some(header_value) = headers.get(AUTHORIZATION) else {
-        return Some((StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response());
+        return Err(Box::new(
+            (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response(),
+        ));
     };
     let Ok(header_str) = header_value.to_str() else {
-        return Some((StatusCode::UNAUTHORIZED, "Invalid Authorization header").into_response());
+        return Err(Box::new(
+            (StatusCode::UNAUTHORIZED, "Invalid Authorization header").into_response(),
+        ));
     };
     let Some(token) = header_str.strip_prefix("Bearer ").map(str::trim) else {
-        return Some((StatusCode::UNAUTHORIZED, "Invalid bearer token").into_response());
+        return Err(Box::new(
+            (StatusCode::UNAUTHORIZED, "Invalid bearer token").into_response(),
+        ));
     };
-    if oauth.verify_access_token(token, server_url) {
-        None
-    } else {
-        Some((StatusCode::UNAUTHORIZED, "Invalid bearer token").into_response())
-    }
+    oauth
+        .access_token_client_id(token, server_url)
+        .ok_or_else(|| Box::new((StatusCode::UNAUTHORIZED, "Invalid bearer token").into_response()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,8 +155,24 @@ pub fn authorize_post(oauth: &OAuthRuntime, form: AuthorizeForm, server_url: &st
     let code = uuid::Uuid::new_v4().to_string().replace('-', "");
     let now = unix_now();
     {
-        let mut pending = oauth.pending.lock().expect("oauth pending lock");
+        const MAX_PENDING_OAUTH_CODES: usize = 128;
+        let mut pending = oauth.lock_pending();
         pending.retain(|_, v| v.expires_at >= now);
+        while pending.len() >= MAX_PENDING_OAUTH_CODES {
+            let Some(oldest_key) = pending
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            pending.remove(&oldest_key);
+        }
+        if pending.capacity() > MAX_PENDING_OAUTH_CODES * 2
+            && pending.len() * 4 < pending.capacity()
+        {
+            pending.shrink_to_fit();
+        }
         pending.insert(
             code.clone(),
             PendingCode {
@@ -222,7 +242,7 @@ fn authorization_code_exchange(
     }
 
     let code_data = {
-        let mut pending = oauth.pending.lock().expect("oauth pending lock");
+        let mut pending = oauth.lock_pending();
         pending.remove(&form.code)
     };
     let Some(code_data) = code_data else {

@@ -1,6 +1,13 @@
 use super::*;
 
 const MAX_REGISTRY_BACKUPS: usize = 3;
+pub(super) const MAX_REGISTERED_CLIENTS: usize = 256;
+
+#[derive(Debug)]
+pub(super) enum RegisterClientError {
+    LimitReached,
+    Persistence(String),
+}
 
 fn registry_backup_item_id(item_id: &str, slot: usize) -> String {
     format!("{item_id}.backup-{slot}")
@@ -123,9 +130,45 @@ fn load_app_client_registry(
     }
 }
 
+fn persist_client_registry(
+    registry: &ClientRegistryPersistence,
+    clients: &HashMap<String, RegisteredClient>,
+) -> Result<(), String> {
+    let raw = serde_json::to_string(clients)
+        .map_err(|error| format!("Unable to serialize OAuth client registry: {error}"))?;
+    match registry {
+        #[cfg(test)]
+        ClientRegistryPersistence::Workspace {
+            workspace_id,
+            secret_key,
+        } => SecretStore::set(workspace_id, secret_key, &raw)
+            .map_err(|error| format!("Unable to persist OAuth client registry: {error}")),
+        ClientRegistryPersistence::App { scope, item_id } => {
+            SecretStore::set_app(scope, item_id, &raw)
+                .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
+            match load_registry_backups(scope, item_id) {
+                Ok(existing_backups) => {
+                    let rotated_backups = rotate_registry_backups(&raw, &existing_backups);
+                    if let Err(error) =
+                        persist_registry_backups(item_id, &rotated_backups, |key, value| {
+                            SecretStore::set_app(scope, key, value)
+                                .map_err(|error| error.to_string())
+                        })
+                    {
+                        eprintln!("Unable to persist OAuth registry backups: {error}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("Unable to inspect OAuth registry backups: {error}");
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 impl OAuthRuntime {
     pub fn new(
-        _base_url: String,
         client_id: String,
         client_secret: Option<String>,
         password: String,
@@ -138,6 +181,7 @@ impl OAuthRuntime {
             token_secret,
             pending: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
+            persist_lock: Arc::new(Mutex::new(())),
             client_registry: None,
             recovery_notice: None,
         }
@@ -145,7 +189,6 @@ impl OAuthRuntime {
 
     #[cfg(test)]
     pub fn new_persistent(
-        base_url: String,
         client_id: String,
         client_secret: Option<String>,
         password: String,
@@ -158,7 +201,7 @@ impl OAuthRuntime {
             .map(|raw| parse_client_registry(&raw))
             .transpose()?
             .unwrap_or_default();
-        let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
+        let mut runtime = Self::new(client_id, client_secret, password, token_secret);
         runtime.clients = Arc::new(Mutex::new(clients));
         runtime.client_registry = Some(ClientRegistryPersistence::Workspace {
             workspace_id,
@@ -168,7 +211,6 @@ impl OAuthRuntime {
     }
 
     pub fn new_app_persistent(
-        base_url: String,
         client_id: String,
         client_secret: Option<String>,
         password: String,
@@ -177,7 +219,7 @@ impl OAuthRuntime {
         item_id: String,
     ) -> Result<Self, String> {
         let (clients, recovery_notice) = load_app_client_registry(&scope, &item_id)?;
-        let mut runtime = Self::new(base_url, client_id, client_secret, password, token_secret);
+        let mut runtime = Self::new(client_id, client_secret, password, token_secret);
         runtime.clients = Arc::new(Mutex::new(clients));
         runtime.client_registry = Some(ClientRegistryPersistence::App { scope, item_id });
         runtime.recovery_notice = recovery_notice;
@@ -188,48 +230,44 @@ impl OAuthRuntime {
         self.recovery_notice.as_deref()
     }
 
+    pub(super) fn lock_pending(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingCode>> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_clients(&self) -> std::sync::MutexGuard<'_, HashMap<String, RegisteredClient>> {
+        self.clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_persist(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.persist_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub(super) fn insert_registered_client(
         &self,
         client_id: String,
         client: RegisteredClient,
-    ) -> Result<(), String> {
-        let mut clients = self.clients.lock().expect("oauth clients lock");
-        let mut next = clients.clone();
-        next.insert(client_id, client);
-        if let Some(registry) = &self.client_registry {
-            let raw = serde_json::to_string(&next)
-                .map_err(|error| format!("Unable to serialize OAuth client registry: {error}"))?;
-            match registry {
-                #[cfg(test)]
-                ClientRegistryPersistence::Workspace {
-                    workspace_id,
-                    secret_key,
-                } => SecretStore::set(workspace_id, secret_key, &raw),
-                ClientRegistryPersistence::App { scope, item_id } => {
-                    SecretStore::set_app(scope, item_id, &raw)
-                        .map_err(|error| error.to_string())?;
-                    match load_registry_backups(scope, item_id) {
-                        Ok(existing_backups) => {
-                            let rotated_backups = rotate_registry_backups(&raw, &existing_backups);
-                            if let Err(error) =
-                                persist_registry_backups(item_id, &rotated_backups, |key, value| {
-                                    SecretStore::set_app(scope, key, value)
-                                        .map_err(|error| error.to_string())
-                                })
-                            {
-                                eprintln!("Unable to persist OAuth registry backups: {error}");
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("Unable to inspect OAuth registry backups: {error}");
-                        }
-                    }
-                    Ok::<(), crate::error::AppError>(())
-                }
+    ) -> Result<(), RegisterClientError> {
+        let _persist_guard = self.lock_persist();
+        let snapshot = {
+            let clients = self.lock_clients();
+            if clients.len() >= MAX_REGISTERED_CLIENTS && !clients.contains_key(&client_id) {
+                return Err(RegisterClientError::LimitReached);
             }
-            .map_err(|error| format!("Unable to persist OAuth client registry: {error}"))?;
+            let mut next = clients.clone();
+            next.insert(client_id.clone(), client.clone());
+            next
+        };
+        if let Some(registry) = &self.client_registry {
+            persist_client_registry(registry, &snapshot)
+                .map_err(RegisterClientError::Persistence)?;
         }
-        *clients = next;
+        self.lock_clients().insert(client_id, client);
         Ok(())
     }
 
@@ -241,20 +279,14 @@ impl OAuthRuntime {
             return true;
         }
         constant_time_eq_str(client_id, &self.client_id)
-            || self
-                .clients
-                .lock()
-                .expect("oauth clients lock")
-                .contains_key(client_id)
+            || self.lock_clients().contains_key(client_id)
     }
 
     pub(super) fn redirect_uri_allowed(&self, client_id: &str, redirect_uri: &str) -> bool {
         if constant_time_eq_str(client_id, &self.client_id) || self.client_id.is_empty() {
             return !redirect_uri.trim().is_empty();
         }
-        self.clients
-            .lock()
-            .expect("oauth clients lock")
+        self.lock_clients()
             .get(client_id)
             .is_some_and(|client| client.redirect_uris.iter().any(|uri| uri == redirect_uri))
     }
@@ -266,7 +298,7 @@ impl OAuthRuntime {
                 .as_deref()
                 .is_none_or(|expected| constant_time_eq_str(client_secret, expected));
         }
-        let clients = self.clients.lock().expect("oauth clients lock");
+        let clients = self.lock_clients();
         let Some(client) = clients.get(client_id) else {
             return false;
         };
@@ -279,23 +311,17 @@ impl OAuthRuntime {
             .is_some_and(|expected| constant_time_eq_str(client_secret, expected))
     }
 
+    #[cfg(test)]
     pub fn verify_access_token(&self, token: &str, server_url: &str) -> bool {
         self.access_token_client_id(token, server_url).is_some()
     }
 
     pub fn access_token_client_id(&self, token: &str, server_url: &str) -> Option<String> {
         let server_url = server_url.trim_end_matches('/');
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.set_audience(&[server_url]);
-        validation.set_issuer(&[server_url]);
-        decode::<TokenClaims>(
-            token,
-            &DecodingKey::from_secret(self.token_secret.as_bytes()),
-            &validation,
-        )
-        .ok()
-        .filter(|data| data.claims.token_use == "access")
-        .map(|data| data.claims.client_id)
+        decode_token_claims(token, &self.token_secret, server_url)
+            .ok()
+            .filter(|claims| claims.token_use == "access")
+            .map(|claims| claims.client_id)
     }
 }
 

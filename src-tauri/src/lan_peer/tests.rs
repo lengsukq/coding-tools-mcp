@@ -16,8 +16,8 @@ use super::crypto::{
     verify_peer_request_signature, ReplayGuard,
 };
 use super::identity::{
-    parse_workspace_scope, WorkspaceTarget, LAN_PEER_SECRETS_SCOPE, LAN_SECRET_SCOPE,
-    LAN_NODE_SECRET_KEY,
+    parse_workspace_scope, WorkspaceTarget, LAN_NODE_SECRET_KEY, LAN_PEER_SECRETS_SCOPE,
+    LAN_SECRET_SCOPE,
 };
 use super::pairing::{
     cancel_pairing_pin, generate_pairing_pin, PairCompleteRequest, PairCompleteResponse,
@@ -62,6 +62,56 @@ fn six_digit_pin_and_replay_guard_enforce_bounds() {
     assert!(guard.check_and_record("dev_alpha1", "nonce-12345678", now));
     assert!(!guard.check_and_record("dev_alpha1", "nonce-12345678", now + 50));
     assert!(guard.check_and_record("dev_beta02", "nonce-12345678", now + 50));
+}
+
+#[test]
+fn replay_guard_at_capacity_keeps_rejecting_unexpired_replays() {
+    let guard = ReplayGuard::default();
+    let now = unix_time_ms();
+    let cap = 8usize;
+
+    for i in 0..cap {
+        assert!(guard.check_and_record_with_capacity(
+            "dev_alpha1",
+            &format!("nonce-{i:08}"),
+            now + i as u64,
+            cap
+        ));
+    }
+    // Capacity is saturated with unexpired nonces: fail closed rather than clearing the guard.
+    assert!(!guard.check_and_record_with_capacity("dev_alpha1", "nonce-overflow", now + 100, cap));
+    // Earlier unexpired nonces MUST still be rejected on replay!
+    assert!(!guard.check_and_record_with_capacity("dev_alpha1", "nonce-00000000", now + 100, cap));
+    assert!(!guard.check_and_record_with_capacity("dev_alpha1", "nonce-00000007", now + 100, cap));
+
+    // Once past TTL, expired entries are pruned and fresh nonces are accepted again.
+    let after_ttl = now + super::crypto::REPLAY_TTL_MS + 100;
+    assert!(guard.check_and_record_with_capacity("dev_alpha1", "nonce-after-ttl", after_ttl, cap));
+}
+
+#[test]
+fn valid_local_identity_fast_path_avoids_rewrite_until_fields_are_invalid() {
+    let mut data = crate::data::AppData::default();
+    assert!(super::identity::extract_valid_local_identity(&data).is_none());
+
+    data.app_secrets.insert(
+        LAN_SECRET_SCOPE.to_string(),
+        HashMap::from([(
+            LAN_NODE_SECRET_KEY.to_string(),
+            "0123456789abcdef0123456789abcdef".to_string(),
+        )]),
+    );
+    data.lan_federation.device_id = "dev_1234567890ab".into();
+    data.lan_federation.device_name = "MacBook-Test".into();
+    data.lan_federation.share_mode = "all".into();
+    data.lan_federation.trust_level = "full".into();
+
+    let extracted = super::identity::extract_valid_local_identity(&data);
+    assert!(extracted.is_some());
+
+    // Invalid share_mode forces fallback to update path.
+    data.lan_federation.share_mode = "invalid".into();
+    assert!(super::identity::extract_valid_local_identity(&data).is_none());
 }
 
 #[test]
@@ -177,7 +227,10 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
     let mut secrets_b = HashMap::new();
     secrets_b.insert(
         LAN_SECRET_SCOPE.to_string(),
-        HashMap::from([(LAN_NODE_SECRET_KEY.to_string(), "secret-node-b-00000000000000000000".to_string())]),
+        HashMap::from([(
+            LAN_NODE_SECRET_KEY.to_string(),
+            "secret-node-b-00000000000000000000".to_string(),
+        )]),
     );
     let mut settings_b = AppSettings {
         allow_lan_access: true,
@@ -199,22 +252,31 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
     settings_b.global_gateway.local_port = port_b;
 
     let gateway_b = Arc::new(GatewayState::for_test_profiles(vec![ws_b], settings_b));
-    let app_b = lan_router(gateway_b.clone())
-        .into_make_service_with_connect_info::<SocketAddr>();
+    let app_b = lan_router(gateway_b.clone()).into_make_service_with_connect_info::<SocketAddr>();
     let server_b = tokio::spawn(async move {
         let _ = axum::serve(listener_b, app_b).await;
     });
 
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
 
-    // 1. Verify public tunnel headers (e.g. Cloudflare / FRP) are hard-blocked with 403 Forbidden.
-    let tunnel_attempt = client
-        .get(format!("http://127.0.0.1:{port_b}/api/lan/v1/hello"))
-        .header("cf-connecting-ip", "203.0.113.9")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(tunnel_attempt.status().as_u16(), 403);
+    // 1. Verify public tunnel / reverse proxy headers (Cloudflare / FRP / Via / True-Client-IP) are hard-blocked with 403 Forbidden.
+    for (header_name, header_val) in [
+        ("cf-connecting-ip", "203.0.113.9"),
+        ("via", "1.1 proxy.example"),
+        ("true-client-ip", "198.51.100.7"),
+    ] {
+        let tunnel_attempt = client
+            .get(format!("http://127.0.0.1:{port_b}/api/lan/v1/hello"))
+            .header(header_name, header_val)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            tunnel_attempt.status().as_u16(),
+            403,
+            "header {header_name} must be rejected"
+        );
+    }
 
     // 2. Mutual 6-digit PIN pairing handshake (wrong PIN rejected, valid PIN pairs both sides).
     let pin_dto = generate_pairing_pin();
@@ -248,7 +310,9 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
         ),
     };
     let bad_resp = client
-        .post(format!("http://127.0.0.1:{port_b}/api/lan/v1/pair/complete"))
+        .post(format!(
+            "http://127.0.0.1:{port_b}/api/lan/v1/pair/complete"
+        ))
         .json(&bad_req)
         .send()
         .await
@@ -267,7 +331,9 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
         ..bad_req
     };
     let good_resp = client
-        .post(format!("http://127.0.0.1:{port_b}/api/lan/v1/pair/complete"))
+        .post(format!(
+            "http://127.0.0.1:{port_b}/api/lan/v1/pair/complete"
+        ))
         .json(&good_req)
         .send()
         .await
@@ -287,12 +353,8 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
     ));
     cancel_pairing_pin();
 
-    let shared_secret = derive_peer_shared_secret(
-        "dev_macbook_a",
-        "dev_windows_b",
-        part_a,
-        &ack.secret_part_b,
-    );
+    let shared_secret =
+        derive_peer_shared_secret("dev_macbook_a", "dev_windows_b", part_a, &ack.secret_part_b);
 
     // 3. Verify Hop > 1 is rejected with 400 FEDERATION_LOOP_DENIED.
     let loop_ts = unix_time_ms();
@@ -322,7 +384,10 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
     let mut secrets_a = HashMap::new();
     secrets_a.insert(
         LAN_SECRET_SCOPE.to_string(),
-        HashMap::from([(LAN_NODE_SECRET_KEY.to_string(), "secret-node-a-00000000000000000000".to_string())]),
+        HashMap::from([(
+            LAN_NODE_SECRET_KEY.to_string(),
+            "secret-node-a-00000000000000000000".to_string(),
+        )]),
     );
     secrets_a.insert(
         LAN_PEER_SECRETS_SCOPE.to_string(),
@@ -385,8 +450,12 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
         .as_array()
         .expect("workspaces array");
     assert_eq!(workspaces.len(), 2);
-    assert!(workspaces.iter().any(|w| w["id"] == "same-ws-id" && w["device"]["isLocal"] == true));
-    assert!(workspaces.iter().any(|w| w["id"] == "dev_windows_b:same-ws-id" && w["device"]["isLocal"] == false));
+    assert!(workspaces
+        .iter()
+        .any(|w| w["id"] == "same-ws-id" && w["device"]["isLocal"] == true));
+    assert!(workspaces
+        .iter()
+        .any(|w| w["id"] == "dev_windows_b:same-ws-id" && w["device"]["isLocal"] == false));
 
     // 4b. Unscoped tool call MUST NOT auto-select local workspace when paired peer workspaces exist!
     let unscoped = tokio::task::spawn_blocking({
@@ -407,7 +476,10 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
     })
     .await
     .unwrap();
-    assert_eq!(unscoped["error"]["data"]["reason"], "WORKSPACE_NOT_SELECTED");
+    assert_eq!(
+        unscoped["error"]["data"]["reason"],
+        "WORKSPACE_NOT_SELECTED"
+    );
 
     // 4c. Selecting remote workspace routes subsequent session calls to Node B while keeping Node A untouched!
     let select_remote = tokio::task::spawn_blocking({

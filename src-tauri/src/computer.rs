@@ -5,18 +5,28 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::data::DataStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::data::DataStore;
+
 mod action_policy;
 mod geometry;
+mod local_api;
+mod mcp_dispatch;
 #[cfg(target_os = "macos")]
 mod native;
 mod schema;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use local_api::local_policy_present;
+pub use local_api::{
+    local_approve, local_apps, local_decide_sensitive_action, local_enable, local_pause,
+    local_request_accessibility_permission, local_request_screen_permission, local_resume,
+    local_revoke, local_status,
+};
+pub use mcp_dispatch::call_tool;
 pub use schema::tool_definitions;
 
 use action_policy::{sensitive_action_description, validate_action};
@@ -26,6 +36,10 @@ const REQUEST_TTL: Duration = Duration::from_secs(120);
 const GRANT_TTL: Duration = Duration::from_secs(300);
 const SNAPSHOT_TTL: Duration = Duration::from_secs(45);
 const SENSITIVE_ACTION_TTL: Duration = Duration::from_secs(60);
+const MAX_CONTROL_ACTIONS: u16 = 100;
+const PERMANENT_GRANT_FALLBACK: Duration = Duration::from_secs(100 * 365 * 24 * 60 * 60);
+const ALLOWED_MANUAL_DURATIONS_MINUTES: &[u64] = &[0, 5, 15, 60, 480, 1440];
+const COMPUTER_AUTO_SESSION_PREFIX: &str = "computer-auto-";
 
 /// Persisted opt-in from the local desktop UI. No MCP tool may modify it.
 /// None for expiry means the user explicitly chose permanent access.
@@ -36,80 +50,6 @@ pub(crate) struct ManualComputerAccess {
     pub expires_at_ms: Option<u64>,
     #[serde(default)]
     pub paused: bool,
-}
-
-/// The listener may use this only AFTER authenticating the MCP request.
-/// An inactive, paused or expired opt-in never bypasses the old session flow.
-pub(crate) fn local_policy_present() -> bool {
-    let mut state = locked();
-    state.expire();
-    state
-        .manual
-        .as_ref()
-        .is_some_and(ManualComputerAccess::active)
-}
-
-/// Called only by a locally invoked Tauri command. No remote tool can change
-/// the policy. Duration 0 is an explicit permanent opt-in.
-pub fn local_enable(
-    scope: &str,
-    duration_minutes: u64,
-    target: Option<&str>,
-) -> Result<Value, String> {
-    if !matches!(scope, "observe" | "control") {
-        return Err("INVALID_SCOPE: 仅允许查看或控制".into());
-    }
-    if ![0, 5, 15, 60, 480, 1440].contains(&duration_minutes) {
-        return Err("INVALID_DURATION: 可选择 5/15/60 分钟、8/24 小时或永久".into());
-    }
-    let app_bundle = validate_control_target(scope, target, "启用控制前，请先授予 macOS 辅助功能权限")?;
-    let policy = ManualComputerAccess {
-        scope: scope.to_owned(),
-        app_bundle,
-        expires_at_ms: (duration_minutes != 0)
-            .then(|| now_ms().saturating_add(duration_minutes * 60_000)),
-        paused: false,
-    };
-    let _serialized = action_lock();
-    DataStore::update_file(|data| {
-        data.manual_computer_access = Some(policy.clone());
-        Ok(())
-    })
-    .map_err(|error| error.to_string())?;
-    let mut state = locked();
-    *state = Controller {
-        manual: Some(policy),
-        ..Controller::default()
-    };
-    drop(state);
-    Ok(local_status())
-}
-
-fn validate_control_target(
-    scope: &str,
-    target: Option<&str>,
-    missing_ax_message: &str,
-) -> Result<Option<String>, String> {
-    if scope != "control" {
-        return Ok(None);
-    }
-    if accessibility_permission() != Some(true) {
-        return Err(missing_ax_message.into());
-    }
-    let target = target
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or("控制授权需要在本机明确选择目标应用")?;
-    let apps = native_apps()?;
-    let exists = apps["applications"].as_array().is_some_and(|items| {
-        items
-            .iter()
-            .any(|item| item["bundle_id"].as_str() == Some(target))
-    });
-    if !exists {
-        return Err("目标应用不在当前可选择的列表中".into());
-    }
-    Ok(Some(target.to_owned()))
 }
 
 fn now_ms() -> u64 {
@@ -136,14 +76,6 @@ struct Pending {
     at: Instant,
 }
 
-/// Only the local desktop UI can approve a specific action. This does not
-/// execute anything: the originating MCP transport must retry the exact action.
-pub fn local_decide_sensitive_action(id: &str, approve: bool) -> Result<Value, String> {
-    let _serialized = action_lock();
-    locked().decide_sensitive_action(id, approve)?;
-    Ok(local_status())
-}
-
 #[derive(Debug)]
 struct PendingSensitiveAction {
     id: String,
@@ -154,67 +86,6 @@ struct PendingSensitiveAction {
     description: String,
     created_at: Instant,
     approved: bool,
-}
-
-/// Pausing is a local-only emergency gate. Resume requires a fresh screenshot
-/// for pointer actions; a paused lease cannot observe or inject events.
-pub fn local_pause() -> Result<Value, String> {
-    let _serialized = action_lock();
-    if let Some(mut policy) = locked().manual.clone() {
-        policy.paused = true;
-        DataStore::update_file(|data| {
-            data.manual_computer_access = Some(policy.clone());
-            Ok(())
-        })
-        .map_err(|error| error.to_string())?;
-    }
-    let mut state = locked();
-    state.expire();
-    if let Some(policy) = state.manual.as_mut() {
-        policy.paused = true;
-    }
-    if let Some(grant) = state.grant.as_mut() {
-        grant.paused = true;
-        state.snapshot = None;
-    }
-    state.sensitive_action = None;
-    drop(state);
-    Ok(local_status())
-}
-
-pub fn local_resume() -> Result<Value, String> {
-    // CGPreflightScreenCaptureAccess can disagree with ScreenCaptureKit for
-    // a correctly user-authorized app (notably across ad-hoc rebuilds).
-    // The approved, scoped ScreenCaptureKit call enforces macOS TCC itself.
-    let _serialized = action_lock();
-    if let Some(mut policy) = locked().manual.clone() {
-        if !policy.active() {
-            return Err("Computer Use 授权已过期，需在本机重新开启".into());
-        }
-        if policy.scope == "control" && accessibility_permission() != Some(true) {
-            return Err("ACCESSIBILITY_PERMISSION_REQUIRED: 辅助功能权限已撤销".into());
-        }
-        policy.paused = false;
-        DataStore::update_file(|data| {
-            data.manual_computer_access = Some(policy.clone());
-            Ok(())
-        })
-        .map_err(|error| error.to_string())?;
-    }
-    let mut state = locked();
-    state.expire();
-    if let Some(policy) = state.manual.as_mut() {
-        policy.paused = false;
-    }
-    if let Some(grant) = state.grant.as_mut() {
-        if grant.scope == "control" && accessibility_permission() != Some(true) {
-            return Err("ACCESSIBILITY_PERMISSION_REQUIRED: 辅助功能权限已撤销".into());
-        }
-        grant.paused = false;
-        state.snapshot = None;
-    }
-    drop(state);
-    Ok(local_status())
 }
 
 #[derive(Debug)]
@@ -234,16 +105,11 @@ fn action_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub fn local_request_accessibility_permission() -> Value {
-    #[cfg(target_os = "macos")]
-    native::request_accessibility();
-    local_status()
-}
-
 #[cfg(target_os = "macos")]
 fn accessibility_permission() -> Option<bool> {
     Some(native::accessibility_granted())
 }
+
 #[cfg(not(target_os = "macos"))]
 fn accessibility_permission() -> Option<bool> {
     None
@@ -276,18 +142,16 @@ impl Controller {
     /// Only authenticated, server-derived principal identities can enter this
     /// path (listener.rs creates the computer-auto-* session after auth).
     fn attach_manual_grant(&mut self, session: &str) {
-        if !session.starts_with("computer-auto-") {
+        if !session.starts_with(COMPUTER_AUTO_SESSION_PREFIX) {
             return;
         }
         self.expire();
         let Some(policy) = self.manual.as_ref().filter(|p| p.active() && !p.paused) else {
             return;
         };
-        if self
-            .grant
-            .as_ref()
-            .is_some_and(|g| g.session == session && !g.paused && g.actions_used < 100)
-        {
+        if self.grant.as_ref().is_some_and(|g| {
+            g.session == session && !g.paused && g.actions_used < MAX_CONTROL_ACTIONS
+        }) {
             return;
         }
         // A principal switch invalidates any previously issued screenshot
@@ -295,7 +159,7 @@ impl Controller {
         let remaining = policy
             .expires_at_ms
             .map(|expiry| Duration::from_millis(expiry.saturating_sub(now_ms())))
-            .unwrap_or_else(|| Duration::from_secs(100 * 365 * 24 * 60 * 60));
+            .unwrap_or(PERMANENT_GRANT_FALLBACK);
         self.grant = Some(Grant {
             id: uuid::Uuid::new_v4().to_string(),
             session: session.to_owned(),
@@ -350,6 +214,38 @@ impl Controller {
         }
     }
 
+    fn stop_session(&mut self, session: &str) -> Result<Value, String> {
+        self.expire();
+        if session.starts_with(COMPUTER_AUTO_SESSION_PREFIX) {
+            if self
+                .grant
+                .as_ref()
+                .is_some_and(|grant| grant.session == session)
+            {
+                self.grant = None;
+                self.snapshot = None;
+                self.sensitive_action = None;
+            }
+            return Ok(json!({
+                "status": "stopped",
+                "note": "本机主动授权仍然开启，仅停止当前客户端操作；需在桌面设置中关闭全局授权"
+            }));
+        }
+        if self.grant.as_ref().is_some_and(|p| p.session == session)
+            || self.pending.as_ref().is_some_and(|p| p.session == session)
+        {
+            // Never wipe `self.manual`: remote MCP sessions must never revoke
+            // a local desktop opt-in policy held in memory.
+            self.grant = None;
+            self.pending = None;
+            self.snapshot = None;
+            self.sensitive_action = None;
+            Ok(json!({ "status": "stopped" }))
+        } else {
+            Err("会话无权终止其他客户端的 Computer Use 授权".into())
+        }
+    }
+
     fn request(&mut self, session: &str, scope: &str) -> Result<Value, String> {
         self.expire();
         if let Some(grant) = &self.grant {
@@ -357,10 +253,10 @@ impl Controller {
                 if grant.scope != scope {
                     return Err("切换读取/控制权限时请先撤销现有授权，再重新申请".into());
                 }
-                return Ok(
-                    json!({ "status": if grant.paused { "paused" } else { "approved" },
-                        "expires_in_seconds": grant.until.saturating_duration_since(Instant::now()).as_secs() }),
-                );
+                return Ok(json!({
+                    "status": if grant.paused { "paused" } else { "approved" },
+                    "expires_in_seconds": grant.until.saturating_duration_since(Instant::now()).as_secs()
+                }));
             }
             return Err("另一 MCP 会话正在控制屏幕，请先在本机终止该会话".into());
         }
@@ -380,9 +276,12 @@ impl Controller {
             scope: scope.to_owned(),
             at: Instant::now(),
         });
-        Ok(
-            json!({ "status": "pending", "scope": scope, "request_id": id, "message": "请用户在 Coding Tools MCP 本机设置中审批 Computer Use；未经批准不能查看或控制屏幕" }),
-        )
+        Ok(json!({
+            "status": "pending",
+            "scope": scope,
+            "request_id": id,
+            "message": "请用户在 Coding Tools MCP 本机设置中审批 Computer Use；未经批准不能查看或控制屏幕"
+        }))
     }
 
     fn approve(&mut self, id: &str, app_bundle: Option<String>) -> Result<(), String> {
@@ -463,18 +362,34 @@ impl Controller {
         Ok(id)
     }
 
+    fn active_control_grant(&self, session: &str, denied_message: &str) -> Result<&Grant, String> {
+        self.grant
+            .as_ref()
+            .filter(|g| {
+                g.session == session
+                    && g.scope == "control"
+                    && !g.paused
+                    && g.actions_used < MAX_CONTROL_ACTIONS
+            })
+            .ok_or_else(|| denied_message.to_owned())
+    }
+
+    #[cfg(test)]
     fn prepare_action(&mut self, session: &str, args: &Value) -> Result<(String, Value), String> {
         self.expire();
         validate_action(args)?;
-        let grant = self
-            .grant
-            .as_ref()
-            .filter(|g| {
-                g.session == session && g.scope == "control" && !g.paused && g.actions_used < 100
-            })
-            .ok_or(
-                "CONTROL_NOT_APPROVED: 请用户在本机以 control 模式授权此会话，或重新批准操作额度",
-            )?;
+        self.prepare_validated_action(session, args)
+    }
+
+    fn prepare_validated_action(
+        &mut self,
+        session: &str,
+        args: &Value,
+    ) -> Result<(String, Value), String> {
+        let grant = self.active_control_grant(
+            session,
+            "CONTROL_NOT_APPROVED: 请用户在本机以 control 模式授权此会话，或重新批准操作额度",
+        )?;
         let target = grant.app_bundle.clone().ok_or("CONTROL_TARGET_REQUIRED")?;
         let action = args["action"].as_str().unwrap_or("");
         let mut prepared = if matches!(
@@ -501,7 +416,9 @@ impl Controller {
         // Never forward untrusted values of these internal privileged fields
         // to the Objective-C action bridge.
         strip_internal_action_fields(&mut prepared);
-        self.grant.as_mut().expect("checked grant").actions_used += 1;
+        if let Some(grant) = self.grant.as_mut() {
+            grant.actions_used += 1;
+        }
         Ok((target, prepared))
     }
 
@@ -513,15 +430,10 @@ impl Controller {
         self.expire();
         validate_action(args)?;
         let Some(description) = sensitive_action_description(args) else {
-            return self.prepare_action(session, args);
+            return self.prepare_validated_action(session, args);
         };
-        let grant = self
-            .grant
-            .as_ref()
-            .filter(|g| {
-                g.session == session && g.scope == "control" && !g.paused && g.actions_used < 100
-            })
-            .ok_or("CONTROL_NOT_APPROVED: 请先在本机批准控制会话")?;
+        let grant =
+            self.active_control_grant(session, "CONTROL_NOT_APPROVED: 请先在本机批准控制会话")?;
         let target = grant
             .app_bundle
             .as_ref()
@@ -541,11 +453,14 @@ impl Controller {
             }
             if existing.approved && confirmation == Some(existing.id.as_str()) {
                 self.sensitive_action = None; // one-time permit, consumed before dispatch
-                let (target, mut prepared) = self.prepare_action(session, &canonical)?;
+                let (target, mut prepared) = self.prepare_validated_action(session, &canonical)?;
                 prepared["high_risk_confirmed"] = json!(true);
                 return Ok((target, prepared));
             }
-            return Err(format!("CONFIRMATION_PENDING: 请在本机明确确认操作（ID: {}）后携带 confirmation_id 原样重试", existing.id));
+            return Err(format!(
+                "CONFIRMATION_PENDING: 请在本机明确确认操作（ID: {}）后携带 confirmation_id 原样重试",
+                existing.id
+            ));
         }
         if confirmation.is_some() {
             return Err("CONFIRMATION_INVALID: 未找到对应待批准动作".into());
@@ -561,7 +476,9 @@ impl Controller {
             created_at: Instant::now(),
             approved: false,
         });
-        Err(format!("CONFIRMATION_PENDING: 需要在本机确认敏感操作（ID: {id}），批准后携带 confirmation_id 原样重试"))
+        Err(format!(
+            "CONFIRMATION_PENDING: 需要在本机确认敏感操作（ID: {id}），批准后携带 confirmation_id 原样重试"
+        ))
     }
 
     fn decide_sensitive_action(&mut self, id: &str, approve: bool) -> Result<(), String> {
@@ -655,48 +572,6 @@ fn locked() -> std::sync::MutexGuard<'static, Controller> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Local Tauri UI only; never expose local_approve/local_revoke as MCP tools.
-pub fn local_status() -> Value {
-    let mut state = locked();
-    state.expire();
-    let manual = state.manual.as_ref();
-    let manual_enabled = manual.is_some_and(ManualComputerAccess::active);
-    let manually_paused = manual.is_some_and(|p| p.paused);
-    let diagnostics = screen_permission_diagnostics();
-    // Use the same native preflight result for the main status and the
-    // diagnostics; two separate checks in one UI poll can disagree.
-    let screen_granted = diagnostics["preflight_granted"]
-        .as_bool()
-        .or_else(screen_recording_permission);
-    json!({
-        "pendingRequestId": state.pending.as_ref().map(|p| p.id.as_str()),
-        "pendingExpiresInSeconds": state.pending.as_ref().map(|p| REQUEST_TTL.saturating_sub(p.at.elapsed()).as_secs()),
-        "active": manual_enabled || state.grant.is_some(),
-        "manualEnabled": manual_enabled,
-        "manualScope": manual.map(|p| p.scope.as_str()),
-        "manualTargetApp": manual.and_then(|p| p.app_bundle.as_deref()),
-        "manualExpiresAtMs": manual.and_then(|p| p.expires_at_ms),
-        "manualPaused": manually_paused,
-        "pendingScope": state.pending.as_ref().map(|p| p.scope.as_str()),
-        "activeScope": manual.map(|p| p.scope.as_str()).or_else(|| state.grant.as_ref().map(|p| p.scope.as_str())),
-        "paused": manually_paused || state.grant.as_ref().is_some_and(|g| g.paused),
-        "pendingSensitiveActionId": state.sensitive_action.as_ref().map(|p| p.id.as_str()),
-        "pendingSensitiveActionDescription": state.sensitive_action.as_ref().map(|p| p.description.as_str()),
-        "pendingSensitiveActionApp": state.sensitive_action.as_ref().map(|p| p.target_app.as_str()),
-        "pendingSensitiveActionApproved": state.sensitive_action.as_ref().is_some_and(|p| p.approved),
-        "pendingSensitiveActionExpiresInSeconds": state.sensitive_action.as_ref().map(|p|
-            SENSITIVE_ACTION_TTL.saturating_sub(p.created_at.elapsed()).as_secs()),
-        "remainingControlActions": state.grant.as_ref().filter(|p| p.scope == "control").map(|p| 100_u16.saturating_sub(p.actions_used)),
-        "targetAppBundle": manual.and_then(|p| p.app_bundle.as_deref()).or_else(|| state.grant.as_ref().and_then(|p| p.app_bundle.as_deref())),
-        "expiresInSeconds": if manual_enabled { manual.and_then(|p| p.expires_at_ms).map(|ms| ms.saturating_sub(now_ms()) / 1000) } else { state.grant.as_ref().map(|g| g.until.saturating_duration_since(Instant::now()).as_secs()) },
-        "supported": cfg!(target_os = "macos"),
-        "screenRecordingGranted": screen_granted,
-        "screenCaptureSucceededInSession": state.grant.as_ref().is_some_and(|grant| grant.capture_succeeded),
-        "screenPermissionDiagnostic": diagnostics,
-        "accessibilityGranted": accessibility_permission()
-    })
-}
-
 /// Read-only macOS TCC diagnostics. TCC permissions are tied to the running
 /// binary/bundle, not to the display name visible in System Settings.
 #[cfg(target_os = "macos")]
@@ -713,7 +588,6 @@ fn screen_permission_diagnostics() -> Value {
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
-    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 #[cfg(target_os = "macos")]
@@ -724,219 +598,6 @@ fn screen_recording_permission() -> Option<bool> {
 #[cfg(not(target_os = "macos"))]
 fn screen_recording_permission() -> Option<bool> {
     None
-}
-
-/// Only invoked from a local user gesture in Tauri, never from an MCP tool.
-pub fn local_request_screen_permission() -> Value {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        let _ = CGRequestScreenCaptureAccess();
-    }
-    local_status()
-}
-
-pub fn local_apps() -> Value {
-    native_apps()
-        .unwrap_or_else(|message| json!({ "ok": false, "error": message, "applications": [] }))
-}
-
-pub fn local_approve(request_id: &str, target_bundle: Option<&str>) -> Result<Value, String> {
-    let scope = {
-        let mut state = locked();
-        state.expire();
-        state
-            .pending
-            .as_ref()
-            .filter(|pending| pending.id == request_id)
-            .ok_or("授权申请不存在或已过期")?
-            .scope
-            .clone()
-    };
-    // A false CGPreflightScreenCaptureAccess is diagnostic only. This function
-    // approves an in-memory MCP lease after a LOCAL user gesture; it does not
-    // grant macOS Screen Recording. The native ScreenCaptureKit API remains
-    // responsible for refusing any actual unauthorised observation.
-    let app_bundle = if scope == "control" {
-        if accessibility_permission() != Some(true) {
-            return Err("请先授予 macOS 辅助功能权限".into());
-        }
-        validate_control_target(&scope, target_bundle, "请先授予 macOS 辅助功能权限")?
-    } else {
-        None
-    };
-    locked().approve(request_id, app_bundle)?;
-    Ok(local_status())
-}
-
-pub fn local_revoke() -> Result<Value, String> {
-    // Serialize revocation with pointer and keyboard actions, so no previously
-    // authorized event can start after this command returns successfully.
-    let _serialized = action_lock();
-    DataStore::update_file(|data| {
-        data.manual_computer_access = None;
-        Ok(())
-    })
-    .map_err(|error| error.to_string())?;
-    *locked() = Controller::default();
-    Ok(local_status())
-}
-
-fn tool_error(message: &str) -> Value {
-    json!({ "isError": true, "content": [{ "type": "text", "text": message }], "structuredContent": { "ok": false, "error": message } })
-}
-
-fn tool_ok(value: Value) -> Value {
-    json!({ "isError": false, "content": [{ "type": "text", "text": value.to_string() }], "structuredContent": value })
-}
-
-/// The caller identity is the *server-generated transport session*, never the
-/// caller-supplied `_meta` field or an arbitrary workspace_id.
-pub fn call_tool(name: &str, session_id: Option<&str>, args: &Value) -> Value {
-    let Some(session) = session_id.filter(|s| !s.is_empty()) else {
-        return tool_error(
-            "COMPUTER_SESSION_REQUIRED: 必须建立持久 MCP transport session 才能申请截图授权",
-        );
-    };
-    // Only verified principals received a server-created computer-auto-*
-    // session in listener.rs. The local policy controls the permission.
-    locked().attach_manual_grant(session);
-    let action = args.get("action").and_then(Value::as_str).unwrap_or("");
-    match (name, action) {
-        ("computer_session", "request") => {
-            let scope = args
-                .get("scope")
-                .and_then(Value::as_str)
-                .unwrap_or("observe");
-            if !matches!(scope, "observe" | "control") {
-                return tool_error("INVALID_SCOPE: only observe or control allowed");
-            }
-            match locked().request(session, scope) {
-                Ok(result) => tool_ok(result),
-                Err(error) => tool_error(&error),
-            }
-        }
-        ("computer_session", "status") => {
-            let mut state = locked();
-            state.expire();
-            let approved = state.allowed(session);
-            let pending = state.pending.as_ref().is_some_and(|p| p.session == session);
-            let paused = state
-                .grant
-                .as_ref()
-                .is_some_and(|g| g.session == session && g.paused)
-                || state
-                    .manual
-                    .as_ref()
-                    .is_some_and(|policy| policy.paused && session.starts_with("computer-auto-"));
-            tool_ok(
-                json!({ "status": if paused { "paused" } else if approved { "approved" } else if pending { "pending" } else { "disabled" },
-                    "scope": state.grant.as_ref().filter(|g| g.session == session).map(|g| g.scope.as_str()),
-                    "authorization": if session.starts_with("computer-auto-") { "local_policy" } else { "session" } }),
-            )
-        }
-        ("computer_session", "stop") => {
-            let _serialized = action_lock();
-            let mut state = locked();
-            state.expire();
-            if session.starts_with("computer-auto-") {
-                if state
-                    .grant
-                    .as_ref()
-                    .is_some_and(|grant| grant.session == session)
-                {
-                    state.grant = None;
-                    state.snapshot = None;
-                    state.sensitive_action = None;
-                }
-                return tool_ok(
-                    json!({"status":"stopped", "note":"本机主动授权仍然开启，仅停止当前客户端操作；需在桌面设置中关闭全局授权"}),
-                );
-            }
-            if state.grant.as_ref().is_some_and(|p| p.session == session)
-                || state.pending.as_ref().is_some_and(|p| p.session == session)
-            {
-                *state = Controller::default();
-                tool_ok(json!({ "status": "stopped" }))
-            } else {
-                tool_error("会话无权终止其他客户端的 Computer Use 授权")
-            }
-        }
-        ("computer_observe", "windows" | "screenshot" | "ui_tree") => {
-            let Some((lease, target_app)) = locked().observation_context(session) else {
-                return tool_error("COMPUTER_NOT_APPROVED: 请先通过 computer_session(request) 申请，并在本机桌面应用中批准");
-            };
-            if action == "windows" {
-                return match native_windows() {
-                    Ok(mut value) if locked().lease_matches(session, &lease) => {
-                        if let Some(target) = target_app.as_deref() {
-                            if let Some(windows) = value["windows"].as_array_mut() {
-                                windows.retain(|w| {
-                                    w["bundle_id"].as_str() == Some(target)
-                                        && w["on_screen"] == true
-                                        && w["layer"] == 0
-                                });
-                            }
-                        }
-                        tool_ok(value)
-                    }
-                    Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取窗口期间被撤销"),
-                    Err(error) => tool_error(&error),
-                };
-            }
-            if action == "ui_tree" {
-                return match native_ui_tree(target_app.as_deref()) {
-                    Ok(value) if locked().lease_matches(session, &lease) => tool_ok(value),
-                    Ok(_) => tool_error("COMPUTER_REVOKED: 授权在读取控件期间被撤销"),
-                    Err(error) => tool_error(&error),
-                };
-            }
-            match native_capture(args, target_app.as_deref()) {
-                Ok(mut value) => {
-                    if !locked().lease_matches(session, &lease) {
-                        return tool_error(
-                            "COMPUTER_REVOKED: 授权在截图期间被撤销，拒绝返回屏幕内容",
-                        );
-                    }
-                    let encoded = value
-                        .as_object_mut()
-                        .and_then(|map| map.remove("base64"))
-                        .and_then(|v| v.as_str().map(str::to_string));
-                    let Some(encoded) = encoded else {
-                        return tool_error("SCREEN_CAPTURE_FAILED: native capture omitted image");
-                    };
-                    let snapshot_id = match locked().record_snapshot(session, &lease, &value) {
-                        Ok(id) => id,
-                        Err(error) => return tool_error(&error),
-                    };
-                    value["snapshot_id"] = json!(snapshot_id);
-                    value["captured_at_unix_ms"] = json!(now_ms());
-                    let metadata = value;
-                    json!({
-                        "isError": false,
-                        "content": [
-                            { "type": "text", "text": metadata.to_string() },
-                            { "type": "image", "data": encoded, "mimeType": "image/jpeg" }
-                        ],
-                        "structuredContent": metadata
-                    })
-                }
-                Err(error) => tool_error(&error),
-            }
-        }
-        ("computer_action", _) => {
-            let _serialized = action_lock();
-            let (target, prepared) =
-                match locked().prepare_or_request_sensitive_action(session, args) {
-                    Ok(prepared) => prepared,
-                    Err(error) => return tool_error(&error),
-                };
-            match native_action(&target, &prepared) {
-                Ok(result) => tool_ok(result),
-                Err(error) => tool_error(&error),
-            }
-        }
-        _ => tool_error("不支持的 computer action"),
-    }
 }
 
 #[cfg(target_os = "macos")]

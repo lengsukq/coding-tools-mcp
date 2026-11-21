@@ -1,3 +1,4 @@
+use super::runtime::{RegisterClientError, MAX_REGISTERED_CLIENTS};
 use super::*;
 
 pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest) -> Response {
@@ -52,14 +53,26 @@ pub fn register_client(oauth: &OAuthRuntime, request: ClientRegistrationRequest)
             client_secret: client_secret.clone(),
         },
     ) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({
-                "error": "server_error",
-                "error_description": error
-            })),
-        )
-            .into_response();
+        return match error {
+            RegisterClientError::LimitReached => (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": "too_many_clients",
+                    "error_description": format!(
+                        "OAuth client registration limit reached ({MAX_REGISTERED_CLIENTS})"
+                    )
+                })),
+            )
+                .into_response(),
+            RegisterClientError::Persistence(message) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({
+                    "error": "server_error",
+                    "error_description": message
+                })),
+            )
+                .into_response(),
+        };
     }
 
     let mut body = json!({

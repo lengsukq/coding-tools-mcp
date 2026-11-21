@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use crate::data::DataStore;
 use crate::local_network;
@@ -19,6 +20,8 @@ pub const LAN_DISCOVERY_UDP_PORT: u16 = 28767;
 const MULTICAST_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 77, 67);
 const BEACON_INTERVAL_SECS: u64 = 8;
 const DISCOVERED_TTL_MS: u64 = 35_000;
+const MAX_DISCOVERED_PEERS: usize = 256;
+const OVERLAY_PROBE_CONCURRENCY: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -257,9 +260,40 @@ pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto
 }
 
 pub(super) fn record_discovered_peer(peer: DiscoveredPeerDto) {
-    let mut map = discovered_map().lock().unwrap_or_else(|e| e.into_inner());
-    map.insert(peer.device_id.clone(), peer.clone());
-    drop(map);
+    let now = unix_time_ms();
+    {
+        let mut map = discovered_map().lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= DISCOVERED_TTL_MS);
+        if map.len() >= MAX_DISCOVERED_PEERS && !map.contains_key(&peer.device_id) {
+            if let Some(oldest_id) = map
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_seen_ms)
+                .map(|(id, _)| id.clone())
+            {
+                map.remove(&oldest_id);
+            }
+        }
+        map.insert(peer.device_id.clone(), peer.clone());
+    }
+
+    // Fast-path cached read: skip disk write & DATA_FILE_LOCK unless a paired peer
+    // with matching pinned fingerprint actually experienced host/port/name drift.
+    let needs_persist = DataStore::read_file(|data| {
+        Ok(data
+            .lan_federation
+            .paired_peers
+            .iter()
+            .find(|p| p.device_id == peer.device_id && p.fingerprint == peer.fingerprint)
+            .is_some_and(|existing| {
+                existing.host != peer.host
+                    || existing.port != peer.port
+                    || existing.device_name != peer.device_name
+            }))
+    })
+    .unwrap_or(false);
+    if !needs_persist {
+        return;
+    }
 
     // Auto-heal DHCP IP or port drift for an already paired peer ONLY if its
     // cryptographic fingerprint matches the pinned fingerprint recorded at pairing time.
@@ -297,7 +331,9 @@ fn bind_discovery_socket() -> Option<UdpSocket> {
 
     let settings = AppSettings::load_or_default();
     let _ = std_sock.join_multicast_v4(&MULTICAST_GROUP, &Ipv4Addr::UNSPECIFIED);
-    for iface in local_network::local_lan_ipv4_addrs_with_subnets(&settings.lan_federation.extra_subnets) {
+    for iface in
+        local_network::local_lan_ipv4_addrs_with_subnets(&settings.lan_federation.extra_subnets)
+    {
         let _ = std_sock.join_multicast_v4(&MULTICAST_GROUP, &iface);
     }
 
@@ -330,36 +366,44 @@ async fn broadcast_beacon(socket: &UdpSocket, kind: &str) {
     let Some(bytes) = build_local_beacon_with_settings(&settings, kind) else {
         return;
     };
-    let mut targets = vec![
-        SocketAddr::from((MULTICAST_GROUP, LAN_DISCOVERY_UDP_PORT)),
-        SocketAddr::from((Ipv4Addr::BROADCAST, LAN_DISCOVERY_UDP_PORT)),
-    ];
-    for ip in local_network::local_lan_ipv4_addrs_with_subnets(&settings.lan_federation.extra_subnets) {
-        let octets = ip.octets();
-        let directed = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-        let addr = SocketAddr::from((directed, LAN_DISCOVERY_UDP_PORT));
-        if !targets.contains(&addr) {
+    let extra_subnets = settings.lan_federation.extra_subnets.clone();
+    let local_port = settings.global_gateway.local_port;
+    let Ok((local_ips, unicast_ips, seed_hosts)) = tokio::task::spawn_blocking(move || {
+        let local_ips = local_network::local_lan_ipv4_addrs_with_subnets(&extra_subnets);
+        let (unicast_ips, seed_hosts) =
+            local_network::collect_overlay_discovery_targets(&extra_subnets, local_port);
+        (local_ips, unicast_ips, seed_hosts)
+    })
+    .await
+    else {
+        return;
+    };
+
+    let mut targets = Vec::new();
+    let mut seen_targets = HashSet::new();
+    let mut push_target = |addr: SocketAddr| {
+        if seen_targets.insert(addr) {
             targets.push(addr);
         }
+    };
+    push_target(SocketAddr::from((MULTICAST_GROUP, LAN_DISCOVERY_UDP_PORT)));
+    push_target(SocketAddr::from((
+        Ipv4Addr::BROADCAST,
+        LAN_DISCOVERY_UDP_PORT,
+    )));
+    for ip in local_ips {
+        let octets = ip.octets();
+        let directed = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+        push_target(SocketAddr::from((directed, LAN_DISCOVERY_UDP_PORT)));
     }
-    let (unicast_ips, seed_hosts) = local_network::collect_overlay_discovery_targets(
-        &settings.lan_federation.extra_subnets,
-        settings.global_gateway.local_port,
-    );
     if kind == "discover" {
         for host_ip in unicast_ips {
-            let addr = SocketAddr::from((host_ip, LAN_DISCOVERY_UDP_PORT));
-            if !targets.contains(&addr) {
-                targets.push(addr);
-            }
+            push_target(SocketAddr::from((host_ip, LAN_DISCOVERY_UDP_PORT)));
         }
     }
     for (seed_host, _) in seed_hosts {
         if let Ok(ip) = seed_host.parse::<Ipv4Addr>() {
-            let addr = SocketAddr::from((ip, LAN_DISCOVERY_UDP_PORT));
-            if !targets.contains(&addr) {
-                targets.push(addr);
-            }
+            push_target(SocketAddr::from((ip, LAN_DISCOVERY_UDP_PORT)));
         }
     }
     for target in targets {
@@ -375,10 +419,15 @@ pub async fn probe_configured_overlay_targets() {
     if !settings.lan_federation.enabled {
         return;
     }
-    let (_, seeds) = local_network::collect_overlay_discovery_targets(
-        &settings.lan_federation.extra_subnets,
-        settings.global_gateway.local_port,
-    );
+    let extra_subnets = settings.lan_federation.extra_subnets.clone();
+    let local_port = settings.global_gateway.local_port;
+    let Ok((_, seeds)) = tokio::task::spawn_blocking(move || {
+        local_network::collect_overlay_discovery_targets(&extra_subnets, local_port)
+    })
+    .await
+    else {
+        return;
+    };
     if seeds.is_empty() {
         return;
     }
@@ -386,19 +435,22 @@ pub async fn probe_configured_overlay_targets() {
     let Ok((local_cfg, _)) = ensure_local_identity() else {
         return;
     };
-    let paired_ids: std::collections::HashSet<String> = settings
-        .lan_federation
-        .paired_peers
-        .iter()
-        .map(|p| p.device_id.clone())
-        .collect();
+    let self_id: Arc<str> = Arc::from(local_cfg.device_id);
+    let paired_ids: Arc<HashSet<String>> = Arc::new(
+        settings
+            .lan_federation
+            .paired_peers
+            .iter()
+            .map(|p| p.device_id.clone())
+            .collect(),
+    );
 
-    for chunk in seeds.chunks(32) {
-        let mut futs = Vec::with_capacity(chunk.len());
+    for chunk in seeds.chunks(OVERLAY_PROBE_CONCURRENCY) {
+        let mut join_set = JoinSet::new();
         for (host, port) in chunk.iter().cloned() {
-            let self_id = local_cfg.device_id.clone();
-            let already_paired_set = paired_ids.clone();
-            futs.push(async move {
+            let self_id = Arc::clone(&self_id);
+            let paired_ids = Arc::clone(&paired_ids);
+            join_set.spawn(async move {
                 let url = format!("http://{host}:{port}/api/lan/v1/hello");
                 let Ok(resp) = client
                     .get(&url)
@@ -414,10 +466,10 @@ pub async fn probe_configured_overlay_targets() {
                 let Ok(hello) = resp.json::<PeerHelloDto>().await else {
                     return;
                 };
-                if hello.protocol != LAN_PROTOCOL_VERSION || hello.device_id == self_id {
+                if hello.protocol != LAN_PROTOCOL_VERSION || hello.device_id == self_id.as_ref() {
                     return;
                 }
-                let already_paired = already_paired_set.contains(&hello.device_id);
+                let already_paired = paired_ids.contains(&hello.device_id);
                 record_discovered_peer(DiscoveredPeerDto {
                     device_id: hello.device_id,
                     device_name: hello.device_name,
@@ -434,9 +486,7 @@ pub async fn probe_configured_overlay_targets() {
                 });
             });
         }
-        for fut in futs {
-            fut.await;
-        }
+        while join_set.join_next().await.is_some() {}
     }
 }
 

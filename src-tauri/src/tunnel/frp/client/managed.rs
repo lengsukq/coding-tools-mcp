@@ -1,12 +1,10 @@
 use super::*;
 
 fn managed_frpc_dir(workspace_id: &str) -> AppResult<PathBuf> {
-    let dir = platform()
+    Ok(platform()
         .app_config_dir()?
         .join("frpc")
-        .join(sanitize_workspace_id(workspace_id));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+        .join(sanitize_workspace_id(workspace_id)))
 }
 
 pub(crate) fn managed_frpc_config_path(workspace_id: &str) -> AppResult<PathBuf> {
@@ -118,6 +116,9 @@ pub(super) fn write_managed_frpc_pid(
     image_path: &Path,
 ) -> AppResult<()> {
     let path = managed_frpc_pid_path(workspace_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(path, format!("{pid}\n{}\n", image_path.to_string_lossy()))?;
     Ok(())
 }

@@ -7,6 +7,7 @@ pub(crate) mod server;
 pub mod stdio_bridge;
 
 pub use listener::{
-    spawn_gateway_listener, GatewayListenerConfig, ListenerSecrets, ShutdownSender,
+    build_live_policy, spawn_gateway_listener, GatewayListenerConfig, ListenerSecrets,
+    LiveListenerPolicy, ShutdownSender,
 };
 pub use server::{LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};

@@ -108,9 +108,11 @@ fn extract_jsonrpc_handles_null_empty_json_and_sse() {
     assert!(extract_jsonrpc_messages("application/json", "")
         .unwrap()
         .is_empty());
-    let json_msgs =
-        extract_jsonrpc_messages("application/json", r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
-            .unwrap();
+    let json_msgs = extract_jsonrpc_messages(
+        "application/json",
+        r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+    )
+    .unwrap();
     assert_eq!(json_msgs.len(), 1);
 
     let sse = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[]}}\n\ndata: [DONE]\n\n";
@@ -269,7 +271,7 @@ async fn bridge_returns_jsonrpc_error_on_unauthorized_without_hanging() {
 
     in_tx
         .send(Ok(
-            r#"{"jsonrpc":"2.0","id":7,"method":"initialize"}"#.to_string(),
+            r#"{"jsonrpc":"2.0","id":7,"method":"initialize"}"#.to_string()
         ))
         .unwrap();
     drop(in_tx);
@@ -347,12 +349,14 @@ fn adapt_gemini_response_compacts_tools_list_without_dropping_schema() {
         tool["inputSchema"]["properties"]["mode"],
         json!({ "type": "string", "enum": ["fast", "full"] })
     );
-    assert!(tool["inputSchema"]["properties"]["cmd"]["description"]
-        .as_str()
-        .unwrap()
-        .chars()
-        .count()
-        <= 48);
+    assert!(
+        tool["inputSchema"]["properties"]["cmd"]["description"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 48
+    );
 }
 
 #[test]

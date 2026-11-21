@@ -1,7 +1,8 @@
 use super::*;
 
-use super::health::{frpc_log_name, log_file_len, stream_frpc_logs, wait_for_frpc_ready};
+use super::health::{frpc_log_name, log_file_len, stream_frpc_output, wait_for_frpc_ready};
 use super::managed::write_managed_frpc_pid;
+use crate::tunnel::helpers::configure_tunnel_command;
 
 pub async fn spawn_global_frpc(
     config: &GlobalGatewayConfig,
@@ -13,6 +14,9 @@ pub async fn spawn_global_frpc(
 
     let scope_id = "global-mcp";
     let config_path = managed_frpc_config_path(scope_id)?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let log_dir = log_dir_for_profile(scope_id);
     std::fs::create_dir_all(&log_dir)?;
     let log_path = log_dir.join(frpc_log_name());
@@ -25,20 +29,8 @@ pub async fn spawn_global_frpc(
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     cmd.current_dir(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-    #[cfg(windows)]
-    {
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        // frpc 是控制台程序。显式禁止创建控制台，避免安装版或开发版
-        // 从桌面应用启动时短暂闪出黑色窗口。
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
-
-    #[cfg(unix)]
-    {
-        cmd.process_group(0);
-    }
+    // frpc 是控制台程序，放入独立进程组并在 Windows 禁止闪出黑色窗口。
+    configure_tunnel_command(&mut cmd);
 
     if config.use_proxy {
         crate::tunnel::cloudflare::apply_proxy_env(&mut cmd, &settings.proxy);
@@ -54,16 +46,12 @@ pub async fn spawn_global_frpc(
             return Err(error);
         }
     }
-    if let Some(stdout) = child.stdout.take() {
-        let log_paths = vec![log_path.clone()];
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    if stdout.is_some() || stderr.is_some() {
+        let log_path_for_stream = log_path.clone();
         tokio::spawn(async move {
-            stream_frpc_logs(stdout, log_paths).await;
-        });
-    }
-    if let Some(stderr) = child.stderr.take() {
-        let log_paths = vec![log_path.clone()];
-        tokio::spawn(async move {
-            stream_frpc_logs(stderr, log_paths).await;
+            stream_frpc_output(stdout, stderr, log_path_for_stream).await;
         });
     }
 

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::task::JoinSet;
 
 use crate::mcp::gateway::{GatewayError, WorkspaceDescriptor};
 use crate::review::ChangeSet;
@@ -15,12 +16,8 @@ use super::identity::{
     format_remote_workspace_scope, get_peer_secret, identity_from_settings, local_device_summary,
     PeerDeviceMetaDto,
 };
-use super::server::{
-    PeerCatalogResponse, PeerReviewTokenDto, PeerRpcRequest, PeerRpcResponse,
-};
-use super::{
-    HOP_HEADER, NONCE_HEADER, PEER_ID_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER,
-};
+use super::server::{PeerCatalogResponse, PeerReviewTokenDto, PeerRpcRequest, PeerRpcResponse};
+use super::{HOP_HEADER, NONCE_HEADER, PEER_ID_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER};
 
 const CATALOG_CACHE_TTL_MS: u64 = 8_000;
 const CONNECT_TIMEOUT_MS: u64 = 1_500;
@@ -48,6 +45,31 @@ pub struct PairedPeerStatusDto {
     pub computer_use_supported: bool,
     pub computer_use_enabled: bool,
     pub last_error: Option<String>,
+}
+
+impl PairedPeerStatusDto {
+    fn offline(peer: PairedPeerConfig, reason: impl Into<String>) -> Self {
+        Self {
+            device_id: peer.device_id,
+            device_name: peer.device_name,
+            fingerprint: peer.fingerprint,
+            os: peer.os,
+            arch: peer.arch,
+            version: peer.version,
+            host: peer.host,
+            port: peer.port,
+            addresses: peer.addresses,
+            enabled: peer.enabled,
+            paired_at_ms: peer.paired_at_ms,
+            online: false,
+            latency_ms: None,
+            trust_level: "unknown".into(),
+            workspace_count: 0,
+            computer_use_supported: false,
+            computer_use_enabled: false,
+            last_error: Some(reason.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,9 +119,20 @@ pub(super) fn shared_lan_http_client() -> &'static reqwest::Client {
 pub(super) fn prune_peer_cache() {
     let now = unix_time_ms();
     let stale_ttl_ms = CATALOG_CACHE_TTL_MS * 10;
-    if let Some(cache) = PEER_CACHE.get() {
+    let live_ids: Option<std::collections::HashSet<String>> = PEER_CACHE.get().map(|cache| {
         let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
         guard.retain(|_, entry| now.saturating_sub(entry.fetched_at_ms) <= stale_ttl_ms);
+        if guard.capacity() > 32 && guard.len() * 4 < guard.capacity() {
+            guard.shrink_to_fit();
+        }
+        guard.keys().cloned().collect()
+    });
+    if let Some(hosts) = PREFERRED_HOST.get() {
+        let mut guard = hosts.lock().unwrap_or_else(|e| e.into_inner());
+        match live_ids {
+            Some(ref ids) => guard.retain(|device_id, _| ids.contains(device_id)),
+            None => guard.clear(),
+        }
         if guard.capacity() > 32 && guard.len() * 4 < guard.capacity() {
             guard.shrink_to_fit();
         }
@@ -201,7 +234,10 @@ fn find_enabled_peer(
     if !peer.enabled {
         return Err(GatewayError::invalid(
             "PEER_DEVICE_DISABLED",
-            format!("配对设备 {} ({device_id}) 当前已在设置中停用。", peer.device_name),
+            format!(
+                "配对设备 {} ({device_id}) 当前已在设置中停用。",
+                peer.device_name
+            ),
         ));
     }
     let secret = get_peer_secret(device_id, Some(settings))
@@ -282,7 +318,10 @@ async fn signed_http_request(
         }
     }
     Err(if last_err.is_empty() {
-        format!("无法连接配对设备 {} ({}:{})", peer.device_name, peer.host, peer.port)
+        format!(
+            "无法连接配对设备 {} ({}:{})",
+            peer.device_name, peer.host, peer.port
+        )
     } else {
         last_err
     })
@@ -382,98 +421,61 @@ pub async fn list_paired_peer_statuses_async(
         return Vec::new();
     }
 
-    let mut tasks = Vec::with_capacity(peers.len());
-    for peer in peers {
+    let mut join_set = JoinSet::new();
+    let total_peers = peers.len();
+    for (index, peer) in peers.into_iter().enumerate() {
         let caller_id = local_cfg.device_id.clone();
         let secret = get_peer_secret(&peer.device_id, Some(&settings))
             .or_else(|| get_peer_secret(&peer.device_id, None));
         let lan_enabled = settings.lan_federation.enabled;
-        tasks.push(async move {
-            if !lan_enabled || !peer.enabled {
-                return PairedPeerStatusDto {
+        join_set.spawn(async move {
+            let dto = if !lan_enabled {
+                PairedPeerStatusDto::offline(peer, "局域网互联未启用")
+            } else if !peer.enabled {
+                PairedPeerStatusDto::offline(peer, "已手动停用")
+            } else if let Some(secret) = secret {
+                let snap = fetch_or_cached_catalog(&caller_id, &peer, &secret, force_refresh).await;
+                let cat = snap.catalog.as_ref();
+                PairedPeerStatusDto {
                     device_id: peer.device_id,
-                    device_name: peer.device_name,
+                    device_name: cat
+                        .map(|c| c.device_name.clone())
+                        .unwrap_or(peer.device_name),
                     fingerprint: peer.fingerprint,
-                    os: peer.os,
-                    arch: peer.arch,
-                    version: peer.version,
+                    os: cat.map(|c| c.os.clone()).unwrap_or(peer.os),
+                    arch: cat.map(|c| c.arch.clone()).unwrap_or(peer.arch),
+                    version: cat.map(|c| c.version.clone()).unwrap_or(peer.version),
                     host: peer.host,
                     port: peer.port,
                     addresses: peer.addresses,
                     enabled: peer.enabled,
                     paired_at_ms: peer.paired_at_ms,
-                    online: false,
-                    latency_ms: None,
-                    trust_level: "unknown".into(),
-                    workspace_count: 0,
-                    computer_use_supported: false,
-                    computer_use_enabled: false,
-                    last_error: if !lan_enabled {
-                        Some("局域网互联未启用".into())
-                    } else {
-                        Some("已手动停用".into())
-                    },
-                };
-            }
-            let Some(secret) = secret else {
-                return PairedPeerStatusDto {
-                    device_id: peer.device_id,
-                    device_name: peer.device_name,
-                    fingerprint: peer.fingerprint,
-                    os: peer.os,
-                    arch: peer.arch,
-                    version: peer.version,
-                    host: peer.host,
-                    port: peer.port,
-                    addresses: peer.addresses,
-                    enabled: peer.enabled,
-                    paired_at_ms: peer.paired_at_ms,
-                    online: false,
-                    latency_ms: None,
-                    trust_level: "unknown".into(),
-                    workspace_count: 0,
-                    computer_use_supported: false,
-                    computer_use_enabled: false,
-                    last_error: Some("缺少配对密钥，请重新配对".into()),
-                };
+                    online: snap.online,
+                    latency_ms: snap.latency_ms,
+                    trust_level: cat
+                        .map(|c| c.trust_level.clone())
+                        .unwrap_or_else(|| "full".into()),
+                    workspace_count: cat.map(|c| c.workspaces.len()).unwrap_or(0),
+                    computer_use_supported: cat.map(|c| c.computer_use_supported).unwrap_or(false),
+                    computer_use_enabled: snap.online
+                        && cat.map(|c| c.computer_use_enabled).unwrap_or(false),
+                    last_error: snap.last_error,
+                }
+            } else {
+                PairedPeerStatusDto::offline(peer, "缺少配对密钥，请重新配对")
             };
-            let snap = fetch_or_cached_catalog(&caller_id, &peer, &secret, force_refresh).await;
-            let cat = snap.catalog.as_ref();
-            PairedPeerStatusDto {
-                device_id: peer.device_id,
-                device_name: cat
-                    .map(|c| c.device_name.clone())
-                    .unwrap_or(peer.device_name),
-                fingerprint: peer.fingerprint,
-                os: cat.map(|c| c.os.clone()).unwrap_or(peer.os),
-                arch: cat.map(|c| c.arch.clone()).unwrap_or(peer.arch),
-                version: cat.map(|c| c.version.clone()).unwrap_or(peer.version),
-                host: peer.host,
-                port: peer.port,
-                addresses: peer.addresses,
-                enabled: peer.enabled,
-                paired_at_ms: peer.paired_at_ms,
-                online: snap.online,
-                latency_ms: snap.latency_ms,
-                trust_level: cat
-                    .map(|c| c.trust_level.clone())
-                    .unwrap_or_else(|| "full".into()),
-                workspace_count: cat.map(|c| c.workspaces.len()).unwrap_or(0),
-                computer_use_supported: cat
-                    .map(|c| c.computer_use_supported)
-                    .unwrap_or(false),
-                computer_use_enabled: snap.online
-                    && cat.map(|c| c.computer_use_enabled).unwrap_or(false),
-                last_error: snap.last_error,
-            }
+            (index, dto)
         });
     }
 
-    let mut out = Vec::with_capacity(tasks.len());
-    for task in tasks {
-        out.push(task.await);
+    let mut indexed = Vec::with_capacity(total_peers);
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(item) = res {
+            indexed.push(item);
+        }
     }
-    out
+    indexed.sort_by_key(|(index, _)| *index);
+    indexed.into_iter().map(|(_, dto)| dto).collect()
 }
 
 /// Collect local + federated remote WorkspaceDescriptors for `workspace_list`.
@@ -533,22 +535,37 @@ pub fn federated_workspace_descriptors(
     let settings_cloned = settings.clone();
     let caller_id = local_summary.device_id;
     let peer_entries = run_lan_future(async move {
-        let mut collected = Vec::new();
-        for peer in settings_cloned
+        let mut join_set = JoinSet::new();
+        for (index, peer) in settings_cloned
             .lan_federation
             .paired_peers
             .iter()
             .filter(|p| p.enabled)
+            .enumerate()
         {
             let Some(secret) = get_peer_secret(&peer.device_id, Some(&settings_cloned))
                 .or_else(|| get_peer_secret(&peer.device_id, None))
             else {
                 continue;
             };
-            let snap = fetch_or_cached_catalog(&caller_id, peer, &secret, false).await;
-            collected.push((peer.clone(), snap));
+            let peer_owned = peer.clone();
+            let caller = caller_id.clone();
+            join_set.spawn(async move {
+                let snap = fetch_or_cached_catalog(&caller, &peer_owned, &secret, false).await;
+                (index, peer_owned, snap)
+            });
         }
-        Ok(collected)
+        let mut collected = Vec::new();
+        while let Some(res) = join_set.join_next().await {
+            if let Ok(item) = res {
+                collected.push(item);
+            }
+        }
+        collected.sort_by_key(|(index, _, _)| *index);
+        Ok(collected
+            .into_iter()
+            .map(|(_, peer, snap)| (peer, snap))
+            .collect::<Vec<_>>())
     })
     .unwrap_or_default();
 
@@ -557,9 +574,7 @@ pub fn federated_workspace_descriptors(
         let peer_name = cat
             .map(|c| c.device_name.clone())
             .unwrap_or_else(|| peer.device_name.clone());
-        let peer_os = cat
-            .map(|c| c.os.clone())
-            .unwrap_or_else(|| peer.os.clone());
+        let peer_os = cat.map(|c| c.os.clone()).unwrap_or_else(|| peer.os.clone());
         let peer_arch = cat
             .map(|c| c.arch.clone())
             .unwrap_or_else(|| peer.arch.clone());
@@ -632,13 +647,57 @@ pub fn federated_device_list(
         .collect()
 }
 
+/// Query only the target paired peer's catalog to resolve a single remote workspace
+/// descriptor (used by `workspace_current` to avoid probing all unrelated peers).
+pub fn lookup_remote_workspace_descriptor(
+    settings_override: Option<&AppSettings>,
+    device_id: &str,
+    workspace_id: &str,
+) -> Option<WorkspaceDescriptor> {
+    let settings = load_effective_settings(settings_override);
+    let (peer, secret) = find_enabled_peer(&settings, device_id).ok()?;
+    let (local_cfg, _) = identity_from_settings(Some(&settings));
+    let caller_id = local_cfg.device_id;
+    let peer_for_req = peer.clone();
+    let snap = run_lan_future(async move {
+        Ok(fetch_or_cached_catalog(&caller_id, &peer_for_req, &secret, false).await)
+    })
+    .ok()?;
+
+    let catalog = snap.catalog?;
+    let remote_ws = catalog
+        .workspaces
+        .into_iter()
+        .find(|ws| ws.id == workspace_id)?;
+    let status_tag = if snap.online { "" } else { " · 离线" };
+    Some(WorkspaceDescriptor {
+        id: format_remote_workspace_scope(&peer.device_id, &remote_ws.id),
+        name: remote_ws.name.clone(),
+        path: remote_ws.path,
+        qualified_name: Some(format!(
+            "[远端 · {} ({}){status_tag}] {}",
+            catalog.device_name, catalog.os, remote_ws.name
+        )),
+        device: Some(PeerDeviceMetaDto {
+            device_id: peer.device_id,
+            device_name: catalog.device_name,
+            is_local: false,
+            os: catalog.os,
+            arch: catalog.arch,
+            online: snap.online,
+            access_mode: catalog.trust_level,
+        }),
+    })
+}
+
 fn dispatch_peer_rpc_sync(
     settings_override: Option<&AppSettings>,
     target_device_id: &str,
     rpc_req: PeerRpcRequest,
 ) -> Result<(PairedPeerConfig, PeerRpcResponse), Value> {
     let settings = load_effective_settings(settings_override);
-    let (peer, secret) = find_enabled_peer(&settings, target_device_id).map_err(|e| e.to_rpc_error())?;
+    let (peer, secret) =
+        find_enabled_peer(&settings, target_device_id).map_err(|e| e.to_rpc_error())?;
     let (local_cfg, _) = identity_from_settings(Some(&settings));
     let caller_id = local_cfg.device_id;
     let body = serde_json::to_vec(&rpc_req).map_err(|e| {
@@ -862,7 +921,10 @@ fn rewrite_peer_result_metadata(
         let entry_base = if !public_base.is_empty() {
             public_base.to_string()
         } else {
-            format!("http://127.0.0.1:{}", entry_settings.global_gateway.local_port)
+            format!(
+                "http://127.0.0.1:{}",
+                entry_settings.global_gateway.local_port
+            )
         };
         let proxied_url = format!(
             "{entry_base}/review/peer/{}/{}?t={}",
@@ -877,7 +939,10 @@ fn rewrite_peer_result_metadata(
     if let Some(first_text) = result
         .get_mut("content")
         .and_then(Value::as_array_mut)
-        .and_then(|arr| arr.iter_mut().find(|item| item.get("type") == Some(&json!("text"))))
+        .and_then(|arr| {
+            arr.iter_mut()
+                .find(|item| item.get("type") == Some(&json!("text")))
+        })
         .and_then(Value::as_object_mut)
     {
         first_text.insert("text".into(), Value::String(serialized));

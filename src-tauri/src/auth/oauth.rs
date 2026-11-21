@@ -98,6 +98,23 @@ fn safe_external_host(host: &str) -> String {
     }
 }
 
+fn strip_host_port(host: &str) -> &str {
+    let trimmed = host.trim();
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        return rest
+            .split_once(']')
+            .map(|(ipv6, _)| ipv6)
+            .unwrap_or(trimmed);
+    }
+    if trimmed.parse::<std::net::IpAddr>().is_ok() {
+        return trimmed;
+    }
+    match trimmed.rsplit_once(':') {
+        Some((value, _)) if !value.contains(':') => value,
+        _ => trimmed,
+    }
+}
+
 fn resolve_external_proto(proto: Option<&str>, host: &str) -> &'static str {
     if let Some(proto) = proto {
         let proto = proto.trim().to_ascii_lowercase();
@@ -109,10 +126,7 @@ fn resolve_external_proto(proto: Option<&str>, host: &str) -> &'static str {
         }
     }
 
-    let host_without_port = host
-        .rsplit_once(':')
-        .map(|(value, _)| value.trim_matches('[').trim_matches(']'))
-        .unwrap_or_else(|| host.trim_matches('[').trim_matches(']'));
+    let host_without_port = strip_host_port(host);
     if is_loopback_host(host_without_port) {
         "http"
     } else {
@@ -121,16 +135,19 @@ fn resolve_external_proto(proto: Option<&str>, host: &str) -> &'static str {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    matches!(host, "127.0.0.1" | "localhost" | "::1")
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
-fn token_endpoint_auth_methods(_client_secret: Option<&str>) -> Vec<&'static str> {
+fn token_endpoint_auth_methods() -> Vec<&'static str> {
     vec!["none", "client_secret_post", "client_secret_basic"]
 }
 
-pub fn authorization_server_metadata(base_url: &str, client_secret: Option<&str>) -> Value {
+pub fn authorization_server_metadata(base_url: &str) -> Value {
     let base = base_url.trim_end_matches('/');
-    let methods = token_endpoint_auth_methods(client_secret);
+    let methods = token_endpoint_auth_methods();
     json!({
         "issuer": base,
         "authorization_endpoint": format!("{base}/oauth/authorize"),
@@ -182,7 +199,7 @@ mod tests {
 
     #[test]
     fn authorization_metadata_includes_token_auth_methods() {
-        let meta = authorization_server_metadata("https://example.com", None);
+        let meta = authorization_server_metadata("https://example.com");
         assert_eq!(
             meta["token_endpoint_auth_methods_supported"],
             json!(["none", "client_secret_post", "client_secret_basic"])
@@ -194,11 +211,6 @@ mod tests {
         assert_eq!(
             meta["grant_types_supported"],
             json!(["authorization_code", "refresh_token"])
-        );
-        let meta = authorization_server_metadata("https://example.com", Some("secret"));
-        assert_eq!(
-            meta["token_endpoint_auth_methods_supported"],
-            json!(["none", "client_secret_post", "client_secret_basic"])
         );
     }
 
@@ -248,5 +260,23 @@ mod tests {
             external_base_url(&headers, 28767, ""),
             "https://lb.frp-tx1.evwali.com"
         );
+    }
+
+    #[test]
+    fn loopback_host_handles_bare_and_bracketed_ipv6() {
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("localhost"));
+        assert!(!is_loopback_host("example.com"));
+
+        assert_eq!(resolve_external_proto(None, "::1"), "http");
+        assert_eq!(resolve_external_proto(None, "[::1]"), "http");
+        assert_eq!(resolve_external_proto(None, "[::1]:28765"), "http");
+        assert_eq!(resolve_external_proto(None, "127.0.0.1:28765"), "http");
+        assert_eq!(resolve_external_proto(None, "2001:db8::1"), "https");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "::1".parse().unwrap());
+        assert_eq!(external_base_url(&headers, 28765, ""), "http://::1");
     }
 }

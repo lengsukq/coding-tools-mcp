@@ -148,7 +148,9 @@ pub fn remove_auth_file_if_exists(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("Unable to remove stale MCP credentials file: {err}")),
+        Err(err) => Err(format!(
+            "Unable to remove stale MCP credentials file: {err}"
+        )),
     }
 }
 

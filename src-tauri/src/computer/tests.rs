@@ -428,3 +428,30 @@ fn remote_cannot_fake_native_high_risk_approval_flag() {
         .is_err());
     assert_eq!(state.grant.as_ref().unwrap().actions_used, 1);
 }
+
+#[test]
+fn stopping_non_auto_session_preserves_in_memory_manual_policy() {
+    let mut state = Controller {
+        manual: Some(manual_policy("observe", None)),
+        ..Controller::default()
+    };
+    let req = state.request("legacy-session", "observe").unwrap();
+    state
+        .approve(req["request_id"].as_str().unwrap(), None)
+        .unwrap();
+    assert!(state.grant.is_some());
+
+    let stopped = state.stop_session("legacy-session").unwrap();
+    assert_eq!(stopped["status"], "stopped");
+    assert!(state.grant.is_none());
+    assert!(state.pending.is_none());
+    assert!(state.snapshot.is_none());
+    assert!(state.sensitive_action.is_none());
+    assert!(
+        state
+            .manual
+            .as_ref()
+            .is_some_and(ManualComputerAccess::active),
+        "stopping a legacy session must not clear manual opt-in policy"
+    );
+}

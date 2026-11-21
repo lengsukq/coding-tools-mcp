@@ -1,13 +1,62 @@
+use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 #[cfg(test)]
 use crate::agent_context::render_skill_catalog;
 use crate::mcp::gateway::{
-    gateway_tool_definitions, is_gateway_tool, GatewayError, GatewayState, WorkspaceRequestContext,
+    gateway_tool_definitions, is_gateway_tool, GatewayError, GatewayState, WorkspaceRegistry,
+    WorkspaceRequestContext,
 };
 use crate::tools::{call_tool, list_tools_for_profile, wrap_mcp_tool_result, SharedToolContext};
 
 pub type SharedState = SharedToolContext;
+
+/// Truncate `value` safely on a UTF-8 boundary and append an ellipsis trailer if truncated.
+pub(crate) fn truncate_utf8_with_ellipsis(value: &str, max_bytes: usize) -> String {
+    let prefix = crate::util::text::truncate_utf8(value, max_bytes);
+    if prefix.len() == value.len() {
+        value.to_string()
+    } else {
+        format!("{prefix}\n…[truncated]")
+    }
+}
+
+/// Map `review::find_review` error strings consistently to HTTP status codes across
+/// both the local review HTTP routes and LAN peer review endpoints.
+pub(crate) fn review_error_status(message: &str) -> StatusCode {
+    match message {
+        "invalid review token" => StatusCode::UNAUTHORIZED,
+        "review expired" => StatusCode::GONE,
+        _ => StatusCode::NOT_FOUND,
+    }
+}
+
+/// Attach session context arguments expected by `history_manage` and `change_review`
+/// without overriding explicit caller-provided keys.
+pub(crate) fn inject_workspace_session_args(
+    canonical_name: &str,
+    args: &mut Value,
+    logical_session_id: Option<&str>,
+) {
+    let Some(session_id) = logical_session_id else {
+        return;
+    };
+    if canonical_name == "history_manage" && args.get("_host_session_key").is_none() {
+        if !args.is_object() {
+            *args = json!({});
+        }
+        args["_host_session_key"] = Value::String(session_id.to_string());
+    }
+    if canonical_name == "change_review"
+        && args.get("scope").and_then(Value::as_str) == Some("session")
+        && args.get("session_id").is_none()
+    {
+        if !args.is_object() {
+            *args = json!({});
+        }
+        args["_review_session_id"] = Value::String(session_id.to_string());
+    }
+}
 
 #[derive(Clone)]
 pub struct GatewayResponse {

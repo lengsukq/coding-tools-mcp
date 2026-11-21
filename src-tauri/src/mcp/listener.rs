@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{
-    header::{AUTHORIZATION, CACHE_CONTROL, HOST, WWW_AUTHENTICATE},
+    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, WWW_AUTHENTICATE},
     HeaderMap, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
@@ -14,10 +15,10 @@ use tokio::sync::oneshot;
 use tower_http::cors::CorsLayer;
 
 use crate::auth::{
-    external_base_url, protected_resource_metadata_url, verify_bearer_header,
-    verify_oauth_bearer_header, OAuthRuntime,
+    authenticate_oauth_bearer_header, external_base_url, protected_resource_metadata_url,
+    verify_bearer_header, OAuthRuntime,
 };
-use crate::local_network;
+use crate::local_network::{self, has_proxy_forwarded_headers, PeerConnectAddr};
 use crate::mcp::audit::{log_request, record_response, RpcRequestMeta};
 use crate::mcp::gateway::{
     session_id_from_metadata, session_id_from_request, GatewayState, MCP_SESSION_HEADER,
@@ -34,35 +35,6 @@ pub type ShutdownSender = oneshot::Sender<()>;
 mod oauth_http;
 mod review_http;
 
-const PROXY_FORWARDED_HEADERS: &[&str] = &[
-    "cf-connecting-ip",
-    "cf-ray",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-    "forwarded",
-    "via",
-    "true-client-ip",
-];
-
-struct PeerConnectAddr(Option<SocketAddr>);
-
-impl<S: Send + Sync> axum::extract::FromRequestParts<S> for PeerConnectAddr {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let addr = parts
-            .extensions
-            .get::<axum::extract::ConnectInfo<SocketAddr>>()
-            .map(|ci| ci.0);
-        Ok(Self(addr))
-    }
-}
-
 fn is_loopback_host(headers: &HeaderMap) -> bool {
     let Some(raw) = headers.get(HOST).and_then(|v| v.to_str().ok()) else {
         return true;
@@ -73,6 +45,8 @@ fn is_loopback_host(headers: &HeaderMap) -> bool {
             Some((ipv6, _)) => ipv6,
             None => return false,
         }
+    } else if trimmed.parse::<std::net::IpAddr>().is_ok() {
+        trimmed.as_str()
     } else if let Some((h, _)) = trimmed.rsplit_once(':') {
         if h.contains(':') {
             return false;
@@ -85,11 +59,8 @@ fn is_loopback_host(headers: &HeaderMap) -> bool {
 }
 
 fn is_direct_loopback_agent(headers: &HeaderMap, remote: Option<SocketAddr>) -> bool {
-    let via_proxy = PROXY_FORWARDED_HEADERS
-        .iter()
-        .any(|name| headers.contains_key(*name));
     remote.is_some_and(|addr| addr.ip().is_loopback())
-        && !via_proxy
+        && !has_proxy_forwarded_headers(headers)
         && is_loopback_host(headers)
         && headers.get("origin").is_none()
 }
@@ -107,18 +78,15 @@ fn check_mcp_surface_scope(
                 Json(json!({
                     "ok": false,
                     "code": "LAN_MCP_DISABLED",
-                    "message": "当前主机未开启局域网直连 /mcp；请在本机通过 127.0.0.1 连接以跨设备访问配对工作区，或在设置中开启「允许局域网访问」。"
+                    "message": "当前主机未开启局域网直连 /mcp；请在本机通过 127.0.0.1 连接以跨设备访问配对工作区，或在「设置 → 连接」中开启「允许局域网未配对客户端直连 /mcp」。"
                 })),
             )
                 .into_response(),
         );
     }
-    let via_proxy = PROXY_FORWARDED_HEADERS
-        .iter()
-        .any(|name| headers.contains_key(*name));
     if !auth_enabled
         && (remote.is_some_and(|addr| !addr.ip().is_loopback())
-            || via_proxy
+            || has_proxy_forwarded_headers(headers)
             || !is_loopback_host(headers)
             || headers.get("origin").is_some())
     {
@@ -137,23 +105,37 @@ fn check_mcp_surface_scope(
     None
 }
 
-// Shared by OAuth endpoints and bearer token verification.
-fn resolve_oauth_base(state: &ListenerState, headers: &HeaderMap) -> String {
-    external_base_url(headers, state.bind_port, &state.configured_public_url)
+// Shared by OAuth endpoints and bearer token verification using an already-cloned policy snapshot.
+pub(super) fn resolve_oauth_base_with_policy(
+    policy: &LiveListenerPolicy,
+    bind_port: u16,
+    headers: &HeaderMap,
+) -> String {
+    external_base_url(headers, bind_port, &policy.configured_public_url)
 }
 
 /// The OAuth issuer may be public, but a loopback MCP client must see its own
 /// exact resource URL in RFC9728 metadata. Never derive this from untrusted
 /// forwarded headers; the comparison is deliberately limited to the listener.
-fn resolve_mcp_resource_base(state: &ListenerState, headers: &HeaderMap) -> String {
-    let loopback_host = format!("127.0.0.1:{}", state.bind_port);
+pub(super) fn resolve_mcp_resource_base_with_policy(
+    policy: &LiveListenerPolicy,
+    bind_port: u16,
+    headers: &HeaderMap,
+) -> String {
+    let loopback_host = format!("127.0.0.1:{bind_port}");
     if headers.get(HOST).and_then(|h| h.to_str().ok()) == Some(loopback_host.as_str())
         && !headers.contains_key("x-forwarded-host")
         && !headers.contains_key("forwarded")
     {
         return format!("http://{loopback_host}");
     }
-    resolve_oauth_base(state, headers)
+    resolve_oauth_base_with_policy(policy, bind_port, headers)
+}
+
+#[cfg(test)]
+fn resolve_mcp_resource_base(state: &ListenerState, headers: &HeaderMap) -> String {
+    let policy = state.policy_snapshot();
+    resolve_mcp_resource_base_with_policy(&policy, state.bind_port, headers)
 }
 
 #[derive(Debug, Clone)]
@@ -163,22 +145,6 @@ pub struct GatewayListenerConfig {
     pub public_base_url: String,
 }
 
-/// Identity is sourced only from the verified auth layer, not RPC parameters.
-/// A shared bearer token inherently represents one shared identity; OAuth is
-/// bound to the authenticated client ID. Missing OAuth identity fails closed
-/// for host-level Computer Use while ordinary Workspace tools still work.
-fn computer_auth_principal(state: &ListenerState, headers: &HeaderMap) -> Option<String> {
-    let (method, client_id) = audit_auth_identity(state, headers);
-    match method {
-        "oauth" => client_id.map(|id| format!("oauth:{id}")),
-        "shared_bearer" => Some("shared_bearer".into()),
-        // Preserve legacy per-session request flow for local/no-auth clients.
-        // An anonymous identity is NEVER eligible for the new local auto mode.
-        "none" => Some("local_unauthenticated".into()),
-        _ => None,
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct ListenerSecrets {
     pub oauth_client_secret: Option<String>,
@@ -186,28 +152,66 @@ pub struct ListenerSecrets {
     pub oauth_token_secret: Option<String>,
 }
 
+/// Hot-reloadable security and endpoint policy shared by a running listener.
+/// Swapping this behind `Arc<RwLock<...>>` applies auth, secret, loopback,
+/// LAN-MCP, and public URL changes immediately without dropping connections
+/// or restarting tunnels.
+#[derive(Clone)]
+pub struct LiveListenerPolicy {
+    pub auth: AuthConfig,
+    pub allow_lan_mcp: bool,
+    pub allow_local_noauth: bool,
+    pub configured_public_url: String,
+    pub bearer_token: Option<String>,
+    pub oauth: Option<Arc<OAuthRuntime>>,
+}
+
+pub struct SpawnedGatewayListener {
+    pub shutdown: ShutdownSender,
+    pub handle: tauri::async_runtime::JoinHandle<()>,
+    pub policy: Arc<RwLock<LiveListenerPolicy>>,
+    pub bound_port: u16,
+    pub bound_all_interfaces: bool,
+}
+
 #[derive(Clone)]
 struct ListenerState {
     gateway: Arc<GatewayState>,
-    auth: AuthConfig,
+    policy: Arc<RwLock<LiveListenerPolicy>>,
     scope_id: String,
     scope_label: String,
     bind_port: u16,
-    allow_lan_mcp: bool,
-    allow_local_noauth: bool,
-    configured_public_url: String,
-    bearer_token: Option<String>,
-    oauth: Option<Arc<OAuthRuntime>>,
-    oauth_client_secret: Option<String>,
 }
 
-pub fn spawn_gateway_listener(
+impl ListenerState {
+    pub(super) fn policy_snapshot(&self) -> LiveListenerPolicy {
+        self.policy
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+struct AuthenticatedRequest {
+    method: &'static str,
+    client_id: Option<String>,
+    computer_principal: Option<String>,
+    local_agent_trusted: bool,
+}
+
+struct ComputerSessionResolution {
+    session_id: Option<String>,
+    newly_issued_capability: Option<(String, String)>,
+}
+
+pub fn build_live_policy(
     config: GatewayListenerConfig,
     secrets: ListenerSecrets,
-    gateway: Arc<GatewayState>,
-) -> Result<(ShutdownSender, tauri::async_runtime::JoinHandle<()>), String> {
+    allow_lan_mcp: bool,
+    allow_local_noauth: bool,
+) -> Result<LiveListenerPolicy, String> {
     let GatewayListenerConfig {
-        port,
+        port: _,
         auth,
         public_base_url,
     } = config;
@@ -223,11 +227,9 @@ pub fn spawn_gateway_listener(
     };
     let configured_public_url = public_base_url.trim().to_string();
     let oauth = if auth.oauth_enabled() {
-        let oauth_base = external_base_url(&HeaderMap::new(), port, &configured_public_url);
         let oauth_runtime = OAuthRuntime::new_app_persistent(
-            oauth_base,
             auth.oauth_client_id.clone(),
-            oauth_client_secret.clone(),
+            oauth_client_secret,
             oauth_password.unwrap_or_default(),
             oauth_token_secret.unwrap_or_default(),
             "global_mcp".into(),
@@ -240,20 +242,37 @@ pub fn spawn_gateway_listener(
     } else {
         None
     };
-    let settings = AppSettings::load_or_default();
-    let allow_lan_access = settings.allow_lan_access || settings.lan_federation.enabled;
-    let state = ListenerState {
-        gateway,
+    Ok(LiveListenerPolicy {
         auth,
-        scope_id: "global-mcp".into(),
-        scope_label: "Global MCP Gateway".into(),
-        bind_port: port,
-        allow_lan_mcp: settings.allow_lan_access,
-        allow_local_noauth: settings.allow_local_noauth,
+        allow_lan_mcp,
+        allow_local_noauth,
         configured_public_url,
         bearer_token,
         oauth,
-        oauth_client_secret,
+    })
+}
+
+pub fn spawn_gateway_listener(
+    config: GatewayListenerConfig,
+    secrets: ListenerSecrets,
+    gateway: Arc<GatewayState>,
+) -> Result<SpawnedGatewayListener, String> {
+    let port = config.port;
+    let settings = AppSettings::load_or_default();
+    let allow_lan_access = settings.allow_lan_access || settings.lan_federation.enabled;
+    let live_policy = build_live_policy(
+        config,
+        secrets,
+        settings.allow_lan_access,
+        settings.allow_local_noauth,
+    )?;
+    let policy = Arc::new(RwLock::new(live_policy));
+    let state = ListenerState {
+        gateway,
+        policy: Arc::clone(&policy),
+        scope_id: "global-mcp".into(),
+        scope_label: "Global MCP Gateway".into(),
+        bind_port: port,
     };
     let listener = bind_listener(port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -262,7 +281,13 @@ pub fn spawn_gateway_listener(
             eprintln!("global mcp listener stopped: {error}");
         }
     });
-    Ok((shutdown_tx, handle))
+    Ok(SpawnedGatewayListener {
+        shutdown: shutdown_tx,
+        handle,
+        policy,
+        bound_port: port,
+        bound_all_interfaces: allow_lan_access,
+    })
 }
 
 async fn serve(
@@ -349,17 +374,32 @@ fn bind_listener(port: u16, allow_lan_access: bool) -> Result<tokio::net::TcpLis
         .map_err(|err| format!("MCP 本地监听器初始化失败: {err}"))
 }
 
-async fn mcp_discovery() -> Response {
-    ([(CACHE_CONTROL, "no-store")], Json(mcp_discovery_payload())).into_response()
+async fn mcp_discovery(State(state): State<ListenerState>) -> Response {
+    let configured_name = state
+        .gateway
+        .settings_snapshot()
+        .unwrap_or_else(AppSettings::load_or_default)
+        .global_mcp_server_name;
+    (
+        [(CACHE_CONTROL, "no-store")],
+        Json(mcp_discovery_payload_for(&configured_name)),
+    )
+        .into_response()
 }
 
-fn mcp_discovery_payload() -> Value {
+fn mcp_discovery_payload_for(configured_name: &str) -> Value {
     json!({
-        "name": "coding-tools-mcp",
+        "name": crate::settings::resolved_mcp_server_name(configured_name),
+        "title": crate::settings::resolved_mcp_server_title(configured_name),
         "version": env!("CARGO_PKG_VERSION"),
         "protocolVersion": crate::mcp::LATEST_PROTOCOL_VERSION,
         "supportedProtocolVersions": crate::mcp::SUPPORTED_PROTOCOL_VERSIONS
     })
+}
+
+#[cfg(test)]
+fn mcp_discovery_payload() -> Value {
+    mcp_discovery_payload_for("")
 }
 
 async fn mcp_post(
@@ -368,39 +408,186 @@ async fn mcp_post(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Some(response) = check_mcp_surface_scope(
-        state.allow_lan_mcp,
-        state.auth.auth_enabled(),
-        &headers,
-        remote,
-    ) {
-        return response;
-    }
-    let local_agent_trusted = state.allow_local_noauth
-        && !headers.contains_key(AUTHORIZATION)
-        && is_direct_loopback_agent(&headers, remote);
-    if !local_agent_trusted {
-        if let Some(response) = require_mcp_auth(&state, &headers) {
-            return response;
-        }
-    }
-    let meta = RpcRequestMeta::from_body(&body);
-    let (effective_auth_method, effective_client_id): (&'static str, Option<String>) =
-        if local_agent_trusted {
-            ("local_loopback", Some("loopback".into()))
-        } else {
-            audit_auth_identity(&state, &headers)
-        };
-    let computer_principal = if local_agent_trusted {
-        Some("local_loopback".into())
-    } else {
-        computer_auth_principal(&state, &headers)
+    let policy = state.policy_snapshot();
+    let auth = match authenticate_mcp_request(&policy, state.bind_port, &headers, remote) {
+        Ok(auth) => auth,
+        Err(response) => return *response,
     };
-    let computer_tool = meta.method == "tools/call"
+
+    let meta = RpcRequestMeta::from_body(&body);
+    let computer_tool = meta.is_tool_call()
         && matches!(
             meta.tool_name.as_str(),
             "computer_session" | "computer_observe" | "computer_action"
         );
+    let computer_resolution = if computer_tool {
+        resolve_computer_session(&state, &policy, &auth, &headers, &meta, &body)
+    } else {
+        ComputerSessionResolution {
+            session_id: None,
+            newly_issued_capability: None,
+        }
+    };
+    if computer_tool && computer_resolution.session_id.is_none() {
+        return reject_missing_computer_session(&meta, &auth, body).await;
+    }
+
+    let (effective_session_id, response_session_id) = resolve_effective_session(
+        &state,
+        &auth,
+        &headers,
+        &meta,
+        &body,
+        computer_tool,
+        computer_resolution.session_id,
+    );
+    // The session must survive the entire tool request, not merely the
+    // initial touch. This guard releases after the worker returns.
+    let _active_session = effective_session_id
+        .as_deref()
+        .and_then(|id| state.gateway.sessions.begin_request(id));
+
+    let is_computer_stop = meta.tool_name == "computer_session"
+        && body
+            .pointer("/params/arguments/action")
+            .and_then(Value::as_str)
+            == Some("stop");
+
+    let gateway = Arc::clone(&state.gateway);
+    let scope_id = state.scope_id.clone();
+    let meta_for_err = meta.clone();
+    let scope_for_err = state.scope_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        execute_and_finalize_rpc(
+            &gateway,
+            &scope_id,
+            effective_session_id.as_deref(),
+            &meta,
+            &auth,
+            &body,
+            computer_resolution.newly_issued_capability,
+            is_computer_stop,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(bytes) => build_json_bytes_response(bytes, response_session_id),
+        Err(error) => handle_worker_failure(&scope_for_err, &meta_for_err, error).await,
+    }
+}
+
+fn authenticate_mcp_request(
+    policy: &LiveListenerPolicy,
+    bind_port: u16,
+    headers: &HeaderMap,
+    remote: Option<SocketAddr>,
+) -> Result<AuthenticatedRequest, Box<Response>> {
+    if let Some(response) = check_mcp_surface_scope(
+        policy.allow_lan_mcp,
+        policy.auth.auth_enabled(),
+        headers,
+        remote,
+    ) {
+        return Err(Box::new(response));
+    }
+    if policy.allow_local_noauth
+        && !headers.contains_key(AUTHORIZATION)
+        && is_direct_loopback_agent(headers, remote)
+    {
+        return Ok(AuthenticatedRequest {
+            method: "local_loopback",
+            client_id: Some("loopback".into()),
+            computer_principal: Some("local_loopback".into()),
+            local_agent_trusted: true,
+        });
+    }
+    authenticate_with_policy(policy, bind_port, headers)
+}
+
+/// Perform credential verification once and return the verified principal identity.
+fn authenticate_with_policy(
+    policy: &LiveListenerPolicy,
+    bind_port: u16,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedRequest, Box<Response>> {
+    if policy.auth.bearer_enabled() {
+        let Some(expected) = policy
+            .bearer_token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Err(Box::new(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Bearer authentication is enabled but no token is configured",
+                )
+                    .into_response(),
+            ));
+        };
+        if let Some(response) = verify_bearer_header(headers, expected) {
+            return Err(Box::new(response));
+        }
+        return Ok(AuthenticatedRequest {
+            method: "shared_bearer",
+            client_id: None,
+            computer_principal: Some("shared_bearer".into()),
+            local_agent_trusted: false,
+        });
+    }
+    if policy.auth.oauth_enabled() {
+        if let Some(oauth) = policy.oauth.as_ref() {
+            let server_url = resolve_oauth_base_with_policy(policy, bind_port, headers);
+            return match authenticate_oauth_bearer_header(headers, oauth, &server_url) {
+                Ok(client_id) => Ok(AuthenticatedRequest {
+                    method: "oauth",
+                    computer_principal: Some(format!("oauth:{client_id}")),
+                    client_id: Some(client_id),
+                    local_agent_trusted: false,
+                }),
+                Err(mut response) => {
+                    if response.status() == StatusCode::UNAUTHORIZED {
+                        let resource_base =
+                            resolve_mcp_resource_base_with_policy(policy, bind_port, headers);
+                        let metadata_url = protected_resource_metadata_url(&resource_base);
+                        if let Ok(value) =
+                            format!("Bearer resource_metadata=\"{metadata_url}\"").parse()
+                        {
+                            response.headers_mut().insert(WWW_AUTHENTICATE, value);
+                        }
+                    }
+                    Err(response)
+                }
+            };
+        }
+    }
+    if policy.auth.auth_enabled() {
+        return Err(Box::new(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unsupported or incomplete MCP authentication configuration",
+            )
+                .into_response(),
+        ));
+    }
+    // Preserve legacy per-session request flow for local/no-auth clients.
+    // An anonymous identity is NEVER eligible for local auto mode.
+    Ok(AuthenticatedRequest {
+        method: "none",
+        client_id: None,
+        computer_principal: Some("local_unauthenticated".into()),
+        local_agent_trusted: false,
+    })
+}
+
+fn resolve_computer_session(
+    state: &ListenerState,
+    policy: &LiveListenerPolicy,
+    auth: &AuthenticatedRequest,
+    headers: &HeaderMap,
+    meta: &RpcRequestMeta,
+    body: &Value,
+) -> ComputerSessionResolution {
     let capability_arg = body
         .pointer("/params/arguments/session_token")
         .and_then(Value::as_str);
@@ -413,98 +600,108 @@ async fn mcp_post(
     // that do not retain the transport header. Neither workspace_id nor _meta
     // can become a Computer Use identity.
     let mut newly_issued_capability: Option<(String, String)> = None;
-    let computer_session = if computer_tool {
-        match (computer_principal.as_deref(), capability_arg) {
-            (Some(owner), Some(token)) => state
-                .gateway
-                .sessions
-                .resolve_computer_capability(token, owner),
-            (Some(owner), None)
-                if audit_auth_identity(&state, &headers).0 != "none"
-                    && crate::computer::local_policy_present() =>
-            {
-                // Stable per-authenticated-principal identity: no ChatGPT
-                // transport header, request _meta, or session_token required.
-                // Only the local webview can enable this policy.
-                Some(state.gateway.sessions.computer_auto_session(owner))
-            }
-            (Some(owner), None)
-                if (local_agent_trusted || audit_auth_identity(&state, &headers).0 != "none")
-                    && remote_computer_target =>
-            {
-                // Remote LAN Computer Use target: mint a transport-bound principal
-                // session so dispatch can forward to the paired Mac, which enforces
-                // its own local Computer Use policy and TCC independently.
-                Some(state.gateway.sessions.computer_auto_session(owner))
-            }
-            (Some(owner), None) => {
-                let header_session = headers
-                    .get(MCP_SESSION_HEADER)
-                    .and_then(|value| value.to_str().ok());
-                if let Some(header_session) = header_session.filter(|session| {
-                    state
-                        .gateway
-                        .sessions
-                        .computer_owner_matches(session, owner)
-                }) {
-                    Some(header_session.to_string())
-                } else if meta.tool_name == "computer_session"
-                    && body
-                        .pointer("/params/arguments/action")
-                        .and_then(Value::as_str)
-                        == Some("request")
-                {
-                    let session = state
-                        .gateway
-                        .sessions
-                        .issue_with_owner(Some(owner.to_string()));
-                    let token = state
-                        .gateway
-                        .sessions
-                        .issue_computer_capability(&session, owner)
-                        .expect("newly issued Computer Use session has matching owner");
-                    newly_issued_capability = Some((session.clone(), token));
-                    Some(session)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-    if computer_tool && computer_session.is_none() {
-        let denied = json!({
-            "jsonrpc": "2.0",
-            "id": meta.request_id,
-            "result": {
-                "isError": true,
-                "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 请先通过 computer_session(request) 获取短期 session_token 并在后续调用中传入，或保留服务端 MCP Session Header；_meta 不能用作电脑操作身份" }],
-                "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
-            }
-        });
-        record_tool_call(
-            ToolAuditCall::new(
-                &meta.request_id,
-                &meta.tool_name,
-                None,
-                effective_auth_method,
-                effective_client_id.as_deref(),
-                serde_json::to_vec(&body)
-                    .map(|v| v.len())
-                    .unwrap_or_default(),
-                &body,
-            ),
-            None,
-            &denied,
-        );
-        return Json(denied).into_response();
-    }
+    let can_use_local_auto = auth.method != "none" && policy.auth.auth_enabled();
+    let can_use_remote_auto = auth.local_agent_trusted || auth.method != "none";
 
-    let requested_session_id = session_id_from_request(&headers, &body);
+    let session_id = match (auth.computer_principal.as_deref(), capability_arg) {
+        (Some(owner), Some(token)) => state
+            .gateway
+            .sessions
+            .resolve_computer_capability(token, owner),
+        (Some(owner), None) if can_use_local_auto && crate::computer::local_policy_present() => {
+            Some(state.gateway.sessions.computer_auto_session(owner))
+        }
+        (Some(owner), None) if can_use_remote_auto && remote_computer_target => {
+            Some(state.gateway.sessions.computer_auto_session(owner))
+        }
+        (Some(owner), None) => {
+            let header_session = headers
+                .get(MCP_SESSION_HEADER)
+                .and_then(|value| value.to_str().ok());
+            if let Some(header_session) = header_session.filter(|session| {
+                state
+                    .gateway
+                    .sessions
+                    .computer_owner_matches(session, owner)
+            }) {
+                Some(header_session.to_string())
+            } else if meta.tool_name == "computer_session"
+                && body
+                    .pointer("/params/arguments/action")
+                    .and_then(Value::as_str)
+                    == Some("request")
+            {
+                let session = state
+                    .gateway
+                    .sessions
+                    .issue_with_owner(Some(owner.to_string()));
+                match state
+                    .gateway
+                    .sessions
+                    .issue_computer_capability(&session, owner)
+                {
+                    Some(token) => {
+                        newly_issued_capability = Some((session.clone(), token));
+                        Some(session)
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    ComputerSessionResolution {
+        session_id,
+        newly_issued_capability,
+    }
+}
+
+async fn reject_missing_computer_session(
+    meta: &RpcRequestMeta,
+    auth: &AuthenticatedRequest,
+    body: Value,
+) -> Response {
+    let denied = json!({
+        "jsonrpc": "2.0",
+        "id": meta.request_id,
+        "result": {
+            "isError": true,
+            "content": [{ "type": "text", "text": "COMPUTER_SESSION_REQUIRED: 请先通过 computer_session(request) 获取短期 session_token 并在后续调用中传入，或保留服务端 MCP Session Header；_meta 不能用作电脑操作身份" }],
+            "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
+        }
+    });
+    let audit_call = ToolAuditCall::new(
+        &meta.request_id,
+        &meta.tool_name,
+        None,
+        auth.method,
+        auth.client_id.as_deref(),
+        meta.request_bytes,
+        &body,
+    );
+    let denied_for_audit = denied.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        record_tool_call(audit_call, None, &denied_for_audit);
+    })
+    .await;
+    Json(denied).into_response()
+}
+
+fn resolve_effective_session(
+    state: &ListenerState,
+    auth: &AuthenticatedRequest,
+    headers: &HeaderMap,
+    meta: &RpcRequestMeta,
+    body: &Value,
+    computer_tool: bool,
+    computer_session: Option<String>,
+) -> (Option<String>, Option<String>) {
+    let requested_session_id = session_id_from_request(headers, body);
     let host_session_id = if headers.get(MCP_SESSION_HEADER).is_none() {
-        session_id_from_metadata(&body)
+        session_id_from_metadata(body)
     } else {
         None
     };
@@ -518,7 +715,7 @@ async fn mcp_post(
     } else if meta.method == "initialize" {
         match requested_session_id.as_deref() {
             Some(session_id)
-                if computer_principal.as_deref().is_some_and(|owner| {
+                if auth.computer_principal.as_deref().is_some_and(|owner| {
                     state
                         .gateway
                         .sessions
@@ -531,17 +728,13 @@ async fn mcp_post(
                 state
                     .gateway
                     .sessions
-                    .issue_with_owner(computer_principal.clone()),
+                    .issue_with_owner(auth.computer_principal.clone()),
             ),
         }
     } else {
         requested_session_id
     };
-    // The session must survive the entire tool request, not merely the
-    // initial touch. This guard releases after the worker returns.
-    let _active_session = effective_session_id
-        .as_deref()
-        .and_then(|id| state.gateway.sessions.begin_request(id));
+
     let response_session_id = effective_session_id
         .as_deref()
         .filter(|session_id| {
@@ -553,185 +746,135 @@ async fn mcp_post(
                 && state.gateway.sessions.contains(session_id)
         })
         .map(str::to_string);
-    log_request(&state.scope_id, effective_session_id.as_deref(), &meta);
 
-    let audit_call = if meta.method == "tools/call" {
-        let request_bytes = serde_json::to_vec(&body)
-            .map(|bytes| bytes.len())
-            .unwrap_or_default();
-        Some(ToolAuditCall::new(
+    (effective_session_id, response_session_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_and_finalize_rpc(
+    gateway: &GatewayState,
+    scope_id: &str,
+    session_id: Option<&str>,
+    meta: &RpcRequestMeta,
+    auth: &AuthenticatedRequest,
+    body: &Value,
+    newly_issued_capability: Option<(String, String)>,
+    is_computer_stop: bool,
+) -> Bytes {
+    log_request(scope_id, session_id, meta);
+
+    let audit_call = meta.is_tool_call().then(|| {
+        ToolAuditCall::new(
             &meta.request_id,
             &meta.tool_name,
-            effective_session_id.as_deref(),
-            effective_auth_method,
-            effective_client_id.as_deref(),
-            request_bytes,
-            &body,
-        ))
-    } else {
-        None
-    };
+            session_id,
+            auth.method,
+            auth.client_id.as_deref(),
+            meta.request_bytes,
+            body,
+        )
+    });
     let audit_workspace_id = audit_call
         .as_ref()
-        .and_then(|_| audit_workspace_hint(&state.gateway, effective_session_id.as_deref(), &body));
+        .and_then(|_| audit_workspace_hint(gateway, session_id, body));
 
-    let gateway = state.gateway.clone();
-    let body_for_worker = body.clone();
-    let session_for_worker = effective_session_id.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        handle_gateway_request(
-            gateway.as_ref(),
-            session_for_worker.as_deref(),
-            &body_for_worker,
-        )
-    })
-    .await;
-    match result {
-        Ok(gateway_response) => {
-            let mut response = gateway_response.body;
-            let tool_succeeded = response["result"]["isError"] == false;
-            if let Some((session, token)) = newly_issued_capability {
-                if tool_succeeded {
-                    response["result"]["structuredContent"]["session_token"] = json!(token);
-                    let payload = response["result"]["structuredContent"].to_string();
-                    response["result"]["content"][0]["text"] = json!(payload);
-                } else {
-                    state
-                        .gateway
-                        .sessions
-                        .revoke_computer_capabilities(&session);
-                }
-            }
-            if tool_succeeded
-                && meta.tool_name == "computer_session"
-                && body
-                    .pointer("/params/arguments/action")
-                    .and_then(Value::as_str)
-                    == Some("stop")
-            {
-                if let Some(session) = effective_session_id.as_deref() {
-                    state.gateway.sessions.revoke_computer_capabilities(session);
-                }
-            }
-            if let Some(workspace) = gateway_response.workspace.as_ref() {
-                record_response(
-                    &workspace.tools,
-                    &workspace.workspace_id,
-                    effective_session_id.as_deref(),
-                    &meta,
-                    &response,
-                );
-            }
-            if let Some(mut call) = audit_call {
-                call.set_execution_host(gateway_response.execution_host);
-                let workspace_id = gateway_response
-                    .workspace
-                    .as_ref()
-                    .map(|workspace| workspace.workspace_id.clone())
-                    .or(gateway_response.federated_workspace_id)
-                    .or(audit_workspace_id);
-                record_tool_call(call, workspace_id, &response);
-            }
-            let mut http_response = Json(response).into_response();
-            if let Some(session_id) = response_session_id {
-                if let Ok(value) = session_id.parse() {
-                    http_response
-                        .headers_mut()
-                        .insert(MCP_SESSION_HEADER, value);
-                }
-            }
-            http_response
-        }
-        Err(error) => {
-            let error_response = json!({
-                "jsonrpc": "2.0",
-                "id": meta.request_id.clone(),
-                "error": {
-                    "code": -32603,
-                    "message": "Exec RPC worker failed",
-                    "data": {
-                        "stage": "rpc_worker",
-                        "reason": "worker_failed",
-                        "retryable": true,
-                        "suggestion": "重试请求或重启 MCP 运行时"
-                    }
-                }
-            });
-            if let Some(call) = audit_call {
-                record_tool_call(call, audit_workspace_id, &error_response);
-            }
-            append_profile_log(
-                &state.scope_id,
-                "mcp-requests.log",
-                &format!(
-                    "[rpc] worker_failed id={} method={} tool={} error={error}",
-                    meta.request_id, meta.method, meta.tool_name
-                ),
-            );
-            Json(error_response).into_response()
+    let gateway_response = handle_gateway_request(gateway, session_id, body);
+    let mut response = gateway_response.body;
+    let tool_succeeded = response["result"]["isError"] == false;
+
+    if let Some((session, token)) = newly_issued_capability {
+        if tool_succeeded {
+            response["result"]["structuredContent"]["session_token"] = json!(token);
+            let payload = response["result"]["structuredContent"].to_string();
+            response["result"]["content"][0]["text"] = json!(payload);
+        } else {
+            gateway.sessions.revoke_computer_capabilities(&session);
         }
     }
-}
-
-fn audit_auth_identity(
-    state: &ListenerState,
-    headers: &HeaderMap,
-) -> (&'static str, Option<String>) {
-    if state.auth.bearer_enabled() {
-        return ("shared_bearer", None);
-    }
-    if state.auth.oauth_enabled() {
-        let client_id = state.oauth.as_ref().and_then(|oauth| {
-            let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
-            let token = value.strip_prefix("Bearer ")?.trim();
-            oauth.access_token_client_id(token, &resolve_oauth_base(state, headers))
-        });
-        return ("oauth", client_id);
-    }
-    ("none", None)
-}
-
-fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Response> {
-    if state.auth.bearer_enabled() {
-        let Some(expected) = state
-            .bearer_token
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        else {
-            return Some(
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Bearer authentication is enabled but no token is configured",
-                )
-                    .into_response(),
-            );
-        };
-        return verify_bearer_header(headers, expected);
-    }
-    if state.auth.oauth_enabled() {
-        if let Some(oauth) = state.oauth.as_ref() {
-            let server_url = resolve_oauth_base(state, headers);
-            let mut response = verify_oauth_bearer_header(headers, oauth, &server_url)?;
-            if response.status() == StatusCode::UNAUTHORIZED {
-                let metadata_url =
-                    protected_resource_metadata_url(&resolve_mcp_resource_base(state, headers));
-                if let Ok(value) = format!("Bearer resource_metadata=\"{metadata_url}\"").parse() {
-                    response.headers_mut().insert(WWW_AUTHENTICATE, value);
-                }
-            }
-            return Some(response);
+    if tool_succeeded && is_computer_stop {
+        if let Some(session) = session_id {
+            gateway.sessions.revoke_computer_capabilities(session);
         }
     }
-    if state.auth.auth_enabled() {
-        return Some(
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unsupported or incomplete MCP authentication configuration",
-            )
-                .into_response(),
+
+    // Serialize once into `Bytes`: used both to measure exact response size
+    // and as the direct HTTP body without a second JSON serialization pass.
+    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
+    let response_bytes = bytes.len();
+
+    if let Some(workspace) = gateway_response.workspace.as_ref() {
+        record_response(
+            &workspace.tools,
+            &workspace.workspace_id,
+            session_id,
+            meta,
+            &response,
+            response_bytes,
         );
     }
-    None
+    if let Some(mut call) = audit_call {
+        call.set_execution_host(gateway_response.execution_host);
+        let workspace_id = gateway_response
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.workspace_id.clone())
+            .or(gateway_response.federated_workspace_id)
+            .or(audit_workspace_id);
+        record_tool_call(call, workspace_id, &response);
+    }
+    bytes
+}
+
+fn build_json_bytes_response(bytes: Bytes, response_session_id: Option<String>) -> Response {
+    let mut http_response =
+        (StatusCode::OK, [(CONTENT_TYPE, "application/json")], bytes).into_response();
+    if let Some(session_id) = response_session_id {
+        if let Ok(value) = session_id.parse() {
+            http_response
+                .headers_mut()
+                .insert(MCP_SESSION_HEADER, value);
+        }
+    }
+    http_response
+}
+
+async fn handle_worker_failure(
+    scope_id: &str,
+    meta: &RpcRequestMeta,
+    error: tokio::task::JoinError,
+) -> Response {
+    let error_response = json!({
+        "jsonrpc": "2.0",
+        "id": meta.request_id.clone(),
+        "error": {
+            "code": -32603,
+            "message": "Exec RPC worker failed",
+            "data": {
+                "stage": "rpc_worker",
+                "reason": "worker_failed",
+                "retryable": true,
+                "suggestion": "重试请求或重启 MCP 运行时"
+            }
+        }
+    });
+    let scope_id = scope_id.to_string();
+    let log_line = format!(
+        "[rpc] worker_failed id={} method={} tool={} error={error}",
+        meta.request_id, meta.method, meta.tool_name
+    );
+    let _ = tokio::task::spawn_blocking(move || {
+        append_profile_log(&scope_id, "mcp-requests.log", &log_line);
+    })
+    .await;
+    Json(error_response).into_response()
+}
+
+#[cfg(test)]
+fn require_mcp_auth(state: &ListenerState, headers: &HeaderMap) -> Option<Response> {
+    let policy = state.policy_snapshot();
+    authenticate_with_policy(&policy, state.bind_port, headers)
+        .err()
+        .map(|resp| *resp)
 }
 
 #[cfg(test)]

@@ -11,6 +11,8 @@ use super::auth::load_bearer_token;
 use super::compact::adapt_gemini_response;
 use super::MCP_SESSION_HEADER;
 
+const MAX_IN_FLIGHT_REQUESTS: usize = 32;
+
 pub(super) struct BridgeState {
     pub(super) client: reqwest::Client,
     pub(super) endpoint: String,
@@ -64,7 +66,11 @@ pub(super) async fn forward_process_stdio(state: Arc<BridgeState>) -> Result<(),
     let writer_res = writer_handle
         .join()
         .map_err(|_| "stdout writer thread panicked".to_string())?;
-    let _ = reader_handle.join();
+    // Only join the blocking stdin reader when the channel drained to EOF cleanly;
+    // on an early bridge error, stdin may still be blocked waiting for input.
+    if bridge_res.is_ok() {
+        let _ = reader_handle.join();
+    }
     bridge_res?;
     writer_res
 }
@@ -77,6 +83,11 @@ pub(super) async fn forward_line_channel(
     let mut in_flight = JoinSet::new();
 
     while let Some(item) = in_rx.recv().await {
+        while let Some(res) = in_flight.try_join_next() {
+            if let Err(err) = res {
+                eprintln!("mcp-stdio request task panicked: {err}");
+            }
+        }
         let raw_line = item?;
         let trimmed = raw_line.trim();
         if trimmed.is_empty() {
@@ -103,6 +114,11 @@ pub(super) async fn forward_line_channel(
         if is_initialize_request(&message) {
             process_message(Arc::clone(&state), message, out_tx.clone()).await;
         } else {
+            while in_flight.len() >= MAX_IN_FLIGHT_REQUESTS {
+                if let Some(Err(err)) = in_flight.join_next().await {
+                    eprintln!("mcp-stdio request task panicked: {err}");
+                }
+            }
             let state_ref = Arc::clone(&state);
             let tx = out_tx.clone();
             in_flight.spawn(async move {
@@ -178,8 +194,7 @@ async fn post_with_auth_retry(state: &BridgeState, message: &Value) -> Result<Ve
         let refreshed_token = load_bearer_token(state.auth_file.as_deref());
         if refreshed_token.is_some() && refreshed_token != current_token {
             *state.bearer_token.write().await = refreshed_token.clone();
-            let retry_response =
-                send_mcp_post(state, message, refreshed_token.as_deref()).await?;
+            let retry_response = send_mcp_post(state, message, refreshed_token.as_deref()).await?;
             return decode_mcp_http_response(state, retry_response).await;
         }
         return Err(format!(

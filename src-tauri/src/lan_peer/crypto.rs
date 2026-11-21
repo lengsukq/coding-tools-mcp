@@ -1,24 +1,20 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const BLOCK_SIZE: usize = 64;
-const REPLAY_TTL_MS: u64 = 120_000;
+pub(super) const REPLAY_TTL_MS: u64 = 120_000;
 const REQUEST_MAX_SKEW_MS: u64 = 60_000;
-const MAX_REPLAY_ENTRIES: usize = 4096;
+pub(super) const MAX_REPLAY_ENTRIES: usize = 4096;
 
 pub fn unix_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or_default()
+    crate::util::time::unix_now_ms()
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::util::hash::sha256_hex(bytes)
 }
 
 /// RFC 2104 standard HMAC-SHA256 using only `sha2::Sha256`.
@@ -55,24 +51,12 @@ pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
 
 pub fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
     let mac = hmac_sha256(key, message);
-    let mut out = String::with_capacity(64);
-    for byte in mac {
-        use std::fmt::Write;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
+    crate::util::hash::encode_hex_lower(&mac)
 }
 
 /// Constant-time byte comparison to prevent timing side-channels on PIN proofs and HMACs.
 pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (&a, &b) in left.iter().zip(right.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
+    crate::auth::constant_time_eq(left, right)
 }
 
 /// Generate 32 bytes (64 hex chars) of OS CSPRNG entropy via v4 UUIDs + domain separation.
@@ -86,15 +70,17 @@ pub fn random_hex_32() -> String {
     hasher.update(b.as_bytes());
     hasher.update(c.as_bytes());
     hasher.update(unix_time_ms().to_le_bytes());
-    format!("{:x}", hasher.finalize())
+    crate::util::hash::encode_hex_lower(&hasher.finalize())
 }
 
 /// Generate a uniform 6-digit numeric pairing PIN (`100000`..=`999999`) with rejection sampling.
 pub fn random_pin_6() -> String {
     loop {
-        let bytes = *Uuid::new_v4().as_bytes();
-        // Mask out UUID v4 version/variant bits by hashing with a second v4 UUID.
-        let digest = Sha256::digest([bytes.as_slice(), Uuid::new_v4().as_bytes()].concat());
+        // Mask out UUID v4 version/variant bits by hashing two v4 UUIDs without heap allocation.
+        let mut hasher = Sha256::new();
+        hasher.update(Uuid::new_v4().as_bytes());
+        hasher.update(Uuid::new_v4().as_bytes());
+        let digest = hasher.finalize();
         let raw = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]);
         // Reject above largest multiple of 900_000 fitting in u32 (4_294_800_000) to avoid bias.
         if raw < 4_294_800_000 {
@@ -105,14 +91,19 @@ pub fn random_pin_6() -> String {
 }
 
 pub fn derive_fingerprint(device_id: &str, node_secret: &str) -> String {
-    let hex = sha256_hex(format!("ctm-device-fp-v1:{device_id}:{node_secret}").as_bytes());
-    let upper = hex[..16].to_ascii_uppercase();
+    let mut hasher = Sha256::new();
+    hasher.update(b"ctm-device-fp-v1:");
+    hasher.update(device_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(node_secret.as_bytes());
+    let digest = hasher.finalize();
+    let hex = crate::util::hash::encode_hex_lower(&digest[..8]).to_ascii_uppercase();
     format!(
         "{}-{}-{}-{}",
-        &upper[0..4],
-        &upper[4..8],
-        &upper[8..12],
-        &upper[12..16]
+        &hex[0..4],
+        &hex[4..8],
+        &hex[8..12],
+        &hex[12..16]
     )
 }
 
@@ -170,6 +161,7 @@ pub fn sign_peer_request(
     hmac_sha256_hex(peer_secret.as_bytes(), canonical.as_bytes())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_peer_request_signature(
     peer_secret: &str,
     caller_device_id: &str,
@@ -213,13 +205,25 @@ pub struct ReplayGuard {
 
 impl ReplayGuard {
     pub fn check_and_record(&self, peer_id: &str, nonce: &str, now_ms: u64) -> bool {
+        self.check_and_record_with_capacity(peer_id, nonce, now_ms, MAX_REPLAY_ENTRIES)
+    }
+
+    pub(super) fn check_and_record_with_capacity(
+        &self,
+        peer_id: &str,
+        nonce: &str,
+        now_ms: u64,
+        max_entries: usize,
+    ) -> bool {
         let mut guard = self.seen.lock().unwrap_or_else(|e| e.into_inner());
         guard.retain(|_, ts| now_ms.saturating_sub(*ts) <= REPLAY_TTL_MS);
-        if guard.len() >= MAX_REPLAY_ENTRIES {
-            guard.clear();
-        }
         let key = format!("{peer_id}:{nonce}");
         if guard.contains_key(&key) {
+            return false;
+        }
+        // Fail closed once capacity is saturated by unexpired entries: never
+        // clear the table, which would open a replay window for all prior nonces.
+        if guard.len() >= max_entries {
             return false;
         }
         guard.insert(key, now_ms);

@@ -107,7 +107,10 @@ pub fn parse_workspace_scope(
                 format!("无效的工作区标识格式: {trimmed}"),
             ));
         }
-        if prefix == "local" || prefix == "self" || (!self_device_id.is_empty() && prefix == self_device_id) {
+        if prefix == "local"
+            || prefix == "self"
+            || (!self_device_id.is_empty() && prefix == self_device_id)
+        {
             return Ok(WorkspaceTarget::Local(rest.to_string()));
         }
         if !valid_device_id(prefix) {
@@ -131,20 +134,50 @@ pub fn parse_workspace_scope(
     Ok(WorkspaceTarget::Local(trimmed.to_string()))
 }
 
+pub(super) fn extract_valid_local_identity(
+    data: &crate::data::AppData,
+) -> Option<(LanFederationConfig, String)> {
+    let node_secret = data
+        .app_secrets
+        .get(LAN_SECRET_SCOPE)
+        .and_then(|map| map.get(LAN_NODE_SECRET_KEY))
+        .map(String::as_str)?;
+    let cfg = &data.lan_federation;
+    if node_secret.trim().len() < 32
+        || !valid_device_id(&cfg.device_id)
+        || cfg.device_name.trim().is_empty()
+        || !matches!(cfg.share_mode.as_str(), "all" | "selected")
+        || !matches!(cfg.trust_level.as_str(), "full" | "readonly")
+    {
+        return None;
+    }
+    Some((cfg.clone(), node_secret.to_string()))
+}
+
 /// Ensure this installation has a persistent `device_id`, `device_name`, and
-/// `node_secret` persisted on disk. Safe to call repeatedly.
+/// `node_secret` persisted on disk. Safe to call repeatedly with zero disk
+/// writes once initialized.
 pub fn ensure_local_identity() -> Result<(LanFederationConfig, String), String> {
-    let mut node_secret = SecretStore::get_app(LAN_SECRET_SCOPE, LAN_NODE_SECRET_KEY)
-        .map_err(|e| e.to_string())?
-        .unwrap_or_default();
-    if node_secret.trim().len() < 32 {
-        let generated = random_hex_32();
-        SecretStore::set_app(LAN_SECRET_SCOPE, LAN_NODE_SECRET_KEY, &generated)
-            .map_err(|e| e.to_string())?;
-        node_secret = generated;
+    if let Some((config, node_secret)) =
+        DataStore::read_file(|data| Ok(extract_valid_local_identity(data)))
+            .map_err(|e| e.to_string())?
+    {
+        let fingerprint = derive_fingerprint(&config.device_id, &node_secret);
+        return Ok((config, fingerprint));
     }
 
-    let config = DataStore::update_file(|data| {
+    let (config, node_secret) = DataStore::update_file(|data| {
+        let secret_entry = data
+            .app_secrets
+            .entry(LAN_SECRET_SCOPE.to_string())
+            .or_default()
+            .entry(LAN_NODE_SECRET_KEY.to_string())
+            .or_default();
+        if secret_entry.trim().len() < 32 {
+            *secret_entry = random_hex_32();
+        }
+        let node_secret = secret_entry.clone();
+
         if !valid_device_id(&data.lan_federation.device_id) {
             let suffix = &random_hex_32()[..12];
             data.lan_federation.device_id = format!("dev_{suffix}");
@@ -155,10 +188,13 @@ pub fn ensure_local_identity() -> Result<(LanFederationConfig, String), String> 
         if !matches!(data.lan_federation.share_mode.as_str(), "all" | "selected") {
             data.lan_federation.share_mode = "all".into();
         }
-        if !matches!(data.lan_federation.trust_level.as_str(), "full" | "readonly") {
+        if !matches!(
+            data.lan_federation.trust_level.as_str(),
+            "full" | "readonly"
+        ) {
             data.lan_federation.trust_level = "full".into();
         }
-        Ok(data.lan_federation.clone())
+        Ok((data.lan_federation.clone(), node_secret))
     })
     .map_err(|e| e.to_string())?;
 
@@ -168,7 +204,9 @@ pub fn ensure_local_identity() -> Result<(LanFederationConfig, String), String> 
 
 /// Read-only identity helper that honors an optional `settings_override` (used by unit tests
 /// so tests never mutate the real user configuration directory).
-pub fn identity_from_settings(settings_override: Option<&AppSettings>) -> (LanFederationConfig, String) {
+pub fn identity_from_settings(
+    settings_override: Option<&AppSettings>,
+) -> (LanFederationConfig, String) {
     if let Some(settings) = settings_override {
         let mut cfg = settings.lan_federation.clone();
         if !valid_device_id(&cfg.device_id) {
@@ -252,10 +290,7 @@ pub fn is_workspace_shared(config: &LanFederationConfig, workspace_id: &str) -> 
     }
 }
 
-pub fn get_peer_secret(
-    device_id: &str,
-    settings_override: Option<&AppSettings>,
-) -> Option<String> {
+pub fn get_peer_secret(device_id: &str, settings_override: Option<&AppSettings>) -> Option<String> {
     if let Some(settings) = settings_override {
         return settings
             .app_secrets

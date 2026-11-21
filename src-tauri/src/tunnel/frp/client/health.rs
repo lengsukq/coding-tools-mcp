@@ -1,98 +1,8 @@
 use super::*;
+use crate::tunnel::rotate_log_if_needed;
 
 pub(crate) fn frpc_log_name() -> &'static str {
     "frpc-mcp.log"
-}
-
-/// Detect a stuck reconnect loop: recent log ends with repeated connect failures
-/// and no newer login/proxy success. This is the state that leaves local MCP up
-/// while the public FRP vhost returns frp's own 404 page.
-#[cfg(test)]
-pub(crate) fn frpc_reconnect_loop_detected(content: &str) -> bool {
-    let cleaned = strip_ansi(content);
-    let lines: Vec<&str> = cleaned
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect();
-    if lines.is_empty() {
-        return false;
-    }
-    let window = &lines[lines.len().saturating_sub(40)..];
-    let mut trailing_errors = 0usize;
-    for line in window.iter().rev() {
-        let lower = line.to_ascii_lowercase();
-        if is_frpc_reconnect_noise_line(&lower) {
-            continue;
-        }
-        if is_frpc_reconnect_error_line(&lower) {
-            trailing_errors += 1;
-            continue;
-        }
-        if is_frpc_healthy_line(&lower) {
-            break;
-        }
-        if trailing_errors > 0 {
-            break;
-        }
-    }
-    trailing_errors >= 3
-}
-
-#[cfg(test)]
-fn is_frpc_reconnect_noise_line(lower: &str) -> bool {
-    lower.contains("try to connect to server")
-}
-
-#[cfg(test)]
-fn is_frpc_reconnect_error_line(lower: &str) -> bool {
-    lower.contains("connect to server error")
-        || lower.contains("i/o deadline reached")
-        || lower.contains("session shutdown")
-        || (lower.contains("login to the server failed") && lower.contains("timeout"))
-}
-
-#[cfg(test)]
-fn is_frpc_healthy_line(lower: &str) -> bool {
-    lower.contains("login to server success")
-        || lower.contains("start proxy success")
-        || lower.contains("proxy start success")
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PublicMcpProbe {
-    Healthy,
-    /// frps answered with its own Not Found HTML — proxy not registered.
-    FrpNotRouted,
-    Unexpected,
-}
-
-#[cfg(test)]
-pub(crate) fn classify_public_mcp_body(status: u16, body: &str) -> PublicMcpProbe {
-    let lower = body.to_ascii_lowercase();
-    if is_frp_not_found_page(&lower) {
-        return PublicMcpProbe::FrpNotRouted;
-    }
-    if status == 200
-        && (lower.contains("coding-tools-mcp")
-            || lower.contains("protocolversion")
-            || lower.contains("\"name\""))
-    {
-        return PublicMcpProbe::Healthy;
-    }
-    // Route is live but auth may challenge; still means the proxy works.
-    if matches!(status, 200 | 401 | 405) {
-        return PublicMcpProbe::Healthy;
-    }
-    PublicMcpProbe::Unexpected
-}
-
-#[cfg(test)]
-pub(crate) fn is_frp_not_found_page(lower_body: &str) -> bool {
-    (lower_body.contains("powered by") && lower_body.contains("frp"))
-        || (lower_body.contains("the page you requested was not found")
-            && lower_body.contains("frp"))
 }
 
 pub(super) async fn wait_for_frpc_ready(
@@ -110,10 +20,10 @@ pub(super) async fn wait_for_frpc_ready(
             sleep(Duration::from_millis(300)).await;
             return Err(frpc_exit_error(status, log_path));
         }
-        if let Some(error) = detect_frpc_log_error(log_path, log_offset) {
+        let content = read_log_since(log_path, log_offset);
+        if let Some(error) = detect_frpc_log_error_in_text(&content) {
             return Err(error);
         }
-        let content = read_log_since(log_path, log_offset);
         if successful_proxy_names(&content).len() >= expected_proxy_count {
             return Ok(true);
         }
@@ -144,12 +54,11 @@ fn frpc_exit_error(status: std::process::ExitStatus, log_path: &Path) -> AppErro
     AppError::Message(format!("frpc 退出，状态码 {status}。{detail}"))
 }
 
-fn detect_frpc_log_error(log_path: &Path, log_offset: u64) -> Option<AppError> {
-    let content = read_log_since(log_path, log_offset);
+fn detect_frpc_log_error_in_text(content: &str) -> Option<AppError> {
     if content.is_empty() {
         return None;
     }
-    let lowered = strip_ansi(&content).to_ascii_lowercase();
+    let lowered = strip_ansi(content).to_ascii_lowercase();
     if lowered.contains("authorization failed")
         || lowered.contains("token in login doesn't match")
         || lowered.contains("login to the server failed")
@@ -158,7 +67,7 @@ fn detect_frpc_log_error(log_path: &Path, log_offset: u64) -> Option<AppError> {
     {
         return Some(AppError::Message(format!(
             "frpc 连接失败：{}",
-            frpc_log_summary_from_text(&content)
+            frpc_log_summary_from_text(content)
         )));
     }
     None
@@ -221,36 +130,59 @@ fn strip_ansi(text: &str) -> String {
     out
 }
 
-pub(super) async fn stream_frpc_logs<R>(stderr: R, log_paths: Vec<PathBuf>)
-where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+/// Merge stdout and stderr through a single channel into one log file writer
+/// to prevent interleaved writes and duplicate file descriptors.
+pub(super) async fn stream_frpc_output<O, E>(
+    stdout: Option<O>,
+    stderr: Option<E>,
+    log_path: PathBuf,
+) where
+    O: tokio::io::AsyncRead + Unpin + Send + 'static,
+    E: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
-    let mut files = Vec::new();
-    for log_path in log_paths {
-        if let Some(parent) = log_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(file) = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .await
-        {
-            files.push(file);
-        }
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    if files.is_empty() {
+    rotate_log_if_needed(&log_path);
+    let Ok(mut file) = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .await
+    else {
         return;
-    }
+    };
 
-    let mut reader = BufReader::new(stderr).lines();
-    while let Ok(Some(line)) = reader.next_line().await {
-        use tokio::io::AsyncWriteExt;
-        for file in &mut files {
-            let _ = file.write_all(line.as_bytes()).await;
-            let _ = file.write_all(b"\n").await;
-            let _ = file.flush().await;
-        }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    if let Some(stdout) = stdout {
+        let stdout_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if stdout_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    if let Some(stderr) = stderr {
+        let stderr_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if stderr_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+
+    use tokio::io::AsyncWriteExt;
+    while let Some(line) = rx.recv().await {
+        let _ = file.write_all(line.as_bytes()).await;
+        let _ = file.write_all(b"\n").await;
+        let _ = file.flush().await;
     }
 }
 

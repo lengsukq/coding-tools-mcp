@@ -1,7 +1,32 @@
+use std::io::{self, Write};
+
 use serde_json::Value;
 
 use crate::mcp::server::SharedState;
 use crate::tunnel::append_profile_log;
+
+/// Zero-allocation writer that counts serialized JSON bytes without buffering a `Vec<u8>`.
+struct CountingWriter(usize);
+
+impl Write for CountingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) fn serialized_json_len(value: &Value) -> usize {
+    let mut counter = CountingWriter(0);
+    if serde_json::to_writer(&mut counter, value).is_ok() {
+        counter.0
+    } else {
+        0
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct RpcRequestMeta {
@@ -26,9 +51,7 @@ impl RpcRequestMeta {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
-            request_bytes: serde_json::to_vec(body)
-                .map(|bytes| bytes.len())
-                .unwrap_or_default(),
+            request_bytes: serialized_json_len(body),
         }
     }
 
@@ -57,8 +80,8 @@ pub(super) fn record_response(
     session_id: Option<&str>,
     meta: &RpcRequestMeta,
     response: &Value,
+    response_bytes: usize,
 ) {
-    let response_bytes = serialized_len(response);
     let is_error = response.get("error").is_some()
         || response
             .get("result")
@@ -74,12 +97,6 @@ pub(super) fn record_response(
     );
     log_rpc_completion(state, profile_id, session_id, meta, response_bytes);
     log_exec_result(profile_id, session_id, meta, response);
-}
-
-fn serialized_len(value: &Value) -> usize {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len())
-        .unwrap_or_default()
 }
 
 fn log_rpc_completion(
@@ -99,7 +116,12 @@ fn log_rpc_completion(
         "mcp-requests.log",
         &format!(
             "[rpc] completed session={} id={} method={} tool={} response_bytes={} repeated_bytes={}",
-            session_id.unwrap_or("none"), meta.request_id, meta.method, meta.tool_name, response_bytes, repeated_bytes
+            session_id.unwrap_or("none"),
+            meta.request_id,
+            meta.method,
+            meta.tool_name,
+            response_bytes,
+            repeated_bytes
         ),
     );
 
@@ -161,7 +183,13 @@ fn log_exec_result(
         "mcp-requests.log",
         &format!(
             "[exec] session={} id={} tool={} is_error={} status={} termination_reason={} exit_code={}",
-            session_id.unwrap_or("none"), meta.request_id, meta.tool_name, is_error, status, termination_reason, exit_code
+            session_id.unwrap_or("none"),
+            meta.request_id,
+            meta.tool_name,
+            is_error,
+            status,
+            termination_reason,
+            exit_code
         ),
     );
 }

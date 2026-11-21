@@ -25,7 +25,7 @@ pub(crate) fn constant_time_eq_str(left: &str, right: &str) -> bool {
     constant_time_eq(left.as_bytes(), right.as_bytes())
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }

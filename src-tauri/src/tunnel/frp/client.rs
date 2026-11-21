@@ -21,11 +21,7 @@ pub(crate) mod managed;
 mod runtime;
 
 #[cfg(test)]
-use health::classify_public_mcp_body;
-#[cfg(test)]
 use health::successful_proxy_names;
-#[cfg(test)]
-pub(crate) use health::{frpc_reconnect_loop_detected, PublicMcpProbe};
 pub(crate) use install::{cached_frpc_path, download_frpc_to_cache};
 pub use install::{ensure_frpc, resolve_frpc};
 #[cfg(test)]
@@ -48,10 +44,7 @@ pub struct FrpcHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        classify_public_mcp_body, frpc_reconnect_loop_detected, managed_frpc_config_path,
-        managed_frpc_pid_path, successful_proxy_names, PublicMcpProbe,
-    };
+    use super::{managed_frpc_config_path, managed_frpc_pid_path, successful_proxy_names};
 
     #[test]
     fn login_success_alone_is_not_a_ready_proxy() {
@@ -89,46 +82,5 @@ mod tests {
 
         assert!(normalized.ends_with("frpc/___unsafe_workspace/frpc.pid"));
         assert!(!normalized.contains("/../"));
-    }
-
-    #[test]
-    fn reconnect_loop_is_detected_from_trailing_errors() {
-        let log = "\
-2026-08-02 15:38:30 [W] connect to server error: EOF\n\
-2026-08-02 15:38:40 [I] try to connect to server...\n\
-2026-08-02 15:38:50 [W] connect to server error: i/o deadline reached\n\
-2026-08-02 15:39:10 [I] try to connect to server...\n\
-2026-08-02 15:39:20 [W] connect to server error: i/o deadline reached\n\
-2026-08-02 15:39:40 [I] try to connect to server...\n\
-2026-08-02 15:39:50 [W] connect to server error: i/o deadline reached\n";
-        assert!(frpc_reconnect_loop_detected(log));
-    }
-
-    #[test]
-    fn successful_relogin_clears_reconnect_loop() {
-        let log = "\
-2026-08-02 15:38:50 [W] connect to server error: i/o deadline reached\n\
-2026-08-02 15:39:10 [W] connect to server error: i/o deadline reached\n\
-2026-08-02 15:39:20 [I] login to server success, get run id [abc]\n\
-2026-08-02 15:39:21 [I] [ws-demo-mcp] start proxy success\n";
-        assert!(!frpc_reconnect_loop_detected(log));
-    }
-
-    #[test]
-    fn frp_not_found_html_is_classified_as_not_routed() {
-        let body = r#"<!DOCTYPE html><title>Not Found</title>
-<p>The page you requested was not found.</p>
-<p>The server is powered by <a href="https://github.com/fatedier/frp">frp</a>.</p>"#;
-        assert_eq!(
-            classify_public_mcp_body(404, body),
-            PublicMcpProbe::FrpNotRouted
-        );
-        assert_eq!(
-            classify_public_mcp_body(
-                200,
-                r#"{"name":"coding-tools-mcp","protocolVersion":"2025-06-18"}"#
-            ),
-            PublicMcpProbe::Healthy
-        );
     }
 }

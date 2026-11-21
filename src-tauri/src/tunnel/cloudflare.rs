@@ -9,6 +9,8 @@ use tokio::time;
 use crate::error::{AppError, AppResult};
 use crate::platform::platform;
 use crate::settings::ProxyConfig;
+use crate::tunnel::helpers::{configure_tunnel_command, set_executable_permissions};
+use crate::tunnel::rotate_log_if_needed;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -112,24 +114,36 @@ pub(crate) async fn download_cloudflared_to_cache() -> AppResult<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let bytes =
-        crate::tunnel::download::download_release_asset(&settings, &url, "cloudflared").await?;
-
     if asset.ends_with(".tgz") {
-        extract_cloudflared_from_tar_gz(&bytes, &dest)?;
+        let archive_path = dest.with_extension(format!("tgz-{}", uuid::Uuid::new_v4().simple()));
+        crate::tunnel::download::download_release_asset_to_file(
+            &settings,
+            &url,
+            "cloudflared",
+            &archive_path,
+        )
+        .await?;
+        let archive_for_extract = archive_path.clone();
+        let dest_for_extract = dest.clone();
+        let extract_result = tokio::task::spawn_blocking(move || {
+            let result = extract_cloudflared_from_tar_gz(&archive_for_extract, &dest_for_extract);
+            let _ = std::fs::remove_file(&archive_for_extract);
+            result
+        })
+        .await
+        .map_err(|err| AppError::Message(format!("解压 cloudflared 任务异常中断: {err}")))?;
+        extract_result?;
     } else {
-        std::fs::write(&dest, &bytes)?;
+        crate::tunnel::download::download_release_asset_to_file(
+            &settings,
+            &url,
+            "cloudflared",
+            &dest,
+        )
+        .await?;
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&dest) {
-            let mut perms = meta.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&dest, perms);
-        }
-    }
+    set_executable_permissions(&dest, "cloudflared")?;
 
     if dest.is_file() {
         Ok(dest)
@@ -139,33 +153,14 @@ pub(crate) async fn download_cloudflared_to_cache() -> AppResult<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn extract_cloudflared_from_tar_gz(bytes: &[u8], dest: &Path) -> AppResult<()> {
-    let decoder = flate2::read::GzDecoder::new(bytes);
-    let mut archive = tar::Archive::new(decoder);
-    for entry in archive
-        .entries()
-        .map_err(|err| AppError::Message(format!("解压 cloudflared 安装包失败: {err}")))?
-    {
-        let mut entry = entry
-            .map_err(|err| AppError::Message(format!("读取 cloudflared 安装包失败: {err}")))?;
-        let path = entry
-            .path()
-            .map_err(|err| AppError::Message(err.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if path.ends_with("cloudflared") {
-            let mut out = std::fs::File::create(dest)?;
-            std::io::copy(&mut entry, &mut out)?;
-            return Ok(());
-        }
-    }
-    Err(AppError::Message(
-        "cloudflared 安装包中未找到可执行文件。".into(),
-    ))
+fn extract_cloudflared_from_tar_gz(archive_path: &Path, dest: &Path) -> AppResult<()> {
+    crate::tunnel::helpers::extract_binary_from_tar_gz(archive_path, dest, "cloudflared", |path| {
+        path.ends_with("cloudflared")
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
-fn extract_cloudflared_from_tar_gz(_bytes: &[u8], _dest: &Path) -> AppResult<()> {
+fn extract_cloudflared_from_tar_gz(_archive_path: &Path, _dest: &Path) -> AppResult<()> {
     Err(AppError::Message(
         "当前平台的 cloudflared 无需解压。".into(),
     ))
@@ -219,59 +214,27 @@ pub(crate) fn apply_proxy_env(cmd: &mut Command, proxy: &ProxyConfig) {
     }
 }
 
-/// Spawn `cloudflared tunnel --url http://127.0.0.1:{port}` (quick) or named `tunnel run --token`.
+/// Spawn a Cloudflare Quick Tunnel (`cloudflared tunnel --url http://127.0.0.1:{port}`).
 pub async fn spawn_cloudflare_tunnel(
     port: u16,
     cwd: &Path,
     log_path: &Path,
-    cloudflare_mode: &str,
-    cloudflare_token: &str,
-    named_public_url: &str,
     use_proxy: bool,
 ) -> AppResult<CloudflareTunnelHandle> {
     let cloudflared = resolve_cloudflared()?;
-    let quick = cloudflare_mode != "named";
-
-    if !quick {
-        if cloudflare_token.trim().is_empty() {
-            return Err(AppError::Message(
-                "Cloudflare 命名隧道模式需要填写 Tunnel Token。".into(),
-            ));
-        }
-        if named_public_url.trim().is_empty() {
-            return Err(AppError::Message(
-                "Cloudflare 命名隧道模式需要填写固定公网地址。".into(),
-            ));
-        }
-    }
 
     let mut cmd = Command::new(&cloudflared);
     cmd.current_dir(cwd);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-
-    #[cfg(windows)]
-    {
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
-
-    #[cfg(unix)]
-    {
-        cmd.process_group(0);
-    }
+    configure_tunnel_command(&mut cmd);
 
     let settings = crate::settings::AppSettings::load_or_default();
     if use_proxy {
         apply_proxy_env(&mut cmd, &settings.proxy);
     }
 
-    if quick {
-        cmd.args(["tunnel", "--url", &format!("http://127.0.0.1:{port}")]);
-    } else {
-        cmd.args(["tunnel", "run", "--token", cloudflare_token.trim()]);
-    }
+    cmd.args(["tunnel", "--url", &format!("http://127.0.0.1:{port}")]);
 
     let mut child = cmd
         .spawn()
@@ -286,22 +249,15 @@ pub async fn spawn_cloudflare_tunnel(
 
     let (ready_tx, ready_rx) = oneshot::channel();
     let log_path = log_path.to_path_buf();
-    let named_url = named_public_url.trim_end_matches('/').to_string();
     let log_path_for_error = log_path.clone();
 
     if let Some(stdout) = child.stdout.take() {
         let stderr = child.stderr.take();
         tokio::spawn(async move {
-            stream_cloudflare_output(stdout, stderr, &log_path, quick, named_url, ready_tx).await;
+            stream_cloudflare_output(stdout, stderr, &log_path, ready_tx).await;
         });
     } else {
-        let _ = ready_tx.send(QuickTunnelReady {
-            public_url: if quick {
-                None
-            } else {
-                Some(named_public_url.trim_end_matches('/').to_string())
-            },
-        });
+        let _ = ready_tx.send(QuickTunnelReady { public_url: None });
     }
 
     let ready_result = match time::timeout(READY_TIMEOUT, ready_rx).await {
@@ -320,19 +276,12 @@ pub async fn spawn_cloudflare_tunnel(
         Err(error) => return Err(cleanup_spawned_child(child, pid, error).await),
     };
 
-    let public_url = if quick {
-        match ready.public_url {
-            Some(public_url) => public_url,
-            None => {
-                let error = AppError::Message(format!(
-                    "cloudflared 已启动，但没有解析到 trycloudflare.com 地址。请查看日志：{}",
-                    log_path_for_error.display()
-                ));
-                return Err(cleanup_spawned_child(child, pid, error).await);
-            }
-        }
-    } else {
-        named_public_url.trim_end_matches('/').to_string()
+    let Some(public_url) = ready.public_url else {
+        let error = AppError::Message(format!(
+            "cloudflared 已启动，但没有解析到 trycloudflare.com 地址。请查看日志：{}",
+            log_path_for_error.display()
+        ));
+        return Err(cleanup_spawned_child(child, pid, error).await);
     };
 
     Ok(CloudflareTunnelHandle {
@@ -359,8 +308,6 @@ async fn stream_cloudflare_output<R, E>(
     stdout: R,
     stderr: Option<E>,
     log_path: &Path,
-    quick: bool,
-    named_url: String,
     ready_tx: oneshot::Sender<QuickTunnelReady>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -369,6 +316,7 @@ async fn stream_cloudflare_output<R, E>(
     let mut ready_tx = Some(ready_tx);
     let mut public_url: Option<String> = None;
 
+    rotate_log_if_needed(log_path);
     let mut log = match tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -378,9 +326,7 @@ async fn stream_cloudflare_output<R, E>(
         Ok(file) => file,
         Err(_) => {
             if let Some(tx) = ready_tx.take() {
-                let _ = tx.send(QuickTunnelReady {
-                    public_url: if quick { None } else { Some(named_url) },
-                });
+                let _ = tx.send(QuickTunnelReady { public_url: None });
             }
             return;
         }
@@ -396,37 +342,19 @@ async fn stream_cloudflare_output<R, E>(
         |line: &str,
          public_url: &mut Option<String>,
          ready_tx: &mut Option<oneshot::Sender<QuickTunnelReady>>| {
-            if quick {
-                if public_url.is_none() {
-                    if let Some(url) = extract_trycloudflare_url(line) {
-                        *public_url = Some(url.clone());
-                        send_ready(ready_tx, Some(url));
-                    }
-                }
-            } else {
-                let lowered = line.to_ascii_lowercase();
-                if lowered.contains("registered tunnel connection")
-                    || lowered.contains("starting metrics server")
-                {
-                    send_ready(ready_tx, Some(named_url.clone()));
+            if public_url.is_none() {
+                if let Some(url) = extract_trycloudflare_url(line) {
+                    *public_url = Some(url.clone());
+                    send_ready(ready_tx, Some(url));
                 }
             }
         };
 
     // cloudflared logs primarily to stderr; read stdout and stderr concurrently.
     let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let stderr_line_tx = line_tx.clone();
-
-    tokio::spawn(async move {
-        let mut stdout = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = stdout.next_line().await {
-            if line_tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
 
     if let Some(stderr) = stderr {
+        let stderr_line_tx = line_tx.clone();
         tokio::spawn(async move {
             let mut stderr = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = stderr.next_line().await {
@@ -436,6 +364,15 @@ async fn stream_cloudflare_output<R, E>(
             }
         });
     }
+
+    tokio::spawn(async move {
+        let mut stdout = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = stdout.next_line().await {
+            if line_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
 
     while let Some(line) = line_rx.recv().await {
         let _ = log.write_all(line.as_bytes()).await;
@@ -495,5 +432,24 @@ mod tests {
     fn ignores_invalid_hosts() {
         let line = "https://bad_host.trycloudflare.com";
         assert!(extract_trycloudflare_url(line).is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_cloudflare_output_closes_cleanly_when_stderr_is_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("cf.log");
+        let (tx, rx) = super::oneshot::channel();
+        let stdout = std::io::Cursor::new(b"INF no tunnel url here\n".to_vec());
+        let stderr: Option<std::io::Cursor<Vec<u8>>> = None;
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            super::stream_cloudflare_output(stdout, stderr, &log_path, tx),
+        )
+        .await
+        .expect("stream must not deadlock when stderr is None");
+
+        let ready = rx.await.expect("ready signal");
+        assert!(ready.public_url.is_none());
     }
 }

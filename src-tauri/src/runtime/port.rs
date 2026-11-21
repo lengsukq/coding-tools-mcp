@@ -1,7 +1,8 @@
-use std::time::{Duration, Instant};
-
 #[cfg(any(target_os = "macos", test))]
 use std::path::Path;
+#[cfg(any(target_os = "macos", test))]
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use tauri::async_runtime::JoinHandle;
 
@@ -15,6 +16,14 @@ pub fn is_own_process(pid: u32) -> bool {
 const DESKTOP_EXECUTABLE_NAME: &str = "coding-tools-mcp-desktop";
 #[cfg(any(target_os = "macos", test))]
 const DESKTOP_BUNDLE_ID: &str = "com.codingtools.mcp.desktop";
+#[cfg(any(target_os = "macos", test))]
+static DESKTOP_BUNDLE_ID_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    let pattern = format!(
+        r"(?s)<key>\s*CFBundleIdentifier\s*</key>\s*<string>\s*{}\s*</string>",
+        regex::escape(DESKTOP_BUNDLE_ID)
+    );
+    regex::Regex::new(&pattern).expect("valid desktop bundle id regex")
+});
 
 /// Reclaim a port only when it belongs to an older macOS instance of this app.
 ///
@@ -76,13 +85,7 @@ fn is_managed_macos_desktop_executable(image: &Path) -> bool {
     let Ok(info_plist) = std::fs::read_to_string(bundle.join("Contents").join("Info.plist")) else {
         return false;
     };
-    let pattern = format!(
-        r"(?s)<key>\s*CFBundleIdentifier\s*</key>\s*<string>\s*{}\s*</string>",
-        regex::escape(DESKTOP_BUNDLE_ID)
-    );
-    regex::Regex::new(&pattern)
-        .map(|regex| regex.is_match(&info_plist))
-        .unwrap_or(false)
+    DESKTOP_BUNDLE_ID_REGEX.is_match(&info_plist)
 }
 
 #[cfg(target_os = "macos")]
@@ -124,25 +127,37 @@ pub fn try_reclaim_own_port(port: u16) -> bool {
     }
 }
 
+async fn find_pid_listening_async(port: u16) -> Result<Option<u32>, ()> {
+    tokio::task::spawn_blocking(move || platform().find_pid_listening_on_port(port).map_err(|_| ()))
+        .await
+        .map_err(|_| ())?
+}
+
+async fn try_reclaim_own_port_async(port: u16) -> bool {
+    tokio::task::spawn_blocking(move || try_reclaim_own_port(port))
+        .await
+        .unwrap_or(false)
+}
+
 pub async fn wait_for_port_free(port: u16, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        match platform().find_pid_listening_on_port(port) {
+        match find_pid_listening_async(port).await {
             Ok(None) => return true,
             Ok(Some(pid)) if is_own_process(pid) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Ok(Some(_)) => return false,
-            Err(_) => return false,
+            Err(()) => return false,
         }
     }
 
-    if try_reclaim_own_port(port) {
+    if try_reclaim_own_port_async(port).await {
         return true;
     }
 
-    platform()
-        .find_pid_listening_on_port(port)
+    find_pid_listening_async(port)
+        .await
         .ok()
         .flatten()
         .is_none()
@@ -185,7 +200,7 @@ pub async fn await_listener_shutdown(handle: Option<JoinHandle<()>>, port: u16) 
     }
 
     if !wait_for_port_free(port, Duration::from_secs(2)).await {
-        let _ = try_reclaim_own_port(port);
+        let _ = try_reclaim_own_port_async(port).await;
     }
 }
 

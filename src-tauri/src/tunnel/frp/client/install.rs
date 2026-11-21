@@ -1,4 +1,5 @@
 use super::*;
+use crate::tunnel::helpers::{extract_binary_from_tar_gz, set_executable_permissions};
 
 pub fn resolve_frpc() -> AppResult<PathBuf> {
     bundled_frpc()
@@ -64,34 +65,37 @@ pub(crate) async fn download_frpc_to_cache() -> AppResult<PathBuf> {
         format!("https://github.com/fatedier/frp/releases/download/v{FRP_VERSION}/{archive_name}");
     let cache_dir = platform().app_config_dir()?.join("bin").join("downloads");
     std::fs::create_dir_all(&cache_dir)?;
-    let archive_path = cache_dir.join(archive_name);
-    let dest = cached_frpc_path().expect("cache path");
+    let archive_path = cache_dir.join(&archive_name);
+    let dest = cached_frpc_path().ok_or_else(|| AppError::Message("无法解析缓存目录。".into()))?;
 
     if !archive_path.is_file() {
-        let bytes =
-            crate::tunnel::download::download_release_asset(&settings, &url, "frpc").await?;
-        std::fs::write(&archive_path, bytes)?;
+        crate::tunnel::download::download_release_asset_to_file(
+            &settings,
+            &url,
+            "frpc",
+            &archive_path,
+        )
+        .await?;
     }
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    if archive_name.ends_with(".zip") {
-        extract_frpc_from_zip(&archive_path, &dest, binary_in_archive)?;
-    } else {
-        extract_frpc_from_tar_gz(&archive_path, &dest, binary_in_archive)?;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&dest) {
-            let mut perms = meta.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&dest, perms);
+    let archive_for_extract = archive_path.clone();
+    let dest_for_extract = dest.clone();
+    let is_zip = archive_name.ends_with(".zip");
+    tokio::task::spawn_blocking(move || {
+        if is_zip {
+            extract_frpc_from_zip(&archive_for_extract, &dest_for_extract, binary_in_archive)
+        } else {
+            extract_frpc_from_tar_gz(&archive_for_extract, &dest_for_extract, binary_in_archive)
         }
-    }
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("解压 frpc 任务异常中断: {err}")))??;
+
+    set_executable_permissions(&dest, "frpc")?;
 
     if dest.is_file() {
         Ok(dest)
@@ -125,51 +129,31 @@ fn extract_frpc_from_tar_gz(
     dest: &Path,
     binary_suffix: &str,
 ) -> AppResult<()> {
-    let file = std::fs::File::open(archive_path)?;
-    let decoder = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    for entry in archive
-        .entries()
-        .map_err(|err| AppError::Message(format!("解压 frpc 安装包失败: {err}")))?
-    {
-        let mut entry =
-            entry.map_err(|err| AppError::Message(format!("读取 frpc 安装包失败: {err}")))?;
-        let path = entry
-            .path()
-            .map_err(|err| AppError::Message(err.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if path.ends_with(binary_suffix) || path.ends_with("/frpc") {
-            let mut out = std::fs::File::create(dest)?;
-            std::io::copy(&mut entry, &mut out)?;
-            return Ok(());
-        }
-    }
-    Err(AppError::Message(
-        "frpc 安装包中未找到 frpc 可执行文件。".into(),
-    ))
+    extract_binary_from_tar_gz(archive_path, dest, "frpc", |path| {
+        path.ends_with(binary_suffix) || path.ends_with("/frpc")
+    })
 }
 
-fn frp_release_asset() -> AppResult<(&'static str, &'static str)> {
+fn frp_release_asset() -> AppResult<(String, &'static str)> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        Ok(("frp_0.61.2_windows_amd64.zip", "frpc.exe"))
+        Ok((format!("frp_{FRP_VERSION}_windows_amd64.zip"), "frpc.exe"))
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        Ok(("frp_0.61.2_linux_amd64.tar.gz", "frpc"))
+        Ok((format!("frp_{FRP_VERSION}_linux_amd64.tar.gz"), "frpc"))
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        Ok(("frp_0.61.2_linux_arm64.tar.gz", "frpc"))
+        Ok((format!("frp_{FRP_VERSION}_linux_arm64.tar.gz"), "frpc"))
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        Ok(("frp_0.61.2_darwin_amd64.tar.gz", "frpc"))
+        Ok((format!("frp_{FRP_VERSION}_darwin_amd64.tar.gz"), "frpc"))
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        Ok(("frp_0.61.2_darwin_arm64.tar.gz", "frpc"))
+        Ok((format!("frp_{FRP_VERSION}_darwin_arm64.tar.gz"), "frpc"))
     }
     #[cfg(not(any(
         all(target_os = "windows", target_arch = "x86_64"),

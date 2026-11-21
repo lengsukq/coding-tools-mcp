@@ -10,9 +10,9 @@ use super::gateway::MCP_SESSION_HEADER;
 
 mod auth;
 mod compact;
-mod transport;
 #[cfg(test)]
 mod tests;
+mod transport;
 
 pub use auth::{
     format_mcp_stdio_command, gemini_stdio_auth_file_path, gemini_stdio_bin_path, read_auth_file,

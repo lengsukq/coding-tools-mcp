@@ -1,4 +1,7 @@
+use std::path::Path;
 use std::time::Duration;
+
+use tokio::io::AsyncWriteExt;
 
 use crate::error::{AppError, AppResult};
 use crate::settings::AppSettings;
@@ -33,41 +36,18 @@ pub fn plan_github_download(settings: &AppSettings, github_url: &str) -> Downloa
     }
 }
 
-/// Build a reqwest client honoring the configured proxy mode.
-///
-/// - `none`: no proxy (default direct connection)
-/// - `system`: reqwest's built-in system-proxy detection
-/// - anything else: treated as an explicit proxy URL (http/https/socks5)
 fn build_client(settings: &AppSettings) -> AppResult<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(180));
-    let mode = settings.download.proxy_mode.trim();
-    match mode {
-        "" | "none" => {
-            builder = builder.no_proxy();
-        }
-        "system" => {
-            // Leave reqwest's default system-proxy detection enabled.
-        }
-        url => {
-            let proxy = reqwest::Proxy::all(url)
-                .map_err(|err| AppError::Message(format!("代理地址无效: {err}")))?;
-            builder = builder.proxy(proxy);
-        }
-    }
-    builder
-        .build()
-        .map_err(|err| AppError::Message(err.to_string()))
+    crate::util::http::build_download_client(&settings.download, Duration::from_secs(180))
 }
 
-/// Download bytes from a GitHub release asset, honoring mirror + proxy config.
-///
-/// Tries the mirrored URL first (if configured), then falls back to the
-/// original GitHub URL. `label` is used in error messages (e.g. "frpc").
-pub async fn download_release_asset(
+/// Stream a GitHub release asset directly to `dest` via a sibling temporary
+/// file, avoiding buffering multi-tens-of-MB archives in heap memory.
+pub async fn download_release_asset_to_file(
     settings: &AppSettings,
     github_url: &str,
     label: &str,
-) -> AppResult<Vec<u8>> {
+    dest: &Path,
+) -> AppResult<()> {
     let plan = plan_github_download(settings, github_url);
     let client = build_client(settings)?;
 
@@ -76,10 +56,14 @@ pub async fn download_release_asset(
         urls.push(fallback);
     }
 
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
     let mut last_err = String::new();
     for url in urls {
-        match fetch_bytes(&client, &url).await {
-            Ok(bytes) => return Ok(bytes),
+        match stream_to_file(&client, &url, dest).await {
+            Ok(()) => return Ok(()),
             Err(err) => {
                 last_err = err;
             }
@@ -88,14 +72,57 @@ pub async fn download_release_asset(
     Err(AppError::Message(format!("下载 {label} 失败: {last_err}")))
 }
 
-async fn fetch_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
-    let response = client
+async fn stream_to_file(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), String> {
+    let mut response = client
         .get(url)
         .send()
         .await
         .map_err(|err| err.to_string())?
         .error_for_status()
         .map_err(|err| err.to_string())?;
-    let bytes = response.bytes().await.map_err(|err| err.to_string())?;
-    Ok(bytes.to_vec())
+
+    let tmp_path = dest.with_extension(format!("part-{}", uuid::Uuid::new_v4().simple()));
+    let mut file = tokio::fs::File::create(&tmp_path)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    let write_result: Result<(), String> = async {
+        while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
+            file.write_all(&chunk)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        file.flush().await.map_err(|err| err.to_string())?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = write_result {
+        drop(file);
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(err);
+    }
+    drop(file);
+
+    if let Err(err) = tokio::fs::rename(&tmp_path, dest).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(err.to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_proxy_mode_uses_proxy_url_and_rejects_empty_url() {
+        let mut settings = AppSettings::default();
+        settings.download.proxy_mode = "manual".into();
+        settings.download.proxy_url.clear();
+        assert!(build_client(&settings).is_err());
+
+        settings.download.proxy_url = "http://127.0.0.1:7890".into();
+        assert!(build_client(&settings).is_ok());
+    }
 }

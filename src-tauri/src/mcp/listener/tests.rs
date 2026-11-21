@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::{fs, path::Path};
 
 use axum::extract::State;
@@ -16,7 +16,7 @@ use crate::workspace::{AuthConfig, WorkspaceProfile};
 
 use super::{
     bind_listener, build_router, mcp_discovery, mcp_discovery_payload, oauth_http,
-    require_mcp_auth, resolve_mcp_resource_base, ListenerState,
+    require_mcp_auth, resolve_mcp_resource_base, ListenerState, LiveListenerPolicy,
 };
 
 #[test]
@@ -31,8 +31,11 @@ fn bind_listener_reports_port_conflict_synchronously() {
 async fn local_mcp_oauth_metadata_uses_loopback_resource_and_original_public_issuer() {
     let mut state = test_listener_state();
     state.bind_port = 28765;
-    state.configured_public_url = "https://coding-mcp.lengsu.top".into();
-    state.auth.auth_type = "oauth".into();
+    {
+        let mut policy = state.policy.write().unwrap();
+        policy.configured_public_url = "https://coding-mcp.lengsu.top".into();
+        policy.auth.auth_type = "oauth".into();
+    }
 
     let mut local_headers = HeaderMap::new();
     local_headers.insert(HOST, "127.0.0.1:28765".parse().unwrap());
@@ -80,15 +83,17 @@ async fn local_mcp_oauth_metadata_uses_loopback_resource_and_original_public_iss
 fn local_mcp_unauthorized_challenge_advertises_the_loopback_metadata_url() {
     let mut state = test_listener_state();
     state.bind_port = 28765;
-    state.configured_public_url = "https://coding-mcp.lengsu.top".into();
-    state.auth.auth_type = "oauth".into();
-    state.oauth = Some(Arc::new(OAuthRuntime::new(
-        state.configured_public_url.clone(),
-        "test-client".into(),
-        None,
-        "test-password".into(),
-        "test-token-secret".into(),
-    )));
+    {
+        let mut policy = state.policy.write().unwrap();
+        policy.configured_public_url = "https://coding-mcp.lengsu.top".into();
+        policy.auth.auth_type = "oauth".into();
+        policy.oauth = Some(Arc::new(OAuthRuntime::new(
+            "test-client".into(),
+            None,
+            "test-password".into(),
+            "test-token-secret".into(),
+        )));
+    }
     let mut headers = HeaderMap::new();
     headers.insert(HOST, "127.0.0.1:28765".parse().unwrap());
     let response = require_mcp_auth(&state, &headers).expect("OAuth must challenge");
@@ -108,25 +113,81 @@ async fn discovery_reports_the_current_package_version() {
 
 #[tokio::test]
 async fn discovery_prevents_stale_tool_catalog_caching() {
-    let response = mcp_discovery().await.into_response();
+    let response = mcp_discovery(State(test_listener_state()))
+        .await
+        .into_response();
 
     assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
 }
 
+#[tokio::test]
+async fn custom_mcp_server_name_is_advertised_by_discovery_and_initialize() {
+    let settings = AppSettings {
+        global_mcp_server_name: "  Coding Tools MCP · Mac mini  ".into(),
+        ..AppSettings::default()
+    };
+    let mut state = test_listener_state();
+    state.gateway = Arc::new(GatewayState::for_test_profiles(Vec::new(), settings));
+
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind test HTTP listener");
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let discovery: serde_json::Value = client
+        .get(&url)
+        .send()
+        .await
+        .expect("GET /mcp")
+        .json()
+        .await
+        .expect("discovery json");
+    assert_eq!(discovery["name"], "Coding Tools MCP · Mac mini");
+    assert_eq!(discovery["title"], "Coding Tools MCP · Mac mini");
+
+    let init: serde_json::Value = client
+        .post(&url)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25" }
+        }))
+        .send()
+        .await
+        .expect("POST /mcp initialize")
+        .json()
+        .await
+        .expect("initialize json");
+    assert_eq!(
+        init["result"]["serverInfo"]["name"],
+        "Coding Tools MCP · Mac mini"
+    );
+    assert_eq!(
+        init["result"]["serverInfo"]["title"],
+        "Coding Tools MCP · Mac mini"
+    );
+
+    server.abort();
+}
+
 #[test]
 fn mcp_auth_fails_closed_for_missing_bearer_and_unknown_mode() {
-    let mut state = test_listener_state();
-    state.auth.auth_type = "bearer".into();
+    let state = test_listener_state();
+    state.policy.write().unwrap().auth.auth_type = "bearer".into();
     let missing_bearer =
         require_mcp_auth(&state, &HeaderMap::new()).expect("missing bearer must fail");
     assert_eq!(missing_bearer.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    state.auth.auth_type = "unexpected".into();
+    state.policy.write().unwrap().auth.auth_type = "unexpected".into();
     let invalid_mode =
         require_mcp_auth(&state, &HeaderMap::new()).expect("unknown auth must fail closed");
     assert_eq!(invalid_mode.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    state.auth.auth_type = "noauth".into();
+    state.policy.write().unwrap().auth.auth_type = "noauth".into();
     assert!(require_mcp_auth(&state, &HeaderMap::new()).is_none());
 }
 
@@ -143,17 +204,19 @@ fn mcp_auth_allows_a_valid_oauth_bearer() {
         token_use: String,
     }
 
-    let mut state = test_listener_state();
-    state.auth.auth_type = "oauth".into();
-    state.configured_public_url = "https://coding-mcp.lengsu.top".into();
+    let state = test_listener_state();
     let token_secret = "oauth-token-secret";
-    state.oauth = Some(Arc::new(OAuthRuntime::new(
-        "https://coding-mcp.lengsu.top".into(),
-        "test-client".into(),
-        None,
-        "test-password".into(),
-        token_secret.into(),
-    )));
+    {
+        let mut policy = state.policy.write().unwrap();
+        policy.auth.auth_type = "oauth".into();
+        policy.configured_public_url = "https://coding-mcp.lengsu.top".into();
+        policy.oauth = Some(Arc::new(OAuthRuntime::new(
+            "test-client".into(),
+            None,
+            "test-password".into(),
+            token_secret.into(),
+        )));
+    }
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -195,16 +258,17 @@ fn listener_state(profiles: Vec<WorkspaceProfile>) -> ListenerState {
             profiles,
             AppSettings::default(),
         )),
-        auth,
+        policy: Arc::new(RwLock::new(LiveListenerPolicy {
+            auth,
+            allow_lan_mcp: false,
+            allow_local_noauth: false,
+            configured_public_url: String::new(),
+            bearer_token: None,
+            oauth: None,
+        })),
         scope_id: "global-mcp".into(),
         scope_label: "Global MCP Gateway".into(),
         bind_port: 0,
-        allow_lan_mcp: false,
-        allow_local_noauth: false,
-        configured_public_url: String::new(),
-        bearer_token: None,
-        oauth: None,
-        oauth_client_secret: None,
     }
 }
 
@@ -874,18 +938,20 @@ fn path_string(path: &Path) -> String {
 async fn local_loopback_agent_works_without_oauth_while_blocking_tunnel_and_cross_origin() {
     use std::net::SocketAddr;
 
-    let mut state = test_listener_state();
-    state.auth.auth_type = "oauth".into();
-    state.allow_local_noauth = true;
-    state.allow_lan_mcp = false;
-    state.configured_public_url = "https://coding-mcp.example.test".into();
-    state.oauth = Some(Arc::new(OAuthRuntime::new(
-        "https://coding-mcp.example.test".into(),
-        "test-client".into(),
-        None,
-        "test-password".into(),
-        "test-token-secret".into(),
-    )));
+    let state = test_listener_state();
+    {
+        let mut policy = state.policy.write().unwrap();
+        policy.auth.auth_type = "oauth".into();
+        policy.allow_local_noauth = true;
+        policy.allow_lan_mcp = false;
+        policy.configured_public_url = "https://coding-mcp.example.test".into();
+        policy.oauth = Some(Arc::new(OAuthRuntime::new(
+            "test-client".into(),
+            None,
+            "test-password".into(),
+            "test-token-secret".into(),
+        )));
+    }
 
     let app = build_router(state).into_make_service_with_connect_info::<SocketAddr>();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -924,3 +990,73 @@ async fn local_loopback_agent_works_without_oauth_while_blocking_tunnel_and_cros
     server.abort();
 }
 
+#[tokio::test]
+async fn live_policy_hot_reloads_auth_and_public_url_without_restart() {
+    use std::net::SocketAddr;
+
+    let state = test_listener_state();
+    let policy_handle = Arc::clone(&state.policy);
+    let app = build_router(state).into_make_service_with_connect_info::<SocketAddr>();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listen");
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}/mcp");
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    // Starts in noauth mode: loopback initialize succeeds.
+    let session = initialize_session(&client, &url).await;
+
+    // Hot-swap to bearer auth without restarting the listener.
+    {
+        let mut policy = policy_handle.write().unwrap();
+        policy.auth.auth_type = "bearer".into();
+        policy.bearer_token = Some("hot-secret-token".into());
+        policy.allow_local_noauth = false;
+    }
+    let unauth = client
+        .post(&url)
+        .header(super::MCP_SESSION_HEADER, &session)
+        .json(&json!({"jsonrpc":"2.0","id":2,"method":"ping","params":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let authed = client
+        .post(&url)
+        .header(super::MCP_SESSION_HEADER, &session)
+        .header(AUTHORIZATION, "Bearer hot-secret-token")
+        .json(&json!({"jsonrpc":"2.0","id":3,"method":"ping","params":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authed.status(), reqwest::StatusCode::OK);
+
+    // Hot-swap to OAuth with a new public URL: metadata reflects new issuer immediately.
+    {
+        let mut policy = policy_handle.write().unwrap();
+        policy.auth.auth_type = "oauth".into();
+        policy.configured_public_url = "https://mini-mcp.example.test".into();
+        policy.oauth = Some(Arc::new(OAuthRuntime::new(
+            "test-client".into(),
+            None,
+            "test-password".into(),
+            "test-token-secret".into(),
+        )));
+    }
+    let meta: serde_json::Value = client
+        .get(format!(
+            "http://{addr}/.well-known/oauth-authorization-server"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(meta["issuer"], "https://mini-mcp.example.test");
+
+    server.abort();
+}

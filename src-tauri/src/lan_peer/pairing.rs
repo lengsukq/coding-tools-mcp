@@ -145,7 +145,11 @@ pub(super) fn accept_pair_complete(
         || req.secret_part_a.len() < 32
         || req.nonce.len() < 8
     {
-        return Err((400, "INVALID_PAIR_REQUEST", "配对请求参数无效或不完整".into()));
+        return Err((
+            400,
+            "INVALID_PAIR_REQUEST",
+            "配对请求参数无效或不完整".into(),
+        ));
     }
 
     let (local_cfg, local_fp) = identity_from_settings(settings_override);
@@ -250,28 +254,8 @@ pub(super) fn accept_pair_complete(
         .or_else(|| req.initiator.addresses.first().cloned())
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    let mut addresses = vec![caller_host.clone()];
-    for addr in &req.initiator.addresses {
-        let trimmed = addr.trim();
-        if !trimmed.is_empty() && !addresses.iter().any(|x| x == trimmed) {
-            addresses.push(trimmed.to_string());
-        }
-    }
-    addresses.truncate(8);
-
-    let peer_record = PairedPeerConfig {
-        device_id: req.initiator.device_id.clone(),
-        device_name: sanitize_device_name(&req.initiator.device_name),
-        fingerprint: req.initiator.fingerprint.clone(),
-        os: sanitize_short(&req.initiator.os, 24),
-        arch: sanitize_short(&req.initiator.arch, 24),
-        version: sanitize_short(&req.initiator.version, 32),
-        host: caller_host,
-        port: req.initiator.mcp_port,
-        addresses,
-        enabled: true,
-        paired_at_ms: now,
-    };
+    let addresses = merge_peer_addresses(&caller_host, &req.initiator.addresses, 8);
+    let peer_record = build_paired_peer_record(&req.initiator, caller_host, addresses, now);
 
     if settings_override.is_none() {
         persist_paired_peer(&peer_record, &shared_secret)
@@ -281,20 +265,7 @@ pub(super) fn accept_pair_complete(
     let extra_subnets = settings_override
         .map(|s| s.lan_federation.extra_subnets.clone())
         .unwrap_or_else(|| AppSettings::load_or_default().lan_federation.extra_subnets);
-    let local_addrs = local_network::local_lan_ipv4_addrs_with_subnets(&extra_subnets)
-        .into_iter()
-        .map(|ip| ip.to_string())
-        .collect();
-    let responder = PairPeerSummary {
-        device_id: local_cfg.device_id,
-        device_name: local_cfg.device_name,
-        fingerprint: local_fp,
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        mcp_port: local_port,
-        addresses: local_addrs,
-    };
+    let responder = build_local_peer_summary(&local_cfg, local_fp, local_port, &extra_subnets);
 
     Ok((
         PairCompleteResponse {
@@ -319,10 +290,6 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
     let target = probe_peer_hello(host, port).await?;
     let (local_cfg, local_fp) = ensure_local_identity()?;
     let settings = AppSettings::load_or_default();
-    let local_addrs: Vec<String> = local_network::local_lan_ipv4_addrs_with_subnets(&settings.lan_federation.extra_subnets)
-        .into_iter()
-        .map(|ip| ip.to_string())
-        .collect();
 
     let timestamp_ms = unix_time_ms();
     let nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -336,26 +303,26 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
         &secret_part_a,
     );
 
+    let initiator = build_local_peer_summary(
+        &local_cfg,
+        local_fp,
+        settings.global_gateway.local_port,
+        &settings.lan_federation.extra_subnets,
+    );
     let payload = PairCompleteRequest {
         protocol: LAN_PROTOCOL_VERSION.to_string(),
         target_device_id: target.device_id.clone(),
-        initiator: PairPeerSummary {
-            device_id: local_cfg.device_id.clone(),
-            device_name: local_cfg.device_name,
-            fingerprint: local_fp,
-            os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            mcp_port: settings.global_gateway.local_port,
-            addresses: local_addrs,
-        },
+        initiator,
         timestamp_ms,
         nonce: nonce.clone(),
         secret_part_a: secret_part_a.clone(),
         pin_proof,
     };
 
-    let url = format!("http://{}:{}/api/lan/v1/pair/complete", target.host, target.port);
+    let url = format!(
+        "http://{}:{}/api/lan/v1/pair/complete",
+        target.host, target.port
+    );
     let response = super::client::shared_lan_http_client()
         .post(&url)
         .timeout(Duration::from_secs(5))
@@ -402,35 +369,74 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
         &ack.secret_part_b,
     );
 
-    let mut addresses = vec![target.host.clone()];
-    for addr in &ack.responder.addresses {
-        let trimmed = addr.trim();
-        if !trimmed.is_empty() && !addresses.iter().any(|x| x == trimmed) {
-            addresses.push(trimmed.to_string());
-        }
-    }
-    addresses.truncate(8);
-
-    let peer_record = PairedPeerConfig {
-        device_id: ack.responder.device_id,
-        device_name: sanitize_device_name(&ack.responder.device_name),
-        fingerprint: ack.responder.fingerprint,
-        os: sanitize_short(&ack.responder.os, 24),
-        arch: sanitize_short(&ack.responder.arch, 24),
-        version: sanitize_short(&ack.responder.version, 32),
-        host: target.host,
-        port: ack.responder.mcp_port,
-        addresses,
-        enabled: true,
-        paired_at_ms: unix_time_ms(),
-    };
+    let addresses = merge_peer_addresses(&target.host, &ack.responder.addresses, 8);
+    let peer_record =
+        build_paired_peer_record(&ack.responder, target.host, addresses, unix_time_ms());
 
     persist_paired_peer(&peer_record, &shared_secret)?;
     super::client::invalidate_peer_cache(&peer_record.device_id);
     Ok(peer_record)
 }
 
-pub(super) fn persist_paired_peer(peer: &PairedPeerConfig, shared_secret: &str) -> Result<(), String> {
+fn merge_peer_addresses(primary: &str, extra: &[String], max: usize) -> Vec<String> {
+    let mut addresses = vec![primary.to_string()];
+    for addr in extra {
+        let trimmed = addr.trim();
+        if !trimmed.is_empty() && !addresses.iter().any(|existing| existing == trimmed) {
+            addresses.push(trimmed.to_string());
+        }
+    }
+    addresses.truncate(max);
+    addresses
+}
+
+fn build_local_peer_summary(
+    local_cfg: &crate::settings::LanFederationConfig,
+    fingerprint: String,
+    mcp_port: u16,
+    extra_subnets: &[String],
+) -> PairPeerSummary {
+    let addresses = local_network::local_lan_ipv4_addrs_with_subnets(extra_subnets)
+        .into_iter()
+        .map(|ip| ip.to_string())
+        .collect();
+    PairPeerSummary {
+        device_id: local_cfg.device_id.clone(),
+        device_name: local_cfg.device_name.clone(),
+        fingerprint,
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        mcp_port,
+        addresses,
+    }
+}
+
+fn build_paired_peer_record(
+    summary: &PairPeerSummary,
+    host: String,
+    addresses: Vec<String>,
+    paired_at_ms: u64,
+) -> PairedPeerConfig {
+    PairedPeerConfig {
+        device_id: summary.device_id.clone(),
+        device_name: sanitize_device_name(&summary.device_name),
+        fingerprint: summary.fingerprint.clone(),
+        os: sanitize_short(&summary.os, 24),
+        arch: sanitize_short(&summary.arch, 24),
+        version: sanitize_short(&summary.version, 32),
+        host,
+        port: summary.mcp_port,
+        addresses,
+        enabled: true,
+        paired_at_ms,
+    }
+}
+
+pub(super) fn persist_paired_peer(
+    peer: &PairedPeerConfig,
+    shared_secret: &str,
+) -> Result<(), String> {
     set_peer_secret(&peer.device_id, shared_secret)?;
     DataStore::update_file(|data| {
         data.lan_federation.enabled = true;

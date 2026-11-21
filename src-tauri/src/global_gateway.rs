@@ -37,7 +37,6 @@ enum TunnelChild {
 struct GatewayRuntime {
     config: GlobalGatewayConfig,
     public_url: String,
-    running: bool,
     tunnel: Option<TunnelChild>,
 }
 
@@ -64,7 +63,7 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
 
     let mut guard = RUNTIME.lock().await;
     if let Some(runtime) = guard.as_ref() {
-        if runtime.config == config && runtime.running {
+        if runtime.config == config {
             return Ok(status_from_runtime(runtime));
         }
     }
@@ -88,7 +87,6 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
     let runtime = GatewayRuntime {
         config: effective_config,
         public_url,
-        running: true,
         tunnel,
     };
     let status = status_from_runtime(&runtime);
@@ -111,13 +109,7 @@ pub async fn force_restart_cloudflare_tunnel() -> AppResult<GlobalGatewayStatusD
     if public_url.trim().is_empty() {
         let error = "Cloudflare Quick Tunnel 启动后没有返回公网 URL。";
         if let Some(tunnel) = tunnel {
-            let runtime = GatewayRuntime {
-                config: config.clone(),
-                public_url,
-                running: true,
-                tunnel: Some(tunnel),
-            };
-            if let Err(cleanup_error) = stop_runtime(runtime, true).await {
+            if let Err(cleanup_error) = stop_tunnel_child(tunnel, true).await {
                 return Err(AppError::Message(format!(
                     "{error} 停止新 Tunnel 也失败：{cleanup_error}"
                 )));
@@ -134,13 +126,7 @@ pub async fn force_restart_cloudflare_tunnel() -> AppResult<GlobalGatewayStatusD
         Ok(())
     }) {
         if let Some(tunnel) = tunnel {
-            let runtime = GatewayRuntime {
-                config: config.clone(),
-                public_url: public_url.clone(),
-                running: true,
-                tunnel: Some(tunnel),
-            };
-            if let Err(cleanup_error) = stop_runtime(runtime, true).await {
+            if let Err(cleanup_error) = stop_tunnel_child(tunnel, true).await {
                 return Err(AppError::Message(format!(
                     "保存 Cloudflare Quick URL 失败：{error}；停止新 Tunnel 也失败：{cleanup_error}"
                 )));
@@ -152,7 +138,6 @@ pub async fn force_restart_cloudflare_tunnel() -> AppResult<GlobalGatewayStatusD
     let runtime = GatewayRuntime {
         config: effective_config,
         public_url,
-        running: true,
         tunnel,
     };
     let status = status_from_runtime(&runtime);
@@ -186,9 +171,9 @@ pub async fn stop() -> AppResult<()> {
 }
 
 pub async fn status() -> GlobalGatewayStatusDto {
-    let guard = RUNTIME.lock().await;
-    if let Some(runtime) = guard.as_ref() {
-        if runtime.running {
+    {
+        let guard = RUNTIME.lock().await;
+        if let Some(runtime) = guard.as_ref() {
             return status_from_runtime(runtime);
         }
     }
@@ -209,14 +194,17 @@ pub async fn health() -> Vec<GatewayHealthItem> {
     let settings = AppSettings::load_or_default();
     let status = status().await;
     let client = &*HEALTH_CLIENT;
-    let local = check_url(client, &status.local_url).await;
-    let public = if !settings.global_gateway.enabled {
-        (true, "公网入口未启用（仅本地模式）".into())
-    } else if status.public_url.trim().is_empty() {
-        (false, "公网 URL 未配置或尚未获取".into())
-    } else {
-        check_url(client, &public_mcp_url(&status.public_url)).await
+    let public_fut = async {
+        if !settings.global_gateway.enabled {
+            (true, "公网入口未启用（仅本地模式）".into())
+        } else if status.public_url.trim().is_empty() {
+            (false, "公网 URL 未配置或尚未获取".into())
+        } else {
+            let url = public_mcp_url(&status.public_url);
+            check_url(client, &url).await
+        }
     };
+    let (local, public) = tokio::join!(check_url(client, &status.local_url), public_fut);
     vec![
         GatewayHealthItem {
             label: "Global MCP 本地入口".into(),
@@ -258,22 +246,27 @@ fn status_from_runtime(runtime: &GatewayRuntime) -> GlobalGatewayStatusDto {
 
 async fn stop_runtime(mut runtime: GatewayRuntime, confirm_cloudflare_stop: bool) -> AppResult<()> {
     if let Some(tunnel) = runtime.tunnel.take() {
-        match tunnel {
-            TunnelChild::Cloudflare { child, pid } => {
-                if confirm_cloudflare_stop {
-                    cloudflare::force_stop_child(child, pid).await?;
-                } else {
-                    let _ = cloudflare::stop_child(child, pid).await;
-                }
+        stop_tunnel_child(tunnel, confirm_cloudflare_stop).await?;
+    }
+    Ok(())
+}
+
+async fn stop_tunnel_child(tunnel: TunnelChild, confirm_cloudflare_stop: bool) -> AppResult<()> {
+    match tunnel {
+        TunnelChild::Cloudflare { child, pid } => {
+            if confirm_cloudflare_stop {
+                cloudflare::force_stop_child(child, pid).await?;
+            } else {
+                let _ = cloudflare::stop_child(child, pid).await;
             }
-            TunnelChild::Frp { mut child, pid } => {
-                if let Some(pid) = pid {
-                    let _ = crate::platform::platform().terminate_process_tree(pid);
-                }
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                frp::clear_managed_frpc_pid("global-mcp");
+        }
+        TunnelChild::Frp { mut child, pid } => {
+            if let Some(pid) = pid {
+                let _ = crate::platform::platform().terminate_process_tree(pid);
             }
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            frp::clear_managed_frpc_pid("global-mcp");
         }
     }
     Ok(())
@@ -300,9 +293,6 @@ async fn start_tunnel(
                 config.local_port,
                 &cwd,
                 &log,
-                "quick",
-                "",
-                "",
                 config.use_proxy,
             )
             .await?;

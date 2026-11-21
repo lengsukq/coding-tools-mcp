@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
@@ -28,10 +28,20 @@ enum RuntimePhase {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenerRebindNeed {
+    None,
+    BindHostOnly,
+    PortChanged,
+}
+
 struct RuntimeEntry {
     phase: RuntimePhase,
     shutdown: Option<mcp::ShutdownSender>,
     handle: Option<JoinHandle<()>>,
+    live_policy: Option<Arc<RwLock<mcp::LiveListenerPolicy>>>,
+    bound_port: u16,
+    bound_all_interfaces: bool,
     error_message: Option<String>,
     started_at: Option<std::time::Instant>,
     missing_port_checks: u8,
@@ -82,12 +92,70 @@ impl RuntimeSupervisor {
         )
     }
 
-    pub fn refresh_mcp(&mut self) {
-        self.refresh();
+    pub fn bound_port(&self) -> Option<u16> {
+        self.entry
+            .as_ref()
+            .filter(|entry| entry.phase == RuntimePhase::Running)
+            .map(|entry| entry.bound_port)
     }
 
-    pub fn drop_workspace(&mut self, workspace_id: &str) {
-        self.gateway.sessions.clear_workspace(workspace_id);
+    pub fn rebind_need(&self, settings: &AppSettings) -> ListenerRebindNeed {
+        let Some(entry) = self
+            .entry
+            .as_ref()
+            .filter(|e| e.phase == RuntimePhase::Running)
+        else {
+            return ListenerRebindNeed::None;
+        };
+        if entry.bound_port != settings.global_gateway.local_port {
+            return ListenerRebindNeed::PortChanged;
+        }
+        let want_all = settings.allow_lan_access || settings.lan_federation.enabled;
+        if entry.bound_all_interfaces != want_all {
+            return ListenerRebindNeed::BindHostOnly;
+        }
+        ListenerRebindNeed::None
+    }
+
+    pub fn reload_live_policy(&self) -> AppResult<bool> {
+        let Some(policy_lock) = self
+            .entry
+            .as_ref()
+            .filter(|entry| entry.phase == RuntimePhase::Running)
+            .and_then(|entry| entry.live_policy.as_ref())
+        else {
+            return Ok(false);
+        };
+        let settings = AppSettings::load_or_default();
+        let (config, secrets) = build_listener_config_and_secrets(&settings)?;
+        let next_policy = mcp::build_live_policy(
+            config,
+            secrets,
+            settings.allow_lan_access,
+            settings.allow_local_noauth,
+        )
+        .map_err(crate::error::AppError::Message)?;
+        {
+            let mut guard = policy_lock
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = next_policy;
+        }
+        append_profile_log(
+            GLOBAL_RUNTIME_LOG_SCOPE,
+            "stdout.log",
+            &format!(
+                "[mcp] hot-reloaded listener policy (auth={}, allow_lan_mcp={}, allow_local_noauth={})",
+                settings.global_mcp_auth_type,
+                settings.allow_lan_access,
+                settings.allow_local_noauth
+            ),
+        );
+        Ok(true)
+    }
+
+    pub fn refresh_mcp(&mut self) {
+        self.refresh();
     }
 
     pub fn begin_stop(&mut self) -> Option<JoinHandle<()>> {
@@ -192,6 +260,9 @@ impl RuntimeSupervisor {
             phase: RuntimePhase::Starting,
             shutdown: None,
             handle: None,
+            live_policy: None,
+            bound_port: port,
+            bound_all_interfaces: false,
             error_message: None,
             started_at: Some(std::time::Instant::now()),
             missing_port_checks: 0,
@@ -216,35 +287,18 @@ impl RuntimeSupervisor {
             }
         }
 
-        let oauth_client_id = SecretStore::get_shared("oauth_client_id")?.unwrap_or_else(|| {
-            format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12])
-        });
-        let auth = AuthConfig {
-            auth_type: settings.global_mcp_auth_type.as_str().into(),
-            oauth_client_id,
-            use_shared_secrets: true,
-        };
-        let secrets = mcp::ListenerSecrets {
-            oauth_client_secret: SecretStore::get_shared("oauth_client_secret")?,
-            oauth_password: SecretStore::get_shared("oauth_password")?,
-            oauth_token_secret: SecretStore::get_shared("oauth_token_secret")?,
-        };
-        let spawn_result = mcp::spawn_gateway_listener(
-            mcp::GatewayListenerConfig {
-                port,
-                auth,
-                public_base_url: settings.global_gateway.public_url,
-            },
-            secrets,
-            self.gateway.clone(),
-        );
+        let (config, secrets) = build_listener_config_and_secrets(&settings)?;
+        let spawn_result = mcp::spawn_gateway_listener(config, secrets, self.gateway.clone());
 
         match spawn_result {
-            Ok((shutdown, handle)) => {
+            Ok(spawned) => {
                 self.entry = Some(RuntimeEntry {
                     phase: RuntimePhase::Running,
-                    shutdown: Some(shutdown),
-                    handle: Some(handle),
+                    shutdown: Some(spawned.shutdown),
+                    handle: Some(spawned.handle),
+                    live_policy: Some(spawned.policy),
+                    bound_port: spawned.bound_port,
+                    bound_all_interfaces: spawned.bound_all_interfaces,
                     error_message: None,
                     started_at: Some(std::time::Instant::now()),
                     missing_port_checks: 0,
@@ -260,6 +314,9 @@ impl RuntimeSupervisor {
                     phase: RuntimePhase::Error,
                     shutdown: None,
                     handle: None,
+                    live_policy: None,
+                    bound_port: port,
+                    bound_all_interfaces: false,
                     error_message: Some(error),
                     started_at: None,
                     missing_port_checks: 0,
@@ -270,14 +327,15 @@ impl RuntimeSupervisor {
     }
 
     fn refresh(&mut self) {
-        let settings = AppSettings::load_or_default();
-        let port = settings.global_gateway.local_port;
         let Some(entry) = self.entry.as_mut() else {
             return;
         };
         if entry.phase != RuntimePhase::Running {
             return;
         }
+        // Inspect the port this listener is actually bound to, not an unapplied
+        // port saved in settings before the next restart.
+        let port = entry.bound_port;
         let listening = match platform().find_pid_listening_on_port(port) {
             Ok(pid) => pid.is_some(),
             Err(error) => {
@@ -322,6 +380,31 @@ fn should_mark_runtime_error(entry: &mut RuntimeEntry, listening: bool) -> bool 
             .unwrap_or(true)
 }
 
+fn build_listener_config_and_secrets(
+    settings: &AppSettings,
+) -> AppResult<(mcp::GatewayListenerConfig, mcp::ListenerSecrets)> {
+    let oauth_client_id = SecretStore::get_shared("oauth_client_id")?
+        .unwrap_or_else(|| format!("chatgpt-client-{}", &uuid::Uuid::new_v4().to_string()[..12]));
+    let auth = AuthConfig {
+        auth_type: settings.global_mcp_auth_type.as_str().into(),
+        oauth_client_id,
+        use_shared_secrets: true,
+    };
+    let secrets = mcp::ListenerSecrets {
+        oauth_client_secret: SecretStore::get_shared("oauth_client_secret")?,
+        oauth_password: SecretStore::get_shared("oauth_password")?,
+        oauth_token_secret: SecretStore::get_shared("oauth_token_secret")?,
+    };
+    Ok((
+        mcp::GatewayListenerConfig {
+            port: settings.global_gateway.local_port,
+            auth,
+            public_base_url: settings.global_gateway.public_url.clone(),
+        },
+        secrets,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +414,9 @@ mod tests {
             phase,
             shutdown: None,
             handle: None,
+            live_policy: None,
+            bound_port: 28765,
+            bound_all_interfaces: false,
             error_message: None,
             started_at,
             missing_port_checks: 0,

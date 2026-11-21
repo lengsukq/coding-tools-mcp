@@ -1,10 +1,48 @@
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use axum::http::HeaderMap;
+
+pub const PROXY_FORWARDED_HEADERS: &[&str] = &[
+    "cf-connecting-ip",
+    "cf-ray",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+    "via",
+    "true-client-ip",
+];
+
+pub fn has_proxy_forwarded_headers(headers: &HeaderMap) -> bool {
+    PROXY_FORWARDED_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+}
+
+pub struct PeerConnectAddr(pub Option<SocketAddr>);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for PeerConnectAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let addr = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0);
+        Ok(Self(addr))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Ipv4Cidr {
     pub network: u32,
     pub prefix_len: u8,
@@ -109,21 +147,26 @@ pub fn parse_subnet_or_seed(raw: &str) -> Result<SubnetOrSeedEntry, String> {
             .trim()
             .parse()
             .map_err(|_| format!("无效的子网掩码前缀长度: /{prefix_part}"))?;
-        if prefix == 0 || prefix > 32 {
-            return Err(format!("子网前缀长度必须在 /8 到 /32 之间: {trimmed}"));
-        }
         if ip.is_unspecified() {
             return Err("禁止配置 0.0.0.0 通配网段".into());
         }
-        let min_prefix = if is_builtin_overlay_or_private_v4(ip) {
-            8
-        } else {
-            16
-        };
-        if prefix < min_prefix {
+        let is_private_or_overlay = is_builtin_overlay_or_private_v4(ip);
+        let min_prefix = if is_private_or_overlay { 8 } else { 16 };
+        if prefix == 0 || prefix > 32 {
             return Err(format!(
-                "自定义非标准组网网段 {trimmed} 掩码过宽（至少需要 /{min_prefix}，例如 /24）"
+                "子网前缀长度必须在 /{min_prefix} 到 /32 之间: {trimmed}"
             ));
+        }
+        if prefix < min_prefix {
+            return if is_private_or_overlay {
+                Err(format!(
+                    "私网/内置组网网段 {trimmed} 掩码过宽（至少需要 /{min_prefix}，例如 /24）"
+                ))
+            } else {
+                Err(format!(
+                    "自定义非标准组网网段 {trimmed} 掩码过宽（至少需要 /{min_prefix}，例如 /24）"
+                ))
+            };
         }
         let cidr =
             Ipv4Cidr::new(ip, prefix).ok_or_else(|| format!("无效的 CIDR 网段: {trimmed}"))?;
@@ -250,11 +293,7 @@ pub fn is_lan_or_loopback_ip(ip: IpAddr) -> bool {
 /// Extended peer origin check that accepts built-in LAN/overlay subnets PLUS any
 /// user-configured `extra_subnets` CIDRs/seeds (e.g. custom EasyTier virtual subnets)
 /// or already-paired peer addresses.
-pub fn is_allowed_peer_ip(
-    ip: IpAddr,
-    extra_subnets: &[String],
-    paired_hosts: &[String],
-) -> bool {
+pub fn is_allowed_peer_ip(ip: IpAddr, extra_subnets: &[String], paired_hosts: &[String]) -> bool {
     if is_lan_or_loopback_ip(ip) {
         return true;
     }
@@ -285,18 +324,13 @@ pub fn is_allowed_peer_ip(
     false
 }
 
-pub fn is_routable_lan_ipv4(v4: Ipv4Addr) -> bool {
-    if v4.is_loopback() || v4.is_unspecified() || v4.is_broadcast() || v4.is_multicast() {
-        return false;
-    }
-    if v4.is_link_local() {
-        return false;
-    }
-    is_builtin_overlay_or_private_v4(v4)
-}
-
 fn is_routable_or_custom_ipv4(v4: Ipv4Addr, custom_cidrs: &[Ipv4Cidr]) -> bool {
-    if v4.is_loopback() || v4.is_unspecified() || v4.is_broadcast() || v4.is_multicast() || v4.is_link_local() {
+    if v4.is_loopback()
+        || v4.is_unspecified()
+        || v4.is_broadcast()
+        || v4.is_multicast()
+        || v4.is_link_local()
+    {
         return false;
     }
     is_builtin_overlay_or_private_v4(v4) || custom_cidrs.iter().any(|c| c.contains(v4))
@@ -315,12 +349,53 @@ fn probe_route_ipv4(target: &str) -> Option<Ipv4Addr> {
     }
 }
 
-/// Enumerate active private LAN + virtual SD-WAN (EasyTier, Tailscale, ZeroTier, WireGuard)
-/// IPv4 addresses across macOS, Windows, and Linux.
-pub fn local_lan_ipv4_addrs() -> Vec<Ipv4Addr> {
-    local_lan_ipv4_addrs_with_subnets(&[])
+const DEFAULT_ROUTE_PROBES: &[&str] = &[
+    "239.255.77.67:28767",
+    "192.168.1.1:80",
+    "10.144.144.1:80",    // EasyTier CLI default virtual network
+    "10.126.126.1:80",    // EasyTier GUI default virtual network
+    "100.100.100.100:80", // Tailscale / CGNAT virtual network
+    "198.18.0.1:80",      // EasyTier / TUN 198.18.0.0/15 range
+    "192.168.192.1:80",   // ZeroTier common virtual network
+    "10.0.0.1:80",
+    "172.16.0.1:80",
+];
+
+fn collect_local_lan_ipv4s_with_interfaces(
+    custom_cidrs: &[Ipv4Cidr],
+    custom_probes: &[String],
+) -> (Vec<Ipv4Addr>, Vec<(Ipv4Addr, bool)>) {
+    let iface_entries = platform_interface_ipv4s(custom_cidrs);
+    let mut found = Vec::<Ipv4Addr>::new();
+    let mut seen = HashSet::<Ipv4Addr>::new();
+    let mut push_unique = |ip: Ipv4Addr| {
+        if is_routable_or_custom_ipv4(ip, custom_cidrs) && seen.insert(ip) {
+            found.push(ip);
+        }
+    };
+
+    // Zero-packet OS kernel routing table probes across physical LAN + EasyTier/Tailscale/ZeroTier ranges.
+    for probe_target in DEFAULT_ROUTE_PROBES {
+        if let Some(ip) = probe_route_ipv4(probe_target) {
+            push_unique(ip);
+        }
+    }
+
+    for custom_target in custom_probes {
+        if let Some(ip) = probe_route_ipv4(custom_target) {
+            push_unique(ip);
+        }
+    }
+
+    for &(ip, _is_overlay) in &iface_entries {
+        push_unique(ip);
+    }
+
+    (found, iface_entries)
 }
 
+/// Enumerate active private LAN + virtual SD-WAN (EasyTier, Tailscale, ZeroTier, WireGuard)
+/// IPv4 addresses across macOS, Windows, and Linux.
 pub fn local_lan_ipv4_addrs_with_subnets(extra_subnets: &[String]) -> Vec<Ipv4Addr> {
     let mut custom_cidrs = Vec::new();
     let mut custom_probes = Vec::new();
@@ -344,41 +419,7 @@ pub fn local_lan_ipv4_addrs_with_subnets(extra_subnets: &[String]) -> Vec<Ipv4Ad
         }
     }
 
-    let mut found = Vec::<Ipv4Addr>::new();
-    let mut push_unique = |ip: Ipv4Addr| {
-        if is_routable_or_custom_ipv4(ip, &custom_cidrs) && !found.contains(&ip) {
-            found.push(ip);
-        }
-    };
-
-    // Zero-packet OS kernel routing table probes across physical LAN + EasyTier/Tailscale/ZeroTier ranges.
-    for probe_target in [
-        "239.255.77.67:28767",
-        "192.168.1.1:80",
-        "10.144.144.1:80",   // EasyTier CLI default virtual network
-        "10.126.126.1:80",   // EasyTier GUI default virtual network
-        "100.100.100.100:80", // Tailscale / CGNAT virtual network
-        "198.18.0.1:80",     // EasyTier / TUN 198.18.0.0/15 range
-        "192.168.192.1:80",  // ZeroTier common virtual network
-        "10.0.0.1:80",
-        "172.16.0.1:80",
-    ] {
-        if let Some(ip) = probe_route_ipv4(probe_target) {
-            push_unique(ip);
-        }
-    }
-
-    for custom_target in &custom_probes {
-        if let Some(ip) = probe_route_ipv4(custom_target) {
-            push_unique(ip);
-        }
-    }
-
-    for (ip, _is_overlay) in platform_interface_ipv4s(&custom_cidrs) {
-        push_unique(ip);
-    }
-
-    found
+    collect_local_lan_ipv4s_with_interfaces(&custom_cidrs, &custom_probes).0
 }
 
 /// Collect `/24` or user-specified unicast UDP discovery targets and explicit HTTP seed targets
@@ -387,20 +428,35 @@ pub fn collect_overlay_discovery_targets(
     extra_subnets: &[String],
     default_port: u16,
 ) -> (Vec<Ipv4Addr>, Vec<(String, u16)>) {
+    const MAX_UNICAST_HOSTS: usize = 1024;
+    const MAX_HTTP_SEEDS: usize = 256;
+
     let mut custom_cidrs = Vec::new();
+    let mut custom_cidr_set = HashSet::new();
+    let mut probe_cidrs = Vec::new();
+    let mut custom_probes = Vec::new();
     let mut seeds = Vec::<(String, u16)>::new();
+    let mut seen_seeds = HashSet::<(String, u16)>::new();
 
     for raw in extra_subnets {
         for token in raw.split([',', ';', '\n', '\r']) {
             match parse_subnet_or_seed(token) {
                 Ok(SubnetOrSeedEntry::Cidr(cidr)) => {
-                    if !custom_cidrs.contains(&cidr) {
+                    custom_probes.push(format!("{}:80", cidr.probe_addr()));
+                    probe_cidrs.push(cidr);
+                    if custom_cidr_set.insert(cidr) {
                         custom_cidrs.push(cidr);
                     }
                 }
                 Ok(SubnetOrSeedEntry::SeedHost { host, port }) => {
+                    if let Ok(ip) = host.parse::<Ipv4Addr>() {
+                        if let Some(cidr) = Ipv4Cidr::new(ip, 24) {
+                            probe_cidrs.push(cidr);
+                        }
+                        custom_probes.push(format!("{ip}:{}", port.unwrap_or(default_port)));
+                    }
                     let entry = (host, port.unwrap_or(default_port));
-                    if !seeds.contains(&entry) {
+                    if seen_seeds.insert(entry.clone()) {
                         seeds.push(entry);
                     }
                 }
@@ -409,16 +465,18 @@ pub fn collect_overlay_discovery_targets(
         }
     }
 
-    let local_ips = local_lan_ipv4_addrs_with_subnets(extra_subnets);
-    let iface_entries = platform_interface_ipv4s(&custom_cidrs);
+    let (local_ips, iface_entries) =
+        collect_local_lan_ipv4s_with_interfaces(&probe_cidrs, &custom_probes);
+    let local_ip_set: HashSet<Ipv4Addr> = local_ips.iter().copied().collect();
 
     let mut unicast_cidrs = custom_cidrs.clone();
+    let mut unicast_cidr_set = custom_cidr_set;
     // Automatically add `/24` neighborhood sweep for active virtual TUN/overlay interfaces
     // (such as macOS `utun*` or Windows Wintun `10.144.144.x` / `10.126.126.x` / `100.64.x.x`).
     for (ip, is_overlay_iface) in iface_entries {
         if is_overlay_iface || is_likely_overlay_ipv4(ip) {
             if let Some(cidr24) = Ipv4Cidr::new(ip, 24) {
-                if !unicast_cidrs.contains(&cidr24) {
+                if unicast_cidr_set.insert(cidr24) {
                     unicast_cidrs.push(cidr24);
                 }
             }
@@ -427,7 +485,7 @@ pub fn collect_overlay_discovery_targets(
     for &ip in &local_ips {
         if is_likely_overlay_ipv4(ip) {
             if let Some(cidr24) = Ipv4Cidr::new(ip, 24) {
-                if !unicast_cidrs.contains(&cidr24) {
+                if unicast_cidr_set.insert(cidr24) {
                     unicast_cidrs.push(cidr24);
                 }
             }
@@ -435,16 +493,17 @@ pub fn collect_overlay_discovery_targets(
     }
 
     let mut unicast_hosts = Vec::new();
+    let mut seen_unicast = HashSet::<Ipv4Addr>::new();
     for cidr in &unicast_cidrs {
         for host_ip in cidr.host_addrs(256) {
-            if !local_ips.contains(&host_ip) && !unicast_hosts.contains(&host_ip) {
+            if !local_ip_set.contains(&host_ip) && seen_unicast.insert(host_ip) {
                 unicast_hosts.push(host_ip);
-                if unicast_hosts.len() >= 1024 {
+                if unicast_hosts.len() >= MAX_UNICAST_HOSTS {
                     break;
                 }
             }
         }
-        if unicast_hosts.len() >= 1024 {
+        if unicast_hosts.len() >= MAX_UNICAST_HOSTS {
             break;
         }
     }
@@ -453,12 +512,12 @@ pub fn collect_overlay_discovery_targets(
     // so EasyTier `no-tun` subnet proxy or UDP-firewalled Windows hosts are discovered on scan.
     for cidr in &custom_cidrs {
         for host_ip in cidr.host_addrs(254) {
-            if seeds.len() >= 256 {
+            if seeds.len() >= MAX_HTTP_SEEDS {
                 break;
             }
-            if !local_ips.contains(&host_ip) {
+            if !local_ip_set.contains(&host_ip) {
                 let target = (host_ip.to_string(), default_port);
-                if !seeds.contains(&target) {
+                if seen_seeds.insert(target.clone()) {
                     seeds.push(target);
                 }
             }
@@ -701,14 +760,29 @@ mod tests {
         assert!(!is_lan_or_loopback_ip("8.8.8.8".parse().unwrap()));
         assert!(!is_lan_or_loopback_ip("1.1.1.1".parse().unwrap()));
         assert!(!is_lan_or_loopback_ip("172.32.0.1".parse().unwrap()));
-        assert!(!is_routable_lan_ipv4(Ipv4Addr::new(169, 254, 1, 2)));
-        assert!(!is_routable_lan_ipv4(Ipv4Addr::LOCALHOST));
+        assert!(!is_routable_or_custom_ipv4(
+            Ipv4Addr::new(169, 254, 1, 2),
+            &[]
+        ));
+        assert!(!is_routable_or_custom_ipv4(Ipv4Addr::LOCALHOST, &[]));
+    }
+
+    #[test]
+    fn private_subnet_too_broad_reports_private_error_not_custom_error() {
+        let private_err = parse_subnet_or_seed("10.0.0.0/4").unwrap_err();
+        assert!(private_err.contains("私网/内置组网网段"));
+        assert!(private_err.contains("/8"));
+        assert!(!private_err.contains("自定义非标准"));
+
+        let public_err = parse_subnet_or_seed("11.0.0.0/8").unwrap_err();
+        assert!(public_err.contains("自定义非标准组网网段"));
+        assert!(public_err.contains("/16"));
     }
 
     #[test]
     fn custom_subnet_and_seed_parser_supports_easytier_cidrs_and_blocks_wildcard_internet() {
         let extra = normalize_extra_subnets(&[
-            "10.144.144.0/24, 11.0.0.0/24\n10.144.144.8:28765".to_string(),
+            "10.144.144.0/24, 11.0.0.0/24\n10.144.144.8:28765".to_string()
         ])
         .expect("valid subnets");
         assert_eq!(extra.len(), 3);
@@ -717,11 +791,7 @@ mod tests {
             &extra,
             &[]
         ));
-        assert!(!is_allowed_peer_ip(
-            "8.8.8.8".parse().unwrap(),
-            &extra,
-            &[]
-        ));
+        assert!(!is_allowed_peer_ip("8.8.8.8".parse().unwrap(), &extra, &[]));
 
         // Wildcard or overly broad non-private ranges must be rejected
         assert!(parse_subnet_or_seed("0.0.0.0/0").is_err());
