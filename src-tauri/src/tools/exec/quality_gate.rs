@@ -101,7 +101,7 @@ pub(super) fn quality_gate(ctx: &ToolContext, args: &Value) -> Result<Value, Wor
             Some(&ctx.workspace),
         ) {
             Ok(()) => {
-                tauri::async_runtime::block_on(run_command(ctx, &check.command, &workdir, &options))
+                crate::async_rt::block_on(run_command(ctx, &check.command, &workdir, &options))
             }
             Err(error) => Err(WorkspaceError::ToolDetails {
                 code: "POLICY_REJECTED",

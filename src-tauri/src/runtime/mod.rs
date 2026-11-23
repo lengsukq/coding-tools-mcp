@@ -1,4 +1,5 @@
 mod port;
+pub mod service;
 mod supervisor;
 
 pub use port::{

@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tauri::async_runtime::JoinHandle;
+use crate::async_rt::JoinHandle;
 
 use crate::error::AppResult;
 use crate::mcp;
@@ -350,7 +350,7 @@ impl RuntimeSupervisor {
         if should_mark_runtime_error(entry, listening) {
             if let Some(handle) = entry.handle.take() {
                 handle.abort();
-                tauri::async_runtime::spawn(async move {
+                crate::async_rt::spawn(async move {
                     let _ = handle.await;
                 });
             }

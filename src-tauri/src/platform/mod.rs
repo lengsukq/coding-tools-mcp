@@ -48,7 +48,9 @@ mod single_instance;
 
 pub(crate) use command::background_command;
 pub use open::{is_allowed_url, open_path_in_file_manager, open_url};
-pub use single_instance::{acquire_single_instance, register_show_window_handle};
+pub use single_instance::acquire_single_instance;
+#[cfg(feature = "desktop-ui")]
+pub use single_instance::register_show_window_handle;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxPlatform;

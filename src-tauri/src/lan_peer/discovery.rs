@@ -115,7 +115,7 @@ pub fn sync_discovery_daemon() {
 
     let (stop_tx, stop_rx) = oneshot::channel();
     let (nudge_tx, nudge_rx) = mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(run_discovery_loop(stop_rx, nudge_rx));
+    crate::async_rt::spawn(run_discovery_loop(stop_rx, nudge_rx));
     *guard = Some(DaemonHandle {
         stop_tx: Some(stop_tx),
         nudge_tx,

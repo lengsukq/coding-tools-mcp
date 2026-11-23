@@ -55,7 +55,7 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
         }
         return Ok(tool_ok(result));
     }
-    let result = tauri::async_runtime::block_on(run_command(
+    let result = crate::async_rt::block_on(run_command(
         ctx,
         &request.cmd,
         &request.workdir,
@@ -100,7 +100,7 @@ pub fn exec_health_check(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         tty: false,
         stdin_text: String::new(),
     };
-    let result = tauri::async_runtime::block_on(run_command(ctx, probe, &cwd, &options));
+    let result = crate::async_rt::block_on(run_command(ctx, probe, &cwd, &options));
 
     let mut response = json!({
         "worker": {"alive": true},

@@ -1,6 +1,6 @@
 //! Single-instance process coordination across desktop platforms.
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "desktop-ui"))]
 static SHOW_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 #[cfg(target_os = "windows")]
@@ -70,6 +70,7 @@ pub fn acquire_single_instance() -> bool {
             if status != WAIT_OBJECT_0 {
                 continue;
             }
+            #[cfg(feature = "desktop-ui")]
             if let Some(app) = SHOW_APP_HANDLE.get() {
                 let _ = crate::commands::window_chrome::show_main_window(app.clone());
             }
@@ -83,6 +84,7 @@ pub fn acquire_single_instance() -> bool {
     true
 }
 
+#[cfg(feature = "desktop-ui")]
 pub fn register_show_window_handle(app_handle: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     {

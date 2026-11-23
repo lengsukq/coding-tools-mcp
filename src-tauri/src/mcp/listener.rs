@@ -168,7 +168,7 @@ pub struct LiveListenerPolicy {
 
 pub struct SpawnedGatewayListener {
     pub shutdown: ShutdownSender,
-    pub handle: tauri::async_runtime::JoinHandle<()>,
+    pub handle: crate::async_rt::JoinHandle<()>,
     pub policy: Arc<RwLock<LiveListenerPolicy>>,
     pub bound_port: u16,
     pub bound_all_interfaces: bool,
@@ -276,7 +276,7 @@ pub fn spawn_gateway_listener(
     };
     let listener = bind_listener(port, allow_lan_access)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let handle = tauri::async_runtime::spawn(async move {
+    let handle = crate::async_rt::spawn(async move {
         if let Err(error) = serve(listener, port, allow_lan_access, state, shutdown_rx).await {
             eprintln!("global mcp listener stopped: {error}");
         }

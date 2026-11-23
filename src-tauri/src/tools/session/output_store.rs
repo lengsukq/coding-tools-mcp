@@ -192,7 +192,7 @@ impl CommandOutputStore {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn_blocking(move || store.cleanup_now());
         } else {
-            tauri::async_runtime::spawn_blocking(move || store.cleanup_now());
+            crate::async_rt::spawn_blocking(move || store.cleanup_now());
         }
     }
 

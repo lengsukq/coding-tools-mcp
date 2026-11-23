@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use tauri::async_runtime::JoinHandle;
+use crate::async_rt::JoinHandle;
 
 use crate::platform::platform;
 

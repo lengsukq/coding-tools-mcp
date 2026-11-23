@@ -200,7 +200,7 @@ mod tests {
         let command_id = "completed-command";
         assert!(store.output_store.prepare_command(command_id));
         let mut writer =
-            tauri::async_runtime::block_on(store.output_store.open_writer(command_id, "stdout"))
+            crate::async_rt::block_on(store.output_store.open_writer(command_id, "stdout"))
                 .expect("full output writer");
         let mut payload = Vec::new();
         payload.extend_from_slice(b"FULL_HEAD\n");
@@ -209,8 +209,8 @@ mod tests {
         payload.extend_from_slice(b"\nFULL_MIDDLE_MARKER\n");
         payload.extend_from_slice(&vec![b'b'; 5_500_000]);
         payload.extend_from_slice(b"\nFULL_TAIL\n");
-        tauri::async_runtime::block_on(writer.write_all(&payload)).expect("write full output");
-        tauri::async_runtime::block_on(writer.flush()).expect("flush full output");
+        crate::async_rt::block_on(writer.write_all(&payload)).expect("write full output");
+        crate::async_rt::block_on(writer.flush()).expect("flush full output");
         drop(writer);
         lock_unpoisoned(&store.evicted).insert_with_limit(
             command_id.to_string(),

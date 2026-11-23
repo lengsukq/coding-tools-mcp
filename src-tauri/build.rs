@@ -32,5 +32,7 @@ fn main() {
         }
         println!("cargo:rerun-if-changed=src/platform/macos/computer_native.m");
     }
-    tauri_build::build()
+
+    #[cfg(feature = "desktop-ui")]
+    tauri_build::build();
 }

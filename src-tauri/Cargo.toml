@@ -1,30 +1,44 @@
 [package]
 name = "coding-tools-mcp-desktop"
 version = "0.3.8"
-description = "Coding Tools MCP desktop client"
+description = "Coding Tools MCP desktop client and headless runtime"
 authors = ["Coding Tools MCP Contributors"]
 repository = "https://github.com/lengsukq/coding-tools-mcp"
 edition = "2021"
+default-run = "coding-tools-mcp-desktop"
 
 [lib]
 name = "coding_tools_mcp_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "coding-tools-mcp-desktop"
+path = "src/main.rs"
+required-features = ["desktop-ui"]
+
+[[bin]]
+name = "coding-tools-mcp"
+path = "src/bin/coding-tools-mcp.rs"
+
+[features]
+default = ["desktop-ui"]
+desktop-ui = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build"]
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 cc = "1"
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-dialog = "2"
+tauri = { version = "2", features = ["tray-icon"], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 dirs = "6"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "process", "io-util", "fs", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "process", "io-util", "fs", "time", "signal"] }
 axum = { version = "0.8", features = ["form"] }
 tower-http = { version = "0.6", features = ["cors"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
