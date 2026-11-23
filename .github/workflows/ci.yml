@@ -40,15 +40,22 @@ jobs:
       - name: cargo fmt
         working-directory: src-tauri
         run: cargo fmt --all -- --check
-      - name: cargo clippy
+      - name: cargo clippy (desktop-ui)
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
-      - name: cargo build
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: cargo clippy (headless no-default-features)
         working-directory: src-tauri
-        run: cargo build --locked
-      - name: cargo test
+        run: cargo clippy --no-default-features --lib --bin coding-tools-mcp --tests --locked -- -D warnings
+      - name: cargo build (desktop + headless)
         working-directory: src-tauri
-        run: cargo test --all-targets --locked
+        run: |
+          cargo build --locked
+          cargo build --no-default-features --bin coding-tools-mcp --locked
+      - name: cargo test (desktop + headless)
+        working-directory: src-tauri
+        run: |
+          cargo test --all-targets --locked
+          cargo test --no-default-features --lib --bin coding-tools-mcp --tests --locked
 
   frontend:
     runs-on: ubuntu-latest
@@ -61,4 +68,5 @@ jobs:
       - run: npm ci
       - run: npm run version:check
       - run: npm run check
+      - run: npm run test:ui
       - run: npm run build

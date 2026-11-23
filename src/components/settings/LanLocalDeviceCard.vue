@@ -72,7 +72,7 @@ function formatAddressList(device: LocalDeviceDto): string {
             />
           </div>
           <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-            支持同一局域网及 EasyTier / Tailscale / ZeroTier 跨子网虚拟组网；配对后本机 Agent 免 OAuth 即可安全访问全网 macOS / Windows 工作区。
+            支持同一局域网及 EasyTier / Tailscale / ZeroTier 跨子网虚拟组网；配对后本机 Agent 免 OAuth 即可安全访问全网 macOS / Windows / Linux 工作区。
           </p>
         </div>
       </div>

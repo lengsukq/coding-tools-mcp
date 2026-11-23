@@ -58,7 +58,7 @@ const emit = defineEmits<{
       <div>
         <h2 class="text-base font-semibold">附近 / 组网可配对电脑与已互联设备</h2>
         <p class="mt-1 text-xs text-[var(--ui-text-muted)]">
-          自动通过广播与单播扫描局域网及 EasyTier / Tailscale 等虚拟组网内的 macOS / Windows 节点；也可直接输入组网 IP:端口 连接。
+          自动通过广播与单播扫描局域网及 EasyTier / Tailscale 等虚拟组网内的 macOS / Windows / Linux（含无 UI 服务器）节点；也可直接输入组网 IP:端口 连接。
         </p>
       </div>
       <BaseButton variant="secondary" size="sm" :busy="scanning" @click="emit('scan')">

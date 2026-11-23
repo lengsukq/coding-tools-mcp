@@ -1,4 +1,4 @@
-name: Desktop Release
+name: Desktop & Headless Release
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "要创建或更新的 Release 标签，例如 v0.2.1"
+        description: "要创建或更新的 Release 标签，例如 v0.3.9"
         required: true
         type: string
 
@@ -68,7 +68,7 @@ jobs:
 
       - name: 运行 Rust 测试
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --locked
 
       - name: 仅构建 Windows NSIS 安装程序
         run: npm run tauri -- build --bundles nsis
@@ -107,7 +107,7 @@ jobs:
 
       - name: 运行 Rust 测试
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --locked
 
       - name: 仅构建通用版 macOS DMG
         run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
@@ -119,11 +119,106 @@ jobs:
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  build-linux-headless:
+    needs: verify-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装交叉编译工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config gcc-aarch64-linux-gnu
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: linux-headless
+
+      - name: 运行无 UI 核心测试
+        working-directory: src-tauri
+        run: cargo test --no-default-features --lib --bin coding-tools-mcp --tests --locked
+
+      - name: 构建 Linux Headless (x86_64 & aarch64)
+        working-directory: src-tauri
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          cargo build --release --locked --no-default-features --bin coding-tools-mcp --target x86_64-unknown-linux-gnu
+          cargo build --release --locked --no-default-features --bin coding-tools-mcp --target aarch64-unknown-linux-gnu
+          mkdir -p dist-headless
+          tar -C target/x86_64-unknown-linux-gnu/release -czf "dist-headless/coding-tools-mcp-v${VERSION}-linux-x86_64-headless.tar.gz" coding-tools-mcp
+          tar -C target/aarch64-unknown-linux-gnu/release -czf "dist-headless/coding-tools-mcp-v${VERSION}-linux-aarch64-headless.tar.gz" coding-tools-mcp
+
+      - name: 上传 Linux Headless 压缩包
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-headless
+          path: src-tauri/dist-headless/*.tar.gz
+          if-no-files-found: error
+
+  build-linux-desktop:
+    needs: verify-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Tauri Linux 桌面依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            patchelf \
+            file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: linux-desktop
+
+      - name: 安装前端依赖与校验
+        run: |
+          npm ci
+          npm run check
+
+      - name: 构建 Linux 桌面安装包 (deb + AppImage)
+        run: npm run tauri -- build --bundles deb,appimage
+
+      - name: 上传 Linux 桌面安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
   publish-release:
     needs:
       - verify-version
       - build-windows
       - build-universal-macos
+      - build-linux-headless
+      - build-linux-desktop
     runs-on: ubuntu-latest
     steps:
       - name: 下载 Windows EXE
@@ -138,7 +233,19 @@ jobs:
           name: macos-dmg
           path: dist/macos
 
-      - name: 创建 Release 并上传安装包
+      - name: 下载 Linux Headless 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-headless
+          path: dist/linux-headless
+
+      - name: 下载 Linux 桌面产物
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-desktop
+          path: dist/linux-desktop
+
+      - name: 创建 Release 并上传全平台安装包
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ github.repository }}
@@ -150,3 +257,6 @@ jobs:
           files: |
             dist/windows/*.exe
             dist/macos/*.dmg
+            dist/linux-headless/*.tar.gz
+            dist/linux-desktop/*.deb
+            dist/linux-desktop/*.AppImage

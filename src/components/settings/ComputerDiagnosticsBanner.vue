@@ -27,7 +27,7 @@ const emit = defineEmits<{
   </div>
 
   <div v-if="computer && !computer.supported" class="ui-banner ui-banner--warning mt-3 text-xs">
-    首版仅支持 macOS。
+    当前系统暂不支持本机屏幕观察与键鼠控制（目前仅 macOS 原生支持；可通过「局域网多设备配对」远程调用已授权 macOS 节点的屏幕）。
   </div>
 
   <div
