@@ -17,8 +17,38 @@ mod workspaces;
 static DATA_FILE_LOCK: Mutex<()> = Mutex::new(());
 /// Path-keyed process cache so concurrent tests with isolated temp paths never pollute each other,
 /// while production hot-path reads (`read_file`, `AppSettings::load_or_default`, `SecretStore`)
-/// hit `Arc<AppData>` with zero disk I/O.
-static CACHED_DATA: OnceLock<RwLock<HashMap<PathBuf, Arc<AppData>>>> = OnceLock::new();
+/// hit `Arc<AppData>` with zero JSON re-parsing and automatically invalidate when another
+/// process (`coding-tools-mcp` CLI vs desktop/daemon) atomically updates `profiles.json`.
+static CACHED_DATA: OnceLock<RwLock<HashMap<PathBuf, CachedDataEntry>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    ino: u64,
+}
+
+impl FileStamp {
+    fn from_path(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        Some(Self {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            #[cfg(unix)]
+            ino: {
+                use std::os::unix::fs::MetadataExt;
+                meta.ino()
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedDataEntry {
+    stamp: Option<FileStamp>,
+    data: Arc<AppData>,
+}
 
 pub(crate) const SHARED_KEYS: &[&str] = &[
     "oauth_client_id",
@@ -34,7 +64,7 @@ pub struct DataStore {
     data: AppData,
 }
 
-fn data_cache() -> &'static RwLock<HashMap<PathBuf, Arc<AppData>>> {
+fn data_cache() -> &'static RwLock<HashMap<PathBuf, CachedDataEntry>> {
     CACHED_DATA.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -42,14 +72,20 @@ fn cache_get(path: &Path) -> Option<Arc<AppData>> {
     let guard = data_cache()
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard.get(path).cloned()
+    let entry = guard.get(path)?;
+    match (entry.stamp, FileStamp::from_path(path)) {
+        (Some(cached), Some(disk)) if cached != disk => None,
+        (None, Some(_)) => None,
+        _ => Some(Arc::clone(&entry.data)),
+    }
 }
 
 fn cache_put(path: &Path, data: Arc<AppData>) {
+    let stamp = FileStamp::from_path(path);
     let mut guard = data_cache()
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard.insert(path.to_path_buf(), data);
+    guard.insert(path.to_path_buf(), CachedDataEntry { stamp, data });
 }
 
 fn lock_data_file() -> std::sync::MutexGuard<'static, ()> {
@@ -223,6 +259,31 @@ mod tests {
         let after = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
             .expect("read after write");
         assert_eq!(after, "ws-updated");
+    }
+
+    #[test]
+    fn external_disk_write_invalidates_stale_process_cache() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("data").join("profiles.json");
+        let initial = AppData {
+            last_workspace_id: "ws-v1".into(),
+            ..AppData::default()
+        };
+        write_data(&path, &initial).expect("seed v1");
+        let v1 = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
+            .expect("read v1");
+        assert_eq!(v1, "ws-v1");
+
+        // Simulate an external CLI process (`coding-tools-mcp lan pair` / `workspace add`)
+        // atomically replacing `profiles.json` on disk without touching this process's cache_put.
+        let external = AppData {
+            last_workspace_id: "ws-v2".into(),
+            ..AppData::default()
+        };
+        write_data(&path, &external).expect("external write v2");
+        let v2 = DataStore::read_file_at(&path, false, |d| Ok(d.last_workspace_id.clone()))
+            .expect("read v2 after external atomic replace");
+        assert_eq!(v2, "ws-v2");
     }
 
     #[test]
