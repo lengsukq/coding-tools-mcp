@@ -75,18 +75,78 @@ pub enum LocalDaemonResponse {
 }
 
 #[cfg(unix)]
-pub fn private_ipc_dir() -> Result<PathBuf, String> {
+fn is_owned_real_dir(dir: &Path, expected_uid: u32) -> bool {
     use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(dir)
+        .map(|m| m.is_dir() && !m.file_type().is_symlink() && m.uid() == expected_uid)
+        .unwrap_or(false)
+}
 
+#[cfg(unix)]
+fn candidate_ipc_dirs_for_uid(
+    euid: u32,
+    xdg_runtime_dir: Option<PathBuf>,
+    temp_dir: PathBuf,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::with_capacity(3);
+    #[cfg(target_os = "linux")]
+    if euid == 0 {
+        let run_root = PathBuf::from("/run");
+        if is_owned_real_dir(&run_root, 0) {
+            dirs.push(run_root.join("coding-tools-mcp"));
+        }
+    }
+    if let Some(xdg) = xdg_runtime_dir.filter(|dir| is_owned_real_dir(dir, euid)) {
+        let candidate = xdg.join("coding-tools-mcp");
+        if !dirs.contains(&candidate) {
+            dirs.push(candidate);
+        }
+    }
+    let fallback = temp_dir.join(format!("coding-tools-mcp-{euid}"));
+    if !dirs.contains(&fallback) {
+        dirs.push(fallback);
+    }
+    dirs
+}
+
+#[cfg(unix)]
+fn is_live_owned_daemon_socket(sock_path: &Path, expected_uid: u32) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::net::UnixStream;
+
+    let Some(parent) = sock_path.parent() else {
+        return false;
+    };
+    let Ok(parent_meta) = std::fs::symlink_metadata(parent) else {
+        return false;
+    };
+    if parent_meta.file_type().is_symlink()
+        || !parent_meta.is_dir()
+        || parent_meta.uid() != expected_uid
+        || (parent_meta.permissions().mode() & 0o077 != 0)
+    {
+        return false;
+    }
+    let Ok(sock_meta) = std::fs::symlink_metadata(sock_path) else {
+        return false;
+    };
+    if sock_meta.file_type().is_symlink() || sock_meta.uid() != expected_uid {
+        return false;
+    }
+    UnixStream::connect(sock_path).is_ok()
+}
+
+#[cfg(unix)]
+pub fn private_ipc_dir() -> Result<PathBuf, String> {
     let euid = unsafe { libc::geteuid() };
-    let candidate = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|dir| {
-            std::fs::symlink_metadata(dir)
-                .map(|m| m.is_dir() && !m.file_type().is_symlink() && m.uid() == euid)
-                .unwrap_or(false)
-        })
-        .map(|dir| dir.join("coding-tools-mcp"))
+    let candidates = candidate_ipc_dirs_for_uid(
+        euid,
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        std::env::temp_dir(),
+    );
+    let candidate = candidates
+        .into_iter()
+        .next()
         .unwrap_or_else(|| std::env::temp_dir().join(format!("coding-tools-mcp-{euid}")));
 
     ensure_private_dir_at(&candidate, euid)?;
@@ -125,6 +185,18 @@ fn ensure_private_dir_at(dir: &Path, expected_uid: u32) -> Result<(), String> {
 
 #[cfg(unix)]
 pub fn default_daemon_socket_path() -> Result<PathBuf, String> {
+    let euid = unsafe { libc::geteuid() };
+    let candidates = candidate_ipc_dirs_for_uid(
+        euid,
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        std::env::temp_dir(),
+    );
+    for dir in &candidates {
+        let sock = dir.join("daemon.sock");
+        if is_live_owned_daemon_socket(&sock, euid) {
+            return Ok(sock);
+        }
+    }
     Ok(private_ipc_dir()?.join("daemon.sock"))
 }
 
@@ -481,5 +553,25 @@ mod tests {
         let acquired =
             acquire_unix_desktop_instance_at(&sock, Arc::new(|| {})).expect("reclaim stale");
         assert!(acquired);
+    }
+
+    #[test]
+    fn live_daemon_socket_in_fallback_dir_is_discovered_across_xdg_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let euid = unsafe { libc::geteuid() };
+        let xdg_root = temp.path().join("xdg");
+        ensure_private_dir_at(&xdg_root, euid).expect("xdg root");
+        let tmp_root = temp.path().join("tmp");
+        std::fs::create_dir_all(&tmp_root).expect("tmp root");
+
+        let candidates = candidate_ipc_dirs_for_uid(euid, Some(xdg_root), tmp_root.clone());
+        let fallback_dir = tmp_root.join(format!("coding-tools-mcp-{euid}"));
+        assert!(candidates.contains(&fallback_dir));
+
+        ensure_private_dir_at(&fallback_dir, euid).expect("fallback private dir");
+        let fallback_sock = fallback_dir.join("daemon.sock");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&fallback_sock).expect("bind fallback daemon");
+        assert!(is_live_owned_daemon_socket(&fallback_sock, euid));
     }
 }
