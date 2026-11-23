@@ -261,6 +261,9 @@ pub struct AppSettings {
     pub global_disabled_instruction_ids: Vec<String>,
     #[serde(default)]
     pub global_disabled_skill_ids: Vec<String>,
+    /// Parent directories whose immediate `.git` child folders are auto-discovered as Workspaces.
+    #[serde(default)]
+    pub workspace_auto_roots: Vec<String>,
     /// Allow MCP and Global Gateway listeners to bind to all LAN interfaces.
     /// Defaults to false so services remain loopback-only unless explicitly enabled.
     #[serde(default)]
@@ -517,6 +520,7 @@ impl AppSettings {
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
             global_disabled_instruction_ids: data.global_disabled_instruction_ids.clone(),
             global_disabled_skill_ids: data.global_disabled_skill_ids.clone(),
+            workspace_auto_roots: data.workspace_auto_roots.clone(),
             allow_lan_access: data.allow_lan_access,
             allow_local_noauth: data.allow_local_noauth,
             restore_runtime_state_on_launch: data.restore_runtime_state_on_launch,
@@ -550,6 +554,7 @@ impl AppSettings {
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
         data.global_disabled_instruction_ids = self.global_disabled_instruction_ids.clone();
         data.global_disabled_skill_ids = self.global_disabled_skill_ids.clone();
+        data.workspace_auto_roots = self.workspace_auto_roots.clone();
         data.allow_lan_access = self.allow_lan_access;
         data.allow_local_noauth = self.allow_local_noauth;
         data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;

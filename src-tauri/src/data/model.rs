@@ -45,6 +45,10 @@ pub struct AppData {
     pub global_disabled_instruction_ids: Vec<String>,
     #[serde(default)]
     pub global_disabled_skill_ids: Vec<String>,
+    /// Parent directories (e.g. `~/code`) whose immediate `.git` child repositories
+    /// are automatically exposed and synchronized as Workspaces.
+    #[serde(default)]
+    pub workspace_auto_roots: Vec<String>,
     #[serde(default)]
     pub allow_lan_access: bool,
     #[serde(default = "crate::settings::default_allow_local_noauth")]

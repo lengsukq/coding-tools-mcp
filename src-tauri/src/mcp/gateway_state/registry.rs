@@ -43,7 +43,11 @@ impl WorkspaceRegistry {
         if let Some(profiles) = &self.profiles_override {
             return Ok(profiles.as_ref().clone());
         }
-        DataStore::read_file(|data| Ok(data.profiles.clone())).map_err(|error| error.to_string())
+        let (profiles, auto_roots) = DataStore::read_file(|data| {
+            Ok((data.profiles.clone(), data.workspace_auto_roots.clone()))
+        })
+        .map_err(|error| error.to_string())?;
+        Ok(crate::workspace::auto_discover::merge_with_cached_auto_roots(profiles, &auto_roots))
     }
 
     pub fn descriptors(&self) -> Result<Vec<WorkspaceDescriptor>, String> {
