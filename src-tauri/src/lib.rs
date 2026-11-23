@@ -5,6 +5,7 @@ mod agent_context;
 mod app_state;
 pub mod async_rt;
 mod auth;
+pub mod cli;
 #[cfg(feature = "desktop-ui")]
 mod commands;
 mod computer;
@@ -32,24 +33,7 @@ mod workspace;
 
 /// Headless / CLI entry point shared by `coding-tools-mcp` binary and subcommands.
 pub fn run_cli_entry(args: &[String]) -> i32 {
-    match args.get(1).map(String::as_str) {
-        Some("mcp-stdio") => mcp::stdio_bridge::run_cli(&args[2..]),
-        Some("-V") | Some("--version") | Some("version") => {
-            println!("coding-tools-mcp {}", env!("CARGO_PKG_VERSION"));
-            0
-        }
-        Some("-h") | Some("--help") | Some("help") | None => {
-            println!(
-                "Coding Tools MCP v{}\n\nUsage:\n  coding-tools-mcp mcp-stdio <http://127.0.0.1:<port>/mcp>\n  coding-tools-mcp --version",
-                env!("CARGO_PKG_VERSION")
-            );
-            0
-        }
-        Some(other) => {
-            eprintln!("Unknown subcommand: {other}. Run `coding-tools-mcp --help` for usage.");
-            2
-        }
-    }
+    cli::run_cli(args)
 }
 
 #[cfg(feature = "desktop-ui")]
@@ -342,8 +326,8 @@ mod desktop_shell {
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
         let args: Vec<String> = std::env::args().collect();
-        if args.get(1).map(String::as_str) == Some("mcp-stdio") {
-            let code = mcp::stdio_bridge::run_cli(&args[2..]);
+        if args.get(1).is_some_and(|arg| cli::is_cli_subcommand(arg)) {
+            let code = cli::run_cli(&args);
             std::process::exit(code);
         }
         if !platform::acquire_single_instance() {
