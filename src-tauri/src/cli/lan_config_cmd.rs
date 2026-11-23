@@ -215,6 +215,7 @@ pub async fn cmd_config(args: &[String]) -> Result<(), String> {
                 "server-name        = {}",
                 crate::settings::resolved_mcp_server_name(&s.global_mcp_server_name)
             );
+            println!("device-name        = {}", s.lan_federation.device_name);
             println!("allow-local-noauth = {}", s.allow_local_noauth);
             println!("allow-lan-mcp      = {}", s.allow_lan_access);
             println!("lan-enabled        = {}", s.lan_federation.enabled);
@@ -279,6 +280,22 @@ fn apply_config_kv(key: &str, val: &str) -> Result<(), String> {
             Ok(())
         })
         .map_err(|e| e.to_string()),
+        "device-name" => {
+            let cleaned: String = val
+                .trim()
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(64)
+                .collect();
+            if cleaned.is_empty() {
+                return Err("`device-name` 不能为空".into());
+            }
+            DataStore::update_file(|d| {
+                d.lan_federation.device_name = cleaned;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+        }
         "allow-local-noauth" => {
             let flag = parse_bool_flag(val)?;
             DataStore::update_file(|d| {

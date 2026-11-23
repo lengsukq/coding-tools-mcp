@@ -4,11 +4,31 @@ use std::process::Command;
 
 pub const SYSTEMD_SERVICE_NAME: &str = "coding-tools-mcp.service";
 
+fn is_root_user() -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 pub fn render_systemd_user_unit(exe_path: &Path) -> String {
+    render_systemd_unit(exe_path, false)
+}
+
+pub fn render_systemd_unit(exe_path: &Path, system_scope: bool) -> String {
     let escaped = exe_path
         .to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
+    let wanted_by = if system_scope {
+        "multi-user.target"
+    } else {
+        "default.target"
+    };
     format!(
         "\
 [Unit]
@@ -24,16 +44,27 @@ RestartSec=3
 Environment=RUST_BACKTRACE=1
 
 [Install]
-WantedBy=default.target
+WantedBy={wanted_by}
 "
     )
 }
 
-fn systemd_user_unit_path() -> Result<PathBuf, String> {
+fn systemd_unit_path(system_scope: bool) -> Result<PathBuf, String> {
+    if system_scope {
+        return Ok(PathBuf::from("/etc/systemd/system").join(SYSTEMD_SERVICE_NAME));
+    }
     let base = dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .ok_or_else(|| "无法定位用户 ~/.config 目录".to_string())?;
     Ok(base.join("systemd").join("user").join(SYSTEMD_SERVICE_NAME))
+}
+
+fn run_systemctl(system_scope: bool, args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
+    let mut cmd = Command::new("systemctl");
+    if !system_scope {
+        cmd.arg("--user");
+    }
+    cmd.args(args).status()
 }
 
 pub fn cmd_service(args: &[String]) -> Result<(), String> {
@@ -41,10 +72,11 @@ pub fn cmd_service(args: &[String]) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map(|p| p.canonicalize().unwrap_or(p))
         .map_err(|e| format!("无法获取当前可执行文件路径: {e}"))?;
+    let system_scope = is_root_user();
 
     match action {
         "print" => {
-            print!("{}", render_systemd_user_unit(&exe));
+            print!("{}", render_systemd_unit(&exe, system_scope));
             Ok(())
         }
         "install" => {
@@ -54,29 +86,29 @@ pub fn cmd_service(args: &[String]) -> Result<(), String> {
                         .into(),
                 );
             }
-            let unit_path = systemd_user_unit_path()?;
+            let unit_path = systemd_unit_path(system_scope)?;
             if let Some(parent) = unit_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("创建 systemd user 目录失败: {e}"))?;
+                fs::create_dir_all(parent).map_err(|e| format!("创建 systemd 目录失败: {e}"))?;
             }
-            fs::write(&unit_path, render_systemd_user_unit(&exe))
+            fs::write(&unit_path, render_systemd_unit(&exe, system_scope))
                 .map_err(|e| format!("写入 {} 失败: {e}", unit_path.display()))?;
             println!("已写入服务文件: {}", unit_path.display());
 
-            let reload = Command::new("systemctl")
-                .args(["--user", "daemon-reload"])
-                .status();
-            let enable = Command::new("systemctl")
-                .args(["--user", "enable", "--now", SYSTEMD_SERVICE_NAME])
-                .status();
+            let reload = run_systemctl(system_scope, &["daemon-reload"]);
+            let enable = run_systemctl(system_scope, &["enable", "--now", SYSTEMD_SERVICE_NAME]);
             match (reload, enable) {
                 (Ok(r), Ok(e)) if r.success() && e.success() => {
-                    println!("已启用并启动用户级服务 `{SYSTEMD_SERVICE_NAME}`。");
-                    println!("提示：若需在 SSH 退出后或服务器无人登录时保持常驻，可执行 `sudo loginctl enable-linger $USER`。");
+                    if system_scope {
+                        println!("已启用并启动系统级常驻服务 `{SYSTEMD_SERVICE_NAME}`。");
+                    } else {
+                        println!("已启用并启动用户级服务 `{SYSTEMD_SERVICE_NAME}`。");
+                        println!("提示：若需在 SSH 退出后或服务器无人登录时保持常驻，可执行 `sudo loginctl enable-linger $USER`。");
+                    }
                 }
                 _ => {
+                    let flag = if system_scope { "" } else { " --user" };
                     println!(
-                        "服务单元文件已生成，但当前会话无法直接连接 `systemctl --user` 总线；可手动执行：\n  systemctl --user daemon-reload\n  systemctl --user enable --now {SYSTEMD_SERVICE_NAME}"
+                        "服务单元文件已生成，可手动执行：\n  systemctl{flag} daemon-reload\n  systemctl{flag} enable --now {SYSTEMD_SERVICE_NAME}"
                     );
                 }
             }
@@ -84,27 +116,23 @@ pub fn cmd_service(args: &[String]) -> Result<(), String> {
         }
         "uninstall" | "remove" => {
             if cfg!(target_os = "linux") {
-                let _ = Command::new("systemctl")
-                    .args(["--user", "disable", "--now", SYSTEMD_SERVICE_NAME])
-                    .status();
+                let _ = run_systemctl(system_scope, &["disable", "--now", SYSTEMD_SERVICE_NAME]);
             }
-            let unit_path = systemd_user_unit_path()?;
+            let unit_path = systemd_unit_path(system_scope)?;
             if unit_path.exists() {
                 fs::remove_file(&unit_path)
                     .map_err(|e| format!("删除 {} 失败: {e}", unit_path.display()))?;
                 if cfg!(target_os = "linux") {
-                    let _ = Command::new("systemctl")
-                        .args(["--user", "daemon-reload"])
-                        .status();
+                    let _ = run_systemctl(system_scope, &["daemon-reload"]);
                 }
                 println!("已卸载服务文件: {}", unit_path.display());
             } else {
-                println!("未检测到已安装的 systemd 用户服务文件。");
+                println!("未检测到已安装的 systemd 服务文件。");
             }
             Ok(())
         }
         "status" => {
-            let unit_path = systemd_user_unit_path()?;
+            let unit_path = systemd_unit_path(system_scope)?;
             println!(
                 "单元文件: {} ({})",
                 unit_path.display(),
@@ -115,10 +143,11 @@ pub fn cmd_service(args: &[String]) -> Result<(), String> {
                 }
             );
             if cfg!(target_os = "linux") {
-                if let Ok(output) = Command::new("systemctl")
-                    .args(["--user", "is-active", SYSTEMD_SERVICE_NAME])
-                    .output()
-                {
+                let mut cmd = Command::new("systemctl");
+                if !system_scope {
+                    cmd.arg("--user");
+                }
+                if let Ok(output) = cmd.args(["is-active", SYSTEMD_SERVICE_NAME]).output() {
                     println!(
                         "systemd 状态: {}",
                         String::from_utf8_lossy(&output.stdout).trim()

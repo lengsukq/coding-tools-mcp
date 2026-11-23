@@ -530,6 +530,7 @@ pub fn collect_overlay_discovery_targets(
 #[cfg(unix)]
 fn platform_interface_ipv4s(custom_cidrs: &[Ipv4Cidr]) -> Vec<(Ipv4Addr, bool)> {
     let mut primary = Vec::new();
+    let mut overlays = Vec::new();
     let mut secondary = Vec::new();
     unsafe {
         let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
@@ -559,6 +560,16 @@ fn platform_interface_ipv4s(custom_cidrs: &[Ipv4Cidr]) -> Vec<(Ipv4Addr, bool)> 
                             .into_owned()
                     };
                     let lower = name.to_ascii_lowercase();
+                    let is_container_bridge = lower.starts_with("docker")
+                        || lower.starts_with("br-")
+                        || lower.starts_with("veth")
+                        || lower.starts_with("virbr")
+                        || lower.starts_with("cni")
+                        || lower.starts_with("flannel");
+                    if is_container_bridge && !custom_cidrs.iter().any(|c| c.contains(ip)) {
+                        cursor = entry.ifa_next;
+                        continue;
+                    }
                     let is_physical = lower.starts_with("en")
                         || lower.starts_with("eth")
                         || lower.starts_with("wl");
@@ -573,8 +584,10 @@ fn platform_interface_ipv4s(custom_cidrs: &[Ipv4Cidr]) -> Vec<(Ipv4Addr, bool)> 
                         || is_likely_overlay_ipv4(ip);
                     if is_physical {
                         primary.push((ip, false));
+                    } else if is_overlay {
+                        overlays.push((ip, true));
                     } else {
-                        secondary.push((ip, is_overlay));
+                        secondary.push((ip, false));
                     }
                 }
             }
@@ -582,6 +595,7 @@ fn platform_interface_ipv4s(custom_cidrs: &[Ipv4Cidr]) -> Vec<(Ipv4Addr, bool)> 
         }
         libc::freeifaddrs(addrs);
     }
+    primary.extend(overlays);
     primary.extend(secondary);
     primary
 }
