@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::agent_context::{
     discover_compact_workspace_instructions, discover_instructions, discover_skills,
-    render_instruction_documents, AgentContextRuntimeConfig, SkillEntry,
+    filter_instructions, filter_skills, render_instruction_documents, AgentContextRuntimeConfig,
+    SkillEntry,
 };
 use crate::harness::Harness;
 use crate::tools::io_util::hash_and_count_json;
@@ -168,18 +169,21 @@ impl ToolContext {
         let Some(config) = &self.agent_context else {
             return self.ai_instructions.clone();
         };
-        let repository_instructions = if self.tool_profile.is_compact() {
-            discover_compact_workspace_instructions(
-                self.workspace.root(),
-                &config.instruction_sources,
-            )
-        } else {
-            discover_instructions(
-                self.workspace.root(),
-                &config.instruction_sources,
-                &config.custom_instruction_paths,
-            )
-        };
+        let repository_instructions = filter_instructions(
+            if self.tool_profile.is_compact() {
+                discover_compact_workspace_instructions(
+                    self.workspace.root(),
+                    &config.instruction_sources,
+                )
+            } else {
+                discover_instructions(
+                    self.workspace.root(),
+                    &config.instruction_sources,
+                    &config.custom_instruction_paths,
+                )
+            },
+            &config.disabled_instruction_ids,
+        );
         merge_ai_instructions(
             &self.ai_instructions,
             &render_instruction_documents(&repository_instructions),
@@ -190,10 +194,13 @@ impl ToolContext {
         let Some(config) = &self.agent_context else {
             return self.skills.clone();
         };
-        discover_skills(
-            self.workspace.root(),
-            &config.skill_sources,
-            &config.custom_skill_paths,
+        filter_skills(
+            discover_skills(
+                self.workspace.root(),
+                &config.skill_sources,
+                &config.custom_skill_paths,
+            ),
+            &config.disabled_skill_ids,
         )
     }
 

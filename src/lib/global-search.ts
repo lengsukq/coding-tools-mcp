@@ -128,9 +128,9 @@ export const SETTINGS_SIDEBAR_GROUPS: SettingsNavGroup[] = [
         id: "context",
         section: "execution",
         panel: "context",
-        label: "AI 指令与技能来源",
-        subtitle: "全局 AI 规则提示词及 Claude / Cursor / Codex 技能源自动扫描",
-        keywords: ["ai 指令", "instructions", "skills", "技能", "claude", "cursor", "codex", "opencode", "提示词", "扫描"],
+        label: "AI 指令与 Skills",
+        subtitle: "全局 AI 规则提示词及本机 Skills / Agents 扫描与勾选注入",
+        keywords: ["ai 指令", "instructions", "skills", "agents", "技能", "注入", "antigravity", "gemini", "claude", "cursor", "codex", "opencode", "提示词", "扫描"],
       },
       {
         id: "computer-control",
@@ -178,8 +178,8 @@ export const SETTINGS_SIDEBAR_GROUPS: SettingsNavGroup[] = [
         id: "general",
         section: "general",
         label: "外观与启动",
-        subtitle: "界面品牌强调色主题面板与应用启动自动恢复 MCP 服务",
-        keywords: ["外观", "主题", "颜色", "强调色", "palette", "启动", "开机", "恢复"],
+        subtitle: "界面品牌强调色主题、开机自动启动、开机轻量启动与自动恢复 MCP 服务",
+        keywords: ["外观", "主题", "颜色", "强调色", "palette", "启动", "开机", "开机自启", "开机自动启动", "轻量启动", "autostart", "恢复"],
       },
       {
         id: "about",

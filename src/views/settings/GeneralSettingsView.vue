@@ -53,6 +53,8 @@ function cloneRuntimeSettings(source: GlobalRuntimeSettingsDto): GlobalRuntimeSe
     ...source,
     instructionSources: [...source.instructionSources],
     skillSources: [...source.skillSources],
+    disabledInstructionIds: [...(source.disabledInstructionIds ?? [])],
+    disabledSkillIds: [...(source.disabledSkillIds ?? [])],
   };
 }
 
@@ -78,9 +80,13 @@ const runtime = reactive<GlobalRuntimeSettingsDto>({
   skillSources: [],
   customInstructionPaths: "",
   customSkillPaths: "",
+  disabledInstructionIds: [],
+  disabledSkillIds: [],
   allowLanAccess: false,
   allowLocalNoauth: true,
   restoreRuntimeStateOnLaunch: false,
+  launchAtLogin: false,
+  launchInLightweightMode: false,
   migrationNotice: "",
 });
 
@@ -107,11 +113,19 @@ const owned = computed<Array<keyof GlobalRuntimeSettingsDto>>(() => {
     return ["authType", "mcpServerName", "allowLocalNoauth", "allowLanAccess"];
   }
   if (props.section === "general") {
-    return ["restoreRuntimeStateOnLaunch"];
+    return ["launchAtLogin", "launchInLightweightMode", "restoreRuntimeStateOnLaunch"];
   }
   if (props.section === "execution") {
     if (props.panel === "context") {
-      return ["aiInstructions", "instructionSources", "skillSources", "customInstructionPaths", "customSkillPaths"];
+      return [
+        "aiInstructions",
+        "instructionSources",
+        "skillSources",
+        "customInstructionPaths",
+        "customSkillPaths",
+        "disabledInstructionIds",
+        "disabledSkillIds",
+      ];
     }
     return ["permissionMode", "allowedCommands", "executablePaths"];
   }
@@ -194,25 +208,18 @@ async function compactUi() {
   }
 }
 
-async function scanSources(autoApply = false) {
+async function scanSources() {
   scanning.value = true;
   try {
-    scan.value = await scanGlobalAgentContext();
-    if (autoApply && scan.value) {
-      if (runtime.instructionSources.length === 0) runtime.instructionSources = [...scan.value.detectedInstructionSources];
-      if (runtime.skillSources.length === 0) runtime.skillSources = [...scan.value.detectedSkillSources];
-    }
+    scan.value = await scanGlobalAgentContext({
+      customInstructionPaths: runtime.customInstructionPaths,
+      customSkillPaths: runtime.customSkillPaths,
+    });
   } catch (error) {
-    showToast(String(error), { title: "扫描 Agent Context 失败", kind: "warning" });
+    showToast(String(error), { title: "扫描本机 Skills 与 Agents 失败", kind: "warning" });
   } finally {
     scanning.value = false;
   }
-}
-
-function applyDetected() {
-  if (!scan.value) return;
-  runtime.instructionSources = [...scan.value.detectedInstructionSources];
-  runtime.skillSources = [...scan.value.detectedSkillSources];
 }
 
 async function saveProxy() {
@@ -245,11 +252,19 @@ async function saveRuntime() {
     const draft = cloneRuntimeSettings(runtime);
     const baseline = runtimeBaseline.value;
     const fields = [...owned.value];
+    const customPathsChanged =
+      props.section === "execution" &&
+      props.panel === "context" &&
+      (draft.customInstructionPaths !== baseline.customInstructionPaths ||
+        draft.customSkillPaths !== baseline.customSkillPaths);
     await enqueueRuntimeSettingsWrite(async () => {
       const latest = await getGlobalRuntimeSettings();
       await setGlobalRuntimeSettings(mergeOwnedChanges(latest, draft, baseline, fields));
     });
     runtimeBaseline.value = draft;
+    if (customPathsChanged) {
+      void scanSources();
+    }
     showToast("设置已保存并自动应用（运行中的 MCP 已热更新生效）。", { kind: "success" });
     return true;
   } catch (e) {
@@ -350,14 +365,43 @@ onMounted(() => {
           <div class="ui-section-heading">
             <div>
               <h2>启动行为</h2>
-              <p>配置桌面端启动时是否自动拉起共享 MCP 服务。</p>
+              <p>配置随系统开机自动启动、开机轻量驻留以及共享 MCP 服务的启动恢复策略。</p>
             </div>
           </div>
-          <ToggleSwitch
-            v-model="runtime.restoreRuntimeStateOnLaunch"
-            label="启动时恢复 MCP 服务"
-            description="影响应用下次启动；所有工作区共享同一个 MCP 服务。"
-          />
+          <div class="ui-stack">
+            <ToggleSwitch
+              v-model="runtime.launchAtLogin"
+              label="开机自动启动"
+              :description="
+                canCompact
+                  ? '登录 macOS 时自动拉起本应用（通过用户 LaunchAgent 配置，无需管理员权限）。'
+                  : '登录系统时自动启动本应用（仅作用于当前系统用户）。'
+              "
+            />
+            <div class="ui-inset space-y-2 p-3.5">
+              <ToggleSwitch
+                v-model="runtime.launchInLightweightMode"
+                :disabled="!runtime.launchAtLogin"
+                label="开机时轻量启动"
+                :description="
+                  canCompact
+                    ? '仅随开机自启生效：启动时不创建主界面 WebView，仅驻留顶部菜单栏以节省内存；随时可从菜单栏恢复主窗口。'
+                    : '仅随开机自启生效：启动时不弹出主窗口，静默驻留系统托盘；点击托盘图标即可打开界面。'
+                "
+              />
+              <p
+                v-if="runtime.launchAtLogin && runtime.launchInLightweightMode && !runtime.restoreRuntimeStateOnLaunch"
+                class="text-xs leading-5 text-amber-700 dark:text-amber-300"
+              >
+                提示：若希望开机轻量启动后 MCP 服务自动就绪，建议同时开启下方「启动时恢复 MCP 服务」。
+              </p>
+            </div>
+            <ToggleSwitch
+              v-model="runtime.restoreRuntimeStateOnLaunch"
+              label="启动时恢复 MCP 服务"
+              description="影响应用下次启动（包含开机轻量启动）；所有工作区共享同一个 MCP 服务。"
+            />
+          </div>
           <SaveBar :dirty="runtimeDirty" :busy="runtimeSaving" :error="runtimeError" @save="saveRuntime" />
         </GlassCard>
       </template>
@@ -405,7 +449,6 @@ onMounted(() => {
           :error="runtimeError"
           @update-runtime="patchRuntime"
           @scan="scanSources()"
-          @apply-detected="applyDetected"
           @save="saveRuntime"
         />
 

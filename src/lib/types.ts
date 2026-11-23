@@ -13,6 +13,8 @@ export interface RuntimeConfig {
   skill_sources?: string[];
   custom_instruction_paths?: string;
   custom_skill_paths?: string;
+  disabled_instruction_ids?: string[];
+  disabled_skill_ids?: string[];
   workspace_local_entries?: boolean;
   workspace_script_extensions?: string;
   allow_high_risk_writes?: boolean;

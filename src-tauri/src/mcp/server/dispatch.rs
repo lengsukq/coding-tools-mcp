@@ -603,6 +603,13 @@ fn handle_workspace_select(
                 &request.tools.current_ai_instructions(),
                 MAX_SELECT_INSTRUCTIONS_BYTES,
             );
+            let skills = request
+                .tools
+                .current_skills()
+                .into_iter()
+                .take(50)
+                .map(|entry| entry.descriptor)
+                .collect::<Vec<_>>();
             let structured = tool_ok(json!({
                 "session_id": session_id,
                 "workspace": crate::mcp::gateway::WorkspaceDescriptor::from(&request.profile),
@@ -610,6 +617,7 @@ fn handle_workspace_select(
                 "permission_mode": request.tools.policy.permission_mode.as_str(),
                 "history_recording": request.tools.history_recording,
                 "agent_instructions": instructions,
+                "skills": skills,
                 "message": "Workspace 已绑定到当前 MCP session；后续普通工具调用将使用该 Workspace。"
             }));
             Ok(DispatchOutcome {
@@ -652,6 +660,7 @@ fn handle_workspace_select(
                 "permission_mode": probe["permission_mode"].as_str().unwrap_or("trusted"),
                 "history_recording": probe["history_recording"].as_bool().unwrap_or(false),
                 "agent_instructions": probe["agent_instructions"].as_str().unwrap_or(""),
+                "skills": probe.get("skills").cloned().unwrap_or_else(|| json!([])),
                 "message": format!("远端配对设备 {peer_name} 的 Workspace 已绑定到当前 MCP session；后续普通工具调用将自动单跳路由至该设备。")
             }));
             Ok(DispatchOutcome {

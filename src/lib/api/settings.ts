@@ -62,9 +62,13 @@ export interface GlobalRuntimeSettingsDto {
   skillSources: string[];
   customInstructionPaths: string;
   customSkillPaths: string;
+  disabledInstructionIds: string[];
+  disabledSkillIds: string[];
   allowLanAccess: boolean;
   allowLocalNoauth?: boolean;
   restoreRuntimeStateOnLaunch: boolean;
+  launchAtLogin: boolean;
+  launchInLightweightMode: boolean;
   migrationNotice: string;
 }
 

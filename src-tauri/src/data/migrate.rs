@@ -404,9 +404,13 @@ fn merge_settings(data: &mut AppData, settings: AppSettings) {
     data.global_skill_sources = settings.global_skill_sources;
     data.global_custom_instruction_paths = settings.global_custom_instruction_paths;
     data.global_custom_skill_paths = settings.global_custom_skill_paths;
+    data.global_disabled_instruction_ids = settings.global_disabled_instruction_ids;
+    data.global_disabled_skill_ids = settings.global_disabled_skill_ids;
     data.allow_lan_access = settings.allow_lan_access;
     data.allow_local_noauth = settings.allow_local_noauth;
     data.restore_runtime_state_on_launch = settings.restore_runtime_state_on_launch;
+    data.launch_at_login = settings.launch_at_login;
+    data.launch_in_lightweight_mode = settings.launch_in_lightweight_mode;
     data.global_mcp_was_running = settings.global_mcp_was_running;
     data.global_mcp_migration_notice = settings.global_mcp_migration_notice;
     data.restore_mcp_workspace_ids = settings.restore_mcp_workspace_ids;

@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
-#[cfg(target_os = "macos")]
 use tauri::webview::WebviewWindowBuilder;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
@@ -32,6 +31,42 @@ pub fn is_compact_mode() -> bool {
 
 pub fn is_exit_armed() -> bool {
     ALLOW_EXIT.load(Ordering::SeqCst)
+}
+
+/// Build the primary `"main"` WebView window from `tauri.conf.json`.
+pub fn create_main_window_from_config(app: &AppHandle, visible: bool) -> AppResult<WebviewWindow> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .ok_or_else(|| AppError::Message("找不到主窗口配置，无法初始化界面".into()))?;
+    let builder = WebviewWindowBuilder::from_config(app, config)
+        .map_err(|err| AppError::Message(format!("初始化界面失败: {err}")))?;
+    builder
+        .visible(visible)
+        .build()
+        .map_err(|err| AppError::Message(format!("创建主窗口失败: {err}")))
+}
+
+/// Start the process silently without displaying the main window.
+/// On macOS this stays truly headless (zero WKWebView, Accessory menubar app);
+/// on Windows/Linux it builds the main window hidden in the system tray so
+/// clicking the tray icon can show it without risking WebView2 sync deadlocks.
+pub fn enter_lightweight_startup(app: &AppHandle) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        COMPACT_MODE.store(true, Ordering::SeqCst);
+        if let Err(error) = app.set_activation_policy(ActivationPolicy::Accessory) {
+            eprintln!("failed to switch to Accessory policy during lightweight startup: {error}");
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = create_main_window_from_config(app, false)?;
+        Ok(())
+    }
 }
 
 /// Unload the macOS main WebView instead of merely hiding it. All backend
@@ -125,18 +160,7 @@ pub fn show_main_window(app: AppHandle) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     let window = if is_compact_mode() && app.get_webview_window("main").is_none() {
         // Recreate lazily: no hidden WKWebView needs to remain resident.
-        let config = app
-            .config()
-            .app
-            .windows
-            .first()
-            .ok_or_else(|| AppError::Message("找不到主窗口配置，无法恢复界面".into()))?;
-        let builder = WebviewWindowBuilder::from_config(&app, config)
-            .map_err(|err| AppError::Message(format!("初始化界面失败: {err}")))?;
-        let window = builder
-            .visible(false)
-            .build()
-            .map_err(|err| AppError::Message(format!("恢复界面失败: {err}")))?;
+        let window = create_main_window_from_config(&app, false)?;
         let geometry = SAVED_GEOMETRY.lock().ok().and_then(|slot| *slot);
         if let Some(geometry) = geometry {
             if let Some(size) = geometry.size {
@@ -152,6 +176,8 @@ pub fn show_main_window(app: AppHandle) -> AppResult<()> {
             if geometry.maximized {
                 let _ = window.maximize();
             }
+        } else {
+            let _ = window.center();
         }
         // Switch back to a regular Dock app only after rebuilding succeeds.
         // Failed activation must not strand a hidden main WebView.

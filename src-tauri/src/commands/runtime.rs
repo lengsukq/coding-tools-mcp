@@ -343,9 +343,11 @@ pub async fn restart_runtime(state: State<'_, AppState>) -> AppResult<RuntimeSta
     restart_global_mcp(&state).await
 }
 
-#[tauri::command]
-pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) async fn restore_runtime_state_inner(state: &AppState) -> AppResult<()> {
     if state.startup_restore_attempted.swap(true, Ordering::SeqCst) {
+        // Wait if background startup restore is still in flight so the UI reads
+        // the settled MCP status instead of a transient "stopped" snapshot.
+        let _gate = RESTART_GATE.lock().await;
         return Ok(());
     }
 
@@ -355,10 +357,15 @@ pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> 
     }
 
     let gate = RESTART_GATE.lock().await;
-    if let Err(error) = start_mcp_service_locked(&state, &gate).await {
+    if let Err(error) = start_mcp_service_locked(state, &gate).await {
         eprintln!("failed to restore Global MCP runtime: {error}");
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn restore_runtime_state(state: State<'_, AppState>) -> AppResult<()> {
+    restore_runtime_state_inner(&state).await
 }
 
 #[cfg(test)]

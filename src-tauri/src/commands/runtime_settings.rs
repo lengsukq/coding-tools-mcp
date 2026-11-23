@@ -28,11 +28,19 @@ pub struct GlobalRuntimeSettingsDto {
     #[serde(default)]
     pub custom_skill_paths: String,
     #[serde(default)]
+    pub disabled_instruction_ids: Vec<String>,
+    #[serde(default)]
+    pub disabled_skill_ids: Vec<String>,
+    #[serde(default)]
     pub allow_lan_access: bool,
     #[serde(default = "crate::settings::default_allow_local_noauth")]
     pub allow_local_noauth: bool,
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
+    #[serde(default)]
+    pub launch_at_login: bool,
+    #[serde(default)]
+    pub launch_in_lightweight_mode: bool,
     #[serde(default)]
     pub migration_notice: String,
 }
@@ -42,6 +50,8 @@ pub async fn get_global_runtime_settings(app: AppHandle) -> AppResult<GlobalRunt
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>().with_settings(|store| {
             let settings = store.settings();
+            let launch_at_login =
+                settings.launch_at_login && crate::platform::autostart::is_enabled();
             Ok(GlobalRuntimeSettingsDto {
                 auth_type: settings.global_mcp_auth_type,
                 mcp_server_name: settings.global_mcp_server_name,
@@ -53,9 +63,13 @@ pub async fn get_global_runtime_settings(app: AppHandle) -> AppResult<GlobalRunt
                 skill_sources: settings.global_skill_sources,
                 custom_instruction_paths: settings.global_custom_instruction_paths,
                 custom_skill_paths: settings.global_custom_skill_paths,
+                disabled_instruction_ids: settings.global_disabled_instruction_ids,
+                disabled_skill_ids: settings.global_disabled_skill_ids,
                 allow_lan_access: settings.allow_lan_access,
                 allow_local_noauth: settings.allow_local_noauth,
                 restore_runtime_state_on_launch: settings.restore_runtime_state_on_launch,
+                launch_at_login,
+                launch_in_lightweight_mode: settings.launch_in_lightweight_mode,
                 migration_notice: settings.global_mcp_migration_notice,
             })
         })
@@ -91,10 +105,18 @@ pub async fn set_global_runtime_settings(
     let app_for_save = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_for_save.state::<AppState>();
-        let should_capture_running = state.with_settings(|store| {
-            Ok(runtime.restore_runtime_state_on_launch
-                && !store.settings().restore_runtime_state_on_launch)
+        let (should_capture_running, previous_launch_at_login) = state.with_settings(|store| {
+            let current = store.settings();
+            Ok((
+                runtime.restore_runtime_state_on_launch && !current.restore_runtime_state_on_launch,
+                current.launch_at_login,
+            ))
         })?;
+        let should_sync_autostart = runtime.launch_at_login != previous_launch_at_login
+            || (runtime.launch_at_login && !crate::platform::autostart::is_enabled());
+        if should_sync_autostart {
+            crate::platform::autostart::set_enabled(runtime.launch_at_login)?;
+        }
         let running_snapshot = if should_capture_running {
             Some(state.with_runtime(|supervisor| Ok(supervisor.is_running()))?)
         } else {
@@ -114,9 +136,15 @@ pub async fn set_global_runtime_settings(
             settings.global_custom_instruction_paths =
                 runtime.custom_instruction_paths.trim().to_string();
             settings.global_custom_skill_paths = runtime.custom_skill_paths.trim().to_string();
+            settings.global_disabled_instruction_ids =
+                crate::agent_context::merge_id_lists(&runtime.disabled_instruction_ids, &[]);
+            settings.global_disabled_skill_ids =
+                crate::agent_context::merge_id_lists(&runtime.disabled_skill_ids, &[]);
             settings.allow_lan_access = runtime.allow_lan_access;
             settings.allow_local_noauth = runtime.allow_local_noauth;
             settings.restore_runtime_state_on_launch = runtime.restore_runtime_state_on_launch;
+            settings.launch_at_login = runtime.launch_at_login;
+            settings.launch_in_lightweight_mode = runtime.launch_in_lightweight_mode;
             settings.global_mcp_migration_notice.clear();
             if let Some(running) = running_snapshot {
                 settings.global_mcp_was_running = running;

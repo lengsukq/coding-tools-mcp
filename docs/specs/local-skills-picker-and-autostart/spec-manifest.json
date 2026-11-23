@@ -1,0 +1,34 @@
+{
+  "layout": "parent-child",
+  "subspecs": [
+    {
+      "id": "skills-scan-and-filter",
+      "title": "本机与工作区 Skills/Instructions 扫描修复及按条过滤",
+      "fr": [
+        "FR-1",
+        "FR-2",
+        "FR-3"
+      ]
+    },
+    {
+      "id": "skills-picker-ui",
+      "title": "Skills/Agents 列表勾选注入界面与隐藏默认 Harness",
+      "fr": [
+        "FR-4",
+        "FR-5"
+      ],
+      "dependsOn": [
+        "skills-scan-and-filter"
+      ]
+    },
+    {
+      "id": "autostart-and-lightweight-launch",
+      "title": "开机自动启动与开机轻量启动模式",
+      "fr": [
+        "FR-6",
+        "FR-7",
+        "FR-8"
+      ]
+    }
+  ]
+}

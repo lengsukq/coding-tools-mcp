@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::agent_context::{
-    discover, merge_source_lists, scan_global_agent_context as discover_global_agent_context,
-    AgentContextSnapshot, GlobalAgentContextScan,
+    discover, merge_source_lists, scan_global_agent_context_with_custom, AgentContextSnapshot,
+    GlobalAgentContextScan,
 };
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
@@ -30,26 +30,48 @@ pub async fn scan_agent_context(
         &settings.global_custom_skill_paths,
         &profile.runtime.custom_skill_paths,
     );
+    let globally_disabled_instruction_ids = settings.global_disabled_instruction_ids;
+    let globally_disabled_skill_ids = settings.global_disabled_skill_ids;
     let workspace_path = profile.path;
 
     tauri::async_runtime::spawn_blocking(move || {
-        discover(
+        let mut snapshot = discover(
             std::path::Path::new(&workspace_path),
             &instruction_sources,
             &skill_sources,
             &instruction_paths,
             &skill_paths,
-        )
+        );
+        snapshot.globally_disabled_instruction_ids = globally_disabled_instruction_ids;
+        snapshot.globally_disabled_skill_ids = globally_disabled_skill_ids;
+        snapshot
     })
     .await
     .map_err(|err| AppError::Message(format!("扫描工作区上下文任务失败: {err}")))
 }
 
 #[tauri::command]
-pub async fn scan_global_agent_context() -> AppResult<GlobalAgentContextScan> {
-    tauri::async_runtime::spawn_blocking(discover_global_agent_context)
-        .await
-        .map_err(|err| AppError::Message(format!("扫描全局上下文任务失败: {err}")))
+pub async fn scan_global_agent_context(
+    state: State<'_, AppState>,
+    custom_instruction_paths: Option<String>,
+    custom_skill_paths: Option<String>,
+) -> AppResult<GlobalAgentContextScan> {
+    let (instruction_paths, skill_paths) = match (custom_instruction_paths, custom_skill_paths) {
+        (Some(instr), Some(skill)) => (instr, skill),
+        (instr_opt, skill_opt) => {
+            let settings = state.with_settings(|store| Ok(store.settings()))?;
+            (
+                instr_opt.unwrap_or(settings.global_custom_instruction_paths),
+                skill_opt.unwrap_or(settings.global_custom_skill_paths),
+            )
+        }
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_global_agent_context_with_custom(&instruction_paths, &skill_paths)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("扫描全局上下文任务失败: {err}")))
 }
 
 fn merge_text(global: &str, workspace: &str) -> String {

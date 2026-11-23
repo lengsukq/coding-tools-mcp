@@ -366,13 +366,35 @@ pub fn run() {
     if let Some(rt) = _tokio_runtime.as_ref() {
         tauri::async_runtime::set(rt.handle().clone());
     }
+    let startup_args = args.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            app.manage(AppState::new().expect("failed to load app state"));
+        .setup(move |app| {
+            let app_state = AppState::new().expect("failed to load app state");
+            let launch_in_lightweight_mode = app_state
+                .with_settings(|store| Ok(store.settings().launch_in_lightweight_mode))
+                .unwrap_or(false);
+            let start_lightweight = platform::autostart::should_start_lightweight(
+                &startup_args,
+                launch_in_lightweight_mode,
+            );
+            app.manage(app_state);
+            if start_lightweight {
+                commands::window_chrome::enter_lightweight_startup(app.handle())
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+            } else {
+                commands::window_chrome::create_main_window_from_config(app.handle(), true)
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+            }
             setup_tray(app)?;
             spawn_memory_maintenance(app.handle().clone());
             platform::register_show_window_handle(app.handle());
+            let restore_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = restore_app.state::<AppState>();
+                let _ = commands::runtime::restore_runtime_state_inner(&state).await;
+                update_tray_dashboard(&restore_app);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -489,6 +511,14 @@ pub fn run() {
                         let _ = app_handle.emit("close-requested", ());
                     }
                 }
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => {
+                let _ = commands::window_chrome::show_main_window(app_handle.clone());
+                update_tray_dashboard(app_handle);
             }
             _ => {}
         });

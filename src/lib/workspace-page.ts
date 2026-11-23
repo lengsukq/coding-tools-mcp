@@ -12,6 +12,8 @@ export interface RuntimePolicyDraft {
   skillSources: string[];
   customInstructionPaths: string;
   customSkillPaths: string;
+  disabledInstructionIds: string[];
+  disabledSkillIds: string[];
   workspaceLocalEntries: boolean;
   workspaceScriptExtensions: string;
 }
@@ -66,6 +68,8 @@ export function withRuntimePolicy(
       skill_sources: draft.skillSources,
       custom_instruction_paths: draft.customInstructionPaths,
       custom_skill_paths: draft.customSkillPaths,
+      disabled_instruction_ids: draft.disabledInstructionIds,
+      disabled_skill_ids: draft.disabledSkillIds,
       workspace_local_entries: draft.workspaceLocalEntries,
       workspace_script_extensions: draft.workspaceScriptExtensions,
     },

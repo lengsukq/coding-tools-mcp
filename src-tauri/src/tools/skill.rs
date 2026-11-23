@@ -102,6 +102,7 @@ mod tests {
                     skill_sources: vec!["custom".into()],
                     custom_instruction_paths: String::new(),
                     custom_skill_paths: ".agents/skills".into(),
+                    ..AgentContextRuntimeConfig::default()
                 });
 
         let empty = list_skills(&ctx, &json!({})).expect("empty skills");
@@ -160,5 +161,65 @@ mod tests {
         let ambiguous = get_skill(&ctx, &json!({"name": "release"}))
             .expect_err("name-only duplicate should remain ambiguous");
         assert_eq!(ambiguous.to_error_value()["code"], "AMBIGUOUS_SKILL");
+    }
+
+    #[test]
+    fn list_skills_and_get_skill_respect_disabled_skill_ids() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let harness = tempfile::tempdir().expect("harness");
+        let keep_dir = workspace.path().join(".agents/skills/keep-me");
+        let drop_dir = workspace.path().join(".agents/skills/drop-me");
+        std::fs::create_dir_all(&keep_dir).expect("keep dir");
+        std::fs::create_dir_all(&drop_dir).expect("drop dir");
+        std::fs::write(
+            keep_dir.join("SKILL.md"),
+            "---\nname: keep-me\ndescription: >-\n  Keep this skill\n  for injection.\n---\nKeep body.",
+        )
+        .expect("keep md");
+        std::fs::write(
+            drop_dir.join("SKILL.md"),
+            "---\nname: drop-me\ndescription: Exclude this skill\n---\nDrop body.",
+        )
+        .expect("drop md");
+
+        let discovered = crate::agent_context::discover_skills(
+            workspace.path(),
+            &["custom".into()],
+            ".agents/skills",
+        );
+        let drop_id = discovered
+            .iter()
+            .find(|item| item.descriptor.name == "drop-me")
+            .expect("drop-me discovered")
+            .descriptor
+            .id
+            .clone();
+
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context")
+                .with_agent_context(AgentContextRuntimeConfig {
+                    instruction_sources: vec!["codex".into()],
+                    skill_sources: vec!["custom".into()],
+                    custom_instruction_paths: String::new(),
+                    custom_skill_paths: ".agents/skills".into(),
+                    disabled_instruction_ids: Vec::new(),
+                    disabled_skill_ids: vec![drop_id],
+                });
+
+        let listed = list_skills(&ctx, &json!({})).expect("list skills");
+        assert_eq!(listed["count"], 1);
+        assert_eq!(listed["skills"][0]["name"], "keep-me");
+        assert_eq!(
+            listed["skills"][0]["description"],
+            "Keep this skill for injection."
+        );
+        assert!(get_skill(&ctx, &json!({"name": "keep-me"})).is_ok());
+        assert_eq!(
+            get_skill(&ctx, &json!({"name": "drop-me"}))
+                .expect_err("disabled skill must not be fetchable")
+                .to_error_value()["code"],
+            "SKILL_NOT_FOUND"
+        );
     }
 }

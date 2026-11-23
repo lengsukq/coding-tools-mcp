@@ -48,6 +48,8 @@ const policy = computed<RuntimePolicyDraft>(() => ({
   skillSources: props.profile.runtime.skill_sources ?? [],
   customInstructionPaths: props.profile.runtime.custom_instruction_paths ?? "",
   customSkillPaths: props.profile.runtime.custom_skill_paths ?? "",
+  disabledInstructionIds: props.profile.runtime.disabled_instruction_ids ?? [],
+  disabledSkillIds: props.profile.runtime.disabled_skill_ids ?? [],
   workspaceLocalEntries: props.profile.runtime.workspace_local_entries ?? true,
   workspaceScriptExtensions: props.profile.runtime.workspace_script_extensions ?? ".exe,.bat,.cmd,.ps1",
 }));

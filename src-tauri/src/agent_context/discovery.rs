@@ -57,11 +57,19 @@ struct ProviderDescriptor {
 
 const PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
+        name: "agents",
+        home_instruction: Some(".agents/AGENTS.md"),
+        workspace_instruction: Some("AGENTS.md"),
+        skill_roots: &[".agents/skills"],
+        global_scan_skill_roots: &[".agents/skills"],
+        extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
         name: "codex",
         home_instruction: Some(".codex/AGENTS.md"),
         workspace_instruction: Some("AGENTS.md"),
         skill_roots: &[".agents/skills", ".codex/skills"],
-        global_scan_skill_roots: &[".agents/skills", ".codex/skills"],
+        global_scan_skill_roots: &[".codex/skills", ".agents/skills"],
         extra_global_skill_roots: &[],
     },
     ProviderDescriptor {
@@ -100,7 +108,7 @@ const PROVIDERS: &[ProviderDescriptor] = &[
         name: "zcode",
         home_instruction: Some(".zcode/AGENTS.md"),
         workspace_instruction: Some("AGENTS.md"),
-        skill_roots: &[".zcode/skills"],
+        skill_roots: &[".zcode/skills", ".agents/skills"],
         global_scan_skill_roots: &[".zcode/skills"],
         extra_global_skill_roots: &[],
     },
@@ -116,6 +124,14 @@ const PROVIDERS: &[ProviderDescriptor] = &[
         ],
         global_scan_skill_roots: &[".reasonix/skills", ".agent/skills"],
         extra_global_skill_roots: &[],
+    },
+    ProviderDescriptor {
+        name: "gemini",
+        home_instruction: Some(".gemini/GEMINI.md"),
+        workspace_instruction: Some("GEMINI.md"),
+        skill_roots: &[".gemini/skills", ".agents/skills"],
+        global_scan_skill_roots: &[".gemini/skills", ".gemini/config/skills"],
+        extra_global_skill_roots: &[".gemini/config/skills"],
     },
 ];
 
@@ -161,6 +177,15 @@ pub(super) fn add_instruction_candidates_for_provider(
             }
         }
         "reasonix" => add_reasonix_instruction_candidates(candidates, workspace_root),
+        "gemini" => {
+            add_home_candidate(candidates, provider, ".gemini/GEMINI.md");
+            add_home_candidate(candidates, provider, ".gemini/AGENTS.md");
+            candidates.push(InstructionCandidate::deferred(
+                provider,
+                workspace_root.join("GEMINI.md"),
+                "workspace",
+            ));
+        }
         "custom" => {}
         _ => {
             let Some(descriptor) = provider_descriptor(provider) else {
@@ -230,6 +255,7 @@ fn add_cursor_rule_files(
     scope: &'static str,
 ) {
     for entry in WalkDir::new(root)
+        .follow_links(true)
         .max_depth(6)
         .into_iter()
         .filter_map(Result::ok)
@@ -329,7 +355,12 @@ pub(super) fn collect_skill_candidates(
     if !root.is_dir() {
         return;
     }
+    // Follow symlinks so single-source skill hubs (e.g. ~/.agents/skills linked
+    // into ~/.codex/skills, ~/.cursor/skills, ~/.claude/skills) are discovered.
+    // walkdir detects symlink cycles automatically and returns an error entry
+    // that filter_map(Result::ok) skips safely.
     for entry in WalkDir::new(root)
+        .follow_links(true)
         .min_depth(1)
         .max_depth(max_depth)
         .into_iter()
@@ -407,8 +438,11 @@ pub(super) fn infer_skill_provider(workspace_root: &Path, path: &Path) -> String
     if relative.starts_with(".reasonix/") {
         return "reasonix".into();
     }
+    if relative.starts_with(".gemini/") {
+        return "gemini".into();
+    }
     if relative.starts_with(".agents/") || relative.starts_with(".agent/") {
-        return "shared".into();
+        return "agents".into();
     }
     "auto".into()
 }
@@ -418,6 +452,8 @@ pub(super) fn normalize_provider(value: &str) -> String {
         "github" | "github-copilot" | "github_copilot" => "copilot".into(),
         "open-code" | "open_code" => "opencode".into(),
         "z-code" | "z_code" => "zcode".into(),
+        "antigravity" | "gemini-cli" | "gemini_cli" => "gemini".into(),
+        "skill-hub" | "skill_hub" | "shared" => "agents".into(),
         value => value.to_string(),
     }
 }
@@ -451,15 +487,17 @@ fn add_home_skill_root(
     }
 }
 
-pub(super) fn discover_global_instruction_paths(home: &Path, provider: &str) -> Vec<String> {
+pub(super) fn discover_global_instruction_files(home: &Path, provider: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::<PathBuf>::new();
     match provider {
+        "agents" => candidates.push(home.join(".agents/AGENTS.md")),
         "codex" => candidates.push(home.join(".codex/AGENTS.md")),
         "claude" => candidates.push(home.join(".claude/CLAUDE.md")),
         "cursor" => {
             let rules = home.join(".cursor/rules");
             if rules.is_dir() {
                 for entry in WalkDir::new(rules)
+                    .follow_links(true)
                     .max_depth(6)
                     .into_iter()
                     .filter_map(Result::ok)
@@ -488,17 +526,27 @@ pub(super) fn discover_global_instruction_paths(home: &Path, provider: &str) -> 
                 );
             }
         }
+        "gemini" => {
+            candidates.push(home.join(".gemini/GEMINI.md"));
+            candidates.push(home.join(".gemini/AGENTS.md"));
+        }
         _ => {}
     }
 
     candidates
         .into_iter()
         .filter(|path| path.is_file())
+        .collect()
+}
+
+pub(super) fn discover_global_instruction_paths(home: &Path, provider: &str) -> Vec<String> {
+    discover_global_instruction_files(home, provider)
+        .into_iter()
         .map(|path| display_home_path(home, &path))
         .collect()
 }
 
-pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<String> {
+pub(super) fn discover_global_skill_files(home: &Path, provider: &str) -> Vec<PathBuf> {
     let roots = provider_descriptor(provider)
         .map(|descriptor| descriptor.global_scan_skill_roots)
         .unwrap_or(&[]);
@@ -510,7 +558,9 @@ pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<St
         if !root.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(&root)
+        let canonical_root = root.canonicalize().unwrap_or(root);
+        for entry in WalkDir::new(&canonical_root)
+            .follow_links(true)
             .min_depth(1)
             .max_depth(4)
             .into_iter()
@@ -525,14 +575,21 @@ pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<St
             let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
             let key = canonical.to_string_lossy().to_string();
             if seen.insert(key) {
-                result.push(display_home_path(home, &canonical));
+                result.push(canonical);
             }
         }
     }
     result
 }
 
-fn display_home_path(home: &Path, path: &Path) -> String {
+pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<String> {
+    discover_global_skill_files(home, provider)
+        .into_iter()
+        .map(|canonical| display_home_path(home, &canonical))
+        .collect()
+}
+
+pub(super) fn display_home_path(home: &Path, path: &Path) -> String {
     let canonical_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     canonical_path
@@ -567,6 +624,24 @@ pub(super) fn resolve_config_path(workspace_root: &Path, value: &str) -> PathBuf
         path
     } else {
         workspace_root.join(path)
+    }
+}
+
+pub(super) fn resolve_home_config_path(home: &Path, value: &str) -> PathBuf {
+    if value == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        return home.join(rest);
+    }
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        home.join(path)
     }
 }
 

@@ -582,6 +582,13 @@ fn execute_select_probe(
                 &ctx.tools.current_ai_instructions(),
                 MAX_SELECT_PROBE_INSTRUCTIONS_BYTES,
             );
+            let skills = ctx
+                .tools
+                .current_skills()
+                .into_iter()
+                .take(50)
+                .map(|entry| entry.descriptor)
+                .collect::<Vec<_>>();
             PeerRpcResponse::ok(
                 json!({
                     "workspace": {
@@ -598,6 +605,7 @@ fn execute_select_probe(
                     "trust_level": lan.trust_level,
                     "history_recording": ctx.tools.history_recording,
                     "agent_instructions": instructions,
+                    "skills": skills,
                 }),
                 None,
             )

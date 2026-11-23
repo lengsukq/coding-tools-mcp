@@ -257,6 +257,10 @@ pub struct AppSettings {
     pub global_custom_instruction_paths: String,
     #[serde(default)]
     pub global_custom_skill_paths: String,
+    #[serde(default)]
+    pub global_disabled_instruction_ids: Vec<String>,
+    #[serde(default)]
+    pub global_disabled_skill_ids: Vec<String>,
     /// Allow MCP and Global Gateway listeners to bind to all LAN interfaces.
     /// Defaults to false so services remain loopback-only unless explicitly enabled.
     #[serde(default)]
@@ -269,6 +273,13 @@ pub struct AppSettings {
     /// Restore the MCP services that were running in the previous app session.
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
+    /// Automatically launch the app when the user logs in.
+    #[serde(default)]
+    pub launch_at_login: bool,
+    /// When launched automatically at login, start silently in lightweight/tray mode
+    /// without opening the main window.
+    #[serde(default)]
+    pub launch_in_lightweight_mode: bool,
     /// Whether the single Global MCP runtime was running when its state was last persisted.
     #[serde(default)]
     pub global_mcp_was_running: bool,
@@ -496,9 +507,13 @@ impl AppSettings {
             global_skill_sources: data.global_skill_sources.clone(),
             global_custom_instruction_paths: data.global_custom_instruction_paths.clone(),
             global_custom_skill_paths: data.global_custom_skill_paths.clone(),
+            global_disabled_instruction_ids: data.global_disabled_instruction_ids.clone(),
+            global_disabled_skill_ids: data.global_disabled_skill_ids.clone(),
             allow_lan_access: data.allow_lan_access,
             allow_local_noauth: data.allow_local_noauth,
             restore_runtime_state_on_launch: data.restore_runtime_state_on_launch,
+            launch_at_login: data.launch_at_login,
+            launch_in_lightweight_mode: data.launch_in_lightweight_mode,
             global_mcp_was_running: data.global_mcp_was_running,
             global_mcp_migration_notice: data.global_mcp_migration_notice.clone(),
             restore_mcp_workspace_ids: data.restore_mcp_workspace_ids.clone(),
@@ -525,9 +540,13 @@ impl AppSettings {
         data.global_skill_sources = self.global_skill_sources.clone();
         data.global_custom_instruction_paths = self.global_custom_instruction_paths.clone();
         data.global_custom_skill_paths = self.global_custom_skill_paths.clone();
+        data.global_disabled_instruction_ids = self.global_disabled_instruction_ids.clone();
+        data.global_disabled_skill_ids = self.global_disabled_skill_ids.clone();
         data.allow_lan_access = self.allow_lan_access;
         data.allow_local_noauth = self.allow_local_noauth;
         data.restore_runtime_state_on_launch = self.restore_runtime_state_on_launch;
+        data.launch_at_login = self.launch_at_login;
+        data.launch_in_lightweight_mode = self.launch_in_lightweight_mode;
         data.global_mcp_was_running = self.global_mcp_was_running;
         data.global_mcp_migration_notice = self.global_mcp_migration_notice.clone();
         data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();

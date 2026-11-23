@@ -42,11 +42,19 @@ pub struct AppData {
     #[serde(default)]
     pub global_custom_skill_paths: String,
     #[serde(default)]
+    pub global_disabled_instruction_ids: Vec<String>,
+    #[serde(default)]
+    pub global_disabled_skill_ids: Vec<String>,
+    #[serde(default)]
     pub allow_lan_access: bool,
     #[serde(default = "crate::settings::default_allow_local_noauth")]
     pub allow_local_noauth: bool,
     #[serde(default)]
     pub restore_runtime_state_on_launch: bool,
+    #[serde(default)]
+    pub launch_at_login: bool,
+    #[serde(default)]
+    pub launch_in_lightweight_mode: bool,
     #[serde(default)]
     pub global_mcp_was_running: bool,
     #[serde(default)]

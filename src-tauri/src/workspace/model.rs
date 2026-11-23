@@ -139,6 +139,12 @@ pub struct RuntimeConfig {
     pub custom_instruction_paths: String,
     #[serde(default)]
     pub custom_skill_paths: String,
+    /// Instruction document IDs explicitly excluded from injection for this workspace.
+    #[serde(default)]
+    pub disabled_instruction_ids: Vec<String>,
+    /// Skill descriptor IDs explicitly excluded from injection for this workspace.
+    #[serde(default)]
+    pub disabled_skill_ids: Vec<String>,
     #[serde(default = "default_workspace_local_entries")]
     pub workspace_local_entries: bool,
     #[serde(default = "default_workspace_script_extensions")]
@@ -253,6 +259,8 @@ impl Default for RuntimeConfig {
             skill_sources: Vec::new(),
             custom_instruction_paths: String::new(),
             custom_skill_paths: String::new(),
+            disabled_instruction_ids: Vec::new(),
+            disabled_skill_ids: Vec::new(),
             workspace_local_entries: default_workspace_local_entries(),
             workspace_script_extensions: default_workspace_script_extensions(),
             allow_high_risk_writes: false,

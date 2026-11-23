@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::agent_context::{merge_source_lists, AgentContextRuntimeConfig};
+use crate::agent_context::{merge_id_lists, merge_source_lists, AgentContextRuntimeConfig};
 #[cfg(test)]
 use crate::lan_peer::LAN_PEER_SECRETS_SCOPE;
 use crate::settings::AppSettings;
@@ -261,6 +261,14 @@ impl GatewayState {
             custom_skill_paths: merge_config_text(
                 &global.global_custom_skill_paths,
                 &profile.runtime.custom_skill_paths,
+            ),
+            disabled_instruction_ids: merge_id_lists(
+                &global.global_disabled_instruction_ids,
+                &profile.runtime.disabled_instruction_ids,
+            ),
+            disabled_skill_ids: merge_id_lists(
+                &global.global_disabled_skill_ids,
+                &profile.runtime.disabled_skill_ids,
             ),
         };
         let ai_instructions = merge_ai_instructions(
