@@ -1,6 +1,9 @@
 //! Single-instance process coordination across desktop platforms.
 
-#[cfg(all(target_os = "windows", feature = "desktop-ui"))]
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    feature = "desktop-ui"
+))]
 static SHOW_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 #[cfg(target_os = "windows")]
@@ -79,18 +82,41 @@ pub fn acquire_single_instance() -> bool {
     true
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn acquire_single_instance() -> bool {
+    let Ok(sock) = crate::platform::local_ipc::default_desktop_socket_path() else {
+        return true;
+    };
+    let callback = std::sync::Arc::new(|| {
+        #[cfg(feature = "desktop-ui")]
+        if let Some(app) = SHOW_APP_HANDLE.get() {
+            let app_clone = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let _ = crate::commands::window_chrome::show_main_window(app_clone);
+            });
+        }
+    });
+    match crate::platform::local_ipc::acquire_unix_desktop_instance_at(&sock, callback) {
+        Ok(acquired) => acquired,
+        Err(err) => {
+            eprintln!("Linux 桌面单实例锁初始化失败（继续启动）: {err}");
+            true
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub fn acquire_single_instance() -> bool {
     true
 }
 
 #[cfg(feature = "desktop-ui")]
 pub fn register_show_window_handle(app_handle: &tauri::AppHandle) {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let _ = SHOW_APP_HANDLE.set(app_handle.clone());
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = app_handle;
     }

@@ -68,7 +68,7 @@ pub struct WebviewMemorySample {
     pub supported: bool,
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn bytes_to_mb(bytes: u64) -> f64 {
     (bytes as f64) / (1024.0 * 1024.0)
 }
@@ -105,7 +105,17 @@ pub(crate) fn sample_webview_memory() -> AppResult<WebviewMemorySample> {
             supported: true,
         })
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        let sample = crate::platform::linux::process::sample_process_tree_memory()?;
+        Ok(WebviewMemorySample {
+            main_mb: (bytes_to_mb(sample.main_bytes) * 10.0).round() / 10.0,
+            webview_mb: (bytes_to_mb(sample.webview_bytes) * 10.0).round() / 10.0,
+            webview_process_count: sample.webview_process_count,
+            supported: true,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         Ok(WebviewMemorySample {
             main_mb: 0.0,
@@ -260,7 +270,7 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-#[cfg(all(test, any(windows, target_os = "macos")))]
+#[cfg(all(test, any(windows, target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
 

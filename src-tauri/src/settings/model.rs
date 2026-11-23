@@ -478,10 +478,18 @@ pub(crate) fn default_global_executable_paths() -> String {
         "/bin",
         "/usr/sbin",
         "/sbin",
+        "/snap/bin",
+        "/home/linuxbrew/.linuxbrew/bin",
         "~/.cargo/bin",
         "~/.local/bin",
         "~/.bun/bin",
         "~/.deno/bin",
+        "~/.volta/bin",
+        "~/.npm-global/bin",
+        "~/.local/share/pnpm",
+        "~/.pyenv/shims",
+        "~/.rye/shims",
+        "~/go/bin",
     ]
     .join("\n")
 }

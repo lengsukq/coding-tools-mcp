@@ -33,8 +33,8 @@ pub trait Platform: Send + Sync {
     fn frpc_candidates(&self) -> Vec<PathBuf>;
 }
 
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(any(target_os = "linux", all(unix, test)))]
+pub(crate) mod linux;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(target_os = "windows")]
@@ -42,6 +42,7 @@ pub(crate) mod windows;
 
 pub(crate) mod autostart;
 mod command;
+pub mod local_ipc;
 mod open;
 mod paths;
 mod single_instance;
