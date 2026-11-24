@@ -2,7 +2,6 @@
 //! 1. Linux desktop single-instance coordination & window wakeup (`desktop.sock`).
 //! 2. Headless `coding-tools-mcp serve` live control (`daemon.sock`: status,
 //!    in-memory 6-digit LAN pairing PIN generation, live policy reload, stop).
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -210,7 +209,7 @@ pub fn default_daemon_socket_path() -> Result<PathBuf, String> {
     Ok(std::env::temp_dir().join("coding-tools-mcp-daemon.sock"))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn default_desktop_socket_path() -> Result<PathBuf, String> {
     Ok(private_ipc_dir()?.join("desktop.sock"))
 }
@@ -218,7 +217,7 @@ pub fn default_desktop_socket_path() -> Result<PathBuf, String> {
 /// Acquire a single-instance Unix socket lock for the desktop shell (`desktop.sock`).
 /// If another desktop instance is already listening, sends a wakeup signal so its
 /// main window comes to the front and returns `false`.
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 pub fn acquire_unix_desktop_instance_at(
     sock_path: &Path,
     on_show_window: Arc<dyn Fn() + Send + Sync + 'static>,
@@ -373,10 +372,19 @@ pub async fn start_daemon_ipc_server(
             let state = Arc::clone(&state);
             let shutdown_notify = Arc::clone(&shutdown_notify);
             tokio::spawn(async move {
+                use tokio::io::AsyncReadExt as _;
+                const MAX_IPC_REQUEST_BYTES: u64 = 1024 * 1024;
+                const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
                 let (read_half, mut write_half) = stream.into_split();
-                let mut reader = BufReader::new(read_half);
+                let mut reader = BufReader::new(read_half.take(MAX_IPC_REQUEST_BYTES));
                 let mut line = String::new();
-                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                let read_result =
+                    tokio::time::timeout(IPC_READ_TIMEOUT, reader.read_line(&mut line)).await;
+                let Ok(Ok(bytes_read)) = read_result else {
+                    return;
+                };
+                if bytes_read == 0 {
                     return;
                 }
                 let response = match serde_json::from_str::<LocalDaemonRequest>(line.trim()) {
@@ -475,7 +483,13 @@ async fn handle_daemon_request(
             }
             crate::lan_peer::sync_discovery_daemon();
             if enabled_changed {
-                let _ = crate::runtime::service::apply_live_runtime_changes(state, false).await;
+                if let Err(err) =
+                    crate::runtime::service::apply_live_runtime_changes(state, false).await
+                {
+                    return LocalDaemonResponse::Error {
+                        message: format!("已开启局域网联邦，但重载监听地址失败: {err}"),
+                    };
+                }
             }
             let settings = state
                 .with_settings(|store| Ok(store.settings()))

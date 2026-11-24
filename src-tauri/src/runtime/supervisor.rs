@@ -71,18 +71,10 @@ impl RuntimeSupervisor {
         }
     }
 
-    pub fn mcp_status(&self) -> RuntimeStatusDto {
-        self.status()
-    }
-
     pub fn usage_stats(&self, workspace_id: &str) -> ServiceUsageStats {
         self.gateway
             .usage_for(workspace_id)
             .snapshot(workspace_id, "mcp")
-    }
-
-    pub fn start_mcp(&mut self) -> AppResult<RuntimeStatusDto> {
-        self.start()
     }
 
     pub fn is_running(&self) -> bool {
@@ -154,10 +146,6 @@ impl RuntimeSupervisor {
         Ok(true)
     }
 
-    pub fn refresh_mcp(&mut self) {
-        self.refresh();
-    }
-
     pub fn begin_stop(&mut self) -> Option<JoinHandle<()>> {
         let entry = self.entry.as_mut()?;
         entry.phase = RuntimePhase::Stopping;
@@ -171,7 +159,7 @@ impl RuntimeSupervisor {
         self.entry = None;
     }
 
-    fn status(&self) -> RuntimeStatusDto {
+    pub fn status(&self) -> RuntimeStatusDto {
         let settings = AppSettings::load_or_default();
         let port = settings.global_gateway.local_port;
         let local_endpoint = format!("http://127.0.0.1:{port}/mcp");
@@ -238,7 +226,7 @@ impl RuntimeSupervisor {
         }
     }
 
-    fn start(&mut self) -> AppResult<RuntimeStatusDto> {
+    pub fn start(&mut self) -> AppResult<RuntimeStatusDto> {
         if matches!(
             self.entry.as_ref().map(|entry| &entry.phase),
             Some(RuntimePhase::Running | RuntimePhase::Starting)
@@ -326,7 +314,7 @@ impl RuntimeSupervisor {
         Ok(self.status())
     }
 
-    fn refresh(&mut self) {
+    pub fn refresh(&mut self) {
         let Some(entry) = self.entry.as_mut() else {
             return;
         };

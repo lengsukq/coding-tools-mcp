@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::tools::io_util::is_default_excluded_os;
+use crate::util::fs::is_default_excluded_os;
 
 use super::presentation::{cursor_rule_content_is_always_apply, cursor_rule_is_always_apply};
 use super::{AUTO_SOURCE, DISCOVERABLE_SOURCES};
@@ -539,13 +539,6 @@ pub(super) fn discover_global_instruction_files(home: &Path, provider: &str) -> 
         .collect()
 }
 
-pub(super) fn discover_global_instruction_paths(home: &Path, provider: &str) -> Vec<String> {
-    discover_global_instruction_files(home, provider)
-        .into_iter()
-        .map(|path| display_home_path(home, &path))
-        .collect()
-}
-
 pub(super) fn discover_global_skill_files(home: &Path, provider: &str) -> Vec<PathBuf> {
     let roots = provider_descriptor(provider)
         .map(|descriptor| descriptor.global_scan_skill_roots)
@@ -580,13 +573,6 @@ pub(super) fn discover_global_skill_files(home: &Path, provider: &str) -> Vec<Pa
         }
     }
     result
-}
-
-pub(super) fn discover_global_skill_paths(home: &Path, provider: &str) -> Vec<String> {
-    discover_global_skill_files(home, provider)
-        .into_iter()
-        .map(|canonical| display_home_path(home, &canonical))
-        .collect()
 }
 
 pub(super) fn display_home_path(home: &Path, path: &Path) -> String {

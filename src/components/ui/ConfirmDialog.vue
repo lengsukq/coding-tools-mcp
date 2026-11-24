@@ -25,13 +25,22 @@ defineEmits<{ confirm: []; cancel: [] }>();
 <template>
   <ModalDialog :open="open" :aria-label="title" :dismissible="!busy" @close="$emit('cancel')">
     <div class="flex items-start gap-3">
-      <div class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl" :class="severity === 'danger' ? 'bg-red-500/12 text-[var(--danger)]' : 'bg-amber-500/12 text-[var(--warning)]'">
+      <div
+        class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl"
+        :class="
+          severity === 'danger'
+            ? 'bg-red-500/12 text-[var(--ui-danger)]'
+            : severity === 'info'
+              ? 'bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]'
+              : 'bg-amber-500/12 text-[var(--ui-warning)]'
+        "
+      >
         <AlertTriangle :size="19" />
       </div>
       <div class="min-w-0 flex-1">
-        <h3 class="text-base font-semibold text-[var(--text-main)]">{{ title }}</h3>
-        <p v-if="message" class="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{{ message }}</p>
-        <p v-if="detail" class="mt-2 break-all rounded-xl bg-[var(--ui-surface-subtle)] px-3 py-2 font-mono text-xs text-[var(--text-muted)]">{{ detail }}</p>
+        <h3 class="text-base font-semibold text-[var(--ui-text)]">{{ title }}</h3>
+        <p v-if="message" class="mt-1 text-sm leading-6 text-[var(--ui-text-secondary)]">{{ message }}</p>
+        <p v-if="detail" class="mt-2 break-all rounded-xl bg-[var(--ui-surface-subtle)] px-3 py-2 font-mono text-xs text-[var(--ui-text-muted)]">{{ detail }}</p>
         <slot />
       </div>
     </div>

@@ -8,7 +8,6 @@ import TextField from "../components/ui/TextField.vue";
 import SelectField from "../components/ui/SelectField.vue";
 import TextAreaField from "../components/ui/TextAreaField.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
-import PageTabs from "../components/ui/PageTabs.vue";
 import SegmentedControl from "../components/ui/SegmentedControl.vue";
 import ToggleSwitch from "../components/ui/ToggleSwitch.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
@@ -18,7 +17,6 @@ import PalettePicker from "../components/settings/PalettePicker.vue";
 
 const text = ref("可编辑的草稿");
 const option = ref("one");
-const tab = ref("one");
 const mode = ref("direct");
 const on = ref(true);
 const modal = ref(false);
@@ -106,15 +104,6 @@ const modal = ref(false);
           <ToggleSwitch v-model="on" label="雾面内嵌开关项" description="保存后立即热更新应用，无需重启本地服务。" />
         </div>
         <SaveBar dirty />
-        <PageTabs
-          v-model="tab"
-          :items="[
-            { value: 'one', label: '第一个胶囊页签' },
-            { value: 'two', label: '第二个胶囊页签' },
-          ]"
-        >
-          <div class="ui-inset p-4 text-sm text-[var(--ui-text-secondary)]">当前激活页签：<code>{{ tab }}</code></div>
-        </PageTabs>
         <EmptyState title="暂无记录" description="柔和虚线雾面空状态，提供明确的下一步引导。">
           <BaseButton variant="secondary">添加记录</BaseButton>
         </EmptyState>

@@ -1,18 +1,20 @@
 import { computed, onUnmounted, ref, type Ref } from "vue";
+type DraftLabel = string | (() => string);
 interface Draft {
-    label: string;
+    label: DraftLabel;
     dirty: Ref<boolean>;
-    save: () => Promise<boolean | void>;
+    save: () => Promise<boolean> | Promise<void>;
 }
 const drafts = new Map<symbol, Draft>();
 const revision = ref(0);
+const resolveLabel = (label: DraftLabel) => (typeof label === "function" ? label() : label);
 export const unsavedDialogOpen = ref(false);
 export const unsavedError = ref("");
 export const hasUnsavedChanges = computed(() => { revision.value; return [...drafts.values()].some(d => d.dirty.value); });
-export const unsavedLabels = computed(() => { revision.value; return [...drafts.values()].filter(d => d.dirty.value).map(d => d.label); });
+export const unsavedLabels = computed(() => { revision.value; return [...drafts.values()].filter(d => d.dirty.value).map(d => resolveLabel(d.label)); });
 let resolveNavigation: ((leave: boolean) => void) | null = null;
-export function useUnsavedChanges(label: string, dirty: Ref<boolean>, save: Draft["save"]) {
-    const key = Symbol(label);
+export function useUnsavedChanges(label: DraftLabel, dirty: Ref<boolean>, save: Draft["save"]) {
+    const key = Symbol(resolveLabel(label));
     drafts.set(key, { label, dirty, save });
     revision.value++;
     onUnmounted(() => { drafts.delete(key); revision.value++; });
@@ -31,7 +33,7 @@ export async function resolveUnsavedChanges(action: "save" | "discard" | "cancel
         try {
             for (const draft of drafts.values()) {
                 if (draft.dirty.value && await draft.save() === false) {
-                    unsavedError.value = draft.label + " 保存失败。输入已保留，可以重试或取消离开查看字段错误。";
+                    unsavedError.value = `${resolveLabel(draft.label)} 保存失败。输入已保留，可以重试或取消离开查看字段错误。`;
                     return;
                 }
             }

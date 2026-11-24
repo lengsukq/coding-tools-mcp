@@ -67,12 +67,12 @@ function move(e:KeyboardEvent,index:number){let next=index;if(["ArrowRight","Arr
 
 .palette-card:hover {
   transform: translateY(-1px);
-  border-color: var(--border);
-  box-shadow: var(--shadow-sm);
+  border-color: var(--ui-line-strong);
+  box-shadow: var(--ui-shadow-subtle);
 }
 
 .palette-card.is-active {
-  border-color: var(--primary);
+  border-color: var(--ui-accent);
   box-shadow: var(--focus-ring);
 }
 
@@ -102,7 +102,7 @@ function move(e:KeyboardEvent,index:number){let next=index;if(["ArrowRight","Arr
 .palette-name {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-main);
+  color: var(--ui-text);
   line-height: 1.3;
 }
 

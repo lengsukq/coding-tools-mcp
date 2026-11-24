@@ -38,7 +38,7 @@ pub async fn spawn_global_frpc(
     configure_tunnel_command(&mut cmd);
 
     if config.use_proxy {
-        crate::tunnel::cloudflare::apply_proxy_env(&mut cmd, &settings.proxy);
+        crate::tunnel::process::apply_proxy_env(&mut cmd, &settings.proxy);
     }
 
     let mut child = cmd

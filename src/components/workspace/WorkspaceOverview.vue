@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { Code2, GitBranch, RefreshCw, Sparkles } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import GlassCard from "../ui/GlassCard.vue";
@@ -59,10 +59,19 @@ async function openIde(id: string) {
   }
 }
 
+let overviewDisposed = false;
+onBeforeUnmount(() => {
+  overviewDisposed = true;
+});
+
 onMounted(() => {
   void getCachedDetectedIdes()
-    .then((v) => (ides.value = v))
-    .catch(() => {});
+    .then((v) => {
+      if (!overviewDisposed) ides.value = v;
+    })
+    .catch((err) => {
+      console.warn("[WorkspaceOverview] failed to detect installed IDEs:", err);
+    });
 });
 </script>
 

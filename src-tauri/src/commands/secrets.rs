@@ -24,34 +24,6 @@ pub async fn get_shared_secret(
 }
 
 #[tauri::command]
-pub async fn set_shared_secret(app: AppHandle, key: String, value: String) -> AppResult<()> {
-    if !SHARED_KEYS.contains(&key.as_str()) {
-        return Err(AppError::Message(format!("invalid shared key: {key}")));
-    }
-    if value.is_empty() {
-        return Err(AppError::Message("密钥不能为空。".into()));
-    }
-    let app_for_save = app.clone();
-    let key_for_save = key.clone();
-    let changed = tauri::async_runtime::spawn_blocking(move || {
-        app_for_save.state::<AppState>().with_data(|store| {
-            if store.get_shared_secret(&key_for_save).as_deref() == Some(value.as_str()) {
-                return Ok(false);
-            }
-            store.set_shared_secret(&key_for_save, &value)?;
-            Ok(true)
-        })
-    })
-    .await
-    .map_err(|err| AppError::Message(format!("保存共享密钥任务失败: {err}")))??;
-
-    if changed {
-        schedule_global_runtime_restart(app, key);
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn set_shared_secrets(app: AppHandle, updates: Vec<SharedSecretUpdate>) -> AppResult<()> {
     let mut normalized = Vec::with_capacity(updates.len());
     for update in updates {

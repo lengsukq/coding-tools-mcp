@@ -223,27 +223,7 @@ pub(super) fn build_http_client(
     use_proxy: bool,
     proxy: &ProxyConfig,
 ) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .pool_idle_timeout(Duration::from_secs(60));
-
-    if !use_proxy || proxy.mode == "none" {
-        builder = builder.no_proxy();
-    } else if proxy.mode == "manual" {
-        let proxy_url = proxy.url.trim();
-        if !proxy_url.is_empty() {
-            match reqwest::Proxy::all(proxy_url) {
-                Ok(p) => builder = builder.proxy(p),
-                Err(err) => {
-                    return Err(format!("无效的代理地址 `{proxy_url}`: {err}"));
-                }
-            }
-        }
-    }
-
-    builder
-        .build()
-        .map_err(|err| format!("初始化 HTTP 客户端失败: {err}"))
+    crate::util::http::build_proxy_client(use_proxy, proxy, Some(Duration::from_secs(10)), None)
 }
 
 pub(super) fn build_static_headers(
@@ -291,7 +271,7 @@ pub(super) fn parse_http_jsonrpc_body(
     }
     if content_type.starts_with("text/event-stream") {
         let mut messages = Vec::new();
-        for chunk in parse_sse_data_chunks(body) {
+        for chunk in crate::mcp::sse::parse_sse_data_events(body) {
             if chunk.is_empty() || chunk == "[DONE]" {
                 continue;
             }
@@ -312,26 +292,4 @@ pub(super) fn parse_http_jsonrpc_body(
     } else {
         Ok(vec![val])
     }
-}
-
-pub(super) fn parse_sse_data_chunks(body: &str) -> Vec<String> {
-    let mut events = Vec::new();
-    let mut current = Vec::new();
-    for raw_line in body.lines() {
-        let line = raw_line.trim_end_matches('\r');
-        if line.is_empty() {
-            if !current.is_empty() {
-                events.push(current.join("\n"));
-                current.clear();
-            }
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("data:") {
-            current.push(rest.trim_start().to_string());
-        }
-    }
-    if !current.is_empty() {
-        events.push(current.join("\n"));
-    }
-    events
 }

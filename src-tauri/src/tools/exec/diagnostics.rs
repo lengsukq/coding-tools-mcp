@@ -67,7 +67,7 @@ fn list_directory(
 ) -> Result<String, WorkspaceError> {
     let target = match args {
         [] => cwd.to_path_buf(),
-        [path] => ctx.workspace.resolve_existing(path)?.path,
+        [path] => ctx.workspace.resolve_existing_at(cwd, path)?.path,
         _ => {
             return Err(WorkspaceError::invalid_argument(
                 "ls/dir accepts at most one directory path",

@@ -1,22 +1,17 @@
 .DS_Store
 node_modules
 /build
-/.svelte-kit
-/package
 .env
 .env.*
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-_tauri-scaffold
-
-# 已归档的旧版实现，仅保留本地参考
-/old/
 
 # Rust
 src-tauri/target
 
-# MCP Probe 临时图谱快照
+# MCP Probe local state & secrets
+.mcp-probe-kit/local.env
 .mcp-probe-kit/graph-snapshots/
 .mcp-probe-kit/plans/
 
@@ -24,11 +19,9 @@ src-tauri/target
 src-tauri/icons/64x64.png
 src-tauri/icons/android/
 src-tauri/icons/ios/
-src-tauri/icons/icons/
 src-tauri/icons/logo-design.png
 
 docs/history-session/
-tmp-run
 
 # MCP / Agent local runtime
 .mcp/
@@ -40,7 +33,6 @@ tmp-run
 .opencode/
 .zcode/
 .reasonix/
-.idea/
 
 # IDE local settings
 .idea/

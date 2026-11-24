@@ -63,9 +63,3 @@
     flex-shrink: 0;
   }
 }
-
-@layer utilities {
-  .tabular-nums {
-    font-variant-numeric: tabular-nums;
-  }
-}

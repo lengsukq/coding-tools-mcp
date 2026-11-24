@@ -127,6 +127,157 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+struct ParsedAddArgs {
+    stdio_cmd: Option<String>,
+    stdio_args: Vec<String>,
+    cwd: Option<String>,
+    http_url: Option<String>,
+    sse_url: Option<String>,
+    bearer: Option<String>,
+    use_proxy: bool,
+    env_plain: BTreeMap<String, String>,
+    env_secret: BTreeMap<String, String>,
+    headers_plain: BTreeMap<String, String>,
+    headers_secret: BTreeMap<String, String>,
+    mode: UpstreamExposeMode,
+    name: Option<String>,
+    description: String,
+}
+
+fn parse_add_args(args: &[String]) -> Result<ParsedAddArgs, String> {
+    let mut parsed = ParsedAddArgs {
+        stdio_cmd: None,
+        stdio_args: Vec::new(),
+        cwd: None,
+        http_url: None,
+        sse_url: None,
+        bearer: None,
+        use_proxy: false,
+        env_plain: BTreeMap::new(),
+        env_secret: BTreeMap::new(),
+        headers_plain: BTreeMap::new(),
+        headers_secret: BTreeMap::new(),
+        mode: UpstreamExposeMode::Direct,
+        name: None,
+        description: String::new(),
+    };
+
+    let mut idx = 1usize;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--stdio" => {
+                parsed.stdio_cmd = Some(
+                    args.get(idx + 1)
+                        .ok_or("`--stdio` 需要指定可执行命令")?
+                        .clone(),
+                );
+                idx += 2;
+            }
+            "--arg" => {
+                // Single repeatable argument flag: preserves values starting with `--` (e.g. `--port`).
+                parsed
+                    .stdio_args
+                    .push(args.get(idx + 1).ok_or("`--arg` 需要指定参数值")?.clone());
+                idx += 2;
+            }
+            "--args" => {
+                idx += 1;
+                while idx < args.len() && !args[idx].starts_with("--") {
+                    parsed.stdio_args.push(args[idx].clone());
+                    idx += 1;
+                }
+            }
+            "--" => {
+                // Pass all remaining arguments verbatim to the Stdio child process.
+                parsed.stdio_args.extend(args[idx + 1..].iter().cloned());
+                break;
+            }
+            "--cwd" => {
+                parsed.cwd = Some(args.get(idx + 1).ok_or("`--cwd` 需要指定目录")?.clone());
+                idx += 2;
+            }
+            "--http" => {
+                parsed.http_url = Some(args.get(idx + 1).ok_or("`--http` 需要指定 URL")?.clone());
+                idx += 2;
+            }
+            "--sse" => {
+                parsed.sse_url = Some(args.get(idx + 1).ok_or("`--sse` 需要指定 URL")?.clone());
+                idx += 2;
+            }
+            "--bearer" => {
+                parsed.bearer = Some(
+                    args.get(idx + 1)
+                        .ok_or("`--bearer` 需要指定 Token")?
+                        .clone(),
+                );
+                idx += 2;
+            }
+            "--use-proxy" => {
+                parsed.use_proxy = true;
+                idx += 1;
+            }
+            "--env" | "--secret-env" => {
+                let force_secret = args[idx] == "--secret-env";
+                let flag = args[idx].as_str();
+                let v = args
+                    .get(idx + 1)
+                    .ok_or_else(|| format!("`{flag}` 需要 K=V 格式"))?;
+                let (k, val) = v
+                    .split_once('=')
+                    .ok_or_else(|| format!("无效环境变量 `{v}`，应为 KEY=VALUE"))?;
+                if force_secret || is_sensitive_key(k) {
+                    parsed
+                        .env_secret
+                        .insert(k.trim().to_string(), val.to_string());
+                } else {
+                    parsed
+                        .env_plain
+                        .insert(k.trim().to_string(), val.to_string());
+                }
+                idx += 2;
+            }
+            "--header" | "--secret-header" => {
+                let force_secret = args[idx] == "--secret-header";
+                let flag = args[idx].as_str();
+                let v = args
+                    .get(idx + 1)
+                    .ok_or_else(|| format!("`{flag}` 需要 Key:Value 格式"))?;
+                let (k, val) = v
+                    .split_once(':')
+                    .ok_or_else(|| format!("无效 Header `{v}`，应为 Key:Value"))?;
+                if force_secret || is_sensitive_key(k) {
+                    parsed
+                        .headers_secret
+                        .insert(k.trim().to_string(), val.trim().to_string());
+                } else {
+                    parsed
+                        .headers_plain
+                        .insert(k.trim().to_string(), val.trim().to_string());
+                }
+                idx += 2;
+            }
+            "--mode" => {
+                let v = args.get(idx + 1).ok_or("`--mode` 需要 direct 或 proxy")?;
+                parsed.mode = UpstreamExposeMode::parse_str(v)?;
+                idx += 2;
+            }
+            "--name" => {
+                parsed.name = Some(args.get(idx + 1).ok_or("`--name` 需要名称")?.clone());
+                idx += 2;
+            }
+            "--desc" | "--description" => {
+                parsed.description = args
+                    .get(idx + 1)
+                    .ok_or("`--description` 需要说明文本")?
+                    .clone();
+                idx += 2;
+            }
+            other => return Err(format!("`upstream add` 不支持参数 `{other}`")),
+        }
+    }
+    Ok(parsed)
+}
+
 async fn cmd_add(args: &[String]) -> Result<(), String> {
     let Some(alias_raw) = args.first().map(String::as_str) else {
         return Err("缺少 <ALIAS>。运行 `coding-tools-mcp upstream --help` 查看用法。".into());
@@ -136,142 +287,28 @@ async fn cmd_add(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut stdio_cmd: Option<String> = None;
-    let mut stdio_args: Vec<String> = Vec::new();
-    let mut cwd: Option<String> = None;
-    let mut http_url: Option<String> = None;
-    let mut sse_url: Option<String> = None;
-    let mut bearer: Option<String> = None;
-    let mut use_proxy = false;
-    let mut env_plain = BTreeMap::new();
-    let mut env_secret = BTreeMap::new();
-    let mut headers_plain = BTreeMap::new();
-    let mut headers_secret = BTreeMap::new();
-    let mut mode = UpstreamExposeMode::Direct;
-    let mut name: Option<String> = None;
-    let mut description = String::new();
-
-    let mut idx = 1usize;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--stdio" => {
-                let v = args.get(idx + 1).ok_or("`--stdio` 需要指定可执行命令")?;
-                stdio_cmd = Some(v.clone());
-                idx += 2;
-            }
-            "--arg" | "--args" => {
-                idx += 1;
-                while idx < args.len() && !args[idx].starts_with("--") {
-                    stdio_args.push(args[idx].clone());
-                    idx += 1;
-                }
-            }
-            "--cwd" => {
-                let v = args.get(idx + 1).ok_or("`--cwd` 需要指定目录")?;
-                cwd = Some(v.clone());
-                idx += 2;
-            }
-            "--http" => {
-                let v = args.get(idx + 1).ok_or("`--http` 需要指定 URL")?;
-                http_url = Some(v.clone());
-                idx += 2;
-            }
-            "--sse" => {
-                let v = args.get(idx + 1).ok_or("`--sse` 需要指定 URL")?;
-                sse_url = Some(v.clone());
-                idx += 2;
-            }
-            "--bearer" => {
-                let v = args.get(idx + 1).ok_or("`--bearer` 需要指定 Token")?;
-                bearer = Some(v.clone());
-                idx += 2;
-            }
-            "--use-proxy" => {
-                use_proxy = true;
-                idx += 1;
-            }
-            "--env" => {
-                let v = args.get(idx + 1).ok_or("`--env` 需要 K=V 格式")?;
-                let (k, val) = v
-                    .split_once('=')
-                    .ok_or_else(|| format!("无效环境变量 `{v}`，应为 KEY=VALUE"))?;
-                if is_sensitive_key(k) {
-                    env_secret.insert(k.trim().to_string(), val.to_string());
-                } else {
-                    env_plain.insert(k.trim().to_string(), val.to_string());
-                }
-                idx += 2;
-            }
-            "--secret-env" => {
-                let v = args.get(idx + 1).ok_or("`--secret-env` 需要 K=V 格式")?;
-                let (k, val) = v
-                    .split_once('=')
-                    .ok_or_else(|| format!("无效加密环境变量 `{v}`，应为 KEY=VALUE"))?;
-                env_secret.insert(k.trim().to_string(), val.to_string());
-                idx += 2;
-            }
-            "--header" => {
-                let v = args.get(idx + 1).ok_or("`--header` 需要 Key:Value 格式")?;
-                let (k, val) = v
-                    .split_once(':')
-                    .ok_or_else(|| format!("无效 Header `{v}`，应为 Key:Value"))?;
-                if is_sensitive_key(k) {
-                    headers_secret.insert(k.trim().to_string(), val.trim().to_string());
-                } else {
-                    headers_plain.insert(k.trim().to_string(), val.trim().to_string());
-                }
-                idx += 2;
-            }
-            "--secret-header" => {
-                let v = args
-                    .get(idx + 1)
-                    .ok_or("`--secret-header` 需要 Key:Value 格式")?;
-                let (k, val) = v
-                    .split_once(':')
-                    .ok_or_else(|| format!("无效加密 Header `{v}`，应为 Key:Value"))?;
-                headers_secret.insert(k.trim().to_string(), val.trim().to_string());
-                idx += 2;
-            }
-            "--mode" => {
-                let v = args.get(idx + 1).ok_or("`--mode` 需要 direct 或 proxy")?;
-                mode = UpstreamExposeMode::parse_str(v)?;
-                idx += 2;
-            }
-            "--name" => {
-                let v = args.get(idx + 1).ok_or("`--name` 需要名称")?;
-                name = Some(v.clone());
-                idx += 2;
-            }
-            "--desc" | "--description" => {
-                let v = args.get(idx + 1).ok_or("`--description` 需要说明文本")?;
-                description = v.clone();
-                idx += 2;
-            }
-            other => return Err(format!("`upstream add` 不支持参数 `{other}`")),
-        }
-    }
-
-    let transport = match (stdio_cmd, http_url, sse_url) {
+    let parsed = parse_add_args(args)?;
+    let transport = match (parsed.stdio_cmd, parsed.http_url, parsed.sse_url) {
         (Some(command), None, None) => UpstreamTransportConfig::Stdio {
             command,
-            args: stdio_args,
-            cwd,
-            env: env_plain,
-            secret_env_keys: env_secret.keys().cloned().collect(),
+            args: parsed.stdio_args,
+            cwd: parsed.cwd,
+            env: parsed.env_plain,
+            secret_env_keys: parsed.env_secret.keys().cloned().collect(),
         },
         (None, Some(url), None) => UpstreamTransportConfig::StreamableHttp {
             url,
-            headers: headers_plain,
-            secret_header_keys: headers_secret.keys().cloned().collect(),
-            has_bearer_token: bearer.is_some(),
-            use_proxy,
+            headers: parsed.headers_plain,
+            secret_header_keys: parsed.headers_secret.keys().cloned().collect(),
+            has_bearer_token: parsed.bearer.is_some(),
+            use_proxy: parsed.use_proxy,
         },
         (None, None, Some(url)) => UpstreamTransportConfig::Sse {
             url,
-            headers: headers_plain,
-            secret_header_keys: headers_secret.keys().cloned().collect(),
-            has_bearer_token: bearer.is_some(),
-            use_proxy,
+            headers: parsed.headers_plain,
+            secret_header_keys: parsed.headers_secret.keys().cloned().collect(),
+            has_bearer_token: parsed.bearer.is_some(),
+            use_proxy: parsed.use_proxy,
         },
         _ => {
             return Err(
@@ -285,10 +322,10 @@ async fn cmd_add(args: &[String]) -> Result<(), String> {
     let mut server = UpstreamServerConfig {
         id: String::new(),
         alias: alias_raw.to_string(),
-        name: name.unwrap_or_else(|| alias_raw.to_string()),
-        description,
+        name: parsed.name.unwrap_or_else(|| alias_raw.to_string()),
+        description: parsed.description,
         enabled: true,
-        expose_mode: mode,
+        expose_mode: parsed.mode,
         transport,
         disabled_tools: Vec::new(),
         call_timeout_secs: DEFAULT_CALL_TIMEOUT_SECS,
@@ -303,9 +340,9 @@ async fn cmd_add(args: &[String]) -> Result<(), String> {
     )?;
 
     let patch = UpstreamSecretPatch {
-        set_env_secrets: env_secret,
-        set_header_secrets: headers_secret,
-        bearer_token: bearer.map(Some),
+        set_env_secrets: parsed.env_secret,
+        set_header_secrets: parsed.headers_secret,
+        bearer_token: parsed.bearer.map(Some),
         ..UpstreamSecretPatch::default()
     };
 
@@ -536,49 +573,155 @@ async fn cmd_tools(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_import(args: &[String]) -> Result<(), String> {
-    let mut scan = false;
-    let mut yes = false;
-    let mut replace = false;
-    let mut connect_mode = TakeoverConnectMode::Auto;
-    let mut file_path: Option<String> = None;
-    let mut from_stdin = false;
+struct ImportCliOptions {
+    scan: bool,
+    yes: bool,
+    replace: bool,
+    connect_mode: TakeoverConnectMode,
+    file_path: Option<String>,
+    from_stdin: bool,
+}
 
+fn parse_import_args(args: &[String]) -> Result<ImportCliOptions, String> {
+    let mut opts = ImportCliOptions {
+        scan: false,
+        yes: false,
+        replace: false,
+        connect_mode: TakeoverConnectMode::Auto,
+        file_path: None,
+        from_stdin: false,
+    };
     let mut idx = 0usize;
     while idx < args.len() {
         match args[idx].as_str() {
             "--scan" => {
-                scan = true;
+                opts.scan = true;
                 idx += 1;
             }
             "--yes" | "-y" => {
-                yes = true;
+                opts.yes = true;
                 idx += 1;
             }
             "--replace" => {
-                replace = true;
+                opts.replace = true;
                 idx += 1;
             }
             "--connect-mode" => {
                 let raw = args
                     .get(idx + 1)
                     .ok_or("`--connect-mode` 需要指定 auto / http / stdio")?;
-                connect_mode = TakeoverConnectMode::parse_str(raw)?;
+                opts.connect_mode = TakeoverConnectMode::parse_str(raw)?;
                 idx += 2;
             }
             "--file" | "-f" => {
                 let p = args.get(idx + 1).ok_or("`--file` 需要指定 JSON 文件路径")?;
-                file_path = Some(p.clone());
+                opts.file_path = Some(p.clone());
                 idx += 2;
             }
             "--stdin" => {
-                from_stdin = true;
+                opts.from_stdin = true;
                 idx += 1;
             }
             other => return Err(format!("`upstream import` 不支持参数 `{other}`")),
         }
     }
+    Ok(opts)
+}
 
+fn load_import_candidates(
+    opts: &ImportCliOptions,
+    existing_aliases: &HashSet<String>,
+    loop_ctx: &SelfLoopContext,
+) -> Result<Vec<crate::upstream_mcp::ImportedUpstreamCandidate>, String> {
+    if opts.scan {
+        Ok(scan_local_mcp_clients(existing_aliases, loop_ctx))
+    } else if let Some(path) = opts.file_path.as_deref() {
+        let raw =
+            std::fs::read_to_string(path).map_err(|err| format!("读取 `{path}` 失败: {err}"))?;
+        parse_mcp_servers_json(&raw, "json", "JSON 文件", path, existing_aliases, loop_ctx)
+    } else if opts.from_stdin {
+        let mut raw = String::new();
+        std::io::stdin()
+            .read_to_string(&mut raw)
+            .map_err(|err| format!("读取 stdin 失败: {err}"))?;
+        parse_mcp_servers_json(&raw, "json", "STDIN", "", existing_aliases, loop_ctx)
+    } else {
+        Err("请指定 `--scan`、`--file <PATH>` 或 `--stdin`".into())
+    }
+}
+
+fn print_scan_preview(candidates: &[crate::upstream_mcp::ImportedUpstreamCandidate]) {
+    println!(
+        "扫描到 {} 个候选上游 MCP（加 `--yes` 导入，或加 `--yes --replace` 聚合并替换原客户端配置）：",
+        candidates.len()
+    );
+    for item in candidates {
+        let note = if let Some(reason) = &item.blocked_reason {
+            format!(" [已拦截: {reason}]")
+        } else if item.already_exists_alias {
+            format!(" [别名冲突 -> 建议改为 {}]", item.suggested_alias)
+        } else {
+            String::new()
+        };
+        println!(
+            "  - {:<18} ({:<14} · {:<14}) {}{}",
+            item.suggested_alias, item.source_label, item.transport_kind, item.summary_target, note
+        );
+    }
+}
+
+fn apply_cli_takeovers(
+    imported_by_client: &BTreeMap<String, Vec<String>>,
+    connect_mode: TakeoverConnectMode,
+) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+    let backup_dir = default_backup_dir().map_err(|e| e.to_string())?;
+    let latest_settings = AppSettings::load_or_default();
+    let needs_stdio = imported_by_client.keys().any(|client| {
+        let (eff, _) = crate::upstream_mcp::takeover::resolve_client_connect_mode(
+            client,
+            connect_mode,
+            &latest_settings,
+        );
+        eff == ResolvedConnectMode::Stdio
+    });
+    let stdio_bin = if needs_stdio {
+        ensure_local_stdio_bridge_ready(&latest_settings)?
+    } else {
+        gemini_stdio_bin_path()?
+    };
+    let (applied, errs) = apply_harness_takeovers(
+        &home,
+        &backup_dir,
+        imported_by_client,
+        connect_mode,
+        &latest_settings,
+        &stdio_bin,
+    );
+    for item in &applied {
+        println!(
+            "  ✓ 已接管 {} ({}) · 移除 {} 项 · 注入 `{}` ({}) · 备份 ID: {}",
+            item.source_label,
+            item.display_path,
+            item.removed_keys.len(),
+            item.injected_key,
+            item.effective_mode.as_str(),
+            item.backup_id
+        );
+    }
+    for err in &errs {
+        eprintln!("  ✗ 替换失败: {err}");
+    }
+    if !applied.is_empty() {
+        println!(
+            "提示：如需恢复原配置文件，随时运行 `coding-tools-mcp upstream restore <BACKUP_ID>`。"
+        );
+    }
+    Ok(())
+}
+
+async fn cmd_import(args: &[String]) -> Result<(), String> {
+    let opts = parse_import_args(args)?;
     let settings = AppSettings::load_or_default();
     let existing_aliases: HashSet<String> = settings
         .upstream_mcp
@@ -587,57 +730,14 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
         .map(|s| s.alias.to_ascii_lowercase())
         .collect();
     let loop_ctx = SelfLoopContext::from_settings(&settings);
-
-    let candidates = if scan {
-        scan_local_mcp_clients(&existing_aliases, &loop_ctx)
-    } else if let Some(path) = file_path {
-        let raw =
-            std::fs::read_to_string(&path).map_err(|err| format!("读取 `{path}` 失败: {err}"))?;
-        parse_mcp_servers_json(
-            &raw,
-            "json",
-            "JSON 文件",
-            &path,
-            &existing_aliases,
-            &loop_ctx,
-        )?
-    } else if from_stdin {
-        let mut raw = String::new();
-        std::io::stdin()
-            .read_to_string(&mut raw)
-            .map_err(|err| format!("读取 stdin 失败: {err}"))?;
-        parse_mcp_servers_json(&raw, "json", "STDIN", "", &existing_aliases, &loop_ctx)?
-    } else {
-        return Err("请指定 `--scan`、`--file <PATH>` 或 `--stdin`".into());
-    };
+    let candidates = load_import_candidates(&opts, &existing_aliases, &loop_ctx)?;
 
     if candidates.is_empty() {
         println!("未发现可导入的上游 MCP 配置。");
         return Ok(());
     }
-
-    if scan && !yes {
-        println!(
-            "扫描到 {} 个候选上游 MCP（加 `--yes` 导入，或加 `--yes --replace` 聚合并替换原客户端配置）：",
-            candidates.len()
-        );
-        for item in &candidates {
-            let note = if let Some(reason) = &item.blocked_reason {
-                format!(" [已拦截: {reason}]")
-            } else if item.already_exists_alias {
-                format!(" [别名冲突 -> 建议改为 {}]", item.suggested_alias)
-            } else {
-                String::new()
-            };
-            println!(
-                "  - {:<18} ({:<14} · {:<14}) {}{}",
-                item.suggested_alias,
-                item.source_label,
-                item.transport_kind,
-                item.summary_target,
-                note
-            );
-        }
+    if opts.scan && !opts.yes {
+        print_scan_preview(&candidates);
         return Ok(());
     }
 
@@ -680,50 +780,9 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
     }
     println!("导入完成：成功 {imported} 个，跳过 {skipped} 个。");
 
-    if scan && replace && !imported_by_client.is_empty() {
-        let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
-        let backup_dir = default_backup_dir().map_err(|e| e.to_string())?;
-        let latest_settings = AppSettings::load_or_default();
-        let needs_stdio = imported_by_client.keys().any(|client| {
-            let (eff, _) = crate::upstream_mcp::takeover::resolve_client_connect_mode(
-                client,
-                connect_mode,
-                &latest_settings,
-            );
-            eff == ResolvedConnectMode::Stdio
-        });
-        let stdio_bin = if needs_stdio {
-            ensure_local_stdio_bridge_ready(&latest_settings)?
-        } else {
-            gemini_stdio_bin_path()?
-        };
-        let (applied, errs) = apply_harness_takeovers(
-            &home,
-            &backup_dir,
-            &imported_by_client,
-            connect_mode,
-            &latest_settings,
-            &stdio_bin,
-        );
-        for item in &applied {
-            println!(
-                "  ✓ 已接管 {} ({}) · 移除 {} 项 · 注入 `{}` ({}) · 备份 ID: {}",
-                item.source_label,
-                item.display_path,
-                item.removed_keys.len(),
-                item.injected_key,
-                item.effective_mode.as_str(),
-                item.backup_id
-            );
-        }
-        for err in &errs {
-            eprintln!("  ✗ 替换失败: {err}");
-        }
-        if !applied.is_empty() {
-            println!("提示：如需恢复原配置文件，随时运行 `coding-tools-mcp upstream restore <BACKUP_ID>`。");
-        }
+    if opts.scan && opts.replace && !imported_by_client.is_empty() {
+        apply_cli_takeovers(&imported_by_client, opts.connect_mode)?;
     }
-
     Ok(())
 }
 

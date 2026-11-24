@@ -9,8 +9,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::tools::io_util::serialized_json_bytes;
 use crate::tunnel::log_dir_for_profile;
+use crate::util::json::serialized_json_bytes;
 
 mod sanitize;
 mod store;
@@ -100,18 +100,19 @@ pub(crate) struct ToolAuditCall {
     source_peer: Option<String>,
 }
 
+pub(crate) struct ToolAuditInput<'a> {
+    pub(crate) request_id: &'a Value,
+    pub(crate) tool_name: &'a str,
+    pub(crate) session_id: Option<&'a str>,
+    pub(crate) auth_method: &'a str,
+    pub(crate) client_id: Option<&'a str>,
+    pub(crate) request_bytes: usize,
+    pub(crate) body: &'a Value,
+}
+
 impl ToolAuditCall {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        request_id: &Value,
-        tool_name: &str,
-        session_id: Option<&str>,
-        auth_method: &str,
-        client_id: Option<&str>,
-        request_bytes: usize,
-        body: &Value,
-    ) -> Self {
-        Self::new_with_peer_context(
+    pub(crate) fn new(input: ToolAuditInput<'_>) -> Self {
+        let ToolAuditInput {
             request_id,
             tool_name,
             session_id,
@@ -119,23 +120,7 @@ impl ToolAuditCall {
             client_id,
             request_bytes,
             body,
-            None,
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_peer_context(
-        request_id: &Value,
-        tool_name: &str,
-        session_id: Option<&str>,
-        auth_method: &str,
-        client_id: Option<&str>,
-        request_bytes: usize,
-        body: &Value,
-        execution_host: Option<String>,
-        source_peer: Option<String>,
-    ) -> Self {
+        } = input;
         let (delegated_tool, wrapper_tool_name) = if tool_name == "workspace_invoke" {
             let inner = body
                 .get("params")
@@ -191,9 +176,19 @@ impl ToolAuditCall {
             auth_method: safe_auth_method(auth_method),
             client_id: client_id.map(|value| bounded_visible_text(value, 128)),
             request_bytes: request_bytes as u64,
-            execution_host: execution_host.map(|v| bounded_visible_text(&v, 128)),
-            source_peer: source_peer.map(|v| bounded_visible_text(&v, 128)),
+            execution_host: None,
+            source_peer: None,
         }
+    }
+
+    pub(crate) fn with_peer_context(
+        mut self,
+        execution_host: Option<String>,
+        source_peer: Option<String>,
+    ) -> Self {
+        self.execution_host = execution_host.map(|v| bounded_visible_text(&v, 128));
+        self.source_peer = source_peer.map(|v| bounded_visible_text(&v, 128));
+        self
     }
 
     pub(crate) fn set_execution_host(&mut self, host: Option<String>) {

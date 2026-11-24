@@ -8,8 +8,9 @@ use regex::Regex;
 use serde_json::{json, Value};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::tools::io_util::{is_ignored_os_component, truncate_utf8};
 use crate::tools::workspace::{relative_display, tool_ok, Workspace, WorkspaceError};
+use crate::util::fs::is_ignored_os_component;
+use crate::util::text::truncate_utf8;
 
 const DEFAULT_READ_MAX_BYTES: usize = 32_768;
 const DEFAULT_LIST_DIR_MAX_ENTRIES: usize = 1_000;
@@ -26,48 +27,43 @@ const READ_PEEK_BYTES: usize = 4096;
 const BINARY_PEEK_BYTES: usize = 8192;
 const LINE_COUNT_CHUNK_BYTES: usize = 8192;
 
-pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| WorkspaceError::invalid_argument("path is required"))?;
-    let resolved = ws.resolve_read_path(path)?;
-    if resolved.path.is_dir() {
-        return Err(WorkspaceError::Tool {
-            code: "IS_DIRECTORY",
-            message: "Path is a directory.".into(),
-            category: "validation",
-            retryable: false,
-        });
-    }
-    let max_bytes = args
-        .get("max_bytes")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_READ_MAX_BYTES as u64) as usize;
-    let start_line = args
-        .get("start_line")
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1) as usize;
-    let end_line = args
-        .get("end_line")
-        .and_then(Value::as_u64)
-        .map(|v| v as usize);
+struct ReadFileOptions {
+    max_bytes: usize,
+    start_line: usize,
+    end_line: Option<usize>,
+}
 
-    let mut file = File::open(&resolved.path).map_err(file_io_error)?;
-    let mut peek = [0u8; READ_PEEK_BYTES];
-    let peeked = file.read(&mut peek).map_err(file_io_error)?;
-    if peek[..peeked].contains(&0) {
-        return Err(WorkspaceError::Tool {
-            code: "BINARY_FILE",
-            message: "Binary file read blocked for text tool.".into(),
-            category: "validation",
-            retryable: false,
-        });
-    }
-    let total_bytes = file.metadata().map(|m| m.len() as usize).unwrap_or(peeked);
-    let mut reader = BufReader::new((&peek[..peeked]).chain(file));
+struct ReadLinesResult {
+    content: String,
+    total_lines: usize,
+    truncated: bool,
+    truncated_by: Option<&'static str>,
+    scan_complete: bool,
+}
 
+fn parse_read_file_options(args: &Value) -> ReadFileOptions {
+    ReadFileOptions {
+        max_bytes: args
+            .get("max_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_READ_MAX_BYTES as u64) as usize,
+        start_line: args
+            .get("start_line")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .max(1) as usize,
+        end_line: args
+            .get("end_line")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize),
+    }
+}
+
+fn read_bounded_utf8_lines<R: BufRead>(
+    reader: &mut R,
+    total_bytes: usize,
+    options: &ReadFileOptions,
+) -> Result<ReadLinesResult, WorkspaceError> {
     let mut line_buf = Vec::new();
     let mut total_lines = 0usize;
     let mut content = String::new();
@@ -76,12 +72,12 @@ pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
     let mut scan_complete = true;
 
     loop {
-        if truncated || end_line.is_some_and(|limit| total_lines >= limit) {
+        if truncated || options.end_line.is_some_and(|limit| total_lines >= limit) {
             if total_bytes > LARGE_FILE_EARLY_STOP_BYTES {
                 // Avoid reading gigabytes to EOF purely to compute total_lines once selection is done.
                 scan_complete = false;
             } else {
-                total_lines += count_remaining_lines(&mut reader)?;
+                total_lines += count_remaining_lines(reader)?;
             }
             break;
         }
@@ -100,10 +96,10 @@ pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
         })?;
         total_lines += 1;
 
-        let in_range =
-            total_lines >= start_line && end_line.is_none_or(|limit| total_lines <= limit);
+        let in_range = total_lines >= options.start_line
+            && options.end_line.is_none_or(|limit| total_lines <= limit);
         if in_range && !truncated {
-            let remaining = max_bytes.saturating_sub(content.len());
+            let remaining = options.max_bytes.saturating_sub(content.len());
             if line_str.len() <= remaining {
                 content.push_str(line_str);
             } else {
@@ -114,34 +110,78 @@ pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
         }
     }
 
-    let end = end_line.unwrap_or(total_lines).min(total_lines);
-    let actual_end = if truncated && !content.is_empty() {
-        start_line + content.lines().count().saturating_sub(1)
+    Ok(ReadLinesResult {
+        content,
+        total_lines,
+        truncated,
+        truncated_by,
+        scan_complete,
+    })
+}
+
+pub fn read_file(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| WorkspaceError::invalid_argument("path is required"))?;
+    let resolved = ws.resolve_read_path(path)?;
+    if resolved.path.is_dir() {
+        return Err(WorkspaceError::Tool {
+            code: "IS_DIRECTORY",
+            message: "Path is a directory.".into(),
+            category: "validation",
+            retryable: false,
+        });
+    }
+    let options = parse_read_file_options(args);
+
+    let mut file = File::open(&resolved.path).map_err(file_io_error)?;
+    let mut peek = [0u8; READ_PEEK_BYTES];
+    let peeked = file.read(&mut peek).map_err(file_io_error)?;
+    if peek[..peeked].contains(&0) {
+        return Err(WorkspaceError::Tool {
+            code: "BINARY_FILE",
+            message: "Binary file read blocked for text tool.".into(),
+            category: "validation",
+            retryable: false,
+        });
+    }
+    let total_bytes = file.metadata().map(|m| m.len() as usize).unwrap_or(peeked);
+    let mut reader = BufReader::new((&peek[..peeked]).chain(file));
+    let scanned = read_bounded_utf8_lines(&mut reader, total_bytes, &options)?;
+
+    let end = options
+        .end_line
+        .unwrap_or(scanned.total_lines)
+        .min(scanned.total_lines);
+    let actual_end = if scanned.truncated && !scanned.content.is_empty() {
+        options.start_line + scanned.content.lines().count().saturating_sub(1)
     } else {
         end
     };
     let mut warnings = Vec::new();
-    if truncated {
+    if scanned.truncated {
         warnings.push("content truncated".to_string());
     }
-    if !scan_complete {
+    if !scanned.scan_complete {
         warnings.push(
             "large file scan stopped early; total_lines reflects lines scanned so far".to_string(),
         );
     }
     Ok(tool_ok(json!({
         "path": resolved.display,
-        "content": content,
+        "content": scanned.content,
         "encoding": "utf-8",
-        "start_line": start_line,
+        "start_line": options.start_line,
         "end_line": actual_end,
-        "next_start_line": (truncated || !scan_complete).then_some(actual_end.saturating_add(1)),
-        "total_lines": total_lines,
+        "next_start_line": (scanned.truncated || !scanned.scan_complete)
+            .then_some(actual_end.saturating_add(1)),
+        "total_lines": scanned.total_lines,
         "total_bytes": total_bytes,
-        "bytes_read": content.len(),
-        "truncated": truncated,
-        "truncated_by": truncated_by,
-        "scan_complete": scan_complete,
+        "bytes_read": scanned.content.len(),
+        "truncated": scanned.truncated,
+        "truncated_by": scanned.truncated_by,
+        "scan_complete": scanned.scan_complete,
         "warnings": warnings
     })))
 }
@@ -217,8 +257,8 @@ pub fn list_files(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
     if !resolved.path.is_dir() {
         return Err(WorkspaceError::not_a_directory("Path is not a directory"));
     }
-    let patterns = compile_globs(&list_files_patterns(args));
-    let exclude_patterns = compile_globs(&string_list_arg(args, "exclude_patterns"));
+    let patterns = compile_globs(&list_files_patterns(args))?;
+    let exclude_patterns = compile_globs(&string_list_arg(args, "exclude_patterns"))?;
     let max_results = args
         .get("max_results")
         .and_then(Value::as_u64)
@@ -252,9 +292,6 @@ pub fn list_files(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
                 truncated = true;
                 visit_budget_reached = true;
                 break;
-            }
-            if !ws.is_safe_read_path(p) {
-                continue;
             }
             if !entry.file_type().is_file() && !entry.file_type().is_symlink() {
                 continue;
@@ -329,8 +366,8 @@ pub fn search_text(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError
         .max(1);
 
     let (raw_include_globs, raw_exclude_globs) = search_globs(args);
-    let include_globs = compile_globs(&raw_include_globs);
-    let exclude_globs = compile_globs(&raw_exclude_globs);
+    let include_globs = compile_globs(&raw_include_globs)?;
+    let exclude_globs = compile_globs(&raw_exclude_globs)?;
     let context_lines = args
         .get("context_lines")
         .and_then(Value::as_u64)
@@ -456,7 +493,7 @@ fn consider_search_file(
         state.truncated = true;
         return false;
     }
-    if !ws.is_safe_read_path(path) || ws.is_ignored_path(path, false, options.include_ignored) {
+    if ws.is_ignored_path(path, false, options.include_ignored) {
         return true;
     }
     let rel = relative_display(ws.root(), path);
@@ -823,6 +860,7 @@ fn collect_dir_entries(
             "other"
         };
         let meta = item.metadata().ok();
+        let is_ignored = options.include_ignored && ws.is_ignored_path(&p, true, false);
         state.entries.push(json!({
             "name": name,
             "path": normalized_rel,
@@ -830,7 +868,7 @@ fn collect_dir_entries(
             "size_bytes": meta.as_ref().map(|m| m.len()).unwrap_or(0),
             "modified": meta.and_then(|m| format_mtime(m.modified().ok())),
             "is_hidden": name.starts_with('.'),
-            "is_ignored": false
+            "is_ignored": is_ignored
         }));
         if state.entries.len() >= options.max_entries {
             state.truncated = true;
@@ -882,35 +920,40 @@ fn search_globs(args: &Value) -> (Vec<String>, Vec<String>) {
 
 enum CompiledGlob {
     Any,
-    Suffix(Option<glob::Pattern>),
-    Exact(Option<glob::Pattern>),
+    Suffix(glob::Pattern),
+    Exact(glob::Pattern),
 }
 
 impl CompiledGlob {
-    fn compile(pattern: &str) -> Self {
+    fn compile(pattern: &str) -> Result<Self, WorkspaceError> {
         let normalized = pattern.replace('\\', "/");
         if normalized == "**/*" || normalized == "*" {
-            return Self::Any;
+            return Ok(Self::Any);
         }
         if let Some(suffix) = normalized.strip_prefix("**/") {
-            return Self::Suffix(glob::Pattern::new(suffix).ok());
+            let compiled = glob::Pattern::new(suffix).map_err(|err| {
+                WorkspaceError::invalid_argument(format!("Invalid glob pattern `{pattern}`: {err}"))
+            })?;
+            return Ok(Self::Suffix(compiled));
         }
-        Self::Exact(glob::Pattern::new(&normalized).ok())
+        let compiled = glob::Pattern::new(&normalized).map_err(|err| {
+            WorkspaceError::invalid_argument(format!("Invalid glob pattern `{pattern}`: {err}"))
+        })?;
+        Ok(Self::Exact(compiled))
     }
 
     fn matches(&self, path: &str) -> bool {
         match self {
             Self::Any => true,
-            Self::Suffix(Some(pattern)) => {
+            Self::Suffix(pattern) => {
                 pattern.matches(path) || path.split('/').any(|part| pattern.matches(part))
             }
-            Self::Exact(Some(pattern)) => pattern.matches(path),
-            _ => false,
+            Self::Exact(pattern) => pattern.matches(path),
         }
     }
 }
 
-fn compile_globs(patterns: &[String]) -> Vec<CompiledGlob> {
+fn compile_globs(patterns: &[String]) -> Result<Vec<CompiledGlob>, WorkspaceError> {
     patterns
         .iter()
         .map(|pattern| CompiledGlob::compile(pattern))

@@ -102,7 +102,8 @@ test("LAN server hard-blocks public tunnel headers, non-LAN IPs, and multi-hop l
   assert.match(server, /FEDERATION_LOOP_DENIED/);
   assert.match(server, /REPLAY_DETECTED/);
   assert.match(server, /PEER_READONLY_POLICY/);
-  assert.match(crypto, /pub fn constant_time_eq\(/);
+  assert.match(crypto, /use crate::auth::constant_time_eq;/);
+  assert.match(crypto, /constant_time_eq\(/);
   assert.match(crypto, /pub struct ReplayGuard/);
 });
 

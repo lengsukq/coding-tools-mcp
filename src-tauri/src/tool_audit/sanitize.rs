@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -208,8 +206,5 @@ pub(super) fn file_day(name: &str) -> Option<u64> {
 }
 
 pub(super) fn unix_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or_default()
+    crate::util::time::unix_now_ms()
 }

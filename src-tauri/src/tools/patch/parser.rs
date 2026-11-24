@@ -165,5 +165,9 @@ fn parse_diff_path(raw: &str) -> String {
     if path == "/dev/null" {
         return String::new();
     }
-    path.replace('\\', "/")
+    let mut normalized = path.replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    normalized
 }

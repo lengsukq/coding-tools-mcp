@@ -12,15 +12,15 @@ use serde_json::{json, Value};
 
 use crate::local_network::{self, has_proxy_forwarded_headers, PeerConnectAddr};
 use crate::mcp::gateway::{GatewayError, GatewayState, WorkspaceRegistry};
-use crate::mcp::server::{
-    inject_workspace_session_args, review_error_status, truncate_utf8_with_ellipsis,
-};
+use crate::mcp::server::{inject_workspace_session_args, review_error_status};
 use crate::settings::{AppSettings, PairedPeerConfig};
-use crate::tool_audit::{record_tool_call, ToolAuditCall};
+use crate::tool_audit::{record_tool_call, ToolAuditCall, ToolAuditInput};
 use crate::tools::workspace::{tool_err, WorkspaceError};
 use crate::tools::{call_tool, wrap_mcp_tool_result};
+use crate::util::text::truncate_utf8_with_ellipsis;
+use crate::util::time::unix_now_ms;
 
-use super::crypto::{unix_time_ms, verify_peer_request_signature, ReplayGuard};
+use super::crypto::{verify_peer_request_signature, PeerSignatureCheck, ReplayGuard};
 use super::discovery::PeerHelloDto;
 use super::identity::{
     get_peer_secret, identity_from_settings, is_workspace_shared, valid_device_id,
@@ -135,7 +135,7 @@ fn replay_guard() -> &'static ReplayGuard {
 
 pub(super) fn prune_replay_cache() {
     if let Some(guard) = REPLAY_GUARD.get() {
-        guard.prune_expired(unix_time_ms());
+        guard.prune_expired(unix_now_ms());
     }
 }
 
@@ -309,18 +309,18 @@ fn authenticate_peer_request(
             ))
         })?;
 
-    let now_ms = unix_time_ms();
-    if let Err(reason) = verify_peer_request_signature(
-        &secret,
-        caller_id,
+    let now_ms = unix_now_ms();
+    if let Err(reason) = verify_peer_request_signature(&PeerSignatureCheck {
+        peer_secret: &secret,
+        caller_device_id: caller_id,
         method,
         path_and_query,
         timestamp_ms,
         nonce,
         body,
-        signature,
+        provided_signature: signature,
         now_ms,
-    ) {
+    }) {
         return Err(Box::new(json_err(
             StatusCode::UNAUTHORIZED,
             reason,
@@ -421,13 +421,27 @@ async fn lan_catalog(
         return *resp;
     }
 
-    let override_snap = state.gateway.settings_snapshot();
-    let (lan, fingerprint) = identity_from_settings(override_snap.as_ref());
-    let local_descriptors = state
-        .gateway
-        .registry
-        .local_descriptors()
-        .unwrap_or_default();
+    let gateway_for_catalog = Arc::clone(&state.gateway);
+    let (lan, fingerprint, local_descriptors) = match tokio::task::spawn_blocking(move || {
+        let override_snap = gateway_for_catalog.settings_snapshot();
+        let (lan, fingerprint) = identity_from_settings(override_snap.as_ref());
+        let local_descriptors = gateway_for_catalog
+            .registry
+            .descriptors()
+            .unwrap_or_default();
+        (lan, fingerprint, local_descriptors)
+    })
+    .await
+    {
+        Ok(tuple) => tuple,
+        Err(err) => {
+            return json_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CATALOG_TASK_FAILED",
+                format!("读取工作区目录失败: {err}"),
+            );
+        }
+    };
     let revision = WorkspaceRegistry::revision_for(&local_descriptors);
     let workspaces = local_descriptors
         .into_iter()
@@ -525,16 +539,18 @@ fn execute_local_peer_rpc(
             caller_session_id,
             request_id,
         } => execute_workspace_tool_rpc(
-            gateway,
-            lan,
-            caller_peer,
-            source_label,
+            PeerRpcContext {
+                gateway,
+                lan,
+                caller_peer,
+                source_label,
+                request_id: &request_id,
+                request_bytes,
+            },
             workspace_id,
             &tool,
             arguments,
             caller_session_id.as_deref(),
-            &request_id,
-            request_bytes,
         ),
         PeerRpcRequest::ComputerTool {
             tool,
@@ -542,15 +558,17 @@ fn execute_local_peer_rpc(
             caller_session_id,
             request_id,
         } => execute_computer_tool_rpc(
-            gateway,
-            lan,
-            caller_peer,
-            source_label,
+            PeerRpcContext {
+                gateway,
+                lan,
+                caller_peer,
+                source_label,
+                request_id: &request_id,
+                request_bytes,
+            },
             &tool,
             arguments,
             &caller_session_id,
-            &request_id,
-            request_bytes,
         ),
     }
 }
@@ -614,19 +632,30 @@ fn execute_select_probe(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_workspace_tool_rpc(
-    gateway: &GatewayState,
-    lan: &crate::settings::LanFederationConfig,
-    caller_peer: &PairedPeerConfig,
+struct PeerRpcContext<'a> {
+    gateway: &'a GatewayState,
+    lan: &'a crate::settings::LanFederationConfig,
+    caller_peer: &'a PairedPeerConfig,
     source_label: String,
+    request_id: &'a Value,
+    request_bytes: usize,
+}
+
+fn execute_workspace_tool_rpc(
+    rpc: PeerRpcContext<'_>,
     workspace_id: String,
     tool: &str,
     mut arguments: Value,
     caller_session_id: Option<&str>,
-    request_id: &Value,
-    request_bytes: usize,
 ) -> PeerRpcResponse {
+    let PeerRpcContext {
+        gateway,
+        lan,
+        caller_peer,
+        source_label,
+        request_id,
+        request_bytes,
+    } = rpc;
     if !is_workspace_shared(lan, &workspace_id) {
         return workspace_not_shared_error(&workspace_id);
     }
@@ -639,17 +668,16 @@ fn execute_workspace_tool_rpc(
     let audit_body = json!({
         "params": { "name": canonical_name, "arguments": &arguments }
     });
-    let audit_call = ToolAuditCall::new_with_peer_context(
+    let audit_call = ToolAuditCall::new(ToolAuditInput {
         request_id,
-        canonical_name,
-        Some(&logical_session),
-        "lan_peer",
-        Some(&caller_peer.device_id),
+        tool_name: canonical_name,
+        session_id: Some(&logical_session),
+        auth_method: "lan_peer",
+        client_id: Some(&caller_peer.device_id),
         request_bytes,
-        &audit_body,
-        Some("local".into()),
-        Some(source_label),
-    );
+        body: &audit_body,
+    })
+    .with_peer_context(Some("local".into()), Some(source_label));
 
     let ctx = match gateway.workspace_by_id(&logical_session, &workspace_id) {
         Ok(ctx) => ctx,
@@ -734,18 +762,20 @@ fn execute_workspace_tool_rpc(
     PeerRpcResponse::ok(result, peer_review)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_computer_tool_rpc(
-    gateway: &GatewayState,
-    lan: &crate::settings::LanFederationConfig,
-    caller_peer: &PairedPeerConfig,
-    source_label: String,
+    rpc: PeerRpcContext<'_>,
     tool: &str,
     mut arguments: Value,
     caller_session_id: &str,
-    request_id: &Value,
-    request_bytes: usize,
 ) -> PeerRpcResponse {
+    let PeerRpcContext {
+        gateway,
+        lan,
+        caller_peer,
+        source_label,
+        request_id,
+        request_bytes,
+    } = rpc;
     let owner = format!("lan_peer:{}:{caller_session_id}", caller_peer.device_id);
     let session = gateway.sessions.computer_auto_session(&owner);
     if let Some(obj) = arguments.as_object_mut() {
@@ -755,17 +785,16 @@ fn execute_computer_tool_rpc(
     let audit_body = json!({
         "params": { "name": tool, "arguments": &arguments }
     });
-    let audit_call = ToolAuditCall::new_with_peer_context(
+    let audit_call = ToolAuditCall::new(ToolAuditInput {
         request_id,
-        tool,
-        Some(&session),
-        "lan_peer",
-        Some(&caller_peer.device_id),
+        tool_name: tool,
+        session_id: Some(&session),
+        auth_method: "lan_peer",
+        client_id: Some(&caller_peer.device_id),
         request_bytes,
-        &audit_body,
-        Some("local".into()),
-        Some(source_label),
-    );
+        body: &audit_body,
+    })
+    .with_peer_context(Some("local".into()), Some(source_label));
 
     if !lan.allow_computer_use {
         let denied = json!({
@@ -784,9 +813,7 @@ fn execute_computer_tool_rpc(
 
 fn is_readonly_peer_tool(canonical_name: &str, args: &Value) -> bool {
     match canonical_name {
-        "server_info" | "read_file" | "list_dir" | "list_files" | "search_text" | "grep_text"
-        | "patch_check" | "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame"
-        | "view_image" | "change_review" => true,
+        "change_review" => true,
         "planning_manage" => matches!(
             args.get("action").and_then(Value::as_str),
             Some("get" | "status" | "list")
@@ -795,7 +822,12 @@ fn is_readonly_peer_tool(canonical_name: &str, args: &Value) -> bool {
             args.get("action").and_then(Value::as_str),
             Some("search" | "read" | "list")
         ),
-        _ => false,
+        "task_manage" => matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("status" | "get" | "list" | "project_state")
+        ),
+        _ => crate::tools::registry::tool_definition(canonical_name)
+            .is_some_and(|def| def.read_only && !def.is_mutating()),
     }
 }
 
@@ -859,7 +891,25 @@ async fn lan_unpair(
 
     if !skip_disk_unpair {
         let device_id = caller.device_id;
-        let _ = tokio::task::spawn_blocking(move || remove_local_paired_peer(&device_id)).await;
+        let remove_result =
+            tokio::task::spawn_blocking(move || remove_local_paired_peer(&device_id)).await;
+        match remove_result {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                return json_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "UNPAIR_PERSIST_FAILED",
+                    format!("解除配对持久化失败: {err}"),
+                );
+            }
+            Err(err) => {
+                return json_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "UNPAIR_TASK_FAILED",
+                    format!("解除配对后台任务异常: {err}"),
+                );
+            }
+        }
     }
     ([(CACHE_CONTROL, "no-store")], Json(json!({ "ok": true }))).into_response()
 }

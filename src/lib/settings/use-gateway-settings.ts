@@ -14,9 +14,11 @@ import type { HealthItem } from "$lib/api/health";
 import { listFrpProfiles, type FrpProfileDto, type GlobalRuntimeSettingsDto } from "$lib/api/settings";
 import { getGlobalMcpOverview, startRuntime, stopRuntime, type GlobalMcpOverviewDto } from "$lib/api/workspaces";
 import { useClipboard } from "$lib/composables/use-clipboard";
+import { formatErrorMessage, formatTimeOnly } from "$lib/formatters";
 import { globalMcpRuntimeState } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import { useUnsavedChanges } from "$lib/unsaved-changes";
+import { isActionableHealthFailure } from "$lib/ui-model";
 import { isValidPort } from "$lib/validators";
 
 const GATEWAY_CONFIG_KEYS: ReadonlyArray<keyof GlobalGatewayConfigDto> = [
@@ -54,19 +56,12 @@ const TUNNEL_OPTIONS = [
   { value: "cloudflare", label: "Cloudflare Quick Tunnel" },
 ];
 
-const TIME_ONLY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
-
 function isGatewayConfigEqual(a: GlobalGatewayConfigDto, b: GlobalGatewayConfigDto): boolean {
   return GATEWAY_CONFIG_KEYS.every((key) => a[key] === b[key]);
 }
 
 export interface UseGatewaySettingsOptions {
-  panel: () => "gateway" | "gemini" | "health";
+  panel: () => "gateway" | "gemini";
   loadRuntimeSettings: () => Promise<GlobalRuntimeSettingsDto>;
   onRecordHealth: (items: HealthItem[], error?: string | null) => void;
 }
@@ -131,7 +126,7 @@ export function useGatewaySettings(options: UseGatewaySettingsOptions) {
     const entry = health.value.find((item) => item.label === "Global MCP 公网入口");
     return entry ? (entry.ok ? "passed" : "failed") : "unchecked";
   });
-  const healthFailedCount = computed(() => health.value.filter((item) => !item.ok).length);
+  const healthFailedCount = computed(() => health.value.filter(isActionableHealthFailure).length);
   const healthSummary = computed(() => {
     if (checking.value) return "检查中";
     if (healthCheckFailed.value) return "检查失败";
@@ -146,7 +141,7 @@ export function useGatewaySettings(options: UseGatewaySettingsOptions) {
   });
   const lastCheckedLabel = computed(() => {
     if (!lastCheckedAt.value) return "尚未检查";
-    return `最近检查 ${TIME_ONLY_FORMATTER.format(lastCheckedAt.value)}`;
+    return `最近检查 ${formatTimeOnly(lastCheckedAt.value)}`;
   });
   const frpOptions = computed(() => [
     { value: "", label: "手动填写" },
@@ -216,26 +211,50 @@ export function useGatewaySettings(options: UseGatewaySettingsOptions) {
   }
 
   async function persistConfig() {
-    if (savePromise) return savePromise;
-    if (!dirty.value) return;
-    const payload: GlobalGatewayConfigDto = {
-      ...config,
-      localPort: normalizePort(config.localPort),
-      frpServerPort: normalizePort(config.frpServerPort),
-      publicUrl: config.publicUrl.trim(),
-      frpServer: config.frpServer.trim(),
-      frpSubdomain: config.frpSubdomain.trim(),
-    };
-    saving.value = true;
-    savePromise = (async () => {
-      await setGlobalGatewayConfig(payload);
-      Object.assign(config, payload);
-      baseline.value = { ...config };
-    })();
-    try {
+    if (savePromise) {
       await savePromise;
+      if (!dirty.value) return;
+    }
+    if (!dirty.value) return;
+    saving.value = true;
+    const run = (async () => {
+      while (dirty.value) {
+        const snapshot: GlobalGatewayConfigDto = {
+          ...config,
+          localPort: normalizePort(config.localPort),
+          frpServerPort: normalizePort(config.frpServerPort),
+          publicUrl: config.publicUrl.trim(),
+          frpServer: config.frpServer.trim(),
+          frpSubdomain: config.frpSubdomain.trim(),
+        };
+        await setGlobalGatewayConfig(snapshot);
+        const unchangedDuringSave =
+          config.enabled === snapshot.enabled &&
+          config.localPort === snapshot.localPort &&
+          config.tunnelType === snapshot.tunnelType &&
+          config.publicUrl.trim() === snapshot.publicUrl &&
+          config.cloudflareMode === snapshot.cloudflareMode &&
+          config.cloudflareHttp2 === snapshot.cloudflareHttp2 &&
+          config.frpProfileId === snapshot.frpProfileId &&
+          config.frpServer.trim() === snapshot.frpServer &&
+          config.frpServerPort === snapshot.frpServerPort &&
+          config.frpSubdomain.trim() === snapshot.frpSubdomain &&
+          config.frpTls === snapshot.frpTls &&
+          config.useProxy === snapshot.useProxy;
+        baseline.value = { ...snapshot };
+        if (unchangedDuringSave) {
+          Object.assign(config, snapshot);
+          break;
+        }
+      }
+    })();
+    savePromise = run;
+    try {
+      await run;
     } finally {
-      savePromise = null;
+      if (savePromise === run) {
+        savePromise = null;
+      }
       saving.value = false;
     }
   }
@@ -248,8 +267,8 @@ export function useGatewaySettings(options: UseGatewaySettingsOptions) {
     return { localPort, tunnel };
   }
 
-  async function saveConfig() {
-    if (!dirty.value && !savePromise) return;
+  async function saveConfig(): Promise<boolean> {
+    if (!dirty.value && !savePromise) return true;
     const changed = changedConfigParts();
     try {
       error.value = "";
@@ -276,7 +295,7 @@ export function useGatewaySettings(options: UseGatewaySettingsOptions) {
       }
       return true;
     } catch (e) {
-      error.value = String(e);
+      error.value = formatErrorMessage(e);
       return false;
     }
   }

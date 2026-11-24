@@ -415,16 +415,16 @@ pub fn apply_harness_takeovers(
                 stdio_bin,
             )
         } else {
-            rewrite_json_client_config(
+            rewrite_json_client_config(JsonRewriteSpec {
                 client_id,
-                &original_text,
-                keys,
-                &injected_key,
-                existing_self_key.is_some(),
-                effective_mode,
-                &endpoint,
+                raw: &original_text,
+                removed_keys: keys,
+                injected_key: &injected_key,
+                already_has_self: existing_self_key.is_some(),
+                mode: effective_mode,
+                endpoint: &endpoint,
                 stdio_bin,
-            )
+            })
         };
 
         let next_content = match rewritten {
@@ -435,17 +435,17 @@ pub fn apply_harness_takeovers(
             }
         };
 
-        let record = match create_backup_snapshot(
+        let record = match create_backup_snapshot(TakeoverBackupInput {
             backup_dir,
             home,
-            client_id,
-            label,
-            &target_path,
-            &original_bytes,
-            keys,
-            &injected_key,
+            source_client: client_id,
+            source_label: label,
+            target_path: &target_path,
+            original_bytes: &original_bytes,
+            removed_keys: keys,
+            injected_key: &injected_key,
             effective_mode,
-        ) {
+        }) {
             Ok(rec) => rec,
             Err(err) => {
                 errors.push(format!("{label}: 创建备份快照失败（未修改原文件）: {err}"));
@@ -527,18 +527,32 @@ pub fn restore_takeover_backup_at(
     Ok(records[pos].clone())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn create_backup_snapshot(
-    backup_dir: &Path,
-    home: &Path,
-    source_client: &str,
-    source_label: &str,
-    target_path: &Path,
-    original_bytes: &[u8],
-    removed_keys: &[String],
-    injected_key: &str,
+struct TakeoverBackupInput<'a> {
+    backup_dir: &'a Path,
+    home: &'a Path,
+    source_client: &'a str,
+    source_label: &'a str,
+    target_path: &'a Path,
+    original_bytes: &'a [u8],
+    removed_keys: &'a [String],
+    injected_key: &'a str,
     effective_mode: ResolvedConnectMode,
+}
+
+fn create_backup_snapshot(
+    input: TakeoverBackupInput<'_>,
 ) -> AppResult<HarnessTakeoverBackupRecord> {
+    let TakeoverBackupInput {
+        backup_dir,
+        home,
+        source_client,
+        source_label,
+        target_path,
+        original_bytes,
+        removed_keys,
+        injected_key,
+        effective_mode,
+    } = input;
     fs::create_dir_all(backup_dir)?;
     let now_ms = unix_time_ms();
     let short_id = &uuid::Uuid::new_v4().to_string()[..8];
@@ -574,27 +588,11 @@ fn create_backup_snapshot(
 
 fn save_backup_index(backup_dir: &Path, records: &[HarnessTakeoverBackupRecord]) -> AppResult<()> {
     fs::create_dir_all(backup_dir)?;
-    let bytes = serde_json::to_vec_pretty(records)
-        .map_err(|err| AppError::Message(format!("序列化备份索引失败: {err}")))?;
-    atomic_write_bytes(&backup_dir.join("index.json"), &bytes)
+    crate::util::fs::atomic_write_json(&backup_dir.join("index.json"), &records)
 }
 
 fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_file_name(format!(
-        ".{}.tmp.{}",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("config"),
-        uuid::Uuid::new_v4()
-    ));
-    fs::write(&tmp, bytes)?;
-    if let Err(err) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(AppError::Io(err));
-    }
+    crate::util::fs::atomic_write_bytes(path, bytes)?;
     Ok(())
 }
 
@@ -704,17 +702,28 @@ fn format_entry_preview(
     .unwrap_or_default()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rewrite_json_client_config(
-    client_id: &str,
-    raw: &str,
-    removed_keys: &[String],
-    injected_key: &str,
+struct JsonRewriteSpec<'a> {
+    client_id: &'a str,
+    raw: &'a str,
+    removed_keys: &'a [String],
+    injected_key: &'a str,
     already_has_self: bool,
     mode: ResolvedConnectMode,
-    endpoint: &str,
-    stdio_bin: &Path,
-) -> Result<String, String> {
+    endpoint: &'a str,
+    stdio_bin: &'a Path,
+}
+
+fn rewrite_json_client_config(spec: JsonRewriteSpec<'_>) -> Result<String, String> {
+    let JsonRewriteSpec {
+        client_id,
+        raw,
+        removed_keys,
+        injected_key,
+        already_has_self,
+        mode,
+        endpoint,
+        stdio_bin,
+    } = spec;
     let mut root: Value =
         serde_json::from_str(raw.trim()).map_err(|err| format!("原 JSON 解析失败: {err}"))?;
     let Some(root_obj) = root.as_object_mut() else {

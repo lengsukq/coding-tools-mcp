@@ -133,15 +133,7 @@ pub fn set_enabled(enabled: bool) -> AppResult<()> {
     }
     let exe = current_executable_path()?;
     let content = render_macos_launch_agent_plist(&exe);
-    let tmp_path = plist_path.with_extension("plist.tmp");
-    std::fs::write(&tmp_path, content).map_err(|err| {
-        AppError::Message(format!(
-            "写入 macOS 开机自启临时文件失败（{}）: {err}",
-            tmp_path.display()
-        ))
-    })?;
-    std::fs::rename(&tmp_path, &plist_path).map_err(|err| {
-        let _ = std::fs::remove_file(&tmp_path);
+    crate::util::fs::atomic_write_bytes(&plist_path, content.as_bytes()).map_err(|err| {
         AppError::Message(format!(
             "保存 macOS 开机自启配置失败（{}）: {err}",
             plist_path.display()

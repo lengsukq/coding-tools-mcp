@@ -1,13 +1,12 @@
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::tools::io_util::hash_and_count_json;
 use crate::tools::registry::{
-    exposed_tool_names_cached, input_schema, tool_definition, ToolProfile,
+    exposed_tool_names_cached, input_schema, tool_definition, ToolProfile, TOOL_PROFILE_COUNT,
 };
+use crate::util::json::hash_and_count_json;
 
 pub const TOOL_SCHEMA_VERSION: u32 = 1;
 
@@ -18,7 +17,7 @@ struct RuntimeIdentity {
 }
 
 static RUNTIME_IDENTITY: OnceLock<RuntimeIdentity> = OnceLock::new();
-static SCHEMA_HASH_CACHE: [OnceLock<String>; 5] = [
+static SCHEMA_HASH_CACHE: [OnceLock<String>; TOOL_PROFILE_COUNT] = [
     OnceLock::new(),
     OnceLock::new(),
     OnceLock::new(),
@@ -91,10 +90,7 @@ fn build_git_sha() -> &'static str {
 }
 
 fn unix_timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into())
+    crate::util::time::unix_now_secs().to_string()
 }
 
 #[cfg(test)]

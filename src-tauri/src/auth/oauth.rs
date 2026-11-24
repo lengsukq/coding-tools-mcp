@@ -17,9 +17,8 @@ impl AuthConfig {
     }
 }
 
-/// Resolve the external OAuth/MCP base URL for a request.
-/// Matches the Python server's behavior: prefer configured URL,
-/// then `X-Forwarded-*` / `Host`, then localhost.
+/// Resolve the external OAuth/MCP base URL for a request: prefer the configured public URL,
+/// then reverse-proxy `X-Forwarded-*` / `Host` headers, then local loopback.
 pub fn external_base_url(headers: &HeaderMap, bind_port: u16, configured_url: &str) -> String {
     let configured = configured_url.trim().trim_end_matches('/');
     if !configured.is_empty() {

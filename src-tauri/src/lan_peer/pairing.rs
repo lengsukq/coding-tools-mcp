@@ -4,13 +4,15 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::auth::constant_time_eq;
 use crate::data::DataStore;
 use crate::local_network;
 use crate::settings::{AppSettings, PairedPeerConfig};
+use crate::util::time::unix_now_ms;
 
 use super::crypto::{
-    compute_pair_ack_proof, compute_pair_request_proof, constant_time_eq,
-    derive_peer_shared_secret, random_hex_32, random_pin_6, unix_time_ms,
+    compute_pair_ack_proof, compute_pair_request_proof, derive_peer_shared_secret, random_hex_32,
+    random_pin_6,
 };
 use super::discovery::probe_peer_hello;
 use super::identity::{
@@ -92,7 +94,7 @@ fn to_pin_dto(session: &ActivePinSession, now_ms: u64) -> PairingPinDto {
 }
 
 pub fn generate_pairing_pin() -> PairingPinDto {
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let session = ActivePinSession {
         pin: random_pin_6(),
         created_at_ms: now,
@@ -109,7 +111,7 @@ pub fn cancel_pairing_pin() {
 }
 
 pub fn current_pairing_pin() -> Option<PairingPinDto> {
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let mut guard = pin_slot().lock().unwrap_or_else(|e| e.into_inner());
     if guard
         .as_ref()
@@ -167,7 +169,7 @@ pub(super) fn accept_pair_complete(
         return Err((400, "SELF_PAIR_DENIED", "不能与当前本机自身进行配对".into()));
     }
 
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     if now.abs_diff(req.timestamp_ms) > PAIR_CLOCK_SKEW_MS {
         return Err((
             400,
@@ -291,7 +293,7 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
     let (local_cfg, local_fp) = ensure_local_identity()?;
     let settings = AppSettings::load_or_default();
 
-    let timestamp_ms = unix_time_ms();
+    let timestamp_ms = unix_now_ms();
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let secret_part_a = random_hex_32();
     let pin_proof = compute_pair_request_proof(
@@ -371,7 +373,7 @@ pub async fn pair_with_peer(host: &str, port: u16, pin: &str) -> Result<PairedPe
 
     let addresses = merge_peer_addresses(&target.host, &ack.responder.addresses, 8);
     let peer_record =
-        build_paired_peer_record(&ack.responder, target.host, addresses, unix_time_ms());
+        build_paired_peer_record(&ack.responder, target.host, addresses, unix_now_ms());
 
     persist_paired_peer(&peer_record, &shared_secret)?;
     super::client::invalidate_peer_cache(&peer_record.device_id);

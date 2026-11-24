@@ -11,16 +11,6 @@ use crate::tools::{call_tool, list_tools_for_profile, wrap_mcp_tool_result, Shar
 
 pub type SharedState = SharedToolContext;
 
-/// Truncate `value` safely on a UTF-8 boundary and append an ellipsis trailer if truncated.
-pub(crate) fn truncate_utf8_with_ellipsis(value: &str, max_bytes: usize) -> String {
-    let prefix = crate::util::text::truncate_utf8(value, max_bytes);
-    if prefix.len() == value.len() {
-        value.to_string()
-    } else {
-        format!("{prefix}\n…[truncated]")
-    }
-}
-
 /// Map `review::find_review` error strings consistently to HTTP status codes across
 /// both the local review HTTP routes and LAN peer review endpoints.
 pub(crate) fn review_error_status(message: &str) -> StatusCode {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
-import { Lock, Plus, Trash2 } from "@lucide/vue";
+import KeyValueSecretEditor from "$src/components/settings/KeyValueSecretEditor.vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import ModalDialog from "$src/components/ui/ModalDialog.vue";
 import SegmentedControl from "$src/components/ui/SegmentedControl.vue";
@@ -9,7 +9,6 @@ import TextField from "$src/components/ui/TextField.vue";
 import ToggleSwitch from "$src/components/ui/ToggleSwitch.vue";
 import {
   createEmptyUpstreamDraft,
-  type KeyValueDraftRow,
   type UpstreamServerDraft,
 } from "$lib/upstream-mcp/use-upstream-mcp";
 import type { UpstreamExposeMode } from "$lib/api/upstream-mcp";
@@ -54,14 +53,6 @@ watch(
   },
   { immediate: true },
 );
-
-function addKvRow(list: KeyValueDraftRow[]) {
-  list.push({ key: "", value: "", secret: false, hasStoredSecret: false });
-}
-
-function removeKvRow(list: KeyValueDraftRow[], index: number) {
-  list.splice(index, 1);
-}
 
 function handleSubmit() {
   emit("submit", {
@@ -161,53 +152,18 @@ function handleSubmit() {
           :disabled="saving"
         />
 
-        <div class="space-y-2 rounded-[var(--ui-radius-control)] border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] p-3">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-medium text-[var(--ui-text-secondary)]">环境变量 (Env)</span>
-            <BaseButton variant="secondary" size="sm" :disabled="saving" @click="addKvRow(form.envRows)">
-              <Plus :size="12" />
-              新增变量
-            </BaseButton>
-          </div>
-          <p v-if="!form.envRows.length" class="text-xs text-[var(--ui-text-muted)]">
-            暂无环境变量。勾选锁形按钮可将 Token / API Key 加密写入 SecretStore。
-          </p>
-          <div v-for="(row, idx) in form.envRows" :key="`env-${idx}`" class="flex items-center gap-2">
-            <input
-              v-model="row.key"
-              type="text"
-              placeholder="KEY"
-              class="h-8 w-36 rounded-md border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] px-2 font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-accent)]"
-            />
-            <input
-              v-model="row.value"
-              :type="row.secret ? 'password' : 'text'"
-              :placeholder="row.hasStoredSecret ? '已加密保存（留空保持不变）' : 'VALUE'"
-              class="h-8 min-w-0 flex-1 rounded-md border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] px-2 font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-accent)]"
-            />
-            <button
-              type="button"
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition"
-              :class="
-                row.secret
-                  ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]'
-                  : 'border-[var(--ui-line)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-              "
-              :title="row.secret ? '已标记为加密凭据（存入 SecretStore）' : '点击标记为加密凭据'"
-              @click="row.secret = !row.secret"
-            >
-              <Lock :size="13" />
-            </button>
-            <button
-              type="button"
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--ui-text-muted)] hover:text-[var(--ui-danger)]"
-              aria-label="删除变量"
-              @click="removeKvRow(form.envRows, idx)"
-            >
-              <Trash2 :size="13" />
-            </button>
-          </div>
-        </div>
+        <KeyValueSecretEditor
+          title="环境变量 (Env)"
+          add-label="新增变量"
+          empty-hint="暂无环境变量。勾选锁形按钮可将 Token / API Key 加密写入 SecretStore。"
+          key-placeholder="KEY"
+          value-placeholder="VALUE"
+          delete-aria-label="删除变量"
+          secret-title-on="已标记为加密凭据（存入 SecretStore）"
+          secret-title-off="点击标记为加密凭据"
+          :rows="form.envRows"
+          :disabled="saving"
+        />
       </template>
 
       <!-- HTTP / SSE Fields -->
@@ -246,53 +202,16 @@ function handleSubmit() {
           :disabled="saving"
         />
 
-        <div class="space-y-2 rounded-[var(--ui-radius-control)] border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] p-3">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-medium text-[var(--ui-text-secondary)]">自定义 HTTP Headers</span>
-            <BaseButton variant="secondary" size="sm" :disabled="saving" @click="addKvRow(form.headerRows)">
-              <Plus :size="12" />
-              新增 Header
-            </BaseButton>
-          </div>
-          <p v-if="!form.headerRows.length" class="text-xs text-[var(--ui-text-muted)]">
-            可添加 X-API-Key 等请求头；点亮锁图标即可加密存储。
-          </p>
-          <div v-for="(row, idx) in form.headerRows" :key="`hdr-${idx}`" class="flex items-center gap-2">
-            <input
-              v-model="row.key"
-              type="text"
-              placeholder="Header-Name"
-              class="h-8 w-36 rounded-md border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] px-2 font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-accent)]"
-            />
-            <input
-              v-model="row.value"
-              :type="row.secret ? 'password' : 'text'"
-              :placeholder="row.hasStoredSecret ? '已加密保存（留空保持不变）' : 'Value'"
-              class="h-8 min-w-0 flex-1 rounded-md border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] px-2 font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-accent)]"
-            />
-            <button
-              type="button"
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition"
-              :class="
-                row.secret
-                  ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]'
-                  : 'border-[var(--ui-line)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-              "
-              :title="row.secret ? '加密存储' : '明文存储'"
-              @click="row.secret = !row.secret"
-            >
-              <Lock :size="13" />
-            </button>
-            <button
-              type="button"
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--ui-text-muted)] hover:text-[var(--ui-danger)]"
-              aria-label="删除 Header"
-              @click="removeKvRow(form.headerRows, idx)"
-            >
-              <Trash2 :size="13" />
-            </button>
-          </div>
-        </div>
+        <KeyValueSecretEditor
+          title="自定义 HTTP Headers"
+          add-label="新增 Header"
+          empty-hint="可添加 X-API-Key 等请求头；点亮锁图标即可加密存储。"
+          key-placeholder="Header-Name"
+          value-placeholder="Value"
+          delete-aria-label="删除 Header"
+          :rows="form.headerRows"
+          :disabled="saving"
+        />
       </template>
 
       <div class="grid gap-3 sm:grid-cols-2">

@@ -288,7 +288,11 @@ fn destructive_command_targeting_git_is_always_rejected() {
         &policy,
     )
     .expect_err("删除 .git 必须拒绝");
-    assert!(error.0.contains("PROTECTED_REPOSITORY_ASSET"));
+    assert!(matches!(
+        error,
+        coding_tools_mcp_desktop_lib::tools::policy::PolicyError::ProtectedRepositoryAsset(_)
+    ));
+    assert!(error.to_string().contains("PROTECTED_REPOSITORY_ASSET"));
 }
 
 #[test]
@@ -303,7 +307,11 @@ fn interpreter_command_cannot_delete_git_assets() {
         &policy,
     )
     .expect_err("解释器删除 .git 必须拒绝");
-    assert!(error.0.contains("PROTECTED_REPOSITORY_ASSET"));
+    assert!(matches!(
+        error,
+        coding_tools_mcp_desktop_lib::tools::policy::PolicyError::ProtectedRepositoryAsset(_)
+    ));
+    assert!(error.to_string().contains("PROTECTED_REPOSITORY_ASSET"));
 }
 
 #[test]
@@ -318,7 +326,11 @@ fn interpreter_command_cannot_delete_github_assets() {
         &policy,
     )
     .expect_err("解释器删除 .github 必须拒绝");
-    assert!(error.0.contains("PROTECTED_REPOSITORY_ASSET"));
+    assert!(matches!(
+        error,
+        coding_tools_mcp_desktop_lib::tools::policy::PolicyError::ProtectedRepositoryAsset(_)
+    ));
+    assert!(error.to_string().contains("PROTECTED_REPOSITORY_ASSET"));
 }
 
 #[test]
@@ -333,7 +345,7 @@ fn interpreter_command_cannot_write_outside_workspace_scope() {
         &policy,
     )
     .expect_err("workspace scope 不得写入外部路径");
-    assert!(error.0.contains("WORKSPACE_PATH_PROTECTED"));
+    assert!(error.to_string().contains("WORKSPACE_PATH_PROTECTED"));
 }
 
 #[test]
@@ -348,7 +360,11 @@ fn interpreter_command_cannot_write_git_files() {
         &policy,
     )
     .expect_err("普通解释器不得写入 .git");
-    assert!(error.0.contains("PROTECTED_REPOSITORY_ASSET"));
+    assert!(matches!(
+        error,
+        coding_tools_mcp_desktop_lib::tools::policy::PolicyError::ProtectedRepositoryAsset(_)
+    ));
+    assert!(error.to_string().contains("PROTECTED_REPOSITORY_ASSET"));
 }
 
 #[test]
@@ -435,5 +451,95 @@ fn safe_permission_mode_blocks_network_looking_command() {
         &policy,
     )
     .expect_err("network command should be blocked in safe mode");
-    assert!(err.0.contains("Network-looking"));
+    assert!(err.to_string().contains("Network-looking"));
+}
+
+#[test]
+fn apply_patch_rejects_curdir_prefixed_git_and_github_paths() {
+    let fx = tiny_js_fixture();
+    let ctx = ctx_for(&fx.root);
+
+    let git_out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Add File: ./.git/hooks/pre-commit\n+#!/bin/sh\n+echo pwned\n*** End Patch\n"
+        }),
+    );
+    assert_eq!(git_out["ok"], json!(false));
+    assert_eq!(
+        git_out["error"]["code"],
+        json!("PROTECTED_REPOSITORY_ASSET")
+    );
+    assert!(!fx.root.join(".git/hooks/pre-commit").exists());
+
+    let github_out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Add File: ./.github/workflows/evil.yml\n+name: evil\n*** End Patch\n"
+        }),
+    );
+    assert_eq!(github_out["ok"], json!(false));
+    assert_eq!(
+        github_out["error"]["code"],
+        json!("PROTECTED_REPOSITORY_ASSET")
+    );
+    assert!(!fx.root.join(".github/workflows/evil.yml").exists());
+
+    let unified_git_out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "--- /dev/null\n+++ b/./.git/config\n@@\n+[core]\n"
+        }),
+    );
+    assert_eq!(unified_git_out["ok"], json!(false));
+    assert_eq!(
+        unified_git_out["error"]["code"],
+        json!("PROTECTED_REPOSITORY_ASSET")
+    );
+}
+
+#[test]
+fn harness_store_rejects_path_traversal_task_id() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = coding_tools_mcp_desktop_lib::harness::HarnessStore::new(dir.path().to_path_buf())
+        .expect("harness store");
+    let err = store
+        .load_task("ws-1", "../escape")
+        .expect_err("path traversal task_id must be rejected");
+    assert_eq!(err.code(), "INVALID_ARGUMENT");
+    let ev_err = store
+        .list_events("ws-1", "../escape", 0, 10)
+        .expect_err("path traversal task_id in list_events must be rejected");
+    assert_eq!(ev_err.code(), "INVALID_ARGUMENT");
+}
+
+#[test]
+fn invalid_glob_returns_invalid_argument_error() {
+    let fx = tiny_js_fixture();
+    let ctx = ctx_for(&fx.root);
+    let out = invoke(&ctx, "list_files", json!({ "patterns": ["[unclosed"] }));
+    assert_eq!(out["ok"], json!(false));
+    assert_eq!(out["error"]["code"], json!("INVALID_ARGUMENT"));
+}
+
+#[test]
+fn default_cwd_prefixes_codex_patch_headers() {
+    let fx = tiny_js_fixture();
+    let ctx = ctx_for(&fx.root);
+    let set_cwd = invoke(&ctx, "set_default_cwd", json!({ "path": "src" }));
+    assert_ok(&set_cwd);
+
+    let out = invoke(
+        &ctx,
+        "apply_patch",
+        json!({
+            "patch": "*** Begin Patch\n*** Add File: added-in-src.js\n+export const ok = true;\n*** End Patch\n"
+        }),
+    );
+    assert_ok(&out);
+    assert!(fx.root.join("src/added-in-src.js").is_file());
+    assert!(!fx.root.join("added-in-src.js").exists());
 }

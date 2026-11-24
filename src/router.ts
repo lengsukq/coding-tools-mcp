@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from "vue-router";
+import { createRouter, createWebHashHistory, type RouteLocationNormalized } from "vue-router";
 import { legacySettingsSection } from "./lib/ui-model";
 import { confirmUnsavedChanges } from "./lib/unsaved-changes";
 
@@ -28,5 +28,12 @@ const router = createRouter({
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });
-router.beforeEach((to, from) => (to.path === from.path ? true : confirmUnsavedChanges()));
+function isSamePanelRoute(to: RouteLocationNormalized, from: RouteLocationNormalized): boolean {
+  if (to.path !== from.path) return false;
+  const toPanel = Array.isArray(to.query.panel) ? (to.query.panel[0] ?? "") : (to.query.panel ?? "");
+  const fromPanel = Array.isArray(from.query.panel) ? (from.query.panel[0] ?? "") : (from.query.panel ?? "");
+  return toPanel === fromPanel;
+}
+
+router.beforeEach((to, from) => (isSamePanelRoute(to, from) ? true : confirmUnsavedChanges()));
 export default router;

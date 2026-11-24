@@ -1,15 +1,16 @@
 [package]
 name = "coding-tools-mcp-desktop"
-version = "0.3.9"
+version = "0.3.10"
 description = "Coding Tools MCP desktop client and headless runtime"
 authors = ["Coding Tools MCP Contributors"]
 repository = "https://github.com/lengsukq/coding-tools-mcp"
 edition = "2021"
+rust-version = "1.89"
 default-run = "coding-tools-mcp-desktop"
 
 [lib]
 name = "coding_tools_mcp_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "coding-tools-mcp-desktop"
@@ -41,7 +42,7 @@ dirs = "6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "process", "io-util", "fs", "time", "signal"] }
 axum = { version = "0.8", features = ["form"] }
 tower-http = { version = "0.6", features = ["cors"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 walkdir = "2"
 regex = "1"
 glob = "0.3"
@@ -51,12 +52,13 @@ jsonwebtoken = "9"
 sha2 = "0.10"
 shell-words = "1"
 which = "7"
-zip = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
-fs2 = "0.4"
-tempfile = "3"
 similar = "2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

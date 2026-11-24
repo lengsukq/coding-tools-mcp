@@ -1,5 +1,6 @@
 import { listWorkspaces } from "$lib/api/workspaces";
 import type { WorkspaceProfile } from "$lib/types";
+import { WORKSPACE_NAV } from "$lib/ui-model";
 
 export interface RuntimePolicyDraft {
   toolProfile: string;
@@ -18,12 +19,9 @@ export interface RuntimePolicyDraft {
   workspaceScriptExtensions: string;
 }
 
-export type WorkspaceTab = "overview" | "planning" | "changes" | "history" | "diagnostics" | "settings";
+export type WorkspaceTab = (typeof WORKSPACE_NAV)[number]["value"];
 
-export const WORKSPACE_TABS: Array<{ value: WorkspaceTab; label: string }> = [
- {value:"overview",label:"概览"},{value:"planning",label:"任务"},{value:"changes",label:"变更"},
- {value:"history",label:"历史"},{value:"diagnostics",label:"诊断"},{value:"settings",label:"设置"},
-];
+export const WORKSPACE_TABS: ReadonlyArray<{ value: WorkspaceTab; label: string }> = WORKSPACE_NAV;
 
 export interface WorkspaceSnapshot {
   items: WorkspaceProfile[];

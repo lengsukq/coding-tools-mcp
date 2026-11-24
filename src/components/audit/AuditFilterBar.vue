@@ -109,7 +109,7 @@ const emit = defineEmits<{
             <select
               id="audit-workspaceId"
               v-model="workspaceId"
-              class="ui-select-native h-9 w-full cursor-pointer appearance-none truncate rounded-[var(--ui-radius-control)] border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] pl-3 pr-8 text-xs text-[var(--ui-text)] outline-none transition focus:border-[var(--ui-accent)]"
+              class="h-9 w-full cursor-pointer appearance-none truncate rounded-[var(--ui-radius-control)] border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] pl-3 pr-8 text-xs text-[var(--ui-text)] outline-none transition focus:border-[var(--ui-accent)]"
               @change="emit('apply')"
             >
               <option value="">全部工作区与全局调用</option>

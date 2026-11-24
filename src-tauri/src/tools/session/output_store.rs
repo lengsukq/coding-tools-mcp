@@ -3,12 +3,13 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use regex::RegexBuilder;
 use serde_json::{json, Value};
 
-use crate::tools::io_util::{sha256_hex, truncate_utf8};
+use crate::util::hash::sha256_hex;
+use crate::util::text::truncate_utf8;
 
 const OUTPUT_TTL: Duration = Duration::from_secs(3 * 24 * 60 * 60);
 const OUTPUT_CAPACITY_BYTES: u64 = 512 * 1024 * 1024;
@@ -286,10 +287,7 @@ fn directory_stats(path: &Path) -> (SystemTime, u64) {
 }
 
 fn current_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
+    crate::util::time::unix_now_secs()
 }
 
 fn utf8_preview(value: &str, max_bytes: usize) -> String {

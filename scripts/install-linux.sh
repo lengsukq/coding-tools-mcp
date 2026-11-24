@@ -9,6 +9,12 @@ set -euo pipefail
 REPO="${CODING_TOOLS_MCP_REPO:-lengsukq/coding-tools-mcp}"
 BIN_NAME="coding-tools-mcp"
 SERVICE_NAME="coding-tools-mcp.service"
+HTTP_RETRY_COUNT=3
+HTTP_RETRY_DELAY_SECS=1
+HTTP_CONNECT_TIMEOUT_SECS=15
+HTTP_MAX_TIME_SECS=120
+PIN_POLL_MAX_ATTEMPTS=12
+PIN_POLL_INTERVAL_SECS=0.5
 
 VERSION="${CODING_TOOLS_MCP_VERSION:-latest}"
 INSTALL_DIR="${CODING_TOOLS_MCP_INSTALL_DIR:-}"
@@ -228,15 +234,19 @@ http_get_text() {
   local url="$1"
   if have_cmd curl; then
     if [[ -n "${GITHUB_TOKEN:-}" && "${url}" == https://api.github.com/* ]]; then
-      curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GITHUB_TOKEN}" "${url}"
+      curl -fsSL --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECS}" --max-time "${HTTP_MAX_TIME_SECS}" \
+        -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GITHUB_TOKEN}" "${url}"
     else
-      curl -fsSL -H "Accept: application/vnd.github+json" "${url}"
+      curl -fsSL --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECS}" --max-time "${HTTP_MAX_TIME_SECS}" \
+        -H "Accept: application/vnd.github+json" "${url}"
     fi
   elif have_cmd wget; then
     if [[ -n "${GITHUB_TOKEN:-}" && "${url}" == https://api.github.com/* ]]; then
-      wget -qO- --header="Accept: application/vnd.github+json" --header="Authorization: Bearer ${GITHUB_TOKEN}" "${url}"
+      wget -qO- --timeout="${HTTP_CONNECT_TIMEOUT_SECS}" --tries="${HTTP_RETRY_COUNT}" \
+        --header="Accept: application/vnd.github+json" --header="Authorization: Bearer ${GITHUB_TOKEN}" "${url}"
     else
-      wget -qO- --header="Accept: application/vnd.github+json" "${url}"
+      wget -qO- --timeout="${HTTP_CONNECT_TIMEOUT_SECS}" --tries="${HTTP_RETRY_COUNT}" \
+        --header="Accept: application/vnd.github+json" "${url}"
     fi
   else
     die "未找到 curl 或 wget，请先安装其中之一。"
@@ -247,12 +257,50 @@ http_download_file() {
   local url="$1"
   local dest="$2"
   if have_cmd curl; then
-    curl -fL --retry 3 --retry-delay 1 --progress-bar -o "${dest}" "${url}"
+    curl -fL --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECS}" --max-time "${HTTP_MAX_TIME_SECS}" \
+      --retry "${HTTP_RETRY_COUNT}" --retry-delay "${HTTP_RETRY_DELAY_SECS}" --progress-bar -o "${dest}" "${url}"
   elif have_cmd wget; then
-    wget -O "${dest}" "${url}"
+    wget --timeout="${HTTP_CONNECT_TIMEOUT_SECS}" --tries="${HTTP_RETRY_COUNT}" \
+      --waitretry="${HTTP_RETRY_DELAY_SECS}" -O "${dest}" "${url}"
   else
     die "未找到 curl 或 wget，请先安装其中之一。"
   fi
+}
+
+verify_archive_checksum() {
+  local raw_archive_url="$1"
+  local archive_file="$2"
+  local asset_name="${raw_archive_url##*/}"
+  local checksums_url
+  checksums_url="$(apply_mirror "${raw_archive_url%/*}/SHA256SUMS.txt")"
+  local checksums_file="${TMP_DIR}/SHA256SUMS.txt"
+
+  if ! http_download_file "${checksums_url}" "${checksums_file}" 2>/dev/null; then
+    warn "当前 Release 未提供 SHA256SUMS.txt，跳过完整性校验（较旧版本属正常情况）。"
+    return 0
+  fi
+
+  local expected_hash
+  expected_hash="$(awk -v name="${asset_name}" '$2 == name || $2 == ("*" name) { print $1; exit }' "${checksums_file}")"
+  if [[ -z "${expected_hash}" ]]; then
+    warn "SHA256SUMS.txt 中未找到 ${asset_name} 的记录，跳过校验。"
+    return 0
+  fi
+
+  local actual_hash=""
+  if have_cmd sha256sum; then
+    actual_hash="$(sha256sum "${archive_file}" | awk '{ print $1 }')"
+  elif have_cmd shasum; then
+    actual_hash="$(shasum -a 256 "${archive_file}" | awk '{ print $1 }')"
+  else
+    warn "系统缺少 sha256sum / shasum，跳过校验。"
+    return 0
+  fi
+
+  if [[ "${actual_hash,,}" != "${expected_hash,,}" ]]; then
+    die "下载包 SHA-256 校验失败 (${asset_name})：期望 ${expected_hash}，实际 ${actual_hash}"
+  fi
+  info "SHA-256 完整性校验通过 (${asset_name})"
 }
 
 resolve_release_download_url() {
@@ -374,6 +422,7 @@ acquire_binary() {
     local archive_dest="${TMP_DIR}/${BIN_NAME}-headless.tar.gz"
     info "正在下载预编译无头包 (${ARCH}): ${download_url}"
     if http_download_file "${download_url}" "${archive_dest}"; then
+      verify_archive_checksum "${raw_url}" "${archive_dest}"
       extract_or_stage_binary "${archive_dest}"
       return 0
     fi
@@ -431,7 +480,9 @@ do_uninstall() {
 
   if [[ -x "${target}" ]]; then
     info "尝试卸载 systemd 常驻服务…"
-    "${target}" service uninstall || true
+    if ! "${target}" service uninstall; then
+      warn "systemd 服务卸载返回非零退出码（可能未安装或非 systemd 环境），将继续删除二进制文件。"
+    fi
     rm -f "${target}"
     info "已移除二进制文件: ${target}"
   else
@@ -472,12 +523,12 @@ apply_post_install_config() {
 wait_for_daemon_and_issue_pin() {
   local target="$1"
   local attempt=0
-  while [[ ${attempt} -lt 12 ]]; do
+  while [[ ${attempt} -lt ${PIN_POLL_MAX_ATTEMPTS} ]]; do
     if "${target}" lan pin 2>/dev/null; then
       return 0
     fi
     attempt=$((attempt + 1))
-    sleep 0.5
+    sleep "${PIN_POLL_INTERVAL_SECS}"
   done
   warn "守护进程尚未完全就绪，可稍后手动执行: ${BIN_NAME} lan pin"
 }

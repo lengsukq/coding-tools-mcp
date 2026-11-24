@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::platform::platform;
 
 pub const UPSTREAM_ENV_SECRETS_SCOPE: &str = "upstream_mcp_env";
@@ -485,18 +485,7 @@ impl UpstreamCatalogCacheFile {
     }
 
     pub fn save_at(&self, path: &Path) -> AppResult<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let payload = serde_json::to_vec_pretty(self)
-            .map_err(|err| AppError::Message(format!("序列化上游 MCP 工具缓存失败: {err}")))?;
-        let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
-        fs::write(&tmp, payload)?;
-        if let Err(err) = fs::rename(&tmp, path) {
-            let _ = fs::remove_file(&tmp);
-            return Err(AppError::Io(err));
-        }
-        Ok(())
+        crate::util::fs::atomic_write_json(path, self)
     }
 }
 
@@ -565,8 +554,5 @@ pub struct UpstreamTestSyncResultDto {
 }
 
 pub fn unix_time_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or_default()
+    crate::util::time::unix_now_ms()
 }

@@ -6,7 +6,7 @@
 
 | 属性 | 当前值 |
 | --- | --- |
-| 应用版本 | `0.3.9`（以 `package.json` 与 `src-tauri/Cargo.toml` 为准） |
+| 应用版本 | `0.3.10`（以 `package.json` 与 `src-tauri/Cargo.toml` 为准） |
 | Rust Edition | 2021 |
 | 前端语言 | TypeScript |
 | 桌面框架 | Tauri 2 |
@@ -27,8 +27,8 @@
 | `uuid` | Goal / Plan / Task / OAuth Client 等 ID |
 | `walkdir` / `glob` / `regex` | Workspace 文件发现与搜索 |
 | `image` | Workspace 图片 Tool |
-| `zip` / `flate2` / `tar` | 下载与归档处理 |
-| `fs2` | 文件锁与运行时协调 |
+| `zip` / `flate2` / `tar` | 下载与归档处理（`zip` 仅启用 `deflate` 最小特性） |
+| `std::fs::File::lock` (Rust ≥ 1.89) | 跨进程文件锁与运行时协调 |
 | `windows` / `libc` | 平台特定能力 |
 
 当前 MCP 协议和 Tool Schema 由项目自己的 Rust 实现维护，仓库没有使用 `rmcp` 或 `git2` 作为当前核心依赖；Git 工具通过受控 Git 命令实现。
@@ -54,22 +54,17 @@
 | `@tauri-apps/plugin-dialog` | 原生 Dialog |
 | `@lucide/vue` | 图标 |
 | Tailwind CSS 4 | 主样式体系，与 iOS 彩色玻璃设计 Token 共存 |
-| TypeScript 5.6 + `vue-tsc` | 类型检查 |
+| TypeScript 5.6 + `vue-tsc` | 类型检查（启用 `noUnusedLocals` / `noUnusedParameters` / `noImplicitReturns` / `verbatimModuleSyntax`） |
+| Biome + `knip` | 前端/脚本静态 Lint 与死代码检测 |
 
 ## 包管理与命令
 
-仓库使用 `npm` / `package-lock.json`，不是 pnpm。
+仓库使用 `pnpm` / `pnpm-lock.yaml`（配合 `pnpm-workspace.yaml`）。
 
 ```bash
-npm ci
-npm run check
-npm run build
-npm run desktop
-
-cd src-tauri
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --all -- --check
+pnpm install --frozen-lockfile
+pnpm run verify
+pnpm run desktop
 ```
 
 ## CI

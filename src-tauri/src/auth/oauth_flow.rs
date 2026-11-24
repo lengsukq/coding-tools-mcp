@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -117,10 +116,7 @@ pub struct ClientRegistrationRequest {
 }
 
 fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::util::time::unix_now_secs()
 }
 
 /// Issue a scoped OAuth access JWT matching `OAuthRuntime::verify_access_token`.

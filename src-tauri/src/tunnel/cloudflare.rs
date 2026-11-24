@@ -8,8 +8,11 @@ use tokio::time;
 
 use crate::error::{AppError, AppResult};
 use crate::platform::platform;
-use crate::settings::ProxyConfig;
 use crate::tunnel::helpers::{configure_tunnel_command, set_executable_permissions};
+use crate::tunnel::process::{
+    apply_proxy_env, clear_managed_pid, force_stop_child as force_stop_tunnel_child,
+    managed_service_dir, verify_recorded_managed_pid, write_managed_pid,
+};
 use crate::tunnel::rotate_log_if_needed;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -187,54 +190,9 @@ pub fn extract_trycloudflare_url(line: &str) -> Option<String> {
     None
 }
 
-/// Apply the global proxy to a tunnel child process environment.
-pub(crate) fn apply_proxy_env(cmd: &mut Command, proxy: &ProxyConfig) {
-    let url = match proxy.mode.as_str() {
-        "manual" if !proxy.url.trim().is_empty() => Some(proxy.url.trim().to_string()),
-        "system" => std::env::var("HTTPS_PROXY")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| std::env::var("HTTP_PROXY").ok().filter(|s| !s.is_empty()))
-            .or_else(|| std::env::var("ALL_PROXY").ok().filter(|s| !s.is_empty())),
-        _ => None,
-    };
-    if let Some(url) = url {
-        for key in [
-            "HTTPS_PROXY",
-            "HTTP_PROXY",
-            "https_proxy",
-            "http_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-        ] {
-            cmd.env(key, &url);
-        }
-        // Some cloudflared builds consult this dedicated variable.
-        cmd.env("TUNNEL_HTTP_PROXY", &url);
-    }
-}
-
 /// Directory used as cwd and PID storage for managed `cloudflared` processes.
 pub(crate) fn managed_cloudflared_dir(scope_id: &str) -> AppResult<PathBuf> {
-    let sanitized: String = scope_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let folder = if sanitized.is_empty() {
-        "global-mcp".to_string()
-    } else {
-        sanitized
-    };
-    Ok(platform()
-        .app_config_dir()?
-        .join("cloudflared")
-        .join(folder))
+    managed_service_dir("cloudflared", scope_id, "global-mcp")
 }
 
 pub(crate) fn managed_cloudflared_pid_path(scope_id: &str) -> AppResult<PathBuf> {
@@ -242,75 +200,27 @@ pub(crate) fn managed_cloudflared_pid_path(scope_id: &str) -> AppResult<PathBuf>
 }
 
 fn write_managed_cloudflared_pid(scope_id: &str, pid: u32, image_path: &Path) -> AppResult<()> {
-    let path = managed_cloudflared_pid_path(scope_id)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, format!("{pid}\n{}\n", image_path.to_string_lossy()))?;
-    Ok(())
+    write_managed_pid(&managed_cloudflared_pid_path(scope_id)?, pid, image_path)
 }
 
 pub(crate) fn clear_managed_cloudflared_pid(scope_id: &str) {
     if let Ok(path) = managed_cloudflared_pid_path(scope_id) {
-        let _ = std::fs::remove_file(path);
+        clear_managed_pid(&path);
     }
 }
 
 pub(crate) async fn stop_recorded_cloudflared_instance(scope_id: &str) -> AppResult<bool> {
     let path = managed_cloudflared_pid_path(scope_id)?;
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    let mut lines = contents.lines();
-    let pid = lines
-        .next()
-        .and_then(|value| value.trim().parse::<u32>().ok());
-    let recorded_image = lines
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let (Some(pid), Some(recorded_image)) = (pid, recorded_image) else {
-        clear_managed_cloudflared_pid(scope_id);
+    let Some((pid, _recorded_image)) = verify_recorded_managed_pid(&path)? else {
         return Ok(false);
     };
-
-    if !platform().is_process_alive(pid) {
-        clear_managed_cloudflared_pid(scope_id);
-        return Ok(false);
-    }
-    let Some(actual_image) = platform().process_image_path(pid)? else {
-        clear_managed_cloudflared_pid(scope_id);
-        return Ok(false);
-    };
-    let left =
-        std::fs::canonicalize(recorded_image).unwrap_or_else(|_| PathBuf::from(recorded_image));
-    let right =
-        std::fs::canonicalize(&actual_image).unwrap_or_else(|_| PathBuf::from(&actual_image));
-    let same = {
-        #[cfg(windows)]
-        {
-            left.to_string_lossy()
-                .trim_start_matches("\\\\?\\")
-                .eq_ignore_ascii_case(right.to_string_lossy().trim_start_matches("\\\\?\\"))
-        }
-        #[cfg(not(windows))]
-        {
-            left == right
-        }
-    };
-    if !same {
-        clear_managed_cloudflared_pid(scope_id);
-        return Ok(false);
-    }
 
     let _ = platform().terminate_process_tree(pid);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while platform().is_process_alive(pid) && tokio::time::Instant::now() < deadline {
         time::sleep(Duration::from_millis(50)).await;
     }
-    clear_managed_cloudflared_pid(scope_id);
+    clear_managed_pid(&path);
     Ok(true)
 }
 
@@ -410,7 +320,7 @@ pub async fn spawn_cloudflare_tunnel(
 }
 
 async fn cleanup_spawned_child(child: Child, pid: Option<u32>, start_error: AppError) -> AppError {
-    let stop_result = force_stop_child(child, pid).await;
+    let stop_result = force_stop_tunnel_child(child, pid, "cloudflared").await;
     clear_managed_cloudflared_pid("global-mcp");
     match stop_result {
         Ok(()) => start_error,
@@ -502,37 +412,6 @@ async fn stream_cloudflare_output<R, E>(
     }
 
     send_ready(&mut ready_tx, public_url);
-}
-
-pub async fn stop_child(mut child: Child, pid: Option<u32>) -> AppResult<()> {
-    if let Some(pid) = pid {
-        let _ = platform().terminate_process_tree(pid);
-    }
-
-    let _ = child.kill().await;
-    let _ = time::timeout(Duration::from_secs(3), child.wait()).await;
-    Ok(())
-}
-
-pub async fn force_stop_child(mut child: Child, pid: Option<u32>) -> AppResult<()> {
-    let already_exited = child.try_wait().ok().flatten().is_some();
-    let process_tree_result = if already_exited {
-        Ok(())
-    } else if let Some(pid) = pid {
-        platform().terminate_process_tree(pid)
-    } else {
-        Ok(())
-    };
-
-    if !already_exited {
-        let _ = child.kill().await;
-    }
-    time::timeout(Duration::from_secs(3), child.wait())
-        .await
-        .map_err(|_| AppError::Message("等待 cloudflared 退出超时。".into()))??;
-    process_tree_result
-        .map_err(|error| AppError::Message(format!("终止 cloudflared 进程树失败：{error}")))?;
-    Ok(())
 }
 
 #[cfg(test)]

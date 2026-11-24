@@ -20,25 +20,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+          cache: pnpm
 
       - name: 校验版本源与 Release 标签
         id: version
         env:
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
-          npm run version:check
+          RELEASE_TAG="$RELEASE_TAG_INPUT" pnpm run version:check
           VERSION="$(node -p "require('./package.json').version")"
-          RELEASE_TAG="$RELEASE_TAG_INPUT"
-          if [[ -n "$RELEASE_TAG" && "$RELEASE_TAG" != "v${VERSION}" ]]; then
-            echo "Release 标签 ${RELEASE_TAG} 必须与项目版本 v${VERSION} 一致。"
-            exit 1
-          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG_INPUT}" >> "$GITHUB_OUTPUT"
 
   build-universal-macos:
     needs: verify-version
@@ -46,10 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,44 +59,27 @@ jobs:
           workspaces: src-tauri
 
       - name: 安装前端依赖
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: 检查前端
-        run: npm run check
+        run: |
+          pnpm run check
+          pnpm run test:ui
 
       - name: 运行 Rust 测试
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --locked
 
       - name: 构建通用 macOS 应用与 DMG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+        run: pnpm run tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: 校验 macOS Universal 双架构、签名与 Info.plist 门禁
         run: |
           set -euo pipefail
           APP="$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 2 -name '*.app' | head -n 1)"
-          test -d "$APP"
-
-          BIN_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
-          ARCHS="$(lipo -archs "$APP/Contents/MacOS/$BIN_NAME")"
-          echo "Detected macOS architectures: $ARCHS"
-          echo "$ARCHS" | grep -qw x86_64
-          echo "$ARCHS" | grep -qw arm64
-
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          SIGN_INFO="$(codesign -dvv "$APP" 2>&1)"
-          echo "$SIGN_INFO"
-          echo "$SIGN_INFO" | grep -q "Identifier=com.codingtools.mcp.desktop"
-
-          for key in \
-            NSScreenCaptureUsageDescription \
-            NSDocumentsFolderUsageDescription \
-            NSDesktopFolderUsageDescription \
-            NSDownloadsFolderUsageDescription; do
-            /usr/libexec/PlistBuddy -c "Print :$key" "$APP/Contents/Info.plist" >/dev/null
-          done
+          bash scripts/verify-macos-bundle.sh --app "$APP"
 
       - name: 上传 Actions 构建产物
         uses: actions/upload-artifact@v4

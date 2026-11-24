@@ -3,11 +3,21 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
-use crate::platform::background_command;
+use crate::platform::{background_command, platform};
+use crate::tools::git::{run_git_bytes, terminate_child};
 
 use super::diff::{review_path_excluded, MAX_FILE_BYTES};
+
+const REVIEW_GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const REVIEW_GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const REVIEW_GIT_BATCH_TIMEOUT: Duration = Duration::from_secs(20);
+const REVIEW_GIT_MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+const REVIEW_GIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub fn direct_git_repositories(workspace_root: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = fs::read_dir(workspace_root) else {
@@ -36,12 +46,13 @@ pub(super) fn git_repo_changes(
     repo_root: &Path,
     ignored_prefixes: &[String],
 ) -> Result<Vec<(String, String, String)>, String> {
-    let output = background_command("git")
-        .args(["diff", "--name-status", "-z", "-M", "HEAD", "--", "."])
-        .current_dir(repo_root)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
+    let output = run_git_bytes(
+        repo_root,
+        &["diff", "--name-status", "-z", "-M", "HEAD", "--", "."],
+        REVIEW_GIT_TIMEOUT,
+        REVIEW_GIT_MAX_STDOUT_BYTES,
+    )?;
+    if !output.success {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     let fields = output
@@ -71,12 +82,13 @@ pub(super) fn git_repo_changes(
             changes.push((status, path.clone(), path));
         }
     }
-    let untracked = background_command("git")
-        .args(["ls-files", "--others", "--exclude-standard", "-z"])
-        .current_dir(repo_root)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if untracked.status.success() {
+    let untracked = run_git_bytes(
+        repo_root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+        REVIEW_GIT_TIMEOUT,
+        REVIEW_GIT_MAX_STDOUT_BYTES,
+    )?;
+    if untracked.success {
         for raw in untracked
             .stdout
             .split(|byte| *byte == 0)
@@ -119,12 +131,15 @@ pub(super) fn is_git_repository_root(path: &Path) -> bool {
     {
         return false;
     }
-    let output = background_command("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(path)
-        .output();
-    let Ok(output) = output else { return false };
-    if !output.status.success() {
+    let Ok(output) = run_git_bytes(
+        path,
+        &["rev-parse", "--show-toplevel"],
+        REVIEW_GIT_PROBE_TIMEOUT,
+        64 * 1024,
+    ) else {
+        return false;
+    };
+    if !output.success {
         return false;
     }
     let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
@@ -179,6 +194,23 @@ pub(super) fn git_blobs_at_head(root: &Path, paths: &[&str]) -> HashMap<String, 
     };
 
     // Feed stdin concurrently while draining stdout to avoid OS pipe buffer deadlocks.
+    // A bounded watchdog terminates stalled `git cat-file` processes so review generation never hangs.
+    let child_pid = child.id();
+    let batch_done = Arc::new(AtomicBool::new(false));
+    let watchdog_done = Arc::clone(&batch_done);
+    let watchdog = thread::spawn(move || {
+        let deadline = Instant::now() + REVIEW_GIT_BATCH_TIMEOUT;
+        while !watchdog_done.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                let _ = platform().terminate_process_tree(child_pid);
+                break;
+            }
+            thread::sleep(
+                REVIEW_GIT_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    });
+
     let batch_paths_ref = batch_paths.as_slice();
     thread::scope(|scope| {
         let writer = scope.spawn(move || {
@@ -218,7 +250,11 @@ pub(super) fn git_blobs_at_head(root: &Path, paths: &[&str]) -> HashMap<String, 
         let _ = writer.join();
     });
 
-    let _ = child.wait();
+    batch_done.store(true, Ordering::Release);
+    let _ = watchdog.join();
+    if child.try_wait().ok().flatten().is_none() {
+        terminate_child(&mut child);
+    }
     blobs
 }
 
@@ -260,22 +296,27 @@ fn read_cat_file_body<R: Read>(reader: &mut R, size: u64) -> io::Result<Vec<u8>>
 }
 
 fn git_blob_at_head(root: &Path, path: &str) -> Vec<u8> {
-    background_command("git")
-        .args(["show", &format!("HEAD:{path}")])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| output.stdout)
-        .unwrap_or_default()
+    let spec = format!("HEAD:{path}");
+    run_git_bytes(
+        root,
+        &["show", spec.as_str()],
+        REVIEW_GIT_TIMEOUT,
+        MAX_FILE_BYTES + 1,
+    )
+    .ok()
+    .filter(|output| output.success)
+    .map(|output| output.stdout)
+    .unwrap_or_default()
 }
 
 pub(super) fn git_head(root: &Path) -> Option<String> {
-    background_command("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    run_git_bytes(
+        root,
+        &["rev-parse", "HEAD"],
+        REVIEW_GIT_PROBE_TIMEOUT,
+        64 * 1024,
+    )
+    .ok()
+    .filter(|out| out.success)
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

@@ -2,19 +2,21 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Component, Path};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::platform::background_command;
-use crate::tools::io_util::is_default_excluded_os;
+use crate::tools::git::run_git_bytes;
+use crate::util::fs::is_default_excluded_os;
 
 use super::model::{BaselineEntry, ProjectBaseline};
 
 const MAX_BASELINE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 const STREAM_READ_BUFFER_BYTES: usize = 64 * 1024;
+const BASELINE_GIT_TIMEOUT: Duration = Duration::from_secs(5);
+const BASELINE_GIT_MAX_STDOUT_BYTES: usize = 64 * 1024;
 
 #[cfg(test)]
 thread_local! {
@@ -172,13 +174,14 @@ fn hash_baseline_file(path: &Path, buf: &mut [u8]) -> Option<(String, u64, bool)
 }
 
 fn git_value(root: &Path, args: &[&str]) -> Option<String> {
-    let output = background_command("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let output = run_git_bytes(
+        root,
+        args,
+        BASELINE_GIT_TIMEOUT,
+        BASELINE_GIT_MAX_STDOUT_BYTES,
+    )
+    .ok()?;
+    if !output.success {
         return None;
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -192,8 +195,5 @@ pub(super) fn workspace_id(root: &Path) -> String {
 }
 
 pub(super) fn timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().to_string())
-        .unwrap_or_else(|_| "0".into())
+    crate::util::time::unix_now_ms().to_string()
 }

@@ -21,14 +21,6 @@ impl DataStore {
         self.data.shared_secrets.get(key).cloned()
     }
 
-    pub fn set_shared_secret(&mut self, key: &str, value: &str) -> AppResult<()> {
-        self.update_latest(|data| {
-            data.shared_secrets
-                .insert(key.to_string(), value.to_string());
-            Ok(())
-        })
-    }
-
     pub fn set_shared_secrets(&mut self, values: &[(String, String)]) -> AppResult<()> {
         self.update_latest(|data| {
             for (key, value) in values {

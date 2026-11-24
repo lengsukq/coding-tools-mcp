@@ -6,15 +6,13 @@ mod query;
 mod storage;
 mod validation;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
-use crate::tools::io_util::serialized_json_bytes;
 use crate::tools::workspace::{
     relative_display, tool_ok, Workspace, WorkspaceError, WorkspaceResult,
 };
+use crate::util::json::serialized_json_bytes;
 
 use self::model::{InitialInputRecord, SearchHit};
 
@@ -31,8 +29,7 @@ const MAX_READ_MAX_BYTES: usize = 64 * 1024;
 const CONTEXT_SESSION_SNIPPET_LIMIT: usize = 3;
 const CONTEXT_SNIPPET_MAX_CHARS: usize = 512;
 
-/// Return the small, UI-safe session catalog used by the desktop history picker.
-/// The catalog contains metadata and bounded focus text, never the archive body.
+/// Keep bootstrap responses within the remote MCP budget by trimming optional state arrays.
 fn bound_bootstrap_result(result: &mut Value) {
     if serialized_json_bytes(result).unwrap_or(0) <= BOOTSTRAP_RESPONSE_BUDGET {
         return;
@@ -164,9 +161,5 @@ fn history_error(
 }
 
 fn now_timestamp() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("unix:{seconds}")
+    format!("unix:{}", crate::util::time::unix_now_secs())
 }

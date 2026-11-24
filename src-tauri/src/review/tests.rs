@@ -356,3 +356,25 @@ fn workspace_review_batches_head_blobs_for_modified_deleted_and_spaced_paths() {
         .iter()
         .any(|f| f.path == "added.txt" && f.status == "add" && f.patch.contains("+hello")));
 }
+
+#[test]
+fn cleanup_expired_only_deletes_iterated_file_not_forged_meta_id() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let reviews_dir = dir.path().join(".coding-tools/reviews");
+    fs::create_dir_all(&reviews_dir).expect("reviews dir");
+    let victim = dir.path().join(".coding-tools/victim.json");
+    fs::write(&victim, r#"{"keep": true}"#).expect("write victim");
+    let forged = reviews_dir.join("forged.json");
+    fs::write(&forged, r#"{"id": "../victim", "expires_at": 1}"#).expect("write forged");
+
+    let removed = super::cleanup_expired(dir.path());
+    assert_eq!(removed, 1);
+    assert!(
+        !forged.exists(),
+        "expired review file itself should be removed"
+    );
+    assert!(
+        victim.exists(),
+        "forged meta.id must never delete files outside reviews dir"
+    );
+}

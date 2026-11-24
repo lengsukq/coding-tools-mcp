@@ -9,32 +9,37 @@ use crate::tools::policy::PolicyError;
 use crate::tools::workspace::{tool_err, WorkspaceError};
 
 pub(super) fn policy_tool_err(err: PolicyError) -> Value {
-    let dangerous = err
-        .0
-        .strip_prefix("DANGEROUS_OPERATION_REQUIRES_CONFIRMATION: ");
-    let protected = err.0.strip_prefix("PROTECTED_REPOSITORY_ASSET: ");
-    let code = if protected.is_some() {
-        "PROTECTED_REPOSITORY_ASSET"
-    } else if dangerous.is_some() {
-        "DANGEROUS_OPERATION_REQUIRES_CONFIRMATION"
-    } else {
-        "POLICY_REJECTED"
-    };
-    let message = protected.or(dangerous).unwrap_or(&err.0).to_string();
-    let (reason, suggestion) = if dangerous.is_some() {
-        (
+    let (code, message, reason, suggestion) = match err {
+        PolicyError::ProtectedRepositoryAsset(message) => (
+            "PROTECTED_REPOSITORY_ASSET",
+            message,
+            "policy_rejected",
+            "根据错误信息修正参数后重试",
+        ),
+        PolicyError::ConfirmationRequired(message) => (
+            "DANGEROUS_OPERATION_REQUIRES_CONFIRMATION",
+            message,
             "confirmation_required",
             "为危险操作补充 confirm=true，确认后再重试",
-        )
-    } else if message.contains("allowlisted") {
-        ("command_rejected", "改用允许的命令，或调整工作区命令白名单")
-    } else if message.contains("Shell chaining") {
-        (
+        ),
+        PolicyError::CommandNotAllowlisted(message) => (
+            "POLICY_REJECTED",
+            message,
+            "command_rejected",
+            "改用允许的命令，或调整工作区命令白名单",
+        ),
+        PolicyError::ShellSyntaxRejected(message) => (
+            "POLICY_REJECTED",
+            message,
             "shell_syntax_rejected",
             "移除未加引号的 shell 操作符；引号内的程序参数可以保留",
-        )
-    } else {
-        ("policy_rejected", "根据错误信息修正参数后重试")
+        ),
+        PolicyError::Rejected(message) => (
+            "POLICY_REJECTED",
+            message,
+            "policy_rejected",
+            "根据错误信息修正参数后重试",
+        ),
     };
     tool_err(WorkspaceError::ToolDetails {
         code,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Moon, Sun } from "@lucide/vue";
 import { onMounted, onUnmounted, ref } from "vue";
+import { APP_EVENTS } from "$lib/events";
 
 const dark = ref(false);
 
@@ -29,11 +30,11 @@ onMounted(() => {
   }
   const initialDark = saved !== "light";
   applyTheme(initialDark);
-  window.addEventListener("coding-tools:toggle-theme", handleToggleEvent);
+  window.addEventListener(APP_EVENTS.TOGGLE_THEME, handleToggleEvent);
 });
 
 onUnmounted(() => {
-  window.removeEventListener("coding-tools:toggle-theme", handleToggleEvent);
+  window.removeEventListener(APP_EVENTS.TOGGLE_THEME, handleToggleEvent);
 });
 </script>
 

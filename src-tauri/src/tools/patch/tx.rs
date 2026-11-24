@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ use super::patch_failed;
 pub(super) fn commit_staged(
     ws: &Workspace,
     staged: &HashMap<String, Option<String>>,
-) -> Result<HashMap<PathBuf, Option<Vec<u8>>>, WorkspaceError> {
+) -> Result<(), WorkspaceError> {
     let staged_bytes = staged
         .iter()
         .map(|(path, content)| {
@@ -27,7 +27,7 @@ pub(super) fn commit_staged(
 pub(crate) fn commit_staged_bytes(
     ws: &Workspace,
     staged: &HashMap<String, Option<Vec<u8>>>,
-) -> Result<HashMap<PathBuf, Option<Vec<u8>>>, WorkspaceError> {
+) -> Result<(), WorkspaceError> {
     let mut backups: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
     let mut temporary_files: HashMap<PathBuf, PathBuf> = HashMap::new();
     let mut resolved_targets: Vec<(PathBuf, bool)> = Vec::with_capacity(staged.len());
@@ -95,7 +95,7 @@ pub(crate) fn commit_staged_bytes(
     }
 
     cleanup_temporary_files(temporary_files.values());
-    Ok(backups)
+    Ok(())
 }
 
 fn restore_backups(backups: &HashMap<PathBuf, Option<Vec<u8>>>) {
@@ -114,14 +114,8 @@ fn restore_backups(backups: &HashMap<PathBuf, Option<Vec<u8>>>) {
     }
 }
 
-fn replace_file(temp: &PathBuf, path: &PathBuf) -> Result<(), std::io::Error> {
-    #[cfg(windows)]
-    {
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
-    }
-    fs::rename(temp, path)
+fn replace_file(temp: &Path, path: &Path) -> Result<(), std::io::Error> {
+    crate::util::fs::atomic_replace(temp, path)
 }
 
 fn cleanup_temporary_files<'a>(paths: impl Iterator<Item = &'a PathBuf>) {

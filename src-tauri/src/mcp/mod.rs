@@ -4,6 +4,7 @@ pub mod gateway;
 mod gateway_state;
 mod listener;
 pub(crate) mod server;
+pub(crate) mod sse;
 pub mod stdio_bridge;
 
 pub use listener::{

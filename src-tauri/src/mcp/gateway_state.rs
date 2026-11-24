@@ -292,6 +292,7 @@ impl GatewayState {
                 policy,
                 profile.runtime.tool_profile.clone(),
             )
+            .map_err(|message| GatewayError::invalid("WORKSPACE_UNAVAILABLE", message))?
             .with_agent_runtime(executable_paths, ai_instructions)
             .with_agent_context(agent_context)
             .with_history_config(

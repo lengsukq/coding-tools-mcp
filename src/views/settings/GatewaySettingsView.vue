@@ -12,7 +12,7 @@ import { recordConnectionHealth } from "$lib/stores/health";
 
 const props = withDefaults(
   defineProps<{
-    panel?: "gateway" | "gemini" | "health";
+    panel?: "gateway" | "gemini";
   }>(),
   { panel: "gateway" },
 );

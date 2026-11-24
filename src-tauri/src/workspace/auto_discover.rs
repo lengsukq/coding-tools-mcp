@@ -1,16 +1,14 @@
 //! Headless-friendly workspace lifecycle helpers and parent-directory `.git`
 //! repository auto-discovery (`workspace_auto_roots`).
-#![allow(dead_code)]
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::DataStore;
 use crate::error::{AppError, AppResult};
-use crate::tools::io_util::sha256_hex;
+use crate::util::hash::sha256_hex;
 use crate::workspace::{RuntimeConfig, WorkspaceProfile};
 
 use super::model::TunnelConfig;
@@ -161,10 +159,7 @@ pub fn merge_with_cached_auto_roots(
     }
     static CACHE: OnceLock<Mutex<Option<ScanCache>>> = OnceLock::new();
 
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let now_ms = crate::util::time::unix_now_ms();
     let roots_key = roots.join("\n");
     let slot = CACHE.get_or_init(|| Mutex::new(None));
     if let Ok(guard) = slot.lock() {

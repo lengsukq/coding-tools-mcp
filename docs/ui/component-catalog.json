@@ -5,53 +5,61 @@
       "path": "src/components/ui/BaseButton.vue",
       "consumers": [
         "src/App.vue",
-        "src/components/CloseConfirmDialog.vue",
-        "src/components/SecretField.vue",
-        "src/components/UnsavedChangesDialog.vue",
-        "src/components/dashboard/DashboardPreferencesPopover.vue",
+        "src/components/audit/AuditFilterBar.vue",
+        "src/components/audit/AuditOverviewAndRetention.vue",
+        "src/components/dashboard/DashboardFocusPane.vue",
+        "src/components/dashboard/DashboardWorkspacesPane.vue",
+        "src/components/dashboard/WorkspaceRowMenu.vue",
+        "src/components/settings/AgentContextPicker.vue",
+        "src/components/settings/ComputerAuditPanel.vue",
+        "src/components/settings/ComputerDiagnosticsBanner.vue",
+        "src/components/settings/GatewayHealthCard.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/GeneralContextCard.vue",
+        "src/components/settings/KeyValueSecretEditor.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamImportModal.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
+        "src/components/settings/UpstreamTakeoverBackupsCard.vue",
+        "src/components/settings/UpstreamToolsModal.vue",
         "src/components/ui/ConfirmDialog.vue",
         "src/components/ui/SaveBar.vue",
-        "src/components/workspace/ChatGptSessionPrompt.vue",
-        "src/components/workspace/HistoryContextPanel.vue",
         "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspaceChanges.vue",
-        "src/components/workspace/WorkspaceDiagnostics.vue",
         "src/components/workspace/WorkspaceHeader.vue",
-        "src/components/workspace/WorkspaceOverview.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
         "src/views/ComponentGalleryView.vue",
         "src/views/DashboardView.vue",
-        "src/views/ToolAuditView.vue",
-        "src/views/WorkspaceView.vue",
+        "src/views/settings/ComputerSettingsView.vue",
         "src/views/settings/FrpSettingsView.vue",
         "src/views/settings/GatewaySettingsView.vue",
         "src/views/settings/GeneralSettingsView.vue",
         "src/views/settings/KeysSettingsView.vue",
-        "src/views/settings/SoftwareSettingsView.vue"
+        "src/views/settings/LanPeersSettingsView.vue",
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/UpstreamMcpSettingsView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/WorkspaceView.vue"
       ],
-      "count": 25
+      "count": 36
     },
     {
       "name": "ConfirmDialog",
       "path": "src/components/ui/ConfirmDialog.vue",
       "consumers": [
-        "src/App.vue",
-        "src/components/workspace/WorkspaceChanges.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
         "src/views/settings/FrpSettingsView.vue",
-        "src/views/settings/KeysSettingsView.vue"
+        "src/views/settings/KeysSettingsView.vue",
+        "src/views/WorkspaceView.vue"
       ],
-      "count": 6
+      "count": 3
     },
     {
       "name": "EmptyState",
       "path": "src/components/ui/EmptyState.vue",
       "consumers": [
-        "src/components/workspace/WorkspaceChanges.vue",
-        "src/components/workspace/WorkspaceOverview.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
+        "src/components/dashboard/DashboardFocusPane.vue",
+        "src/components/dashboard/DashboardWorkspacesPane.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
         "src/views/ComponentGalleryView.vue",
         "src/views/DashboardView.vue"
       ],
@@ -61,39 +69,46 @@
       "name": "GlassCard",
       "path": "src/components/ui/GlassCard.vue",
       "consumers": [
-        "src/components/workspace/HistoryContextPanel.vue",
-        "src/components/workspace/WorkspaceChanges.vue",
-        "src/components/workspace/WorkspaceConfiguration.vue",
-        "src/components/workspace/WorkspaceDiagnostics.vue",
-        "src/components/workspace/WorkspaceOverview.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/audit/AuditOverviewAndRetention.vue",
+        "src/components/dashboard/DashboardFocusPane.vue",
+        "src/components/dashboard/DashboardUsagePane.vue",
+        "src/components/dashboard/DashboardWorkspacesPane.vue",
+        "src/components/settings/GatewayHealthCard.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/GeneralContextCard.vue",
+        "src/components/settings/GeneralPermissionsCard.vue",
+        "src/components/settings/GeneralProxyCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
+        "src/components/settings/UpstreamTakeoverBackupsCard.vue",
         "src/views/ComponentGalleryView.vue",
         "src/views/DashboardView.vue",
-        "src/views/ToolAuditView.vue",
-        "src/views/WorkspaceView.vue",
+        "src/views/settings/ComputerSettingsView.vue",
         "src/views/settings/FrpSettingsView.vue",
         "src/views/settings/GatewaySettingsView.vue",
         "src/views/settings/GeneralSettingsView.vue",
         "src/views/settings/KeysSettingsView.vue",
-        "src/views/settings/SoftwareSettingsView.vue"
+        "src/views/settings/SoftwareSettingsView.vue",
+        "src/views/settings/UpstreamMcpSettingsView.vue",
+        "src/views/ToolAuditView.vue",
+        "src/views/WorkspaceView.vue"
       ],
-      "count": 16
+      "count": 24
     },
     {
       "name": "ModalDialog",
       "path": "src/components/ui/ModalDialog.vue",
       "consumers": [
-        "src/components/CloseConfirmDialog.vue",
-        "src/components/UnsavedChangesDialog.vue",
-        "src/components/dashboard/DashboardCommandPalette.vue",
-        "src/components/dashboard/DashboardPreferencesPopover.vue",
+        "src/components/audit/AuditOverviewAndRetention.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamImportModal.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
+        "src/components/settings/UpstreamToolsModal.vue",
         "src/components/ui/ConfirmDialog.vue",
-        "src/views/ComponentGalleryView.vue",
-        "src/views/ToolAuditView.vue",
-        "src/views/WorkspaceView.vue"
+        "src/views/ComponentGalleryView.vue"
       ],
-      "count": 8
+      "count": 7
     },
     {
       "name": "PageHeader",
@@ -101,10 +116,9 @@
       "consumers": [
         "src/views/ComponentGalleryView.vue",
         "src/views/DashboardView.vue",
-        "src/views/ToolAuditView.vue",
-        "src/views/settings/SettingsView.vue"
+        "src/views/ToolAuditView.vue"
       ],
-      "count": 4
+      "count": 3
     },
     {
       "name": "PageShell",
@@ -117,26 +131,16 @@
       "count": 3
     },
     {
-      "name": "PageTabs",
-      "path": "src/components/ui/PageTabs.vue",
-      "consumers": [
-        "src/views/ComponentGalleryView.vue",
-        "src/views/WorkspaceView.vue",
-        "src/views/settings/SettingsView.vue"
-      ],
-      "count": 3
-    },
-    {
       "name": "SaveBar",
       "path": "src/components/ui/SaveBar.vue",
       "consumers": [
-        "src/components/workspace/HistoryContextPanel.vue",
-        "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspaceConfiguration.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/GeneralContextCard.vue",
+        "src/components/settings/GeneralPermissionsCard.vue",
+        "src/components/settings/GeneralProxyCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
         "src/views/ComponentGalleryView.vue",
         "src/views/settings/FrpSettingsView.vue",
-        "src/views/settings/GatewaySettingsView.vue",
         "src/views/settings/GeneralSettingsView.vue",
         "src/views/settings/KeysSettingsView.vue",
         "src/views/settings/SoftwareSettingsView.vue"
@@ -147,78 +151,97 @@
       "name": "SegmentedControl",
       "path": "src/components/ui/SegmentedControl.vue",
       "consumers": [
-        "src/components/workspace/WorkspacePlanning.vue",
-        "src/views/ComponentGalleryView.vue",
-        "src/views/ToolAuditView.vue"
+        "src/components/audit/AuditFilterBar.vue",
+        "src/components/settings/UpstreamImportModal.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
+        "src/views/ComponentGalleryView.vue"
       ],
-      "count": 3
+      "count": 5
     },
     {
       "name": "SelectField",
       "path": "src/components/ui/SelectField.vue",
       "consumers": [
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/GeneralPermissionsCard.vue",
+        "src/components/settings/GeneralProxyCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
         "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspaceChanges.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
         "src/views/ComponentGalleryView.vue",
-        "src/views/settings/GatewaySettingsView.vue",
+        "src/views/settings/ComputerSettingsView.vue",
         "src/views/settings/GeneralSettingsView.vue",
         "src/views/settings/SoftwareSettingsView.vue"
       ],
-      "count": 7
+      "count": 9
     },
     {
       "name": "StatusPill",
       "path": "src/components/ui/StatusPill.vue",
       "consumers": [
-        "src/components/workspace/WorkspaceDiagnostics.vue",
-        "src/components/workspace/WorkspaceOverview.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
+        "src/components/dashboard/DashboardFocusPane.vue",
+        "src/components/dashboard/DashboardWorkspacesPane.vue",
+        "src/components/settings/GatewayHealthCard.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
         "src/views/ComponentGalleryView.vue",
-        "src/views/DashboardView.vue",
+        "src/views/settings/ComputerSettingsView.vue",
         "src/views/settings/GatewaySettingsView.vue"
       ],
-      "count": 6
+      "count": 10
     },
     {
       "name": "TextAreaField",
       "path": "src/components/ui/TextAreaField.vue",
       "consumers": [
+        "src/components/settings/GeneralContextCard.vue",
+        "src/components/settings/GeneralPermissionsCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/UpstreamImportModal.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
         "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspacePlanning.vue",
-        "src/views/ComponentGalleryView.vue",
-        "src/views/settings/GeneralSettingsView.vue"
+        "src/views/ComponentGalleryView.vue"
       ],
-      "count": 4
+      "count": 7
     },
     {
       "name": "TextField",
       "path": "src/components/ui/TextField.vue",
       "consumers": [
-        "src/components/dashboard/DashboardCommandPalette.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/GeneralContextCard.vue",
+        "src/components/settings/GeneralProxyCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
         "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
         "src/views/ComponentGalleryView.vue",
         "src/views/settings/FrpSettingsView.vue",
-        "src/views/settings/GatewaySettingsView.vue",
         "src/views/settings/GeneralSettingsView.vue",
         "src/views/settings/SoftwareSettingsView.vue"
       ],
-      "count": 8
+      "count": 11
     },
     {
       "name": "ToggleSwitch",
       "path": "src/components/ui/ToggleSwitch.vue",
       "consumers": [
-        "src/components/workspace/HistoryContextPanel.vue",
+        "src/components/settings/GatewayTunnelConfigCard.vue",
+        "src/components/settings/LanLocalDeviceCard.vue",
+        "src/components/settings/LanPeersDiscoveryCard.vue",
+        "src/components/settings/UpstreamImportModal.vue",
+        "src/components/settings/UpstreamServerEditorModal.vue",
+        "src/components/settings/UpstreamServerListCard.vue",
         "src/components/workspace/RuntimePolicyPanel.vue",
-        "src/components/workspace/WorkspaceConfiguration.vue",
-        "src/components/workspace/WorkspaceSettings.vue",
         "src/views/ComponentGalleryView.vue",
-        "src/views/settings/GatewaySettingsView.vue",
-        "src/views/settings/GeneralSettingsView.vue"
+        "src/views/settings/ComputerSettingsView.vue",
+        "src/views/settings/FrpSettingsView.vue",
+        "src/views/settings/GeneralSettingsView.vue",
+        "src/views/settings/UpstreamMcpSettingsView.vue"
       ],
-      "count": 7
+      "count": 12
     }
   ],
   "developmentGallery": "/dev/ui"

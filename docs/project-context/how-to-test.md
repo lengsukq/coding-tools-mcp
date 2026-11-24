@@ -88,8 +88,6 @@ cargo test --all-targets --locked
 
 ## UI 优化回归
 
-`npm run test:release` 包含版本一致性、前端类型检查、生产构建、14 项前端回归和 Rust 完整测试。前端测试覆盖状态映射、进度、未知健康、旧地址、缓存失效竞争、设置队列和草稿生命周期。
+`pnpm run verify`（`pnpm run test:release` 别名）统一执行版本一致性、组件目录同步校验、`vue-tsc`、Biome Lint、`knip` 死代码检查、前端回归与 IPC 契约测试、生产构建，以及 Rust 桌面与 Linux 无头双模式的 `fmt` / `clippy -D warnings` / `cargo test --locked`。前端测试覆盖状态映射、进度、未知健康、旧地址、缓存失效竞争、设置队列、草稿生命周期与前后端 IPC 1:1 契约。
 
-`npm run dev` 后访问 `/tests/fixtures/ui.html#/` 可运行隔离测试入口，IPC 只读写内存模拟数据；此入口不进入生产构建。控制区可模拟无工作区、保存失败、验收失败及成功后刷新失败。不得用模拟数据验收替代真实 Tauri 的 IPC、窗口与平台交互。
-
-最新截图、实际执行日志、验证范围及未通过项见 [全应用优化验收记录](../ui/verification/acceptance.md)。
+`pnpm run dev` 后访问 `/tests/fixtures/ui.html#/` 可运行隔离测试入口，IPC 只读写内存模拟数据；此入口不进入生产构建。控制区可模拟无工作区、保存失败、验收失败及成功后刷新失败。不得用模拟数据验收替代真实 Tauri 的 IPC、窗口与平台交互。

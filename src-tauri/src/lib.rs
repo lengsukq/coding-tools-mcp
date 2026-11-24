@@ -13,7 +13,6 @@ mod data;
 mod error;
 mod global_gateway;
 pub mod harness;
-mod health;
 pub(crate) mod lan_peer;
 mod local_network;
 mod mcp;
@@ -63,16 +62,14 @@ mod desktop_shell {
         recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
         remove_lan_paired_peer, rename_lan_paired_peer, request_computer_accessibility_permission,
         request_computer_screen_permission, reset_planning_state, restart_global_cloudflare_tunnel,
-        restart_runtime, restore_runtime_state, restore_upstream_mcp_takeover_backup,
-        resume_computer_access, revoke_computer_screen_access, run_global_health_checks,
-        save_frp_profile, save_lan_federation_settings, save_upstream_mcp_server,
-        scan_agent_context, scan_global_agent_context, scan_lan_peers,
+        restore_runtime_state, restore_upstream_mcp_takeover_backup, resume_computer_access,
+        revoke_computer_screen_access, save_frp_profile, save_lan_federation_settings,
+        save_upstream_mcp_server, scan_agent_context, scan_global_agent_context, scan_lan_peers,
         scan_local_upstream_mcp_clients, set_download_config, set_global_gateway_config,
         set_global_runtime_settings, set_lan_paired_peer_enabled, set_last_workspace,
-        set_planning_mode, set_proxy, set_shared_secret, set_shared_secrets,
-        set_tool_audit_retention_days, set_upstream_mcp_global_settings,
-        set_upstream_mcp_server_enabled, set_upstream_mcp_server_mode, start_global_gateway,
-        start_runtime, stop_global_gateway, stop_runtime, sync_all_upstream_mcp_servers,
+        set_planning_mode, set_proxy, set_shared_secrets, set_tool_audit_retention_days,
+        set_upstream_mcp_global_settings, set_upstream_mcp_server_enabled,
+        set_upstream_mcp_server_mode, start_runtime, stop_runtime, sync_all_upstream_mcp_servers,
         test_and_sync_upstream_mcp_server, uninstall_software, update_upstream_mcp_disabled_tools,
         update_workspace,
     };
@@ -99,8 +96,8 @@ mod desktop_shell {
     fn collect_tray_snapshot(app: &AppHandle) -> TraySnapshot {
         let compact = commands::window_chrome::is_compact_mode();
         let runtime = app.state::<AppState>().with_runtime(|runtime| {
-            runtime.refresh_mcp();
-            Ok(runtime.mcp_status().state)
+            runtime.refresh();
+            Ok(runtime.status().state)
         });
         let status = match runtime.as_deref() {
             Ok("running") => "运行中",
@@ -428,11 +425,8 @@ mod desktop_shell {
                 stop_runtime,
                 get_runtime_status,
                 get_global_mcp_overview,
-                restart_runtime,
                 restore_runtime_state,
-                run_global_health_checks,
                 get_shared_secret,
-                set_shared_secret,
                 set_shared_secrets,
                 regenerate_shared_secret,
                 read_workspace_logs,
@@ -455,9 +449,7 @@ mod desktop_shell {
                 set_global_gateway_config,
                 get_gemini_local_bridge_status,
                 prepare_gemini_local_bridge,
-                start_global_gateway,
                 restart_global_cloudflare_tunnel,
-                stop_global_gateway,
                 get_global_gateway_status,
                 check_global_gateway_health,
                 get_global_runtime_settings,

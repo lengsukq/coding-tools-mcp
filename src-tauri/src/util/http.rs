@@ -1,7 +1,36 @@
 use std::time::Duration;
 
 use crate::error::{AppError, AppResult};
-use crate::settings::DownloadConfig;
+use crate::settings::{DownloadConfig, ProxyConfig};
+
+/// Build a `reqwest::Client` honoring `use_proxy` and `ProxyConfig`, with optional connect/request timeouts.
+pub fn build_proxy_client(
+    use_proxy: bool,
+    proxy: &ProxyConfig,
+    connect_timeout: Option<Duration>,
+    timeout: Option<Duration>,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(ct) = connect_timeout {
+        builder = builder.connect_timeout(ct);
+    }
+    if let Some(t) = timeout {
+        builder = builder.timeout(t);
+    }
+    if !use_proxy || matches!(proxy.mode.trim(), "" | "none") {
+        builder = builder.no_proxy();
+    } else if proxy.mode.trim() == "manual" {
+        let proxy_url = proxy.url.trim();
+        if !proxy_url.is_empty() {
+            let p = reqwest::Proxy::all(proxy_url)
+                .map_err(|err| format!("无效的代理地址 `{proxy_url}`: {err}"))?;
+            builder = builder.proxy(p);
+        }
+    }
+    builder
+        .build()
+        .map_err(|err| format!("初始化 HTTP 客户端失败: {err}"))
+}
 
 /// Build a `reqwest::Client` honoring the configured download proxy mode and timeout.
 ///

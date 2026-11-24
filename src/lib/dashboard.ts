@@ -1,5 +1,8 @@
 import type { ServiceUsageStats } from "$lib/api/usage";
-import { formatCompactNumber } from "$lib/formatters";
+
+const CHART_BASELINE_Y = 32;
+const CHART_PLOT_HEIGHT = 25;
+const CHART_WIDTH = 100;
 
 export interface UsagePoint {
   timestamp: number;
@@ -7,22 +10,10 @@ export interface UsagePoint {
   deltaEstimatedTokens: number;
   requestCount: number;
   toolCallCount: number;
-  averageTokens: number;
-}
-
-export interface ChartPoint {
-  x: number;
-  y: number;
 }
 
 export interface UsageChart {
   path: string;
-  areaPath: string;
-  points: ChartPoint[];
-  max: number;
-  latest: number;
-  average: number;
-  sampleCount: number;
 }
 
 export interface UsageTotals {
@@ -59,10 +50,6 @@ export function summarizeUsage(usageByWorkspace: Record<string, ServiceUsageStat
   return totals;
 }
 
-export function formatCount(value: number): string {
-  return formatCompactNumber(value);
-}
-
 export function buildUsagePoint(
   statsByWorkspace: Record<string, ServiceUsageStats[]>,
   previous?: UsagePoint,
@@ -80,42 +67,23 @@ export function buildUsagePoint(
     deltaEstimatedTokens,
     requestCount,
     toolCallCount,
-    averageTokens: toolCallCount === 0 ? 0 : estimatedTokens / toolCallCount,
   };
 }
 
 export function buildUsageChart(history: UsagePoint[]): UsageChart {
   if (history.length === 0) {
-    return {
-      path: "M 0 32 L 100 32",
-      areaPath: "M 0 32 L 100 32 L 100 36 L 0 36 Z",
-      points: [],
-      max: 0,
-      latest: 0,
-      average: 0,
-      sampleCount: 0,
-    };
+    return { path: `M 0 ${CHART_BASELINE_Y} L ${CHART_WIDTH} ${CHART_BASELINE_Y}` };
   }
 
   const values = history.map((point) => point.deltaEstimatedTokens);
   const max = Math.max(...values, 1);
   const samples = values.length === 1 ? [values[0], values[0]] : values;
-  const points = samples.map((value, index) => ({
-    x: samples.length === 1 ? 50 : (index / (samples.length - 1)) * 100,
-    y: 32 - (value / max) * 25,
-  }));
-  const path = points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+  const path = samples
+    .map((value, index) => {
+      const x = (index / (samples.length - 1)) * CHART_WIDTH;
+      const y = CHART_BASELINE_Y - (value / max) * CHART_PLOT_HEIGHT;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
     .join(" ");
-  const last = points[points.length - 1];
-  const first = points[0];
-  return {
-    path,
-    areaPath: `${path} L ${last.x.toFixed(2)} 36 L ${first.x.toFixed(2)} 36 Z`,
-    points,
-    max,
-    latest: values.at(-1) ?? 0,
-    average: values.reduce((sum, value) => sum + value, 0) / values.length,
-    sampleCount: values.length,
-  };
+  return { path };
 }

@@ -7,7 +7,6 @@ const props = withDefaults(
     type?: "button" | "submit" | "reset";
     variant?: "primary" | "secondary" | "ghost" | "danger";
     size?: "sm" | "md";
-    pill?: boolean;
     disabled?: boolean;
     busy?: boolean;
     title?: string;
@@ -16,7 +15,6 @@ const props = withDefaults(
     type: "button",
     variant: "primary",
     size: "md",
-    pill: true,
     disabled: false,
     busy: false,
   },
@@ -25,10 +23,9 @@ const props = withDefaults(
 defineEmits<{ click: [event: MouseEvent] }>();
 
 const classes = computed(() => {
-  const radius = props.pill ? "rounded-full" : "rounded-[var(--ui-radius-control)]";
   const sizes = {
-    sm: `h-8 px-3.5 text-xs font-medium ${radius}`,
-    md: `h-9 px-4 text-[13.5px] font-medium ${radius}`,
+    sm: "h-8 px-3.5 text-xs font-medium rounded-full",
+    md: "h-9 px-4 text-[13.5px] font-medium rounded-full",
   };
   const variants = {
     primary:

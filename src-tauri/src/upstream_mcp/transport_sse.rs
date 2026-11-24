@@ -1,17 +1,15 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
+use super::rpc_mux::PendingRpcMap;
 use super::transport_http::{build_http_client, build_static_headers, HttpTransportConfig};
 
 const SSE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(12);
-
-type PendingMap = Arc<StdMutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
 
 /// Legacy MCP SSE (`2024-11-05`) client:
 /// opens a persistent `GET <sse_url>` stream, waits for `event: endpoint` to obtain
@@ -21,7 +19,7 @@ pub struct LegacySseTransport {
     client: reqwest::Client,
     message_endpoint: String,
     headers: HeaderMap,
-    pending: PendingMap,
+    pending: PendingRpcMap,
     next_id: AtomicU64,
     closed: Arc<AtomicBool>,
     stream_task: tokio::task::JoinHandle<()>,
@@ -41,13 +39,23 @@ impl LegacySseTransport {
             &config.origin_device_id,
         )?;
 
-        let response = client
-            .get(base_url.clone())
-            .headers(headers.clone())
-            .header(ACCEPT, "text/event-stream")
-            .send()
-            .await
-            .map_err(|err| format!("连接 Legacy SSE MCP `{}` 失败: {err}", config.url))?;
+        let response = tokio::time::timeout(
+            SSE_HANDSHAKE_TIMEOUT,
+            client
+                .get(base_url.clone())
+                .headers(headers.clone())
+                .header(ACCEPT, "text/event-stream")
+                .send(),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "连接 Legacy SSE MCP `{}` 超过 {} 秒未返回响应头",
+                config.url,
+                SSE_HANDSHAKE_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|err| format!("连接 Legacy SSE MCP `{}` 失败: {err}", config.url))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -56,11 +64,11 @@ impl LegacySseTransport {
             return Err(format!("Legacy SSE 握手返回状态 {status}: {preview}"));
         }
 
-        let pending: PendingMap = Arc::new(StdMutex::new(HashMap::new()));
+        let pending = PendingRpcMap::new();
         let closed = Arc::new(AtomicBool::new(false));
         let (endpoint_tx, endpoint_rx) = oneshot::channel::<Result<String, String>>();
 
-        let pending_task = Arc::clone(&pending);
+        let pending_task = pending.clone();
         let closed_task = Arc::clone(&closed);
         let base_for_task = base_url.clone();
         let stream_task = tokio::spawn(async move {
@@ -124,11 +132,7 @@ impl LegacySseTransport {
             "params": params
         });
 
-        let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, tx);
+        let rx = self.pending.register(id);
 
         let post_res = self
             .client
@@ -143,10 +147,7 @@ impl LegacySseTransport {
         let response = match post_res {
             Ok(resp) => resp,
             Err(err) => {
-                self.pending
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&id);
+                self.pending.remove(id);
                 return Err(format!(
                     "Legacy SSE POST `{}` 失败: {err}",
                     self.message_endpoint
@@ -156,10 +157,7 @@ impl LegacySseTransport {
 
         let status = response.status();
         if !status.is_success() {
-            self.pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
+            self.pending.remove(id);
             let body = response.text().await.unwrap_or_default();
             let preview = crate::util::text::truncate_utf8(body.trim(), 240);
             return Err(format!("Legacy SSE POST 返回状态 {status}: {preview}"));
@@ -176,10 +174,7 @@ impl LegacySseTransport {
             if let Ok(text) = response.text().await {
                 if let Ok(val) = serde_json::from_str::<Value>(text.trim()) {
                     if val.get("id").and_then(Value::as_u64) == Some(id) {
-                        self.pending
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .remove(&id);
+                        self.pending.remove(id);
                         return Ok(val);
                     }
                 }
@@ -190,10 +185,7 @@ impl LegacySseTransport {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err("Legacy SSE 连接在收到响应前断开".into()),
             Err(_) => {
-                self.pending
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&id);
+                self.pending.remove(id);
                 Err(format!(
                     "Legacy SSE 调用 `{method}` 超时（>{} 秒）",
                     timeout.as_secs()
@@ -229,7 +221,7 @@ impl LegacySseTransport {
 
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        fail_all_pending(&self.pending, "Legacy SSE 连接已主动关闭");
+        self.pending.fail_all("Legacy SSE 连接已主动关闭");
         self.stream_task.abort();
     }
 }
@@ -244,23 +236,28 @@ async fn run_sse_reader(
     mut response: reqwest::Response,
     base_url: reqwest::Url,
     endpoint_tx: oneshot::Sender<Result<String, String>>,
-    pending: PendingMap,
+    pending: PendingRpcMap,
     closed: Arc<AtomicBool>,
     on_tools_changed: Arc<dyn Fn() + Send + Sync>,
 ) {
     let mut endpoint_tx = Some(endpoint_tx);
-    let mut buffer = String::new();
+    // Buffer raw bytes until line boundaries so multi-byte UTF-8 sequences split across
+    // TCP chunks are decoded intact instead of becoming U+FFFD replacement characters.
+    let mut byte_buffer: Vec<u8> = Vec::new();
     let mut current_event = String::new();
     let mut current_data: Vec<String> = Vec::new();
 
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
-                let text = String::from_utf8_lossy(&chunk);
-                buffer.push_str(&text);
-                while let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
-                    buffer.drain(..=newline_pos);
+                byte_buffer.extend_from_slice(&chunk);
+                while let Some(newline_pos) = byte_buffer.iter().position(|&b| b == b'\n') {
+                    let mut raw_line = byte_buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+                    raw_line.pop(); // trailing '\n'
+                    if raw_line.last() == Some(&b'\r') {
+                        raw_line.pop();
+                    }
+                    let line = String::from_utf8_lossy(&raw_line);
                     if line.is_empty() {
                         if !current_data.is_empty() {
                             let event_name = if current_event.is_empty() {
@@ -302,7 +299,7 @@ async fn run_sse_reader(
     if let Some(tx) = endpoint_tx.take() {
         let _ = tx.send(Err("Legacy SSE 流在收到 endpoint 前结束".into()));
     }
-    fail_all_pending(&pending, "Legacy SSE 长连接已断开");
+    pending.fail_all("Legacy SSE 长连接已断开");
 }
 
 fn dispatch_sse_event(
@@ -310,7 +307,7 @@ fn dispatch_sse_event(
     data: &str,
     base_url: &reqwest::Url,
     endpoint_tx: &mut Option<oneshot::Sender<Result<String, String>>>,
-    pending: &PendingMap,
+    pending: &PendingRpcMap,
     on_tools_changed: &Arc<dyn Fn() + Send + Sync>,
 ) {
     let trimmed = data.trim();
@@ -333,13 +330,7 @@ fn dispatch_sse_event(
             return;
         }
         if let Some(id_num) = msg.get("id").and_then(Value::as_u64) {
-            let tx = pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id_num);
-            if let Some(tx) = tx {
-                let _ = tx.send(Ok(msg));
-            }
+            pending.resolve(id_num, msg);
         }
     }
 }
@@ -357,15 +348,4 @@ fn resolve_endpoint_url(base_url: &reqwest::Url, raw_endpoint: &str) -> Result<S
         .join(raw_endpoint)
         .map(|u| u.to_string())
         .map_err(|err| format!("无法解析 Legacy SSE endpoint `{raw_endpoint}`: {err}"))
-}
-
-fn fail_all_pending(pending: &PendingMap, message: &str) {
-    let drained: Vec<_> = pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .drain()
-        .collect();
-    for (_, tx) in drained {
-        let _ = tx.send(Err(message.to_string()));
-    }
 }

@@ -8,8 +8,7 @@ pub(crate) use client::{
 pub(crate) use client::{cached_frpc_path, download_frpc_to_cache};
 pub use client::{resolve_frpc, spawn_global_frpc};
 
-const FRP_VERSION: &str = "0.61.2";
-pub(crate) const VERSION: &str = FRP_VERSION;
+pub(crate) const FRP_VERSION: &str = "0.61.2";
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct FrpProxyConfig {

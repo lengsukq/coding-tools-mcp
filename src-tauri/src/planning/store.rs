@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
-use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes};
+use crate::util::fs::{atomic_write_bytes, lock_file as acquire_file_lock};
 
 use super::migration::normalize_legacy_state;
 use super::{PlanningState, PLANNING_RELATIVE_PATH, PLANNING_SCHEMA_VERSION};

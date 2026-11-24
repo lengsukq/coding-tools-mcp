@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "scripts/*.mjs",
+    "tests/*.test.mjs"
+  ],
+  "project": [
+    "src/**/*.{ts,vue,css}",
+    "scripts/**/*.mjs",
+    "tests/**/*.mjs"
+  ],
+  "ignoreExportsUsedInFile": true
+}

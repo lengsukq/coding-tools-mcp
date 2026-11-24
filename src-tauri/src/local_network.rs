@@ -2,8 +2,6 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
-#[cfg(windows)]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::HeaderMap;
 
@@ -641,10 +639,7 @@ fn windows_ipconfig_ipv4s() -> Vec<(Ipv4Addr, bool)> {
     const CACHE_TTL_MS: u64 = 15_000;
 
     static CACHE: OnceLock<Mutex<(u64, Vec<(Ipv4Addr, bool)>)>> = OnceLock::new();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let now_ms = crate::util::time::unix_now_ms();
     let slot = CACHE.get_or_init(|| Mutex::new((0, Vec::new())));
     if let Ok(guard) = slot.lock() {
         if guard.0 > 0 && now_ms.saturating_sub(guard.0) <= CACHE_TTL_MS {

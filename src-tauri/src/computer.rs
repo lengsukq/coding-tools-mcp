@@ -3,7 +3,7 @@
 //! This module is deliberately host-scoped, not Workspace-scoped. In particular,
 //! neither the Workspace "trusted" setting nor command execution can grant it.
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -53,10 +53,7 @@ pub(crate) struct ManualComputerAccess {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    crate::util::time::unix_now_ms()
 }
 
 impl ManualComputerAccess {

@@ -73,6 +73,7 @@ async function save() {
     return true;
   } catch (error) {
     saveError.value = String(error);
+    highRiskConfirmOpen.value = false;
     return false;
   } finally {
     saving.value = false;

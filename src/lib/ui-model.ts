@@ -57,3 +57,8 @@ export function connectionHealthPresentation(item: { ok: boolean; detail: string
     if (item.detail.includes("未检查")) return { status: "unknown", label: "未检查" };
     return { status: item.ok ? "success" : "error", label: item.ok ? "正常" : "失败" };
 }
+
+/** Only treat checks whose resolved presentation is `error` as actionable failures. */
+export function isActionableHealthFailure(item: { ok: boolean; detail: string }): boolean {
+    return !item.ok && connectionHealthPresentation(item).status === "error";
+}

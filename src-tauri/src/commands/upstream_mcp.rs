@@ -26,8 +26,7 @@ pub struct UpstreamImportResultDto {
     pub overview: UpstreamMcpOverviewDto,
 }
 
-#[tauri::command]
-pub async fn get_upstream_mcp_overview(app: AppHandle) -> AppResult<UpstreamMcpOverviewDto> {
+async fn load_overview_blocking(app: &AppHandle) -> AppResult<UpstreamMcpOverviewDto> {
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
@@ -35,6 +34,11 @@ pub async fn get_upstream_mcp_overview(app: AppHandle) -> AppResult<UpstreamMcpO
     })
     .await
     .map_err(|err| AppError::Message(format!("加载 MCP 聚合概览失败: {err}")))?
+}
+
+#[tauri::command]
+pub async fn get_upstream_mcp_overview(app: AppHandle) -> AppResult<UpstreamMcpOverviewDto> {
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
@@ -54,7 +58,7 @@ pub async fn set_upstream_mcp_global_settings(
     .map_err(|err| AppError::Message(format!("保存 MCP 聚合开关失败: {err}")))??;
 
     state.gateway.upstream.reload_config(None).await;
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
@@ -84,7 +88,7 @@ pub async fn save_upstream_mcp_server(
     .map_err(|err| AppError::Message(format!("保存上游 MCP 配置失败: {err}")))??;
 
     state.gateway.upstream.reload_config(None).await;
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
@@ -109,7 +113,7 @@ pub async fn delete_upstream_mcp_server(
         .disconnect_server(&server_id, true)
         .await;
     state.gateway.upstream.reload_config(None).await;
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
@@ -138,13 +142,12 @@ pub async fn set_upstream_mcp_server_enabled(
     .map_err(|err| AppError::Message(format!("切换上游 MCP 状态失败: {err}")))??;
 
     state.gateway.upstream.reload_config(None).await;
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
 pub async fn set_upstream_mcp_server_mode(
     app: AppHandle,
-    state: State<'_, AppState>,
     server_id: String,
     expose_mode: UpstreamExposeMode,
 ) -> AppResult<UpstreamMcpOverviewDto> {
@@ -166,13 +169,12 @@ pub async fn set_upstream_mcp_server_mode(
     .await
     .map_err(|err| AppError::Message(format!("切换暴露模式失败: {err}")))??;
 
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
 pub async fn update_upstream_mcp_disabled_tools(
     app: AppHandle,
-    state: State<'_, AppState>,
     server_id: String,
     disabled_tools: Vec<String>,
 ) -> AppResult<UpstreamMcpOverviewDto> {
@@ -201,7 +203,7 @@ pub async fn update_upstream_mcp_disabled_tools(
     .await
     .map_err(|err| AppError::Message(format!("保存工具过滤设置失败: {err}")))??;
 
-    Ok(state.gateway.upstream.overview(None))
+    load_overview_blocking(&app).await
 }
 
 #[tauri::command]
@@ -218,18 +220,24 @@ pub async fn test_and_sync_upstream_mcp_server(
 
 #[tauri::command]
 pub async fn sync_all_upstream_mcp_servers(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<UpstreamTestSyncResultDto>> {
-    let ids: Vec<String> = state.with_settings(|store| {
-        Ok(store
-            .settings()
-            .upstream_mcp
-            .servers
-            .into_iter()
-            .filter(|s| s.enabled)
-            .map(|s| s.id)
-            .collect())
-    })?;
+    let app_for_read = app.clone();
+    let ids: Vec<String> = tauri::async_runtime::spawn_blocking(move || {
+        app_for_read.state::<AppState>().with_settings(|store| {
+            Ok(store
+                .settings()
+                .upstream_mcp
+                .servers
+                .into_iter()
+                .filter(|s| s.enabled)
+                .map(|s| s.id)
+                .collect())
+        })
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("读取上游 MCP 列表失败: {err}")))??;
     let mut join_set = tokio::task::JoinSet::new();
     for id in ids {
         let hub = std::sync::Arc::clone(&state.gateway.upstream);
@@ -515,7 +523,7 @@ pub async fn import_upstream_mcp_candidates(
         .map_err(|err| AppError::Message(format!("导入上游 MCP 失败: {err}")))??;
 
     state.gateway.upstream.reload_config(None).await;
-    let overview = state.gateway.upstream.overview(None);
+    let overview = load_overview_blocking(&app).await?;
     Ok(UpstreamImportResultDto {
         imported_count,
         skipped,

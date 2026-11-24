@@ -256,13 +256,54 @@ export function useLanPeers() {
     draft.sharedWorkspaceIds = [...set];
   }
 
+  /**
+   * Persist only `enabled: true` on top of the saved baseline so triggering
+   * pairing PIN or nearby scan never silently saves unrelated unsaved draft edits.
+   */
+  async function enableLanPreservingDraft(): Promise<boolean> {
+    if (overview.value?.config.enabled) return true;
+    const saved = baseline.value;
+    if (!saved) {
+      draft.enabled = true;
+      return saveSettings();
+    }
+    const deviceName = saved.deviceName.trim() || draft.deviceName.trim();
+    if (!deviceName) {
+      saveError.value = "请填写本机在局域网中显示的设备名称。";
+      return false;
+    }
+    saving.value = true;
+    saveError.value = "";
+    try {
+      const res = await saveLanFederationSettings({
+        enabled: true,
+        deviceName,
+        shareMode: saved.shareMode,
+        sharedWorkspaceIds: [...saved.sharedWorkspaceIds],
+        trustLevel: saved.trustLevel,
+        allowComputerUse: saved.allowComputerUse,
+        extraSubnets: parseExtraSubnetsText(saved.extraSubnetsText),
+        allowLocalNoauth: saved.allowLocalNoauth,
+      });
+      const hadUnrelatedEdits = dirty.value;
+      draft.enabled = true;
+      baseline.value = { ...saved, enabled: true };
+      applyOverview(res.overview, !hadUnrelatedEdits);
+      return true;
+    } catch (error) {
+      saveError.value = String(error);
+      return false;
+    } finally {
+      saving.value = false;
+    }
+  }
+
   async function generatePin() {
     if (pinBusy.value) return;
     pinBusy.value = true;
     try {
-      if (!draft.enabled) {
-        draft.enabled = true;
-        const ok = await saveSettings();
+      if (!overview.value?.config.enabled) {
+        const ok = await enableLanPreservingDraft();
         if (!ok) return;
       }
       const pin = await createLanPairingPin();
@@ -292,9 +333,8 @@ export function useLanPeers() {
     if (scanning.value) return;
     scanning.value = true;
     try {
-      if (!draft.enabled || dirty.value) {
-        draft.enabled = true;
-        const ok = await saveSettings();
+      if (!overview.value?.config.enabled) {
+        const ok = await enableLanPreservingDraft();
         if (!ok) return;
       }
       const next = await scanLanPeers();

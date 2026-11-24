@@ -20,7 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync and validate server.json version
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate server.json and repository version consistency
         shell: bash
         env:
           TARGET_VERSION: ${{ inputs.version }}
@@ -31,19 +37,7 @@ jobs:
             echo "Prerelease ${VERSION} must not be published to the stable MCP Registry" >&2
             exit 1
           fi
-          export VERSION
-          node -e "
-            const fs = require('fs');
-            const j = JSON.parse(fs.readFileSync('server.json', 'utf8'));
-            if (j.description.length > 100) {
-              throw new Error('server.json description exceeds 100 characters: ' + j.description.length);
-            }
-            j.version = process.env.VERSION;
-            if (Array.isArray(j.packages)) {
-              for (const pkg of j.packages) pkg.version = process.env.VERSION;
-            }
-            fs.writeFileSync('server.json', JSON.stringify(j, null, 2) + '\n');
-          "
+          RELEASE_TAG="v${VERSION}" pnpm run version:check
           echo "Publishing MCP Registry metadata for version ${VERSION}"
 
       - name: Install MCP Publisher

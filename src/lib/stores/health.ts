@@ -1,11 +1,12 @@
 import { computed, ref } from "vue";
 import type { HealthItem } from "$lib/api/health";
+import { isActionableHealthFailure } from "$lib/ui-model";
 
 const globalHealthItems = ref<HealthItem[]>([]);
 const globalHealthError = ref<string | null>(null);
 
 export const globalHealthSummary = computed(() => {
-  const failed = globalHealthItems.value.filter((item) => !item.ok);
+  const failed = globalHealthItems.value.filter(isActionableHealthFailure);
   const total = globalHealthItems.value.length;
   if (globalHealthError.value) {
     return {

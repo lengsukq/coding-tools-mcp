@@ -60,10 +60,6 @@ impl WorkspaceRegistry {
         Ok(items)
     }
 
-    pub fn local_descriptors(&self) -> Result<Vec<WorkspaceDescriptor>, String> {
-        self.descriptors()
-    }
-
     pub fn resolve(&self, workspace_id: &str) -> Result<WorkspaceProfile, GatewayError> {
         self.list()
             .map_err(|message| GatewayError::internal("WORKSPACE_REGISTRY_UNAVAILABLE", message))?

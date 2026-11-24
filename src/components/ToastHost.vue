@@ -38,14 +38,6 @@ function iconFor(kind: string) {
           <div class="min-w-0 flex-1">
             <strong v-if="toast.title" class="block text-xs font-semibold text-[var(--ui-text)]">{{ toast.title }}</strong>
             <p class="mt-0.5 text-xs leading-5 text-[var(--ui-text-secondary)]">{{ toast.message }}</p>
-            <button
-              v-if="toast.action"
-              type="button"
-              class="mt-2 text-xs font-semibold text-[var(--ui-accent)] hover:underline"
-              @click="toast.action.onClick()"
-            >
-              {{ toast.action.label }}
-            </button>
           </div>
           <button
             type="button"

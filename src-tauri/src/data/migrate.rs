@@ -229,7 +229,7 @@ fn apply_global_mcp_migration(data: &mut AppData) -> bool {
     true
 }
 
-fn backup_corrupt_profiles(path: &Path) -> PathBuf {
+fn backup_corrupt_profiles(path: &Path) -> Result<PathBuf, std::io::Error> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let ts = unix_now_secs();
     let mut candidate = parent.join(format!("profiles.json.corrupt.{ts}"));
@@ -238,8 +238,8 @@ fn backup_corrupt_profiles(path: &Path) -> PathBuf {
         candidate = parent.join(format!("profiles.json.corrupt.{ts}.{suffix}"));
         suffix = suffix.saturating_add(1);
     }
-    let _ = fs::copy(path, &candidate);
-    candidate
+    fs::copy(path, &candidate)?;
+    Ok(candidate)
 }
 
 pub(super) fn load_for_store() -> AppResult<(PathBuf, LoadedAppData)> {
@@ -259,11 +259,18 @@ pub(super) fn load_for_store_at(
         let mut data: AppData = match serde_json::from_str(&raw) {
             Ok(parsed) => parsed,
             Err(parse_err) => {
-                let backup = backup_corrupt_profiles(path);
+                let backup_note = match backup_corrupt_profiles(path) {
+                    Ok(backup) => format!(
+                        "原始数据未覆盖并已备份至 {}，请检查或恢复该备份文件后重试。",
+                        backup.display()
+                    ),
+                    Err(copy_err) => format!(
+                        "原始数据未覆盖，但自动备份失败（{copy_err}），请先手动备份原文件后再修复。"
+                    ),
+                };
                 return Err(AppError::Message(format!(
-                    "配置文件 {} 解析失败（{parse_err}）。原始数据未覆盖并已备份至 {}，请检查或恢复该备份文件后重试。",
+                    "配置文件 {} 解析失败（{parse_err}）。{backup_note}",
                     path.display(),
-                    backup.display()
                 )));
             }
         };

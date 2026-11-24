@@ -77,6 +77,7 @@ const saving = ref(false);
 const scanning = ref(false);
 const scanResult = ref<AgentContextSnapshotDto | null>(null);
 const scanError = ref("");
+const saveError = ref("");
 const showAdvancedSources = ref(false);
 let persistPromise: Promise<boolean> | null = null;
 
@@ -145,37 +146,51 @@ function normalizedDraft(): RuntimePolicyDraft {
 }
 
 async function persist() {
-  if (persistPromise) return persistPromise;
+  if (persistPromise) {
+    await persistPromise;
+    if (!dirty.value) return false;
+  }
   if (!dirty.value) return false;
   saving.value = true;
-  const payload = normalizedDraft();
-  const shouldRescan = showsContext.value && sourcePathsDirty.value;
-  persistPromise = (async () => {
-    await props.onSave(payload);
-    Object.assign(draft, clonePolicyDraft(payload));
-    baseline.value = clonePolicyDraft(payload);
-    if (shouldRescan) {
-      void scan();
+  const run = (async () => {
+    let savedAny = false;
+    while (dirty.value) {
+      const payload = normalizedDraft();
+      const shouldRescan = showsContext.value && sourcePathsDirty.value;
+      await props.onSave(payload);
+      savedAny = true;
+      const unchangedDuringSave = isRuntimePolicyEqual(normalizedDraft(), payload);
+      baseline.value = clonePolicyDraft(payload);
+      if (unchangedDuringSave) {
+        Object.assign(draft, clonePolicyDraft(payload));
+      }
+      if (shouldRescan) {
+        void scan();
+      }
+      if (unchangedDuringSave) break;
     }
-    return true;
+    return savedAny;
   })();
+  persistPromise = run;
   try {
-    return await persistPromise;
+    return await run;
   } finally {
-    persistPromise = null;
+    if (persistPromise === run) {
+      persistPromise = null;
+    }
     saving.value = false;
   }
 }
 
 async function save() {
-  scanError.value = "";
+  saveError.value = "";
   try {
     if (await persist()) {
       showToast("工作区执行策略已保存，将从下一次工具调用起生效。", { kind: "success" });
     }
     return true;
   } catch (error) {
-    scanError.value = String(error);
+    saveError.value = String(error);
     return false;
   }
 }
@@ -376,7 +391,7 @@ useUnsavedChanges("工作区执行策略", dirty, save);
         </div>
       </template>
 
-      <SaveBar :dirty="dirty" :busy="saving" :error="scanError" label="保存策略" @save="save" />
+      <SaveBar :dirty="dirty" :busy="saving" :error="saveError" label="保存策略" @save="save" />
     </form>
   </fieldset>
 </template>

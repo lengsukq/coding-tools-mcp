@@ -21,6 +21,7 @@ import { globalMcpRuntimeState, workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 import { startUiMemoryGuard } from "$lib/ui-memory-guard";
 import { startCloseGuard } from "$lib/close-guard";
+import { APP_EVENTS, dispatchAppEvent } from "$lib/events";
 import { enterCompactMode } from "$lib/api/window-chrome";
 import {
   dashboardPreferences,
@@ -79,7 +80,8 @@ async function refreshWorkspaces() {
     workspaceLoadError.value = "";
     try {
       globalMcpRuntimeState.value = (await getRuntimeStatus()).state;
-    } catch {
+    } catch (statusError) {
+      console.warn("[App] failed to query runtime status:", statusError);
       globalMcpRuntimeState.value = "unknown";
     }
   } catch (error) {
@@ -135,7 +137,7 @@ function handleSelectSearchEntry(entry: GlobalSearchEntry) {
   if (entry.action === "add-workspace") {
     void addWorkspace();
   } else if (entry.action === "toggle-theme") {
-    window.dispatchEvent(new CustomEvent("coding-tools:toggle-theme"));
+    dispatchAppEvent(APP_EVENTS.TOGGLE_THEME);
   } else if (entry.action === "compact-ui") {
     void compactUi();
   }
@@ -178,8 +180,8 @@ onMounted(() => {
       if (leave) closeConfirmOpen.value = true;
     });
   });
-  window.addEventListener("coding-tools:add-workspace", handleAddWorkspace);
-  window.addEventListener("coding-tools:open-search", handleOpenSearch);
+  window.addEventListener(APP_EVENTS.ADD_WORKSPACE, handleAddWorkspace);
+  window.addEventListener(APP_EVENTS.OPEN_SEARCH, handleOpenSearch);
   window.addEventListener("keydown", handleGlobalKeydown);
 
   void (async () => {
@@ -205,8 +207,8 @@ onUnmounted(() => {
   stopCompactRequest?.();
   stopMemoryGuard?.();
   stopCloseGuard?.();
-  window.removeEventListener("coding-tools:add-workspace", handleAddWorkspace);
-  window.removeEventListener("coding-tools:open-search", handleOpenSearch);
+  window.removeEventListener(APP_EVENTS.ADD_WORKSPACE, handleAddWorkspace);
+  window.removeEventListener(APP_EVENTS.OPEN_SEARCH, handleOpenSearch);
   window.removeEventListener("keydown", handleGlobalKeydown);
 });
 </script>

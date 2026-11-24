@@ -2,6 +2,7 @@ import {hasUnsavedChanges,confirmUnsavedChanges} from "./unsaved-changes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getWebviewMemorySample, recreateUiWebview } from "$lib/api/ui-memory";
 import { enterCompactMode } from "$lib/api/window-chrome";
+import { isMacPlatform } from "$lib/platform";
 
 /** How long the window must stay minimized/hidden before releasing UI memory. */
 const HIDDEN_RELOAD_MS = 50 * 60 * 1000;
@@ -9,6 +10,8 @@ const HIDDEN_RELOAD_MS = 50 * 60 * 1000;
 const MEMORY_WARN_MB = 1024;
 /** Min gap between any UI recreates. */
 const RELOAD_COOLDOWN_MS = 60 * 60 * 1000;
+/** Delay before first background memory sample after startup. */
+const FIRST_SAMPLE_DELAY_MS = 60 * 1000;
 /** How often to sample memory while the window may be visible. */
 const SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 /** Tick for hidden/minimized duration tracking. */
@@ -73,11 +76,6 @@ function cooldownOk(): boolean {
   return Date.now() - lastReloadAt() >= RELOAD_COOLDOWN_MS;
 }
 
-function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /mac/i.test(navigator.platform || navigator.userAgent);
-}
-
 async function isWindowObscured(): Promise<boolean> {
   if (typeof document !== "undefined" && document.visibilityState === "hidden") {
     return true;
@@ -117,7 +115,7 @@ async function maybeSilentReload(): Promise<void> {
     return;
   }
 
-  if (isMacPlatform()) {
+  if (isMacPlatform) {
     if (hasUnsavedChanges.value || releasing) return;
     releasing = true;
     try {
@@ -128,7 +126,9 @@ async function maybeSilentReload(): Promise<void> {
     try {
       await enterCompactMode();
       return;
-    } catch {
+    } catch (error) {
+      console.warn("[ui-memory-guard] enterCompactMode failed, falling back to UI reload:", error);
+    } finally {
       releasing = false;
     }
   }
@@ -141,7 +141,7 @@ async function maybeAutoRecreateHighMemory(): Promise<void> {
   if (await isWindowObscured()) return;
   if (!cooldownOk()) return;
 
-  let sample;
+  let sample: Awaited<ReturnType<typeof getWebviewMemorySample>>;
   try {
     sample = await getWebviewMemorySample();
   } catch {
@@ -185,7 +185,7 @@ export function startUiMemoryGuard(): () => void {
 
   const firstSample = setTimeout(() => {
     void maybeAutoRecreateHighMemory();
-  }, 60_000);
+  }, FIRST_SAMPLE_DELAY_MS);
 
   return () => {
     started = false;

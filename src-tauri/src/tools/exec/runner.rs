@@ -26,6 +26,8 @@ pub(super) async fn run_command(
     let session = spawn_session(ctx, cmd, cwd, options.tty, &options.env_vars).await?;
     let deadline = start + options.limit;
 
+    write_initial_stdin(&session, options).await?;
+
     if options.yield_time.is_zero() {
         return Ok(background_snapshot(
             ctx,
@@ -38,7 +40,6 @@ pub(super) async fn run_command(
         ));
     }
 
-    write_initial_stdin(&session, options).await?;
     wait_for_command(ctx, session, start, deadline, cmd, cwd, options).await
 }
 

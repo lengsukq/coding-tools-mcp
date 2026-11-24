@@ -13,7 +13,7 @@ import {
   TerminalSquare,
 } from "@lucide/vue";
 import BaseButton from "../components/ui/BaseButton.vue";
-import ModalDialog from "../components/ui/ModalDialog.vue";
+import ConfirmDialog from "../components/ui/ConfirmDialog.vue";
 import { evictWorkspaceStatus, invalidateWorkspaceStatus } from "$lib/workspace-status-cache";
 import { enqueueWorkspaceSettingsWrite } from "$lib/queued-writes";
 import GlassCard from "../components/ui/GlassCard.vue";
@@ -135,8 +135,9 @@ async function load(id = workspaceId.value) {
 
 async function refreshProfile(id = workspaceId.value): Promise<WorkspaceProfile | null> {
   if (!id) return null;
+  const generation = ++loadGeneration;
   const snapshot = await loadWorkspaceSnapshot(id);
-  if (id !== workspaceId.value) return null;
+  if (generation !== loadGeneration || id !== workspaceId.value) return null;
   workspaces.value = snapshot.items;
   profile.value = snapshot.profile;
   return profile.value;
@@ -210,8 +211,12 @@ watch(
       profile.value = normalizeWorkspaceProfile(cached);
       loadError.value = "";
       renderError.value = "";
-      void setLastWorkspace(id).catch(() => undefined);
-      void refreshProfile(id).catch(() => undefined);
+      void setLastWorkspace(id).catch((err) => {
+        console.warn("[WorkspaceView] failed to record last workspace:", err);
+      });
+      void refreshProfile(id).catch((err) => {
+        console.warn("[WorkspaceView] failed to refresh cached workspace profile:", err);
+      });
       return;
     }
     profile.value = null;
@@ -325,21 +330,18 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <ModalDialog
+    <ConfirmDialog
       v-if="profile"
       :open="deleteConfirmOpen"
       title="移除工作区"
-      :description="`确定移除「${profile.name}」？本地磁盘中的源码文件不会被删除。`"
-      @close="deleteConfirmOpen = false"
-    >
-      <div class="mb-4 rounded-2xl bg-[var(--ui-surface-subtle)] px-3 py-2.5 font-mono text-xs text-[var(--text-secondary)]">
-        {{ profile.path }}
-      </div>
-      <div class="flex justify-end gap-2">
-        <BaseButton variant="ghost" :disabled="deleteBusy" @click="deleteConfirmOpen = false">取消</BaseButton>
-        <BaseButton variant="danger" :busy="deleteBusy" @click="confirmDelete">确认移除</BaseButton>
-      </div>
-    </ModalDialog>
+      :message="`确定移除「${profile.name}」？本地磁盘中的源码文件不会被删除。`"
+      :detail="profile.path"
+      confirm-text="确认移除"
+      severity="danger"
+      :busy="deleteBusy"
+      @cancel="deleteConfirmOpen = false"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 

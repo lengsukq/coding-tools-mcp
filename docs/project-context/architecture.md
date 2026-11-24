@@ -1,6 +1,6 @@
 # 架构设计
 
-> 本文档描述 Coding Tools MCP 当前实际架构。`docs/specs/` 可以保留历史设计过程，本目录只记录当前代码事实。
+> 本文档描述 Coding Tools MCP 当前实际架构，只记录当前代码事实。
 
 ## 总体定位
 
@@ -74,7 +74,7 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及上层 Agent
 
 `queued-writes.ts` 持有模块级设置写入队列；各保存单元重新读取当前配置，只合并自己修改的字段，避免页面卸载或不同分类保存互相覆盖。`unsaved-changes.ts` 注册当前页面草稿，路由离开和关闭应用提供保存、放弃与取消；失败保留输入。
 
-`src/styles/design-system.css` 是语义 token 与通用视觉规则来源，页面负责布局。组件展示页仅在开发构建注册。验收依据与原生桌面待验收项见 [记录](../ui/verification/acceptance.md)。
+`src/styles/design-system.css` 是语义 token 与通用视觉规则来源，页面负责布局。组件展示页仅在开发构建注册。
 
 复杂视图统一遵循“组合式函数持有状态 + 纯展示子组件通过类型化 props/emits 协作”边界：
 

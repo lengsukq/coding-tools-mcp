@@ -48,6 +48,7 @@ async function load() {
 }
 
 async function regenerate(key: SharedSecretKey) {
+  if (saving.value || regenerating.value) return;
   regenerating.value = key;
   try {
     secrets[key] = await regenerateSharedSecret(key);
@@ -77,6 +78,8 @@ async function save() {
     return true;
   } catch (e) {
     error.value = String(e);
+    // Close confirmation modal so the SaveBar error banner is immediately visible to the user.
+    saveConfirmOpen.value = false;
     return false;
   } finally {
     saving.value = false;

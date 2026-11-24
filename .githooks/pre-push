@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Native Git pre-push quality gate (enable once via: git config core.hooksPath .githooks)
+set -euo pipefail
+
+echo "[pre-push] Running version, catalog, typecheck, lint, UI tests, and Rust fmt checks..."
+pnpm run version:check
+pnpm run catalog:check
+pnpm run check
+pnpm run lint
+pnpm run test:ui
+pnpm run check:rust:fmt
+echo "[pre-push] All fast gates passed."

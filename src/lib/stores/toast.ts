@@ -2,17 +2,11 @@ import { ref } from "vue";
 
 export type ToastKind = "info" | "success" | "warning" | "error";
 
-export interface ToastAction {
-  label: string;
-  onClick: () => void;
-}
-
 export interface Toast {
   id: string;
   title?: string;
   message: string;
   kind: ToastKind;
-  action?: ToastAction;
 }
 
 export interface ToastOptions {
@@ -20,7 +14,6 @@ export interface ToastOptions {
   kind?: ToastKind;
   /** Auto-dismiss after ms; 0 keeps the toast until dismissed manually. */
   duration?: number;
-  action?: ToastAction;
 }
 
 export const toasts = ref<Toast[]>([]);
@@ -36,7 +29,6 @@ export function showToast(message: string, options: ToastOptions = {}): string {
     message,
     title: options.title,
     kind: options.kind ?? "info",
-    action: options.action,
   };
 
   toasts.value = [...toasts.value, toast];

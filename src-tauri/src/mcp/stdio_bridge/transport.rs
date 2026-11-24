@@ -285,7 +285,7 @@ pub(super) fn extract_jsonrpc_messages(
 
     if content_type.starts_with("text/event-stream") {
         let mut messages = Vec::new();
-        for data_chunk in parse_sse_data_events(body) {
+        for data_chunk in crate::mcp::sse::parse_sse_data_events(body) {
             if data_chunk.is_empty() || data_chunk == "[DONE]" {
                 continue;
             }
@@ -305,27 +305,4 @@ pub(super) fn extract_jsonrpc_messages(
     } else {
         Ok(vec![value])
     }
-}
-
-fn parse_sse_data_events(body: &str) -> Vec<String> {
-    let mut events = Vec::new();
-    let mut current_lines = Vec::new();
-
-    for line in body.lines() {
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
-            if !current_lines.is_empty() {
-                events.push(current_lines.join("\n"));
-                current_lines.clear();
-            }
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("data:") {
-            current_lines.push(rest.trim_start().to_string());
-        }
-    }
-    if !current_lines.is_empty() {
-        events.push(current_lines.join("\n"));
-    }
-    events
 }

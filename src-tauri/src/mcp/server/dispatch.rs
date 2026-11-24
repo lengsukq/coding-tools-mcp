@@ -189,24 +189,6 @@ fn handle_gateway_tools_call(
         return handle_workspace_tool(state, session_id, request_id, name, &args);
     }
 
-    let override_snap = state.settings_snapshot();
-    if state
-        .upstream
-        .is_upstream_tool_name(name, override_snap.as_ref())
-    {
-        let outcome = crate::async_rt::block_on(state.upstream.handle_tool_call(
-            name,
-            &args,
-            override_snap.as_ref(),
-        ))?;
-        return Ok(DispatchOutcome {
-            result: outcome.result,
-            workspace: None,
-            federated_workspace_id: None,
-            execution_host: Some(outcome.execution_host),
-        });
-    }
-
     let resolved = resolve_tool_workspace(state, session_id, &mut args)?;
     let canonical_name = crate::tools::registry::canonical_tool_name(name);
     let logical_session_id = params
@@ -237,17 +219,17 @@ fn handle_gateway_tools_call(
             let effective_session = logical_session_id
                 .as_deref()
                 .unwrap_or(fallback_session.as_str());
-            run_remote_tool(
-                override_snap.as_ref(),
-                &device_id,
-                &workspace_id,
+            run_remote_tool(RemoteToolCall {
+                settings_override: override_snap.as_ref(),
+                device_id: &device_id,
+                workspace_id: &workspace_id,
                 qualified_id,
                 canonical_name,
-                &args,
-                effective_session,
+                args: &args,
+                logical_session_id: effective_session,
                 request_id,
-                false,
-            )
+                tag_one_off_workspace: false,
+            })
         }
     }
 }
@@ -292,18 +274,30 @@ fn run_local_tool(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_remote_tool(
-    settings_override: Option<&AppSettings>,
-    device_id: &str,
-    workspace_id: &str,
+struct RemoteToolCall<'a> {
+    settings_override: Option<&'a AppSettings>,
+    device_id: &'a str,
+    workspace_id: &'a str,
     qualified_id: String,
-    canonical_name: &str,
-    args: &Value,
-    logical_session_id: &str,
-    request_id: &Value,
+    canonical_name: &'a str,
+    args: &'a Value,
+    logical_session_id: &'a str,
+    request_id: &'a Value,
     tag_one_off_workspace: bool,
-) -> Result<DispatchOutcome, Value> {
+}
+
+fn run_remote_tool(call: RemoteToolCall<'_>) -> Result<DispatchOutcome, Value> {
+    let RemoteToolCall {
+        settings_override,
+        device_id,
+        workspace_id,
+        qualified_id,
+        canonical_name,
+        args,
+        logical_session_id,
+        request_id,
+        tag_one_off_workspace,
+    } = call;
     let gateway_surface = crate::tools::registry::exposed_tool_names("compact");
     if !gateway_surface.contains(&canonical_name) {
         return Err(GatewayError::invalid(
@@ -483,7 +477,7 @@ fn handle_device_list(
 ) -> Result<DispatchOutcome, Value> {
     let local_count = state
         .registry
-        .local_descriptors()
+        .descriptors()
         .map(|v| v.len())
         .unwrap_or_default();
     let devices = federated_device_list(local_count, override_snap);
@@ -507,7 +501,7 @@ fn handle_workspace_list(
     name: &str,
     args: &Value,
 ) -> Result<DispatchOutcome, Value> {
-    let local_workspaces = state.registry.local_descriptors().map_err(|message| {
+    let local_workspaces = state.registry.descriptors().map_err(|message| {
         GatewayError::internal("WORKSPACE_REGISTRY_UNAVAILABLE", message).to_rpc_error()
     })?;
     let revision = WorkspaceRegistry::revision_for(&local_workspaces);
@@ -636,7 +630,7 @@ fn handle_workspace_select(
             let request = state
                 .select_workspace(session_id, &local_id)
                 .map_err(|error| error.to_rpc_error())?;
-            let instructions = truncate_utf8_with_ellipsis(
+            let instructions = crate::util::text::truncate_utf8_with_ellipsis(
                 &request.tools.current_ai_instructions(),
                 MAX_SELECT_INSTRUCTIONS_BYTES,
             );
@@ -768,17 +762,17 @@ fn handle_workspace_invoke(
             workspace_id,
         } => {
             let qualified_id = format_remote_workspace_scope(&device_id, &workspace_id);
-            run_remote_tool(
-                override_snap,
-                &device_id,
-                &workspace_id,
+            run_remote_tool(RemoteToolCall {
+                settings_override: override_snap,
+                device_id: &device_id,
+                workspace_id: &workspace_id,
                 qualified_id,
                 canonical_name,
-                &nested_args,
+                args: &nested_args,
                 logical_session_id,
                 request_id,
-                true,
-            )
+                tag_one_off_workspace: true,
+            })
         }
     }
 }

@@ -104,7 +104,14 @@ async fn stream_to_file(client: &reqwest::Client, url: &str, dest: &Path) -> Res
     }
     drop(file);
 
-    if let Err(err) = tokio::fs::rename(&tmp_path, dest).await {
+    let tmp_for_replace = tmp_path.clone();
+    let dest_for_replace = dest.to_path_buf();
+    let replace_result = tokio::task::spawn_blocking(move || {
+        crate::util::fs::atomic_replace(&tmp_for_replace, &dest_for_replace)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    if let Err(err) = replace_result {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(err.to_string());
     }

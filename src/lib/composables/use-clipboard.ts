@@ -14,14 +14,6 @@ export function useClipboard(defaultDurationMs = DEFAULT_COPIED_RESET_MS) {
   const copiedKey = ref("");
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function clearCopied() {
-    if (resetTimer !== undefined) {
-      clearTimeout(resetTimer);
-      resetTimer = undefined;
-    }
-    copiedKey.value = "";
-  }
-
   async function copyText(text: string, options: CopyTextOptions = {}): Promise<boolean> {
     if (!text) return false;
     const key = options.key ?? "default";
@@ -53,6 +45,5 @@ export function useClipboard(defaultDurationMs = DEFAULT_COPIED_RESET_MS) {
   return {
     copiedKey,
     copyText,
-    clearCopied,
   };
 }

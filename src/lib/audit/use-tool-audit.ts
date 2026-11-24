@@ -9,7 +9,12 @@ import {
   type ToolAuditRecord,
 } from "$lib/api/tool-audit";
 import { useClipboard } from "$lib/composables/use-clipboard";
-import { formatFullDateTime } from "$lib/formatters";
+import {
+  formatBytes,
+  formatDuration,
+  formatFullDateTime,
+  formatRelativeTime,
+} from "$lib/formatters";
 import { workspaces } from "$lib/stores/app";
 import { showToast } from "$lib/stores/toast";
 
@@ -20,11 +25,6 @@ const MAX_RETENTION_DAYS = 365;
 const COPY_FEEDBACK_MS = 1800;
 const ONE_HOUR_MS = 3_600_000;
 const ONE_DAY_MS = 86_400_000;
-
-const SHORT_MONTH_DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "numeric",
-  day: "numeric",
-});
 
 const OUTCOME_SEGMENTS = [
   { value: "", label: "全部结果" },
@@ -72,28 +72,15 @@ export function formatAuditTime(timestampMs: number): string {
 }
 
 export function formatAuditRelativeTime(timestampMs: number): string {
-  const diffSec = Math.floor((Date.now() - timestampMs) / 1000);
-  if (diffSec < 15) return "刚刚";
-  if (diffSec < 60) return `${diffSec}秒前`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}分钟前`;
-  const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `${diffHours}小时前`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 30) return `${diffDays}天前`;
-  return SHORT_MONTH_DAY_FORMATTER.format(timestampMs);
+  return formatRelativeTime(timestampMs);
 }
 
 export function formatAuditDuration(durationMs: number): string {
-  if (durationMs < 1000) return `${durationMs} ms`;
-  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 2 : 1)} s`;
+  return formatDuration(durationMs);
 }
 
 export function formatAuditBytes(bytes: number | null | undefined): string {
-  if (!bytes || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return formatBytes(bytes);
 }
 
 export function formatAuditAuthLabel(record: ToolAuditRecord): { text: string; kind: "oauth" | "bearer" | "none" } {

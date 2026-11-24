@@ -93,6 +93,7 @@ struct GatewayRuntime {
 static RUNTIME: LazyLock<Mutex<Option<GatewayRuntime>>> = LazyLock::new(|| Mutex::new(None));
 static HEALTH_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
+        .no_proxy()
         .timeout(HEALTH_TIMEOUT)
         .pool_idle_timeout(Duration::from_secs(15))
         .pool_max_idle_per_host(2)
@@ -112,8 +113,14 @@ pub async fn ensure_started() -> AppResult<GlobalGatewayStatusDto> {
     }
 
     let mut guard = RUNTIME.lock().await;
-    if let Some(runtime) = guard.as_ref() {
-        if runtime.config == config {
+    if let Some(runtime) = guard.as_mut() {
+        let tunnel_alive = match runtime.tunnel.as_mut() {
+            Some(TunnelChild::Cloudflare { child, .. } | TunnelChild::Frp { child, .. }) => {
+                matches!(child.try_wait(), Ok(None))
+            }
+            None => true,
+        };
+        if tunnel_alive && runtime.config == config {
             return Ok(status_from_runtime(runtime));
         }
     }
@@ -426,20 +433,16 @@ async fn stop_tunnel_child(tunnel: TunnelChild, confirm_cloudflare_stop: bool) -
     match tunnel {
         TunnelChild::Cloudflare { child, pid } => {
             let result = if confirm_cloudflare_stop {
-                cloudflare::force_stop_child(child, pid).await
+                crate::tunnel::process::force_stop_child(child, pid, "cloudflared").await
             } else {
-                let _ = cloudflare::stop_child(child, pid).await;
+                let _ = crate::tunnel::process::stop_child(child, pid).await;
                 Ok(())
             };
             cloudflare::clear_managed_cloudflared_pid("global-mcp");
             result?;
         }
-        TunnelChild::Frp { mut child, pid } => {
-            if let Some(pid) = pid {
-                let _ = crate::platform::platform().terminate_process_tree(pid);
-            }
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+        TunnelChild::Frp { child, pid } => {
+            let _ = crate::tunnel::process::stop_child(child, pid).await;
             frp::clear_managed_frpc_pid("global-mcp");
         }
     }

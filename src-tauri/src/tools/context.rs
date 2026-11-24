@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::agent_context::{
@@ -9,12 +9,13 @@ use crate::agent_context::{
     SkillEntry,
 };
 use crate::harness::Harness;
-use crate::tools::io_util::hash_and_count_json;
 use crate::tools::policy::PolicySettings;
 use crate::tools::registry::ToolProfile;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
 use crate::usage::ServiceUsage;
+use crate::util::fs::expand_home;
+use crate::util::json::hash_and_count_json;
 use crate::workspace::AuthConfig;
 
 const MAX_CONTEXT_AUDIT_BLOCKS: usize = 32;
@@ -59,12 +60,7 @@ impl ToolContext {
             auth_type: "noauth".into(),
             ..AuthConfig::default()
         };
-        Ok(Self::from_workspace(
-            workspace,
-            auth,
-            PolicySettings::default(),
-            "full".into(),
-        ))
+        Self::from_workspace(workspace, auth, PolicySettings::default(), "full".into())
     }
 
     pub fn from_workspace(
@@ -72,8 +68,9 @@ impl ToolContext {
         auth: AuthConfig,
         policy: PolicySettings,
         tool_profile: String,
-    ) -> Self {
-        let harness_root = Harness::default_root().expect("无法初始化 Harness 数据目录");
+    ) -> Result<Self, String> {
+        let harness_root =
+            Harness::default_root().map_err(|err| format!("无法初始化 Harness 数据目录: {err}"))?;
         Self::from_workspace_with_harness_root(
             workspace,
             auth,
@@ -89,10 +86,12 @@ impl ToolContext {
         policy: PolicySettings,
         tool_profile: ToolProfile,
         harness_root: PathBuf,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let root = workspace.root().to_path_buf();
         let sessions = crate::tools::session::workspace_session_store(&root);
-        Self {
+        let harness = Harness::new(root.clone(), harness_root)
+            .map_err(|err| format!("无法初始化 Harness: {err}"))?;
+        Ok(Self {
             workspace,
             auth,
             policy,
@@ -103,17 +102,17 @@ impl ToolContext {
             ai_instructions: String::new(),
             skills: Vec::new(),
             agent_context: None,
-            harness: Harness::new(root.clone(), harness_root).expect("无法初始化 Harness"),
+            harness,
             default_cwd: Mutex::new(root),
             sessions,
             usage: Arc::new(ServiceUsage::default()),
             context_audit: Mutex::new(ContextAuditState::default()),
-        }
+        })
     }
 
     pub fn for_test(workspace_path: PathBuf, harness_root: PathBuf) -> Result<Self, String> {
         let workspace = Workspace::new(workspace_path).map_err(|e| e.message())?;
-        Ok(Self::from_workspace_with_harness_root(
+        Self::from_workspace_with_harness_root(
             workspace,
             AuthConfig {
                 auth_type: "noauth".into(),
@@ -122,7 +121,7 @@ impl ToolContext {
             PolicySettings::default(),
             ToolProfile::Core,
             harness_root,
-        ))
+        )
     }
 
     pub fn with_agent_runtime(
@@ -306,21 +305,6 @@ pub fn merge_ai_instructions(global: &str, workspace: &str) -> String {
         .join("\n\n")
 }
 
-fn expand_home(value: &str) -> PathBuf {
-    if value == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
-    }
-    if let Some(rest) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
-    }
-    Path::new(value).to_path_buf()
-}
-
 fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     if !paths.iter().any(|existing| existing == &path) {
         paths.push(path);
@@ -372,7 +356,9 @@ mod tests {
     fn context_audit_records_only_sizes_hashes_and_repetition() {
         let workspace = tempfile::tempdir().expect("workspace");
         let harness = tempfile::tempdir().expect("harness");
-        let context = ToolContext::for_test(workspace.keep(), harness.keep()).expect("context");
+        let context =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("context");
         context.record_context_block("test", &serde_json::json!({"value": "bounded"}));
         context.record_context_block("test", &serde_json::json!({"value": "bounded"}));
 

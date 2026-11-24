@@ -6,7 +6,6 @@ pub mod file;
 pub mod git;
 pub mod history;
 mod image_tool;
-pub(crate) mod io_util;
 pub mod manage;
 pub mod patch;
 pub mod planning;

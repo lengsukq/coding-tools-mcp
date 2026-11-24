@@ -61,6 +61,7 @@ async function refresh() {
 }
 
 async function install(kind: string) {
+  if (installing.value || uninstalling.value) return;
   installing.value = kind;
   try {
     await installSoftware(kind);
@@ -74,6 +75,7 @@ async function install(kind: string) {
 }
 
 async function uninstall(kind: string) {
+  if (installing.value || uninstalling.value) return;
   uninstalling.value = kind;
   try {
     await uninstallSoftware(kind);
@@ -87,20 +89,24 @@ async function uninstall(kind: string) {
 }
 
 async function saveConfig() {
-  if (!dirty.value || saving.value) return true;
+  if (saving.value) return false;
+  if (!dirty.value) return true;
   if (config.proxyMode === "manual" && !isValidProxyUrl(config.proxyUrl)) {
     error.value = "请输入有效的 HTTP(S) 或 SOCKS5 代理地址";
     return false;
   }
-  if (config.githubMirror && !/^https?:\/\//.test(config.githubMirror.trim())) {
+  const trimmedMirror = config.githubMirror.trim();
+  if (trimmedMirror && !/^https?:\/\//.test(trimmedMirror)) {
     error.value = "请输入有效的 HTTP(S) 镜像地址";
     return false;
   }
   error.value = "";
   saving.value = true;
   try {
-    await setDownloadConfig({ ...config });
-    baseline.value = { ...config };
+    const nextConfig = { ...config, githubMirror: trimmedMirror, proxyUrl: config.proxyUrl.trim() };
+    await setDownloadConfig(nextConfig);
+    Object.assign(config, nextConfig);
+    baseline.value = { ...nextConfig };
     showToast("下载配置已保存", { kind: "success" });
     return true;
   } catch (e) {

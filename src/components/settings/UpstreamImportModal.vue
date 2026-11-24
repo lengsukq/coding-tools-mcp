@@ -39,6 +39,13 @@ const emit = defineEmits<{
   "update:jsonText": [value: string];
   "update:replaceSourceConfigs": [value: boolean];
   "update:connectMode": [value: TakeoverConnectMode];
+  "update-selection": [
+    payload: {
+      id: string;
+      field: keyof ImportCandidateSelectionDraft;
+      value: ImportCandidateSelectionDraft[keyof ImportCandidateSelectionDraft];
+    },
+  ];
   rescan: [];
   "parse-json": [];
   "submit-import": [];
@@ -76,10 +83,7 @@ function setSelectionField<K extends keyof ImportCandidateSelectionDraft>(
   field: K,
   value: ImportCandidateSelectionDraft[K],
 ) {
-  const row = props.selections[id];
-  if (row) {
-    row[field] = value;
-  }
+  emit("update-selection", { id, field, value });
 }
 </script>
 

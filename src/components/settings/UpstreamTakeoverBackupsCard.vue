@@ -3,6 +3,7 @@ import { History, RotateCcw } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
 import type { HarnessTakeoverBackupRecord } from "$lib/api/upstream-mcp";
+import { formatFullDateTime } from "$lib/formatters";
 
 defineProps<{
   backups: HarnessTakeoverBackupRecord[];
@@ -12,18 +13,10 @@ defineProps<{
 const emit = defineEmits<{
   restore: [record: HarnessTakeoverBackupRecord];
 }>();
-
-function formatTime(ms: number): string {
-  try {
-    return new Date(ms).toLocaleString();
-  } catch {
-    return String(ms);
-  }
-}
 </script>
 
 <template>
-  <GlassCard v-if="backups.length" variant="subtle">
+  <GlassCard v-if="backups.length">
     <div class="space-y-3">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-2">
@@ -61,7 +54,7 @@ function formatTime(ms: number): string {
             <p class="text-[11px] text-[var(--ui-text-secondary)]">
               原移除项：<code class="font-mono">{{ item.removedKeys.join(', ') }}</code>
               · 注入入口：<code class="font-mono">{{ item.injectedKey }}</code>
-              · {{ formatTime(item.createdAtMs) }}
+              · {{ formatFullDateTime(item.createdAtMs) }}
             </p>
           </div>
 

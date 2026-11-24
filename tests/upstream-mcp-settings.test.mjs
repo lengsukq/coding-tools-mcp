@@ -60,16 +60,9 @@ test("Upstream MCP security guards: anti-loop header, audit unwrapping, and head
 });
 
 test("buildSavePayloadFromDraft isolates secret env/headers and respects bearer token clearing", async () => {
-  const composableSrc = await source("src/lib/upstream-mcp/use-upstream-mcp.ts");
-  const sliceStart = composableSrc.indexOf("export interface KeyValueDraftRow");
-  const sliceEnd = composableSrc.indexOf("export function useUpstreamMcp()");
-  assert.ok(sliceStart >= 0 && sliceEnd > sliceStart, "pure helper block exists");
-
-  const pureTs = composableSrc
-    .slice(sliceStart, sliceEnd)
-    .replace(/UpstreamExposeMode/g, "string")
-    .replace(/UpstreamServerConfig/g, "any")
-    .replace(/UpstreamSecretPatch/g, "any");
+  const draftSrc = await source("src/lib/upstream-mcp/upstream-draft.ts");
+  // Strip type-only alias imports so the pure helper module executes directly in Node ESM.
+  const pureTs = draftSrc.replace(/import type[\s\S]*?;\n/, "");
   const jsCode = ts.transpileModule(pureTs, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -95,6 +88,11 @@ test("buildSavePayloadFromDraft isolates secret env/headers and respects bearer 
   assert.deepEqual(stdioOut.secretPatch.setEnvSecrets, { NEW_TOKEN: "ghp_123" });
   assert.deepEqual(stdioOut.secretPatch.removeEnvSecrets, ["OLD_KEY"]);
 
+  const roundTrip = mod.buildUpstreamDraftFromConfig(stdioOut.server);
+  assert.equal(roundTrip.transportType, "stdio");
+  assert.equal(roundTrip.command, "npx");
+  assert.deepEqual(mod.splitArgsText(roundTrip.argsText), ["-y", "@modelcontextprotocol/server-github"]);
+
   const httpDraft = mod.createEmptyUpstreamDraft();
   httpDraft.alias = "docs";
   httpDraft.transportType = "streamable_http";
@@ -104,4 +102,8 @@ test("buildSavePayloadFromDraft isolates secret env/headers and respects bearer 
   const httpOut = mod.buildSavePayloadFromDraft(httpDraft);
   assert.equal(httpOut.secretPatch.bearerToken, null);
   assert.equal(httpOut.server.transport.hasBearerToken, false);
+
+  assert.equal(mod.transportLabel("streamable_http"), "Streamable HTTP");
+  assert.equal(mod.upstreamStatusForPill("connected").status, "running");
+  assert.equal(mod.upstreamStatusForPill("disabled").status, "stopped");
 });

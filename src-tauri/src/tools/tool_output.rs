@@ -3,14 +3,15 @@ use std::fmt::Write as _;
 use serde_json::{json, Value};
 
 use crate::tools::error::WorkspaceError;
-use crate::tools::io_util::truncate_utf8;
+use crate::util::text::truncate_utf8;
 
 pub fn tool_ok(mut value: Value) -> Value {
     if value.get("ok").is_none() {
-        value
-            .as_object_mut()
-            .expect("tool result object")
-            .insert("ok".into(), Value::Bool(true));
+        if let Some(object) = value.as_object_mut() {
+            object.insert("ok".into(), Value::Bool(true));
+        } else {
+            return json!({ "ok": true, "value": value });
+        }
     }
     value
 }

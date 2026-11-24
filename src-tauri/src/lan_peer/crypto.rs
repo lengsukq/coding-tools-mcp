@@ -4,18 +4,14 @@ use std::sync::Mutex;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::auth::constant_time_eq;
+use crate::util::hash::sha256_hex;
+use crate::util::time::unix_now_ms;
+
 const BLOCK_SIZE: usize = 64;
 pub(super) const REPLAY_TTL_MS: u64 = 120_000;
 const REQUEST_MAX_SKEW_MS: u64 = 60_000;
 pub(super) const MAX_REPLAY_ENTRIES: usize = 4096;
-
-pub fn unix_time_ms() -> u64 {
-    crate::util::time::unix_now_ms()
-}
-
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    crate::util::hash::sha256_hex(bytes)
-}
 
 /// RFC 2104 standard HMAC-SHA256 using only `sha2::Sha256`.
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
@@ -54,11 +50,6 @@ pub fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
     crate::util::hash::encode_hex_lower(&mac)
 }
 
-/// Constant-time byte comparison to prevent timing side-channels on PIN proofs and HMACs.
-pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    crate::auth::constant_time_eq(left, right)
-}
-
 /// Generate 32 bytes (64 hex chars) of OS CSPRNG entropy via v4 UUIDs + domain separation.
 pub fn random_hex_32() -> String {
     let a = Uuid::new_v4();
@@ -69,7 +60,7 @@ pub fn random_hex_32() -> String {
     hasher.update(a.as_bytes());
     hasher.update(b.as_bytes());
     hasher.update(c.as_bytes());
-    hasher.update(unix_time_ms().to_le_bytes());
+    hasher.update(unix_now_ms().to_le_bytes());
     crate::util::hash::encode_hex_lower(&hasher.finalize())
 }
 
@@ -161,36 +152,42 @@ pub fn sign_peer_request(
     hmac_sha256_hex(peer_secret.as_bytes(), canonical.as_bytes())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn verify_peer_request_signature(
-    peer_secret: &str,
-    caller_device_id: &str,
-    method: &str,
-    path_and_query: &str,
-    timestamp_ms: u64,
-    nonce: &str,
-    body: &[u8],
-    provided_signature: &str,
-    now_ms: u64,
-) -> Result<(), &'static str> {
-    if now_ms.abs_diff(timestamp_ms) > REQUEST_MAX_SKEW_MS {
+pub struct PeerSignatureCheck<'a> {
+    pub peer_secret: &'a str,
+    pub caller_device_id: &'a str,
+    pub method: &'a str,
+    pub path_and_query: &'a str,
+    pub timestamp_ms: u64,
+    pub nonce: &'a str,
+    pub body: &'a [u8],
+    pub provided_signature: &'a str,
+    pub now_ms: u64,
+}
+
+pub fn verify_peer_request_signature(check: &PeerSignatureCheck<'_>) -> Result<(), &'static str> {
+    if check.now_ms.abs_diff(check.timestamp_ms) > REQUEST_MAX_SKEW_MS {
         return Err("TIMESTAMP_SKEW_EXCEEDED");
     }
-    if nonce.len() < 8 || nonce.len() > 128 || nonce.chars().any(char::is_control) {
+    if check.nonce.len() < 8 || check.nonce.len() > 128 || check.nonce.chars().any(char::is_control)
+    {
         return Err("INVALID_NONCE");
     }
     let expected = sign_peer_request(
-        peer_secret,
-        caller_device_id,
-        method,
-        path_and_query,
-        timestamp_ms,
-        nonce,
-        body,
+        check.peer_secret,
+        check.caller_device_id,
+        check.method,
+        check.path_and_query,
+        check.timestamp_ms,
+        check.nonce,
+        check.body,
     );
     if !constant_time_eq(
         expected.as_bytes(),
-        provided_signature.trim().to_ascii_lowercase().as_bytes(),
+        check
+            .provided_signature
+            .trim()
+            .to_ascii_lowercase()
+            .as_bytes(),
     ) {
         return Err("INVALID_SIGNATURE");
     }

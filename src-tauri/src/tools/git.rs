@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::platform::{background_command, platform};
-use crate::tools::io_util::truncate_utf8;
 use crate::tools::workspace::{tool_ok, Workspace, WorkspaceError};
+use crate::util::text::truncate_utf8;
 
 const DEFAULT_GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -487,6 +487,32 @@ struct GitOutput {
     stdout_truncated: bool,
 }
 
+#[derive(Debug)]
+pub(crate) struct GitBytesOutput {
+    pub(crate) success: bool,
+    pub(crate) exit_code: i32,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stdout_truncated: bool,
+}
+
+pub(crate) fn run_git_bytes(
+    cwd: &std::path::Path,
+    args: &[&str],
+    limit: Duration,
+    max_stdout_bytes: usize,
+) -> Result<GitBytesOutput, String> {
+    let mut cmd = background_command("git");
+    cmd.arg("-C")
+        .arg(cwd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    run_command_bytes_with_timeout(cmd, limit, max_stdout_bytes, MAX_GIT_STDERR_BYTES)
+        .map_err(|err| err.message())
+}
+
 fn run_git(
     cwd: &std::path::Path,
     args: &[&str],
@@ -499,15 +525,23 @@ fn run_git(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    run_command_with_timeout(cmd, limit, MAX_GIT_STDOUT_BYTES, MAX_GIT_STDERR_BYTES)
+    let output =
+        run_command_bytes_with_timeout(cmd, limit, MAX_GIT_STDOUT_BYTES, MAX_GIT_STDERR_BYTES)?;
+    Ok(GitOutput {
+        success: output.success,
+        exit_code: output.exit_code,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        stdout_truncated: output.stdout_truncated,
+    })
 }
 
-fn run_command_with_timeout(
+fn run_command_bytes_with_timeout(
     mut cmd: std::process::Command,
     limit: Duration,
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
-) -> Result<GitOutput, WorkspaceError> {
+) -> Result<GitBytesOutput, WorkspaceError> {
     let mut child = cmd
         .spawn()
         .map_err(|e| git_error(&format!("git not available: {e}")))?;
@@ -555,18 +589,18 @@ fn run_command_with_timeout(
         }
     };
 
-    let (stdout_bytes, stdout_truncated) = stdout_reader.join().unwrap_or_default();
-    let (stderr_bytes, _) = stderr_reader.join().unwrap_or_default();
-    Ok(GitOutput {
+    let (stdout, stdout_truncated) = stdout_reader.join().unwrap_or_default();
+    let (stderr, _) = stderr_reader.join().unwrap_or_default();
+    Ok(GitBytesOutput {
         success: status.success(),
         exit_code: status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        stdout,
+        stderr,
         stdout_truncated,
     })
 }
 
-fn terminate_child(child: &mut std::process::Child) {
+pub(crate) fn terminate_child(child: &mut std::process::Child) {
     let _ = platform().terminate_process_tree(child.id());
     let _ = child.kill();
     let _ = child.wait();
@@ -729,7 +763,7 @@ mod tests {
             .stderr(Stdio::piped());
 
         let started = Instant::now();
-        let error = run_command_with_timeout(
+        let error = run_command_bytes_with_timeout(
             cmd,
             Duration::from_millis(80),
             MAX_GIT_STDOUT_BYTES,

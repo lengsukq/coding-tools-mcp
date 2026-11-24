@@ -11,8 +11,8 @@ use tokio::task::JoinSet;
 use crate::data::DataStore;
 use crate::local_network;
 use crate::settings::AppSettings;
+use crate::util::time::unix_now_ms;
 
-use super::crypto::unix_time_ms;
 use super::identity::ensure_local_identity;
 use super::LAN_PROTOCOL_VERSION;
 
@@ -135,7 +135,7 @@ pub fn trigger_discovery_scan() {
 }
 
 pub fn list_discovered_peers() -> Vec<DiscoveredPeerDto> {
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let settings = AppSettings::load_or_default();
     let paired_ids: std::collections::HashSet<&str> = settings
         .lan_federation
@@ -162,7 +162,7 @@ pub fn list_discovered_peers() -> Vec<DiscoveredPeerDto> {
 }
 
 pub(super) fn prune_discovered_peers() {
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     if let Some(map) = DISCOVERED.get() {
         let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
         guard.retain(|_, peer| now.saturating_sub(peer.last_seen_ms) <= DISCOVERED_TTL_MS);
@@ -240,7 +240,7 @@ pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto
         .paired_peers
         .iter()
         .any(|p| p.device_id == hello.device_id);
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let dto = DiscoveredPeerDto {
         device_id: hello.device_id.clone(),
         device_name: hello.device_name,
@@ -260,7 +260,7 @@ pub async fn probe_peer_hello(host: &str, port: u16) -> Result<DiscoveredPeerDto
 }
 
 pub(super) fn record_discovered_peer(peer: DiscoveredPeerDto) {
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     {
         let mut map = discovered_map().lock().unwrap_or_else(|e| e.into_inner());
         map.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= DISCOVERED_TTL_MS);
@@ -356,7 +356,7 @@ fn build_local_beacon_with_settings(settings: &AppSettings, kind: &str) -> Optio
         version: env!("CARGO_PKG_VERSION").to_string(),
         mcp_port: settings.global_gateway.local_port,
         computer_use_supported: cfg!(target_os = "macos"),
-        sent_at_ms: unix_time_ms(),
+        sent_at_ms: unix_now_ms(),
     };
     serde_json::to_vec(&packet).ok()
 }
@@ -482,7 +482,7 @@ pub async fn probe_configured_overlay_targets() {
                     addresses: vec![host],
                     computer_use_supported: hello.computer_use_supported,
                     already_paired,
-                    last_seen_ms: unix_time_ms(),
+                    last_seen_ms: unix_now_ms(),
                 });
             });
         }
@@ -495,6 +495,9 @@ async fn run_discovery_loop(
     mut nudge_rx: mpsc::UnboundedReceiver<()>,
 ) {
     let Some(socket) = bind_discovery_socket() else {
+        // Clear the global daemon handle on bind failure so subsequent scans can retry cleanly.
+        let mut guard = daemon_slot().lock().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
         return;
     };
     broadcast_beacon(&socket, "discover").await;
@@ -518,65 +521,73 @@ async fn run_discovery_loop(
                 let Ok((len, src_addr)) = recv else {
                     continue;
                 };
-                let settings_check = AppSettings::load_or_default();
-                let paired_hosts: Vec<String> = settings_check
-                    .lan_federation
-                    .paired_peers
-                    .iter()
-                    .flat_map(|p| std::iter::once(p.host.clone()).chain(p.addresses.iter().cloned()))
-                    .collect();
-                if !local_network::is_allowed_peer_ip(
-                    src_addr.ip(),
-                    &settings_check.lan_federation.extra_subnets,
-                    &paired_hosts,
-                ) {
-                    continue;
-                }
-                let Ok(beacon) = serde_json::from_slice::<BeaconPacket>(&buf[..len]) else {
-                    continue;
-                };
-                if beacon.protocol != LAN_PROTOCOL_VERSION {
-                    continue;
-                }
-                let Ok((local_cfg, _)) = ensure_local_identity() else {
-                    continue;
-                };
-                if beacon.device_id == local_cfg.device_id {
-                    continue;
-                }
-                let host = match src_addr.ip() {
-                    IpAddr::V4(v4) => v4.to_string(),
-                    IpAddr::V6(v6) => v6
-                        .to_ipv4_mapped()
-                        .map(|v4| v4.to_string())
-                        .unwrap_or_else(|| v6.to_string()),
-                };
-                let already_paired = settings_check
-                    .lan_federation
-                    .paired_peers
-                    .iter()
-                    .any(|p| p.device_id == beacon.device_id);
-                record_discovered_peer(DiscoveredPeerDto {
-                    device_id: beacon.device_id,
-                    device_name: beacon.device_name,
-                    fingerprint: beacon.fingerprint,
-                    os: beacon.os,
-                    arch: beacon.arch,
-                    version: beacon.version,
-                    host: host.clone(),
-                    port: beacon.mcp_port,
-                    addresses: vec![host],
-                    computer_use_supported: beacon.computer_use_supported,
-                    already_paired,
-                    last_seen_ms: unix_time_ms(),
-                });
-
-                if beacon.kind == "discover" {
-                    if let Some(reply) = build_local_beacon_with_settings(&settings_check, "announce") {
-                        let _ = socket.send_to(&reply, src_addr).await;
-                    }
+                let packet = buf[..len].to_vec();
+                let reply = tokio::task::spawn_blocking(move || {
+                    handle_received_beacon(&packet, src_addr)
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(reply_bytes) = reply {
+                    let _ = socket.send_to(&reply_bytes, src_addr).await;
                 }
             }
         }
     }
+}
+
+fn handle_received_beacon(packet: &[u8], src_addr: std::net::SocketAddr) -> Option<Vec<u8>> {
+    let settings_check = AppSettings::load_or_default();
+    let paired_hosts: Vec<String> = settings_check
+        .lan_federation
+        .paired_peers
+        .iter()
+        .flat_map(|p| std::iter::once(p.host.clone()).chain(p.addresses.iter().cloned()))
+        .collect();
+    if !local_network::is_allowed_peer_ip(
+        src_addr.ip(),
+        &settings_check.lan_federation.extra_subnets,
+        &paired_hosts,
+    ) {
+        return None;
+    }
+    let beacon = serde_json::from_slice::<BeaconPacket>(packet).ok()?;
+    if beacon.protocol != LAN_PROTOCOL_VERSION {
+        return None;
+    }
+    let (local_cfg, _) = ensure_local_identity().ok()?;
+    if beacon.device_id == local_cfg.device_id {
+        return None;
+    }
+    let host = match src_addr.ip() {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(|v4| v4.to_string())
+            .unwrap_or_else(|| v6.to_string()),
+    };
+    let already_paired = settings_check
+        .lan_federation
+        .paired_peers
+        .iter()
+        .any(|p| p.device_id == beacon.device_id);
+    record_discovered_peer(DiscoveredPeerDto {
+        device_id: beacon.device_id,
+        device_name: beacon.device_name,
+        fingerprint: beacon.fingerprint,
+        os: beacon.os,
+        arch: beacon.arch,
+        version: beacon.version,
+        host: host.clone(),
+        port: beacon.mcp_port,
+        addresses: vec![host],
+        computer_use_supported: beacon.computer_use_supported,
+        already_paired,
+        last_seen_ms: unix_now_ms(),
+    });
+
+    if beacon.kind == "discover" {
+        return build_local_beacon_with_settings(&settings_check, "announce");
+    }
+    None
 }

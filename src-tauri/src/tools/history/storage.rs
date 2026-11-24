@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes, sha256_hex, FileLock};
 use crate::tools::workspace::{relative_display, Workspace, WorkspaceError, WorkspaceResult};
+use crate::util::fs::{atomic_write_bytes, lock_file as acquire_file_lock, FileLock};
+use crate::util::hash::sha256_hex;
 
 use super::markdown;
 use super::model::{
@@ -19,10 +20,6 @@ const STATE_ITEM_LIMIT: usize = 12;
 const STATE_TEXT_LIMIT: usize = 512;
 const STATE_FOCUS_LIMIT: usize = 2_048;
 const STATE_REFERENCE_LIMIT: usize = 8;
-
-pub struct HistoryLock {
-    _lock: FileLock,
-}
 
 pub fn resolve_history_dir(
     workspace: &Workspace,
@@ -90,12 +87,10 @@ pub fn ensure_directory(path: &Path) -> WorkspaceResult<()> {
     fs::create_dir_all(path).map_err(|error| io_error("HISTORY_WRITE_FAILED", error, true))
 }
 
-pub fn lock_directory(path: &Path) -> WorkspaceResult<HistoryLock> {
+pub fn lock_directory(path: &Path) -> WorkspaceResult<FileLock> {
     ensure_directory(path)?;
     let lock_path = path.join(".history.lock");
-    let lock = acquire_file_lock(&lock_path)
-        .map_err(|error| io_error("HISTORY_LOCK_FAILED", error, true))?;
-    Ok(HistoryLock { _lock: lock })
+    acquire_file_lock(&lock_path).map_err(|error| io_error("HISTORY_LOCK_FAILED", error, true))
 }
 
 pub fn scan(workspace: &Workspace, history_dir: &Path) -> WorkspaceResult<ScanReport> {

@@ -1,26 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 pub use crate::tools::error::{WorkspaceError, WorkspaceResult};
-
-pub const DEFAULT_EXCLUDED_NAMES: &[&str] = &[
-    ".git",
-    ".reference",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    ".venv",
-    "venv",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "__pycache__",
-    ".cache",
-    ".next",
-    ".turbo",
-    "coverage",
-];
+pub use crate::util::fs::DEFAULT_EXCLUDED_NAMES;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedPath {
@@ -220,10 +201,20 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn reject_protected_write_path(&self, raw_path: &str) -> WorkspaceResult<()> {
+    /// Return the first normal path segment after normalizing separators and skipping `.` components.
+    pub fn first_normal_component(raw_path: &str) -> Option<String> {
         let normalized = raw_path.replace('\\', "/");
-        let first = normalized.split('/').next().unwrap_or("");
-        if first == ".git" {
+        Path::new(&normalized).components().find_map(|component| {
+            if let Component::Normal(segment) = component {
+                Some(segment.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn reject_protected_write_path(&self, raw_path: &str) -> WorkspaceResult<()> {
+        if Self::first_normal_component(raw_path).as_deref() == Some(".git") {
             return Err(WorkspaceError::Tool {
                 code: "PROTECTED_PATH",
                 message: format!("禁止普通文件操作写入 .git: {raw_path}"),
@@ -246,17 +237,11 @@ impl Workspace {
             return false;
         };
         scan_path.components().any(|part| match part {
-            Component::Normal(name) => crate::tools::io_util::is_ignored_os_component(
-                name,
-                include_hidden,
-                include_ignored,
-            ),
+            Component::Normal(name) => {
+                crate::util::fs::is_ignored_os_component(name, include_hidden, include_ignored)
+            }
             _ => false,
         })
-    }
-
-    pub fn is_safe_read_path(&self, path: &Path) -> bool {
-        path.exists() || path.is_symlink()
     }
 }
 

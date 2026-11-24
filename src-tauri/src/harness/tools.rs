@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
-use crate::tools::io_util::serialized_json_bytes;
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 use crate::tools::ToolContext;
+use crate::util::json::serialized_json_bytes;
 
 use super::model::{HarnessEvent, TaskSession, TaskStatus};
 use super::store::HarnessError;

@@ -251,13 +251,7 @@ fn terminate_pid(pid: u32) -> AppResult<()> {
     }
 }
 
-/// Working-set sample for the desktop process tree (main + WebView2 children).
-#[derive(Debug, Clone, Default)]
-pub struct ProcessTreeMemory {
-    pub main_bytes: u64,
-    pub webview_bytes: u64,
-    pub webview_process_count: u32,
-}
+pub use crate::platform::process_common::ProcessTreeMemory;
 
 pub fn sample_process_tree_memory() -> AppResult<ProcessTreeMemory> {
     let root = std::process::id();

@@ -1,11 +1,83 @@
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use fs2::FileExt;
 use serde::Serialize;
 
 use crate::error::AppResult;
+
+pub const DEFAULT_EXCLUDED_NAMES: &[&str] = &[
+    ".git",
+    ".reference",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    ".cache",
+    ".next",
+    ".turbo",
+    "coverage",
+];
+
+/// Zero-allocation check against `DEFAULT_EXCLUDED_NAMES` for directory pruning.
+pub fn is_default_excluded_os(name: &OsStr) -> bool {
+    let Some(text) = name.to_str() else {
+        return false;
+    };
+    DEFAULT_EXCLUDED_NAMES.contains(&text)
+}
+
+/// Zero-allocation check for a single path component during `WalkDir::filter_entry`.
+pub fn is_ignored_os_component(name: &OsStr, include_hidden: bool, include_ignored: bool) -> bool {
+    if !include_hidden && is_hidden_os_component(name) {
+        return true;
+    }
+    if !include_ignored && is_default_excluded_os(name) {
+        return true;
+    }
+    false
+}
+
+fn is_hidden_os_component(name: &OsStr) -> bool {
+    if let Some(text) = name.to_str() {
+        return text.starts_with('.') && text != ".";
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = name.as_bytes();
+        bytes.starts_with(b".") && bytes != b"."
+    }
+    #[cfg(not(unix))]
+    {
+        let text = name.to_string_lossy();
+        text.starts_with('.') && text != "."
+    }
+}
+
+/// Expand leading `~`, `~/`, or `~\` to the current user's home directory.
+pub fn expand_home(value: &str) -> PathBuf {
+    if value == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
+    }
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    Path::new(value).to_path_buf()
+}
 
 /// Exclusive advisory file lock released automatically on drop.
 pub struct FileLock {
@@ -14,7 +86,7 @@ pub struct FileLock {
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
@@ -29,7 +101,7 @@ pub fn lock_file(lock_path: &Path) -> io::Result<FileLock> {
         .read(true)
         .write(true)
         .open(lock_path)?;
-    FileExt::lock_exclusive(&file)?;
+    file.lock()?;
     Ok(FileLock { file })
 }
 
@@ -83,12 +155,12 @@ pub fn atomic_write_json<T: Serialize>(target: &Path, value: &T) -> AppResult<()
 }
 
 #[cfg(not(windows))]
-fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
+pub fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
     fs::rename(source, target)
 }
 
 #[cfg(windows)]
-fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
+pub fn atomic_replace(source: &Path, target: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows::core::PCWSTR;
@@ -143,5 +215,23 @@ mod tests {
             assert!(lock_path.exists());
         }
         let _reacquired = lock_file(&lock_path).expect("reacquire released lock");
+    }
+
+    #[test]
+    fn is_ignored_os_component_matches_hidden_and_excluded() {
+        assert!(is_ignored_os_component(
+            OsStr::new("node_modules"),
+            false,
+            false
+        ));
+        assert!(!is_ignored_os_component(
+            OsStr::new("node_modules"),
+            false,
+            true
+        ));
+        assert!(is_ignored_os_component(OsStr::new(".git"), false, true));
+        assert!(is_ignored_os_component(OsStr::new(".git"), true, false));
+        assert!(!is_ignored_os_component(OsStr::new(".git"), true, true));
+        assert!(!is_ignored_os_component(OsStr::new("src"), false, false));
     }
 }

@@ -68,17 +68,23 @@ pub(crate) fn apply_patch_with_operation(
         })));
     }
 
-    let _transaction_backups = commit_staged(&ctx.workspace, &prepared.staged)?;
+    commit_staged(&ctx.workspace, &prepared.staged)?;
     let change_id = Uuid::new_v4().simple().to_string();
-    let review = crate::review::create_patch_review_with_metadata(
+    let mut warnings = Vec::new();
+    let review = match crate::review::create_patch_review_with_metadata(
         ctx.workspace.root(),
         &change_id,
         operation_id,
         session_id,
         &summary,
         &prepared.review_files,
-    )
-    .ok();
+    ) {
+        Ok(link) => Some(link),
+        Err(err) => {
+            warnings.push(format!("变更快照持久化失败，但不影响已写入的文件: {err}"));
+            None
+        }
+    };
     let review_url = review
         .as_ref()
         .and_then(|link| build_review_url(&link.change_id, &link.token));
@@ -94,7 +100,7 @@ pub(crate) fn apply_patch_with_operation(
         "files_modified": files_modified,
         "files_deleted": files_deleted,
         "recovery": "git",
-        "warnings": []
+        "warnings": warnings
     })))
 }
 
@@ -253,11 +259,13 @@ fn affected_paths(affected: &[Value], operation: &str) -> Vec<String> {
 }
 
 fn is_high_risk_file(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    let first = normalized.split('/').next().unwrap_or("");
-    if matches!(first, ".git" | ".github") {
+    if matches!(
+        crate::tools::workspace::Workspace::first_normal_component(path).as_deref(),
+        Some(".git" | ".github")
+    ) {
         return true;
     }
+    let normalized = path.replace('\\', "/");
     let name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
     name == ".gitignore"
         || name == "Cargo.toml"
@@ -273,9 +281,7 @@ fn is_high_risk_file(path: &str) -> bool {
 }
 
 fn is_git_repository_asset(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    let first = normalized.split('/').next().unwrap_or("");
-    first == ".git"
+    crate::tools::workspace::Workspace::first_normal_component(path).as_deref() == Some(".git")
 }
 
 fn dangerous_operation(message: impl Into<String>) -> WorkspaceError {

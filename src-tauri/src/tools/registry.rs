@@ -5,11 +5,11 @@ pub const TOOL_API_VERSION: &str = "2";
 mod profiles;
 mod schema;
 
-pub(crate) use profiles::exposed_tool_names_cached;
 pub use profiles::{
     canonical_tool_name, exposed_tool_names, is_allowed_tool, list_tools_for_profile, ToolProfile,
-    ALLOWED_TOOLS, COMPACT_TOOLS, CORE_READ_ONLY_TOOLS, CORE_TOOLS,
+    COMPACT_TOOLS, CORE_READ_ONLY_TOOLS, CORE_TOOLS,
 };
+pub(crate) use profiles::{exposed_tool_names_cached, TOOL_PROFILE_COUNT};
 pub use schema::input_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -527,7 +527,6 @@ mod tests {
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_manage"));
         assert!(names.contains(&"planning_manage"));
-        assert!(names.contains(&"change_review"));
         assert!(names.contains(&"change_review"));
         assert!(names.contains(&"task_manage"));
         assert!(names.contains(&"history_session_bootstrap"));

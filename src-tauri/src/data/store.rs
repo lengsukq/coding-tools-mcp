@@ -94,6 +94,13 @@ fn lock_data_file() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Acquire a cross-process advisory file lock beside `profiles.json` so desktop and
+/// headless CLI processes serialize read-modify-write updates without lost writes.
+fn lock_cross_process(path: &Path) -> AppResult<crate::util::fs::FileLock> {
+    let lock_path = path.with_extension("lock");
+    Ok(crate::util::fs::lock_file(&lock_path)?)
+}
+
 fn app_root_for_path(path: &Path) -> AppResult<PathBuf> {
     if let Some(root) = path.parent().and_then(Path::parent) {
         if !root.as_os_str().is_empty() {
@@ -106,6 +113,8 @@ fn app_root_for_path(path: &Path) -> AppResult<PathBuf> {
 impl DataStore {
     pub fn load() -> AppResult<Self> {
         let _guard = lock_data_file();
+        let path = data_file_path()?;
+        let _file_lock = lock_cross_process(&path)?;
         let (path, loaded) = load_for_store()?;
         if !loaded.existed_before || loaded.needs_persist {
             write_data(&path, &loaded.data)?;
@@ -170,6 +179,7 @@ impl DataStore {
         f: impl FnOnce(&mut AppData) -> AppResult<(bool, R)>,
     ) -> AppResult<R> {
         let _guard = lock_data_file();
+        let _file_lock = lock_cross_process(path)?;
         let (mut data, was_cached) = if let Some(cached) = cache_get(path) {
             ((*cached).clone(), true)
         } else {
@@ -198,6 +208,7 @@ impl DataStore {
         f: impl FnOnce(&mut AppData) -> AppResult<(bool, R)>,
     ) -> AppResult<R> {
         let _guard = lock_data_file();
+        let _file_lock = lock_cross_process(&self.path)?;
         let (mut data, was_cached) = if let Some(cached) = cache_get(&self.path) {
             ((*cached).clone(), true)
         } else {

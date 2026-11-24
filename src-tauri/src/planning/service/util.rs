@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::error::{AppError, AppResult};
 
 pub(super) fn required_text(value: &str, label: &str) -> AppResult<String> {
@@ -17,9 +15,5 @@ pub(super) fn new_id() -> String {
 }
 
 pub(super) fn timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .to_string()
+    crate::util::time::unix_now_secs().to_string()
 }

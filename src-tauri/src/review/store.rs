@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes, sha256_hex, FileLock};
+use crate::util::fs::{atomic_write_bytes, lock_file as acquire_file_lock, FileLock};
+use crate::util::hash::sha256_hex;
 
 pub(super) const REVIEW_DIR: &str = ".coding-tools/reviews";
 const REVIEW_LOCK_FILE: &str = ".reviews.lock";
@@ -90,10 +90,7 @@ fn is_review_json_file(path: &Path) -> bool {
 }
 
 fn valid_change_id(change_id: &str) -> bool {
-    !change_id.is_empty()
-        && change_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    crate::util::text::is_safe_identifier(change_id)
 }
 
 fn read_change_set(path: &Path) -> Result<ChangeSet, String> {
@@ -187,7 +184,6 @@ pub struct ChangeSetSummary {
 
 #[derive(Debug, Deserialize)]
 struct ChangeSetExpiry {
-    id: String,
     expires_at: u64,
 }
 
@@ -240,7 +236,7 @@ pub fn cleanup_expired(workspace_root: &Path) -> usize {
         let Ok(meta) = serde_json::from_reader::<_, ChangeSetExpiry>(BufReader::new(file)) else {
             continue;
         };
-        if meta.expires_at < now && fs::remove_file(review_path(workspace_root, &meta.id)).is_ok() {
+        if meta.expires_at < now && fs::remove_file(&path).is_ok() {
             removed += 1;
         }
     }
@@ -292,6 +288,9 @@ pub fn find_review(
     id: &str,
     token: &str,
 ) -> Result<ChangeSet, String> {
+    if !valid_change_id(id) {
+        return Err("invalid review id".into());
+    }
     for root in workspace_roots {
         if review_path(&root, id).is_file() {
             return load_review(&root, id, token);
@@ -311,10 +310,7 @@ pub(super) fn workspace_key(workspace_root: &Path) -> String {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    crate::util::time::unix_now_secs()
 }
 
 pub(super) struct PersistChangeSetInput<'a> {

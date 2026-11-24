@@ -83,7 +83,7 @@ const allItems = computed<PickerItem[]>(() => {
   });
   const instructionItems: PickerItem[] = props.instructions.map((doc) => {
     const globallyDisabled = globalDisabledInstructionSet.value.has(doc.id);
-    const filename = doc.path.split("/").pop() || doc.path;
+    const filename = doc.path.split(/[\\/]/).pop() || doc.path;
     return {
       id: doc.id,
       type: "instruction",

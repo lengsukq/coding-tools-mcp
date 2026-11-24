@@ -106,7 +106,7 @@ pub(super) fn quality_gate(ctx: &ToolContext, args: &Value) -> Result<Value, Wor
             }
             Err(error) => Err(WorkspaceError::ToolDetails {
                 code: "POLICY_REJECTED",
-                message: error.0,
+                message: error.to_string(),
                 category: "policy",
                 retryable: false,
                 details: json!({

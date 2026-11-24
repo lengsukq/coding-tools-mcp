@@ -483,7 +483,8 @@ mod tests {
             dangerous_policy,
             crate::tools::registry::ToolProfile::Compact,
             harness.path().to_path_buf(),
-        );
+        )
+        .expect("dangerous ctx");
 
         let out = call_tool(
             &dangerous_ctx,

@@ -3,6 +3,7 @@ mod download;
 pub(crate) mod frp;
 pub(crate) mod helpers;
 mod logs;
+pub(crate) mod process;
 mod software;
 
 pub(crate) use logs::rotate_log_if_needed;

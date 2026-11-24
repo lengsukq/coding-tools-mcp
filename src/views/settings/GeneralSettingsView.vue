@@ -280,10 +280,18 @@ function saveActiveSection() {
 }
 
 useUnsavedChanges(
-  "应用设置 · " + (SETTINGS_NAV.find((item) => item.value === props.section)?.label ?? "通用"),
+  () => "应用设置 · " + (SETTINGS_NAV.find((item) => item.value === props.section)?.label ?? "通用"),
   activeUnsavedDirty,
   saveActiveSection,
 );
+
+async function openRepository() {
+  try {
+    await openUrl(REPO_URL);
+  } catch (error) {
+    showToast(String(error), { title: "打开仓库页面失败", kind: "error" });
+  }
+}
 
 async function checkUpdate() {
   checkingUpdate.value = true;
@@ -487,7 +495,7 @@ onMounted(() => {
           <p class="ui-secondary text-sm leading-6">统一编排多工作区上下文、跨设备联邦路由、AI 修改快照对比与任务验收门禁。</p>
           <div class="ui-actions mt-5">
             <BaseButton variant="secondary" :busy="checkingUpdate" @click="checkUpdate">检查更新</BaseButton>
-            <BaseButton variant="ghost" @click="openUrl(REPO_URL)">仓库与帮助</BaseButton>
+            <BaseButton variant="ghost" @click="openRepository">仓库与帮助</BaseButton>
           </div>
         </GlassCard>
 

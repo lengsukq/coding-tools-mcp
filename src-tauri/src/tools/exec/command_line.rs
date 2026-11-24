@@ -50,7 +50,11 @@ pub(crate) fn split_windows_command(command: &str) -> Result<Vec<String>, &'stat
                 arg.extend(std::iter::repeat_n('\\', slashes));
                 match chars.peek() {
                     Some(c) if c.is_whitespace() && !quoted => break,
-                    Some(_) => arg.push(chars.next().unwrap()),
+                    Some(_) => {
+                        if let Some(next_char) = chars.next() {
+                            arg.push(next_char);
+                        }
+                    }
                     None => break,
                 }
             }

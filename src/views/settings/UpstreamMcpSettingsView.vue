@@ -55,6 +55,7 @@ const {
   openToolsModal,
   saveDisabledTools,
   openImportModal,
+  updateCandidateSelection,
   runLocalScan,
   runParseJson,
   submitImport,
@@ -216,6 +217,7 @@ const {
       @update:json-text="importJsonText = $event"
       @update:replace-source-configs="replaceSourceConfigs = $event"
       @update:connect-mode="takeoverConnectMode = $event"
+      @update-selection="updateCandidateSelection($event.id, $event.field, $event.value)"
       @rescan="runLocalScan"
       @parse-json="runParseJson"
       @submit-import="submitImport"

@@ -16,6 +16,7 @@ import { getLastWorkspaceId } from "$lib/api/settings";
 import { getServiceUsageStats, type ServiceUsageStats } from "$lib/api/usage";
 import { openWorkspaceDirectory } from "$lib/api/workspaces";
 import { useClipboard } from "$lib/composables/use-clipboard";
+import { APP_EVENTS, dispatchAppEvent } from "$lib/events";
 import { buildUsageChart, buildUsagePoint, summarizeUsage, type UsagePoint } from "$lib/dashboard";
 import {
   dashboardPreferences,
@@ -161,7 +162,7 @@ const chart = computed(() => buildUsageChart(samples.value));
 const totals = computed(() => summarizeUsage(usage.value));
 
 function addWorkspace() {
-  window.dispatchEvent(new CustomEvent("coding-tools:add-workspace"));
+  dispatchAppEvent(APP_EVENTS.ADD_WORKSPACE);
 }
 
 function visible(id: DashboardModuleId) {

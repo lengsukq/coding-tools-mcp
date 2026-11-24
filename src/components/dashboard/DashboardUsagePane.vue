@@ -2,8 +2,9 @@
 import { computed } from "vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
 import type { ServiceUsageStats } from "$lib/api/usage";
-import { formatCount, type UsageChart, type UsagePoint, type UsageTotals } from "$lib/dashboard";
+import type { UsageChart, UsagePoint, UsageTotals } from "$lib/dashboard";
 import type { DashboardWorkspaceRow } from "$lib/dashboard-types";
+import { formatCompactNumber } from "$lib/formatters";
 
 const props = defineProps<{
   auxiliaryError: string;
@@ -42,19 +43,19 @@ const tokensByWorkspace = computed(() => {
       <div class="ui-metric-grid">
         <div>
           <span>估算 Tokens</span>
-          <strong>{{ formatCount(totals.estimatedTokens) }}</strong>
+          <strong>{{ formatCompactNumber(totals.estimatedTokens) }}</strong>
         </div>
         <div>
           <span>工具调用</span>
-          <strong>{{ formatCount(totals.toolCallCount) }}</strong>
+          <strong>{{ formatCompactNumber(totals.toolCallCount) }}</strong>
         </div>
         <div>
           <span>总请求数</span>
-          <strong>{{ formatCount(totals.requestCount) }}</strong>
+          <strong>{{ formatCompactNumber(totals.requestCount) }}</strong>
         </div>
         <div>
           <span>错误响应</span>
-          <strong>{{ formatCount(totals.errorCount) }}</strong>
+          <strong>{{ formatCompactNumber(totals.errorCount) }}</strong>
         </div>
       </div>
 
@@ -75,15 +76,15 @@ const tokensByWorkspace = computed(() => {
         </svg>
         <p v-else class="py-6 text-center text-xs text-[var(--ui-text-muted)]">正在积累趋势样本，下一次采样后自动绘制曲线…</p>
         <p class="ui-muted">
-          输入 {{ formatCount(totals.estimatedInputTokens) }} · 输出 {{ formatCount(totals.estimatedOutputTokens) }} · 工具载荷
-          {{ formatCount(totals.estimatedToolCallTokens) }}
+          输入 {{ formatCompactNumber(totals.estimatedInputTokens) }} · 输出 {{ formatCompactNumber(totals.estimatedOutputTokens) }} · 工具载荷
+          {{ formatCompactNumber(totals.estimatedToolCallTokens) }}
         </p>
       </div>
 
       <div v-if="ordered.length" class="space-y-0.5">
         <p v-for="row in ordered" :key="row.workspace.id" class="ui-data-row text-xs">
           <span class="font-medium text-[var(--ui-text-secondary)]">{{ row.workspace.name }}</span>
-          <strong class="font-mono">{{ formatCount(tokensByWorkspace.get(row.workspace.id) ?? 0) }}</strong>
+          <strong class="font-mono">{{ formatCompactNumber(tokensByWorkspace.get(row.workspace.id) ?? 0) }}</strong>
         </p>
       </div>
     </div>

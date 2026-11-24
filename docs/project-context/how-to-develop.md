@@ -7,11 +7,11 @@
 桌面端运行：
 
 ```bash
-npm ci
-npm run desktop
+pnpm install --frozen-lockfile
+pnpm run desktop
 ```
 
-只开发前端时可以使用 `npm run dev`，但它不能验证 Tauri IPC、系统托盘、Runtime、Keyring 等桌面能力，因此功能验收仍应回到 `npm run desktop`。
+只开发前端时可以使用 `pnpm run dev`，但它不能验证 Tauri IPC、系统托盘、Runtime、Keyring 等桌面能力，因此功能验收仍应回到 `pnpm run desktop`。
 
 ## Planning Mode
 
@@ -94,15 +94,19 @@ MCP OAuth 使用 `auth/oauth_flow.rs`。修改 OAuth 时至少保持：
 
 ## 提交前质量门
 
-```bash
-npm run check
-npm run build
+统一执行单个入口即可覆盖全部前端、脚本与 Rust（桌面 + Linux 无头）质量门：
 
-cd src-tauri
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets --locked
+```bash
+pnpm run verify
 ```
+
+可选启用仓库内置原生 Git `pre-push` 钩子：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+也可按需单独运行：`pnpm run check:fe`、`pnpm run lint`、`pnpm run check:dead`、`pnpm run check:rust:fmt`、`pnpm run check:rust:clippy`、`pnpm run check:rust:test`。
 
 本机缺少 rustfmt/clippy component 时不要静默跳过；记录环境限制，并保证 CI 的 stable toolchain 安装对应 component。
 

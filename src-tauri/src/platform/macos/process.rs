@@ -1,11 +1,13 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
+pub use crate::platform::process_common::ProcessTreeMemory;
+use crate::platform::process_common::{
+    collect_descendants_bfs, normalized_image_path, terminate_process_tree_unix,
+};
 
 const RUSAGE_INFO_V2: libc::c_int = 2;
-const TERM_WAIT_STEP_MS: u64 = 20;
-const TERM_WAIT_MAX_STEPS: usize = 10;
 
 #[repr(C)]
 struct RUsageInfoV2 {
@@ -52,14 +54,6 @@ pub fn trim_process_heap() {
     }
 }
 
-/// Memory footprint sample for the desktop process tree (main + WKWebView XPC helpers).
-#[derive(Debug, Clone, Default)]
-pub struct ProcessTreeMemory {
-    pub main_bytes: u64,
-    pub webview_bytes: u64,
-    pub webview_process_count: u32,
-}
-
 pub fn is_process_alive(pid: u32) -> bool {
     let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
         return false;
@@ -86,27 +80,7 @@ pub fn process_image_path(pid: u32) -> AppResult<Option<String>> {
 
 pub fn terminate_process_tree(root_pid: u32) -> AppResult<()> {
     let children = collect_child_pids(root_pid)?;
-    for pid in children.iter().copied().rev() {
-        signal_pid(pid, libc::SIGTERM)?;
-    }
-    signal_pid(root_pid, libc::SIGTERM)?;
-
-    for _ in 0..TERM_WAIT_MAX_STEPS {
-        if !is_process_alive(root_pid) && children.iter().all(|&pid| !is_process_alive(pid)) {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(TERM_WAIT_STEP_MS));
-    }
-
-    for &pid in &children {
-        if is_process_alive(pid) {
-            let _ = signal_pid(pid, libc::SIGKILL);
-        }
-    }
-    if is_process_alive(root_pid) {
-        signal_pid(root_pid, libc::SIGKILL)?;
-    }
-    Ok(())
+    terminate_process_tree_unix(root_pid, &children, is_process_alive)
 }
 
 pub fn terminate_processes_by_image_path(image_path: &Path) -> AppResult<usize> {
@@ -226,10 +200,6 @@ fn is_webkit_helper_path(path: &str) -> bool {
     name.starts_with("com.apple.webkit.")
 }
 
-fn normalized_image_path(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
 fn collect_child_pids(root_pid: u32) -> AppResult<Vec<u32>> {
     let pids = super::net::all_pids()?;
     collect_child_pids_from(root_pid, &pids)
@@ -249,34 +219,6 @@ fn collect_child_pids_from(root_pid: u32, pids: &[i32]) -> AppResult<Vec<u32>> {
         }
     }
     Ok(collect_descendants_bfs(root_pid, &children_by_parent))
-}
-
-fn collect_descendants_bfs(root_pid: u32, children_by_parent: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
-    let mut queue = VecDeque::from([root_pid]);
-    let mut seen = HashSet::from([root_pid]);
-    let mut ordered = Vec::new();
-    while let Some(parent) = queue.pop_front() {
-        if let Some(children) = children_by_parent.get(&parent) {
-            for &child in children {
-                if seen.insert(child) {
-                    ordered.push(child);
-                    queue.push_back(child);
-                }
-            }
-        }
-    }
-    ordered
-}
-
-fn signal_pid(pid: u32, signal: i32) -> AppResult<()> {
-    let result = unsafe { libc::kill(pid as i32, signal) };
-    if result == 0 || std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
-        return Ok(());
-    }
-    Err(AppError::Message(format!(
-        "kill({pid}, {signal}) failed: {}",
-        std::io::Error::last_os_error()
-    )))
 }
 
 #[cfg(test)]

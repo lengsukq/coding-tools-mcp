@@ -1,13 +1,13 @@
 # Coding Tools MCP - 项目上下文
 
-> 本目录记录当前代码事实，供开发者和 Agent 快速恢复架构上下文。历史方案与已经完成的迁移过程保留在 `docs/specs/`，不应反向覆盖这里的当前状态。
+> 本目录记录当前代码事实，供开发者和 Agent 快速恢复架构上下文。
 
 ## 项目概览
 
 | 属性 | 当前值 |
 | --- | --- |
 | 项目名称 | Coding Tools MCP |
-| 版本 | `0.3.9` |
+| 版本 | `0.3.10` |
 | 桌面端 | Tauri 2 |
 | 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
@@ -48,8 +48,6 @@
 - [设计系统](./design-system.md)
 - [UI 页面结构](./ui/page-structure.json)
 - [UI 组件目录](./ui/component-catalog.json)
-- [全应用优化验收记录](./ui/verification/acceptance.md)
-- [UI 架构与代码审查](./ui/verification/architecture-review.md)
 
 ## 开发时的事实来源
 
@@ -57,8 +55,7 @@
 
 1. 当前代码与测试；
 2. `docs/project-context/` 当前事实文档；
-3. 当前功能对应的 `docs/specs/`；
-4. 带日期的历史规格、验证记录与 `docs/history-session/`，仅用于追溯，不作为当前 Runtime 实现依据。
+3. `docs/history-session/` 仅用于会话追溯，不作为当前 Runtime 实现依据。
 
 Agent 的分析与交付前置要求以当前 `AGENTS.md` 和 `.agents/skills/mcp-probe-kit/SKILL.md` 为准。
 

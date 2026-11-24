@@ -4,7 +4,7 @@ use super::*;
 pub async fn list_workspaces(app: AppHandle) -> AppResult<Vec<WorkspaceProfile>> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
-            .with_workspaces(|store| Ok(store.list().to_vec()))
+            .with_data(|store| Ok(store.list().to_vec()))
     })
     .await
     .map_err(|err| AppError::Message(format!("读取工作区列表失败: {err}")))?
@@ -17,7 +17,7 @@ pub async fn create_workspace(
     name: Option<String>,
 ) -> AppResult<WorkspaceProfile> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<AppState>().with_workspaces(|store| {
+        app.state::<AppState>().with_data(|store| {
             let profile = WorkspaceProfile::new(path, name);
             store.add(profile.clone())?;
             Ok(profile)
@@ -30,7 +30,7 @@ pub async fn create_workspace(
 #[tauri::command]
 pub async fn update_workspace(app: AppHandle, profile: WorkspaceProfile) -> AppResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<AppState>().with_workspaces(|store| {
+        app.state::<AppState>().with_data(|store| {
             if store.get(&profile.id).is_none() {
                 return Err(AppError::Message(format!(
                     "workspace not found: {}",
@@ -62,7 +62,7 @@ pub async fn delete_workspace(app: AppHandle, id: String) -> AppResult<()> {
         crate::tools::session::drop_workspace_session_store(&workspace_path);
         state.gateway.drop_workspace(&id);
         // Single atomic write: `DataStore::remove` deletes both the profile and its secrets.
-        state.with_workspaces(|store| {
+        state.with_data(|store| {
             let _ = store.remove(&id)?;
             Ok(())
         })

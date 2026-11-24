@@ -162,8 +162,18 @@ impl PolicySettings {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct PolicyError(pub String);
+pub enum PolicyError {
+    #[error("PROTECTED_REPOSITORY_ASSET: {0}")]
+    ProtectedRepositoryAsset(String),
+    #[error("DANGEROUS_OPERATION_REQUIRES_CONFIRMATION: {0}")]
+    ConfirmationRequired(String),
+    #[error("{0}")]
+    CommandNotAllowlisted(String),
+    #[error("{0}")]
+    ShellSyntaxRejected(String),
+    #[error("{0}")]
+    Rejected(String),
+}
 
 pub fn parse_allowed_commands(configured: &str) -> HashSet<String> {
     let trimmed = configured.trim();
@@ -258,19 +268,21 @@ pub fn validate_command_for_workspace(
     let command = arguments
         .get("cmd")
         .and_then(Value::as_str)
-        .ok_or_else(|| PolicyError("exec_command requires a non-empty cmd".into()))?;
+        .ok_or_else(|| PolicyError::Rejected("exec_command requires a non-empty cmd".into()))?;
     if command.trim().is_empty() {
-        return Err(PolicyError("exec_command requires a non-empty cmd".into()));
+        return Err(PolicyError::Rejected(
+            "exec_command requires a non-empty cmd".into(),
+        ));
     }
     if command.len() > 4_000 {
-        return Err(PolicyError("Command is too long".into()));
+        return Err(PolicyError::Rejected("Command is too long".into()));
     }
-    let parts = split_command(command).map_err(|message| PolicyError(message.into()))?;
+    let parts = split_command(command).map_err(|message| PolicyError::Rejected(message.into()))?;
     if parts.is_empty() {
-        return Err(PolicyError("Empty command".into()));
+        return Err(PolicyError::Rejected("Empty command".into()));
     }
     if has_forbidden_shell_syntax(command) {
-        return Err(PolicyError(
+        return Err(PolicyError::ShellSyntaxRejected(
             "Shell chaining, redirection and expansion are not allowed".into(),
         ));
     }
@@ -279,12 +291,12 @@ pub fn validate_command_for_workspace(
     if (is_dangerous || is_interpreter_mutation)
         && command_targets_protected_repository_asset(command)
     {
-        return Err(PolicyError(
-            "PROTECTED_REPOSITORY_ASSET: 禁止删除或递归清空 .git/.github".into(),
+        return Err(PolicyError::ProtectedRepositoryAsset(
+            "禁止删除或递归清空 .git/.github".into(),
         ));
     }
     if is_interpreter_mutation && contains_external_path(&parts[1..], workspace) {
-        return Err(PolicyError(
+        return Err(PolicyError::Rejected(
             "WORKSPACE_PATH_PROTECTED: workspace scope 禁止通过子进程写入 Workspace 外部路径"
                 .into(),
         ));
@@ -295,14 +307,13 @@ pub fn validate_command_for_workspace(
             .and_then(Value::as_bool)
             .unwrap_or(false)
     {
-        return Err(PolicyError(
-            "DANGEROUS_OPERATION_REQUIRES_CONFIRMATION: dangerous command requires confirm=true"
-                .into(),
+        return Err(PolicyError::ConfirmationRequired(
+            "dangerous command requires confirm=true".into(),
         ));
     }
     if !policy.skip_permission_gates() {
         if network_command_pattern().is_match(command) && !policy.network_allowed() {
-            return Err(PolicyError(
+            return Err(PolicyError::Rejected(
                 "Network-looking commands are blocked in safe permission mode".into(),
             ));
         }
@@ -321,11 +332,13 @@ pub fn validate_command_for_workspace(
             || (policy.workspace_local_entries && workspace_entry_candidate))
         {
             let stem = strip_windows_executable_suffix(base_name);
-            return Err(PolicyError(format!("Command is not allowlisted: {stem}")));
+            return Err(PolicyError::CommandNotAllowlisted(format!(
+                "Command is not allowlisted: {stem}"
+            )));
         }
 
         if arguments.get("env").is_some() {
-            return Err(PolicyError(
+            return Err(PolicyError::Rejected(
                 "Environment variables cannot be supplied unless permission_mode is dangerous"
                     .into(),
             ));
@@ -336,7 +349,9 @@ pub fn validate_command_for_workspace(
 
     if let Some(timeout_ms) = arguments.get("timeout_ms").and_then(Value::as_u64) {
         if timeout_ms > 600_000 {
-            return Err(PolicyError("Command timeout exceeds 10 minutes".into()));
+            return Err(PolicyError::Rejected(
+                "Command timeout exceeds 10 minutes".into(),
+            ));
         }
     }
 
@@ -367,34 +382,34 @@ fn strip_windows_executable_suffix(name: &str) -> &str {
 
 fn validate_env_argument(env_value: &Value) -> Result<(), PolicyError> {
     let Some(map) = env_value.as_object() else {
-        return Err(PolicyError(
+        return Err(PolicyError::Rejected(
             "env must be a JSON object of string values".into(),
         ));
     };
     if map.len() > MAX_ENV_VARS {
-        return Err(PolicyError(format!(
+        return Err(PolicyError::Rejected(format!(
             "Too many environment variables (max {MAX_ENV_VARS})"
         )));
     }
     for (key, value) in map {
         if key.is_empty() || key.contains('=') || key.contains('\0') {
-            return Err(PolicyError(format!(
+            return Err(PolicyError::Rejected(format!(
                 "Invalid environment variable name: {key}"
             )));
         }
         let upper = key.to_ascii_uppercase();
         if FORBIDDEN_ENV_KEYS.contains(&upper.as_str()) {
-            return Err(PolicyError(format!(
+            return Err(PolicyError::Rejected(format!(
                 "Protected environment variable cannot be overridden: {key}"
             )));
         }
         let Some(text) = value.as_str() else {
-            return Err(PolicyError(format!(
+            return Err(PolicyError::Rejected(format!(
                 "Environment variable `{key}` must be a string"
             )));
         };
         if text.contains('\0') || text.len() > MAX_ENV_VALUE_BYTES {
-            return Err(PolicyError(format!(
+            return Err(PolicyError::Rejected(format!(
                 "Environment variable `{key}` value is invalid or exceeds {MAX_ENV_VALUE_BYTES} bytes"
             )));
         }
@@ -416,7 +431,7 @@ fn validate_exec_boundary(
         .and_then(Value::as_str)
         .unwrap_or("workspace");
     if filesystem_scope != "workspace" {
-        return Err(PolicyError(
+        return Err(PolicyError::Rejected(
             "EXTERNAL_EXECUTION_NOT_ALLOWED: exec_command 只允许在 Workspace 内执行".into(),
         ));
     }
@@ -426,12 +441,13 @@ fn validate_exec_boundary(
             if path.components().any(|part| part == Component::ParentDir)
                 || (path.is_absolute() && workspace.is_none())
             {
-                return Err(PolicyError(
+                return Err(PolicyError::Rejected(
                     "workdir must stay inside the configured workspace".into(),
                 ));
             }
             if let Some(workspace) = workspace {
-                resolve_workdir(workspace, workdir).map_err(|err| PolicyError(err.message()))?;
+                resolve_workdir(workspace, workdir)
+                    .map_err(|err| PolicyError::Rejected(err.message()))?;
             }
         }
     }
@@ -469,13 +485,13 @@ pub fn validate_patch(arguments: &Value, policy: &PolicySettings) -> Result<(), 
     let patch = arguments
         .get("patch")
         .and_then(Value::as_str)
-        .ok_or_else(|| PolicyError("apply_patch requires a patch".into()))?;
+        .ok_or_else(|| PolicyError::Rejected("apply_patch requires a patch".into()))?;
     if patch.trim().is_empty() {
-        return Err(PolicyError("apply_patch requires a patch".into()));
+        return Err(PolicyError::Rejected("apply_patch requires a patch".into()));
     }
 
     if patch.len() > policy.max_patch_bytes {
-        return Err(PolicyError("Patch is too large".into()));
+        return Err(PolicyError::Rejected("Patch is too large".into()));
     }
 
     Ok(())
@@ -662,7 +678,7 @@ mod tests {
             ..PolicySettings::default()
         };
         let err = validate_patch(&json!({ "patch": "01234567890" }), &policy).unwrap_err();
-        assert!(err.0.contains("too large"));
+        assert!(err.to_string().contains("too large"));
     }
 
     #[test]

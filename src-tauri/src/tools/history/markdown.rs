@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::tools::io_util::sha256_hex;
+use crate::util::hash::sha256_hex;
 
 use super::model::{CheckpointRecord, InitialInputRecord};
 

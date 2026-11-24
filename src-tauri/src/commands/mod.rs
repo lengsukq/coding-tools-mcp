@@ -3,7 +3,6 @@ mod app_info;
 mod computer;
 mod frp_profiles;
 mod global_gateway;
-mod health;
 mod history;
 mod lan_peers;
 mod logs;
@@ -34,9 +33,8 @@ pub use frp_profiles::{
 pub use global_gateway::{
     check_global_gateway_health, get_gemini_local_bridge_status, get_global_gateway_config,
     get_global_gateway_status, prepare_gemini_local_bridge, restart_global_cloudflare_tunnel,
-    set_global_gateway_config, start_global_gateway, stop_global_gateway,
+    set_global_gateway_config,
 };
-pub use health::run_global_health_checks;
 pub use history::list_history_sessions;
 pub use lan_peers::{
     cancel_lan_pairing_pin, create_lan_pairing_pin, get_lan_peers_overview, pair_lan_peer,
@@ -49,13 +47,10 @@ pub use planning::{
     reject_plan_review, reset_planning_state, set_planning_mode,
 };
 pub use runtime::{
-    get_global_mcp_overview, get_runtime_status, restart_runtime, restore_runtime_state,
-    start_runtime, stop_runtime,
+    get_global_mcp_overview, get_runtime_status, restore_runtime_state, start_runtime, stop_runtime,
 };
 pub use runtime_settings::{get_global_runtime_settings, set_global_runtime_settings};
-pub use secrets::{
-    get_shared_secret, regenerate_shared_secret, set_shared_secret, set_shared_secrets,
-};
+pub use secrets::{get_shared_secret, regenerate_shared_secret, set_shared_secrets};
 pub use software::{
     get_download_config, install_software, list_software, set_download_config, uninstall_software,
 };

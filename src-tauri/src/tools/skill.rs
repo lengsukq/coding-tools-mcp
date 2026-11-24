@@ -43,7 +43,7 @@ pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceErro
         [] => Err(WorkspaceError::Tool {
             code: "SKILL_NOT_FOUND",
             message: "Skill not found in discovered agent sources".into(),
-            category: "runtime",
+            category: "not_found",
             retryable: false,
         }),
         [skill] => Ok(tool_ok(json!({
@@ -53,7 +53,7 @@ pub fn get_skill(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceErro
         _ => Err(WorkspaceError::ToolDetails {
             code: "AMBIGUOUS_SKILL",
             message: "Multiple skills use this name; call get_skill with id instead".into(),
-            category: "runtime",
+            category: "validation",
             retryable: false,
             details: json!({
                 "matches": matches.iter().map(|skill| &skill.descriptor).collect::<Vec<_>>()

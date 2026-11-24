@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::tools::io_util::truncate_utf8;
+use crate::util::text::truncate_utf8;
 
 const MAX_HIGHLIGHTS: usize = 10;
 const HIGHLIGHT_BYTES: usize = 512;

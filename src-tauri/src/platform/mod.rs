@@ -45,6 +45,7 @@ mod command;
 pub mod local_ipc;
 mod open;
 mod paths;
+pub(crate) mod process_common;
 mod single_instance;
 
 pub(crate) use command::background_command;

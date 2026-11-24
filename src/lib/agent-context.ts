@@ -12,8 +12,6 @@ export const AGENT_SOURCE_OPTIONS = [
   { value: "custom", label: "Custom", detail: "自定义文件或 Skills 目录" },
 ] as const;
 
-export type AgentSourceId = (typeof AGENT_SOURCE_OPTIONS)[number]["value"];
-
 export function toggleSource(values: string[], value: string, enabled: boolean): string[] {
   if (value === "auto") {
     return enabled ? ["auto"] : ["disabled"];

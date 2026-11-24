@@ -48,7 +48,10 @@ const localCopied = ref(false);
 const prompt = computed(() => `请使用 ${effectiveServerName.value} 调用 workspace_list，列出可用工作区；然后先询问我需要进入哪个工作区，不要猜测路径。`);
 
 const BRIDGE_REFRESH_DEBOUNCE_MS = 60;
+const COPY_FEEDBACK_MS = 1800;
 let bridgeRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let copiedResetTimer: ReturnType<typeof setTimeout> | undefined;
+let localCopiedResetTimer: ReturnType<typeof setTimeout> | undefined;
 let bridgeRefreshSeq = 0;
 
 async function refreshBridgeStatus() {
@@ -79,6 +82,8 @@ watch(
 onBeforeUnmount(() => {
   bridgeRefreshSeq += 1;
   if (bridgeRefreshTimer !== undefined) clearTimeout(bridgeRefreshTimer);
+  if (copiedResetTimer !== undefined) clearTimeout(copiedResetTimer);
+  if (localCopiedResetTimer !== undefined) clearTimeout(localCopiedResetTimer);
 });
 
 async function copyEndpoint() {
@@ -86,6 +91,11 @@ async function copyEndpoint() {
   try {
     await navigator.clipboard.writeText(props.endpoint);
     copied.value = true;
+    if (copiedResetTimer !== undefined) clearTimeout(copiedResetTimer);
+    copiedResetTimer = setTimeout(() => {
+      copied.value = false;
+      copiedResetTimer = undefined;
+    }, COPY_FEEDBACK_MS);
     showToast("Gemini MCP 地址已复制", { kind: "success" });
   } catch (error) {
     showToast(String(error), { title: "复制失败", kind: "error" });
@@ -100,6 +110,11 @@ async function copyLocalCommand() {
     bridgeStatus.value = status;
     await navigator.clipboard.writeText(status.command);
     localCopied.value = true;
+    if (localCopiedResetTimer !== undefined) clearTimeout(localCopiedResetTimer);
+    localCopiedResetTimer = setTimeout(() => {
+      localCopied.value = false;
+      localCopiedResetTimer = undefined;
+    }, COPY_FEEDBACK_MS);
     showToast("已生成本地桥接凭据并复制命令", { kind: "success" });
   } catch (error) {
     showToast(String(error), { title: "准备或复制失败", kind: "error" });

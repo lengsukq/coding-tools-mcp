@@ -63,22 +63,16 @@
     inset 0 1px 0 var(--ui-specular-top),
     0 1px 2px rgba(20, 32, 52, 0.03),
     0 10px 28px -8px rgba(24, 39, 64, 0.065);
-  --ui-shadow-hover:
-    inset 0 1px 0 var(--ui-specular-top),
-    0 4px 12px rgba(20, 32, 52, 0.05),
-    0 16px 36px -10px rgba(24, 39, 64, 0.1);
   --ui-shadow-overlay:
     inset 0 1px 0 rgba(255, 255, 255, 0.82),
     0 24px 68px -12px rgba(15, 26, 46, 0.24);
 
   /* Concentric Large Radii System */
   --ui-radius-pill: 999px;
-  --ui-radius-xs: 10px;
   --ui-radius-control: 14px;
   --ui-radius-row: 14px;
   --ui-radius-inset: 18px;
   --ui-radius-card: 28px;
-  --ui-radius-panel: 28px;
   --ui-radius-shell: 28px;
   --ui-radius-overlay: 32px;
 
@@ -91,7 +85,6 @@
   --ui-shell-gap: 12px;
   --ui-sidebar-width: clamp(228px, 18.5vw, 256px);
   --ui-page-max: 1440px;
-  --ui-reading-max: 1160px;
   --ui-page-gutter: clamp(16px, 2vw, 30px);
   --ui-section-gap: 20px;
 
@@ -100,28 +93,6 @@
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
   --focus-ring: 0 0 0 3px var(--ui-accent-soft);
-
-  /* Token aliases kept for seamless cross-view compatibility */
-  --page-bg: var(--ui-canvas);
-  --card-bg: var(--ui-surface);
-  --surface: var(--ui-surface);
-  --surface-hover: var(--ui-surface-hover);
-  --card-border: var(--ui-line);
-  --border: var(--ui-line);
-  --border-light: var(--ui-line);
-  --card-border-active: var(--ui-accent);
-  --card-radius: var(--ui-radius-card);
-  --text-main: var(--ui-text);
-  --text-primary: var(--ui-text);
-  --text-secondary: var(--ui-text-secondary);
-  --text-muted: var(--ui-text-muted);
-  --primary: var(--ui-accent);
-  --primary-soft: var(--ui-accent-soft);
-  --primary-gradient: linear-gradient(135deg, var(--ui-accent), var(--ui-accent-strong));
-  --success: var(--ui-success);
-  --warning: var(--ui-warning);
-  --danger: var(--ui-danger);
-  --shadow-sm: var(--ui-shadow-subtle);
 }
 
 :root.dark,
@@ -164,9 +135,6 @@
   --ui-shadow-subtle:
     inset 0 1px 0 var(--ui-specular-top),
     0 10px 30px -10px rgba(0, 0, 0, 0.32);
-  --ui-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11),
-    0 16px 38px -10px rgba(0, 0, 0, 0.44);
   --ui-shadow-overlay:
     inset 0 1px 0 rgba(255, 255, 255, 0.11),
     0 28px 72px -12px rgba(0, 0, 0, 0.62);
@@ -458,9 +426,6 @@
   gap: var(--ui-section-gap);
   min-width: 0;
 }
-.ui-page--reading {
-  max-width: var(--ui-reading-max);
-}
 
 /* Page Header */
 .ui-page-header {
@@ -518,11 +483,6 @@
   background:
     linear-gradient(145deg, color-mix(in srgb, var(--ui-accent) 6%, transparent), transparent 55%),
     var(--ui-surface);
-}
-.ui-surface--subtle {
-  background: var(--ui-surface-subtle);
-  box-shadow: none;
-  border-radius: var(--ui-radius-inset);
 }
 
 /* L1: Floating Glass Overlays & Modals */
@@ -640,54 +600,7 @@
   color: var(--ui-accent);
 }
 
-/* L4: Capsule Pill Tabs & Segmented Controls */
-.ui-tabs {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px;
-  border-radius: var(--ui-radius-pill);
-  border: 1px solid var(--ui-line);
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-subtle);
-  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturation));
-  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturation));
-  overflow-x: auto;
-  max-width: 100%;
-  scrollbar-width: none;
-}
-.ui-tabs::-webkit-scrollbar {
-  display: none;
-}
-.ui-tabs button {
-  min-height: 34px;
-  padding: 6px 16px;
-  border-radius: var(--ui-radius-pill);
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 520;
-  color: var(--ui-text-secondary);
-}
-.ui-tabs button:hover {
-  color: var(--ui-text);
-  background: var(--ui-surface-hover);
-}
-.ui-tabs button.active {
-  background: var(--ui-surface-raised);
-  color: var(--ui-accent);
-  font-weight: 620;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 20%, var(--ui-line)),
-    0 2px 8px rgba(15, 26, 46, 0.08);
-}
-.ui-tab-panel {
-  min-width: 0;
-  margin-top: 18px;
-}
-.ui-tab-panel:focus {
-  outline: none;
-}
-
+/* L4: Capsule Segmented Controls */
 .ui-options {
   display: inline-flex;
   gap: 4px;
@@ -1176,20 +1089,6 @@
   border-bottom: 1px solid var(--ui-line);
 }
 
-.ui-select-native {
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
-  background-image: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ui-select-native::picker-icon {
-  display: none;
-}
-
 /* L2: Secondary Left Matte Glass Navigation Rail (Single-Screen Split Pages) */
 .ui-subnav-layout {
   display: grid;
@@ -1361,9 +1260,6 @@
   }
   .ui-list-action {
     flex-wrap: wrap;
-  }
-  .ui-tabs button {
-    padding-inline: 12px;
   }
   .ui-save-bar {
     flex-wrap: wrap;

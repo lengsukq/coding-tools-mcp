@@ -9,8 +9,6 @@
 :root[data-palette="ocean"] {
   --pal-primary: #0071e3;
   --pal-primary-dark: #005bb5;
-  --pal-primary-light: #64b5ff;
-  --pal-accent: #5856d6;
   --pal-rgb: 0, 113, 227;
   --pal-accent-rgb: 88, 86, 214;
 }
@@ -18,8 +16,6 @@
 :root[data-palette="coral"] {
   --pal-primary: #e2574c;
   --pal-primary-dark: #c74338;
-  --pal-primary-light: #fcb6ad;
-  --pal-accent: #e2845c;
   --pal-rgb: 226, 87, 76;
   --pal-accent-rgb: 226, 132, 92;
 }
@@ -27,8 +23,6 @@
 :root[data-palette="grape"] {
   --pal-primary: #8e4ec6;
   --pal-primary-dark: #7440a8;
-  --pal-primary-light: #d0a2ff;
-  --pal-accent: #d6409f;
   --pal-rgb: 142, 78, 198;
   --pal-accent-rgb: 214, 64, 159;
 }
@@ -36,8 +30,6 @@
 :root[data-palette="emerald"] {
   --pal-primary: #0d9d6c;
   --pal-primary-dark: #0a7d57;
-  --pal-primary-light: #6ee7b7;
-  --pal-accent: #0ea5a4;
   --pal-rgb: 13, 157, 108;
   --pal-accent-rgb: 14, 165, 164;
 }
@@ -45,8 +37,6 @@
 :root[data-palette="amber"] {
   --pal-primary: #dd7d0a;
   --pal-primary-dark: #b56305;
-  --pal-primary-light: #fcd34d;
-  --pal-accent: #e2574c;
   --pal-rgb: 221, 125, 10;
   --pal-accent-rgb: 226, 87, 76;
 }
@@ -54,8 +44,6 @@
 :root[data-palette="sakura"] {
   --pal-primary: #d63384;
   --pal-primary-dark: #b0256a;
-  --pal-primary-light: #f9a8d4;
-  --pal-accent: #a855f7;
   --pal-rgb: 214, 51, 132;
   --pal-accent-rgb: 168, 85, 247;
 }
@@ -64,8 +52,6 @@
 .dark[data-palette="ocean"] {
   --pal-primary: #3898ff;
   --pal-primary-dark: #0a84ff;
-  --pal-primary-light: #80c2ff;
-  --pal-accent: #7d7aff;
   --pal-rgb: 56, 152, 255;
   --pal-accent-rgb: 125, 122, 255;
 }
@@ -74,8 +60,6 @@
 .dark[data-palette="coral"] {
   --pal-primary: #ff7468;
   --pal-primary-dark: #e2574c;
-  --pal-primary-light: #fcb6ad;
-  --pal-accent: #ffb37a;
   --pal-rgb: 255, 116, 104;
   --pal-accent-rgb: 255, 179, 122;
 }
@@ -84,8 +68,6 @@
 .dark[data-palette="grape"] {
   --pal-primary: #b07fe8;
   --pal-primary-dark: #8e4ec6;
-  --pal-primary-light: #dcbdff;
-  --pal-accent: #f06bb8;
   --pal-rgb: 176, 127, 232;
   --pal-accent-rgb: 240, 107, 184;
 }
@@ -94,8 +76,6 @@
 .dark[data-palette="emerald"] {
   --pal-primary: #34d399;
   --pal-primary-dark: #0e9f6e;
-  --pal-primary-light: #86efac;
-  --pal-accent: #2dd4bf;
   --pal-rgb: 52, 211, 153;
   --pal-accent-rgb: 45, 212, 191;
 }
@@ -104,8 +84,6 @@
 .dark[data-palette="amber"] {
   --pal-primary: #fbbf24;
   --pal-primary-dark: #d97706;
-  --pal-primary-light: #fde68a;
-  --pal-accent: #fb7185;
   --pal-rgb: 251, 191, 36;
   --pal-accent-rgb: 251, 113, 133;
 }
@@ -114,8 +92,6 @@
 .dark[data-palette="sakura"] {
   --pal-primary: #f472b6;
   --pal-primary-dark: #ec4899;
-  --pal-primary-light: #fbcfe8;
-  --pal-accent: #c084fc;
   --pal-rgb: 244, 114, 182;
   --pal-accent-rgb: 192, 132, 252;
 }

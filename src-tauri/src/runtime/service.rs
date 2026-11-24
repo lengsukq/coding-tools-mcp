@@ -45,8 +45,8 @@ pub struct GlobalMcpOverviewDto {
 
 pub fn collect_global_mcp_overview(state: &AppState) -> AppResult<GlobalMcpOverviewDto> {
     let runtime = state.with_runtime(|runtime| {
-        runtime.refresh_mcp();
-        Ok(runtime.mcp_status())
+        runtime.refresh();
+        Ok(runtime.status())
     })?;
     let workspaces = state
         .gateway
@@ -173,7 +173,7 @@ async fn stop_mcp_service_locked(
     await_listener_shutdown(handle, port).await;
     state.with_runtime(|runtime| {
         runtime.finish_stop();
-        Ok(runtime.mcp_status())
+        Ok(runtime.status())
     })
 }
 
@@ -189,7 +189,7 @@ async fn start_mcp_service_locked(
     };
     validate_global_auth(&settings.global_mcp_auth_type, bearer_token.as_deref())?;
     ensure_port_available(settings.global_gateway.local_port, "Global MCP").await?;
-    state.with_runtime(|runtime| runtime.start_mcp())?;
+    state.with_runtime(|runtime| runtime.start())?;
 
     if settings.global_gateway.enabled {
         if let Err(error) = global_gateway::ensure_started().await {
@@ -199,8 +199,8 @@ async fn start_mcp_service_locked(
 
     tokio::time::sleep(Duration::from_millis(250)).await;
     state.with_runtime(|runtime| {
-        runtime.refresh_mcp();
-        Ok(runtime.mcp_status())
+        runtime.refresh();
+        Ok(runtime.status())
     })
 }
 
@@ -246,10 +246,10 @@ async fn rebind_mcp_listener_only_locked(
     })?;
     let settings = state.with_settings(|store| Ok(store.settings()))?;
     ensure_port_available(settings.global_gateway.local_port, "Global MCP").await?;
-    state.with_runtime(|runtime| runtime.start_mcp())?;
+    state.with_runtime(|runtime| runtime.start())?;
     tokio::time::sleep(Duration::from_millis(120)).await;
     state.with_runtime(|runtime| {
-        runtime.refresh_mcp();
+        runtime.refresh();
         Ok(())
     })
 }

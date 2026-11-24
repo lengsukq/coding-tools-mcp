@@ -28,7 +28,7 @@ use crate::mcp::server::{
 };
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
-use crate::tool_audit::{record_tool_call, ToolAuditCall};
+use crate::tool_audit::{record_tool_call, ToolAuditCall, ToolAuditInput};
 use crate::tunnel::append_profile_log;
 use crate::workspace::AuthConfig;
 
@@ -404,6 +404,79 @@ fn mcp_discovery_payload() -> Value {
     mcp_discovery_payload_for("")
 }
 
+fn reject_upstream_self_loop(
+    state: &ListenerState,
+    headers: &HeaderMap,
+    body: &Value,
+) -> Option<Response> {
+    let origin = headers
+        .get(crate::upstream_mcp::UPSTREAM_ORIGIN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    let own_device_id = state
+        .gateway
+        .settings_snapshot()
+        .unwrap_or_else(AppSettings::load_or_default)
+        .lan_federation
+        .device_id;
+    if own_device_id.is_empty() || origin != own_device_id {
+        return None;
+    }
+    Some(
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": body.get("id").cloned().unwrap_or(Value::Null),
+                "error": {
+                    "code": -32602,
+                    "message": "UPSTREAM_SELF_LOOP_BLOCKED: 检测到上游 MCP 聚合自环调用当前 Coding Tools MCP 实例，已强制拦截。",
+                    "data": { "reason": "UPSTREAM_SELF_LOOP_BLOCKED", "retryable": false }
+                }
+            })),
+        )
+            .into_response(),
+    )
+}
+
+async fn execute_upstream_tool_call(
+    state: &ListenerState,
+    meta: &RpcRequestMeta,
+    auth: &AuthenticatedRequest,
+    effective_session_id: Option<&str>,
+    response_session_id: Option<String>,
+    body: &Value,
+) -> Response {
+    let gateway = Arc::clone(&state.gateway);
+    let scope_id = state.scope_id.clone();
+    let session_for_log = effective_session_id.map(str::to_string);
+    let meta_for_log = meta.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        log_request(&scope_id, session_for_log.as_deref(), &meta_for_log);
+    })
+    .await;
+    let mut audit_call = ToolAuditCall::new(ToolAuditInput {
+        request_id: &meta.request_id,
+        tool_name: &meta.tool_name,
+        session_id: effective_session_id,
+        auth_method: auth.method,
+        client_id: auth.client_id.as_deref(),
+        request_bytes: meta.request_bytes,
+        body,
+    });
+    let gateway_response =
+        handle_gateway_upstream_tool_call_async(&gateway, effective_session_id, body).await;
+    let response = gateway_response.body;
+    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
+    audit_call.set_execution_host(gateway_response.execution_host);
+    let _ = tokio::task::spawn_blocking(move || {
+        record_tool_call(audit_call, None, &response);
+    })
+    .await;
+    build_json_bytes_response(bytes, response_session_id)
+}
+
 async fn mcp_post(
     State(state): State<ListenerState>,
     PeerConnectAddr(remote): PeerConnectAddr,
@@ -417,33 +490,8 @@ async fn mcp_post(
     };
 
     // Anti-self-loop guard: reject upstream requests originating from this exact instance.
-    if let Some(origin) = headers
-        .get(crate::upstream_mcp::UPSTREAM_ORIGIN_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
-        let own_device_id = state
-            .gateway
-            .settings_snapshot()
-            .unwrap_or_else(AppSettings::load_or_default)
-            .lan_federation
-            .device_id;
-        if !own_device_id.is_empty() && origin == own_device_id {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "jsonrpc": "2.0",
-                    "id": body.get("id").cloned().unwrap_or(Value::Null),
-                    "error": {
-                        "code": -32602,
-                        "message": "UPSTREAM_SELF_LOOP_BLOCKED: 检测到上游 MCP 聚合自环调用当前 Coding Tools MCP 实例，已强制拦截。",
-                        "data": { "reason": "UPSTREAM_SELF_LOOP_BLOCKED", "retryable": false }
-                    }
-                })),
-            )
-                .into_response();
-        }
+    if let Some(rejected) = reject_upstream_self_loop(&state, &headers, &body) {
+        return rejected;
     }
 
     let meta = RpcRequestMeta::from_body(&body);
@@ -503,30 +551,15 @@ async fn mcp_post(
             .upstream
             .is_upstream_tool_name(&meta.tool_name, state.gateway.settings_snapshot().as_ref());
     if is_upstream_call {
-        let gateway = Arc::clone(&state.gateway);
-        let scope_id = state.scope_id.clone();
-        log_request(&scope_id, effective_session_id.as_deref(), &meta);
-        let audit_call = ToolAuditCall::new(
-            &meta.request_id,
-            &meta.tool_name,
+        return execute_upstream_tool_call(
+            &state,
+            &meta,
+            &auth,
             effective_session_id.as_deref(),
-            auth.method,
-            auth.client_id.as_deref(),
-            meta.request_bytes,
-            &body,
-        );
-        let gateway_response = handle_gateway_upstream_tool_call_async(
-            &gateway,
-            effective_session_id.as_deref(),
+            response_session_id,
             &body,
         )
         .await;
-        let response = gateway_response.body;
-        let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
-        let mut call = audit_call;
-        call.set_execution_host(gateway_response.execution_host);
-        record_tool_call(call, None, &response);
-        return build_json_bytes_response(bytes, response_session_id);
     }
 
     let gateway = Arc::clone(&state.gateway);
@@ -534,16 +567,16 @@ async fn mcp_post(
     let meta_for_err = meta.clone();
     let scope_for_err = state.scope_id.clone();
     let result = tokio::task::spawn_blocking(move || {
-        execute_and_finalize_rpc(
-            &gateway,
-            &scope_id,
-            effective_session_id.as_deref(),
-            &meta,
-            &auth,
-            &body,
-            computer_resolution.newly_issued_capability,
+        execute_and_finalize_rpc(RpcExecutionInput {
+            gateway: &gateway,
+            scope_id: &scope_id,
+            session_id: effective_session_id.as_deref(),
+            meta: &meta,
+            auth: &auth,
+            body: &body,
+            newly_issued_capability: computer_resolution.newly_issued_capability,
             is_computer_stop,
-        )
+        })
     })
     .await;
 
@@ -749,15 +782,15 @@ async fn reject_missing_computer_session(
             "structuredContent": { "ok": false, "error": "COMPUTER_SESSION_REQUIRED" }
         }
     });
-    let audit_call = ToolAuditCall::new(
-        &meta.request_id,
-        &meta.tool_name,
-        None,
-        auth.method,
-        auth.client_id.as_deref(),
-        meta.request_bytes,
-        &body,
-    );
+    let audit_call = ToolAuditCall::new(ToolAuditInput {
+        request_id: &meta.request_id,
+        tool_name: &meta.tool_name,
+        session_id: None,
+        auth_method: auth.method,
+        client_id: auth.client_id.as_deref(),
+        request_bytes: meta.request_bytes,
+        body: &body,
+    });
     let denied_for_audit = denied.clone();
     let _ = tokio::task::spawn_blocking(move || {
         record_tool_call(audit_call, None, &denied_for_audit);
@@ -826,29 +859,40 @@ fn resolve_effective_session(
     (effective_session_id, response_session_id)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_and_finalize_rpc(
-    gateway: &GatewayState,
-    scope_id: &str,
-    session_id: Option<&str>,
-    meta: &RpcRequestMeta,
-    auth: &AuthenticatedRequest,
-    body: &Value,
+struct RpcExecutionInput<'a> {
+    gateway: &'a GatewayState,
+    scope_id: &'a str,
+    session_id: Option<&'a str>,
+    meta: &'a RpcRequestMeta,
+    auth: &'a AuthenticatedRequest,
+    body: &'a Value,
     newly_issued_capability: Option<(String, String)>,
     is_computer_stop: bool,
-) -> Bytes {
+}
+
+fn execute_and_finalize_rpc(input: RpcExecutionInput<'_>) -> Bytes {
+    let RpcExecutionInput {
+        gateway,
+        scope_id,
+        session_id,
+        meta,
+        auth,
+        body,
+        newly_issued_capability,
+        is_computer_stop,
+    } = input;
     log_request(scope_id, session_id, meta);
 
     let audit_call = meta.is_tool_call().then(|| {
-        ToolAuditCall::new(
-            &meta.request_id,
-            &meta.tool_name,
+        ToolAuditCall::new(ToolAuditInput {
+            request_id: &meta.request_id,
+            tool_name: &meta.tool_name,
             session_id,
-            auth.method,
-            auth.client_id.as_deref(),
-            meta.request_bytes,
+            auth_method: auth.method,
+            client_id: auth.client_id.as_deref(),
+            request_bytes: meta.request_bytes,
             body,
-        )
+        })
     });
     let audit_workspace_id = audit_call
         .as_ref()

@@ -31,6 +31,8 @@ const sessions = ref<HistorySessionSummary[]>([]);
 const reviews = ref<WorkspaceReviewSummaryDto[]>([]);
 const planning = ref<PlanningStateDto | null>(null);
 const reviewError = ref("");
+const planningError = ref("");
+const reviewBusy = ref(false);
 const recording = ref(props.profile.runtime.history_recording ?? true);
 const selected = ref<number[]>([...(props.profile.runtime.history_context_sessions ?? [])]);
 const baselineRecording = ref(recording.value);
@@ -102,10 +104,12 @@ watch(
 );
 
 async function viewSessionReview(session: HistorySessionSummary) {
+  if (reviewBusy.value) return;
   if (!session.session_key) {
     showToast("这个历史会话没有可用于聚合 Review 的 session key", { kind: "error" });
     return;
   }
+  reviewBusy.value = true;
   try {
     const review = await createSessionReviewUrl(props.workspaceId, session.session_key);
     if (!review) {
@@ -116,27 +120,36 @@ async function viewSessionReview(session: HistorySessionSummary) {
     reviews.value = await listWorkspaceReviews(props.workspaceId);
   } catch (error) {
     showToast(String(error), { title: "无法生成会话 Diff", kind: "error" });
+  } finally {
+    reviewBusy.value = false;
   }
 }
 
 async function viewReview(id: string) {
+  if (reviewBusy.value) return;
+  reviewBusy.value = true;
   try {
     const url = await issueWorkspaceReviewUrl(props.workspaceId, id);
     await openUrl(url);
   } catch (error) {
     showToast(String(error), { title: "无法打开 Review", kind: "error" });
+  } finally {
+    reviewBusy.value = false;
   }
 }
 
-async function load() {
+async function load(clearExisting = false) {
   const workspaceId = props.workspaceId;
   const generation = ++loadGeneration;
   loading.value = true;
   loadError.value = "";
   reviewError.value = "";
-  sessions.value = [];
-  reviews.value = [];
-  planning.value = null;
+  planningError.value = "";
+  if (clearExisting) {
+    sessions.value = [];
+    reviews.value = [];
+    planning.value = null;
+  }
   const [history, changeReviews, taskState] = await Promise.allSettled([
     listHistorySessions(workspaceId),
     listWorkspaceReviews(workspaceId),
@@ -148,6 +161,7 @@ async function load() {
   if (changeReviews.status === "fulfilled") reviews.value = changeReviews.value;
   else reviewError.value = "变更快照暂时不可用，不影响历史记录浏览。";
   if (taskState.status === "fulfilled") planning.value = taskState.value;
+  else planningError.value = `任务与计划历史暂时不可用：${String(taskState.reason)}`;
   loading.value = false;
 }
 
@@ -162,7 +176,8 @@ function toggle(number: number, checked: boolean) {
 }
 
 async function save() {
-  if (saving.value || !dirty.value) return true;
+  if (saving.value) return false;
+  if (!dirty.value) return true;
   saving.value = true;
   saveError.value = "";
   try {
@@ -180,12 +195,12 @@ async function save() {
 
 useUnsavedChanges("历史上下文", dirty, save);
 onMounted(() => {
-  void load();
+  void load(false);
 });
 watch(
   () => props.workspaceId,
   () => {
-    void load();
+    void load(true);
   },
 );
 onBeforeUnmount(() => {
@@ -204,7 +219,7 @@ onBeforeUnmount(() => {
     />
     <p v-if="loadError" class="ui-danger" role="alert">
       加载历史失败：{{ loadError }}
-      <BaseButton variant="secondary" size="sm" @click="load">重试</BaseButton>
+      <BaseButton variant="secondary" size="sm" @click="load()">重试</BaseButton>
     </p>
     <div>
       <div class="mb-2 flex items-center justify-between">
@@ -212,7 +227,7 @@ onBeforeUnmount(() => {
           <p class="text-xs font-semibold">注入到当前上下文的历史会话</p>
           <p class="mt-0.5 text-xs text-[var(--ui-text-muted)]">只选择确实需要长期带入的会话，避免上下文膨胀。最新会话排在顶部。</p>
         </div>
-        <BaseButton variant="ghost" size="sm" :disabled="loading" @click="load">
+        <BaseButton variant="ghost" size="sm" :disabled="loading" @click="load()">
           <RefreshCw :size="14" :class="{ 'animate-spin': loading }" /> 刷新
         </BaseButton>
       </div>
@@ -294,6 +309,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <p v-if="planningError" class="ui-muted" role="status">{{ planningError }}</p>
     <div v-if="recentTasks.length" class="min-w-0">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>

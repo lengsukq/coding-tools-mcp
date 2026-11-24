@@ -5,15 +5,17 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::auth::constant_time_eq;
 use crate::mcp::gateway::GatewayState;
 use crate::mcp::server::handle_gateway_request;
 use crate::settings::{AppSettings, LanFederationConfig, PairedPeerConfig};
+use crate::util::time::unix_now_ms;
 use crate::workspace::WorkspaceProfile;
 
 use super::crypto::{
-    compute_pair_ack_proof, compute_pair_request_proof, constant_time_eq,
-    derive_peer_shared_secret, hmac_sha256_hex, random_pin_6, sign_peer_request, unix_time_ms,
-    verify_peer_request_signature, ReplayGuard,
+    compute_pair_ack_proof, compute_pair_request_proof, derive_peer_shared_secret, hmac_sha256_hex,
+    random_pin_6, sign_peer_request, verify_peer_request_signature, PeerSignatureCheck,
+    ReplayGuard,
 };
 use super::identity::{
     parse_workspace_scope, WorkspaceTarget, LAN_NODE_SECRET_KEY, LAN_PEER_SECRETS_SCOPE,
@@ -58,7 +60,7 @@ fn six_digit_pin_and_replay_guard_enforce_bounds() {
     }
 
     let guard = ReplayGuard::default();
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     assert!(guard.check_and_record("dev_alpha1", "nonce-12345678", now));
     assert!(!guard.check_and_record("dev_alpha1", "nonce-12345678", now + 50));
     assert!(guard.check_and_record("dev_beta02", "nonce-12345678", now + 50));
@@ -67,7 +69,7 @@ fn six_digit_pin_and_replay_guard_enforce_bounds() {
 #[test]
 fn replay_guard_at_capacity_keeps_rejecting_unexpired_replays() {
     let guard = ReplayGuard::default();
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let cap = 8usize;
 
     for i in 0..cap {
@@ -145,7 +147,7 @@ fn workspace_scope_parser_distinguishes_local_and_remote_namespaces() {
 #[test]
 fn peer_signature_rejects_tampering_and_clock_skew() {
     let secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let body = br#"{"kind":"select_probe"}"#;
     let sig = sign_peer_request(
         secret,
@@ -156,46 +158,46 @@ fn peer_signature_rejects_tampering_and_clock_skew() {
         "nonce_abcdef12",
         body,
     );
-    assert!(verify_peer_request_signature(
-        secret,
-        "dev_caller01",
-        "POST",
-        "/api/lan/v1/rpc",
-        now,
-        "nonce_abcdef12",
+    assert!(verify_peer_request_signature(&PeerSignatureCheck {
+        peer_secret: secret,
+        caller_device_id: "dev_caller01",
+        method: "POST",
+        path_and_query: "/api/lan/v1/rpc",
+        timestamp_ms: now,
+        nonce: "nonce_abcdef12",
         body,
-        &sig,
-        now + 1000,
-    )
+        provided_signature: &sig,
+        now_ms: now + 1000,
+    })
     .is_ok());
 
     assert_eq!(
-        verify_peer_request_signature(
-            secret,
-            "dev_caller01",
-            "POST",
-            "/api/lan/v1/rpc",
-            now,
-            "nonce_abcdef12",
-            br#"{"kind":"tampered"}"#,
-            &sig,
-            now,
-        ),
+        verify_peer_request_signature(&PeerSignatureCheck {
+            peer_secret: secret,
+            caller_device_id: "dev_caller01",
+            method: "POST",
+            path_and_query: "/api/lan/v1/rpc",
+            timestamp_ms: now,
+            nonce: "nonce_abcdef12",
+            body: br#"{"kind":"tampered"}"#,
+            provided_signature: &sig,
+            now_ms: now,
+        }),
         Err("INVALID_SIGNATURE")
     );
 
     assert_eq!(
-        verify_peer_request_signature(
-            secret,
-            "dev_caller01",
-            "POST",
-            "/api/lan/v1/rpc",
-            now - 90_000,
-            "nonce_abcdef12",
+        verify_peer_request_signature(&PeerSignatureCheck {
+            peer_secret: secret,
+            caller_device_id: "dev_caller01",
+            method: "POST",
+            path_and_query: "/api/lan/v1/rpc",
+            timestamp_ms: now - 90_000,
+            nonce: "nonce_abcdef12",
             body,
-            &sig,
-            now,
-        ),
+            provided_signature: &sig,
+            now_ms: now,
+        }),
         Err("TIMESTAMP_SKEW_EXCEEDED")
     );
 }
@@ -280,7 +282,7 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
 
     // 2. Mutual 6-digit PIN pairing handshake (wrong PIN rejected, valid PIN pairs both sides).
     let pin_dto = generate_pairing_pin();
-    let now = unix_time_ms();
+    let now = unix_now_ms();
     let nonce = "pairnonce123456";
     let part_a = "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222";
 
@@ -357,7 +359,7 @@ async fn two_peers_pair_and_federate_workspaces_while_blocking_tunnel_and_loops(
         derive_peer_shared_secret("dev_macbook_a", "dev_windows_b", part_a, &ack.secret_part_b);
 
     // 3. Verify Hop > 1 is rejected with 400 FEDERATION_LOOP_DENIED.
-    let loop_ts = unix_time_ms();
+    let loop_ts = unix_now_ms();
     let loop_nonce = "loopnonce123456";
     let loop_sig = sign_peer_request(
         &shared_secret,

@@ -7,6 +7,7 @@ mod manager;
 mod model;
 pub mod naming;
 pub mod proxy_tools;
+mod rpc_mux;
 pub mod takeover;
 mod transport_http;
 mod transport_sse;

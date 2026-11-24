@@ -2,16 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-
-use crate::data::AppData;
+use crate::data::{AppData, LegacyProfilesOnlyFile};
 use crate::error::AppResult;
-use crate::workspace::model::WorkspaceProfile;
-
-#[derive(Deserialize)]
-struct LegacyProfilesFile {
-    profiles: Vec<WorkspaceProfile>,
-}
 
 pub fn legacy_app_home() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".coding-tools-mcp-desktop"))
@@ -29,7 +21,7 @@ pub fn import_legacy_profiles_if_empty(data: &mut AppData) -> AppResult<usize> {
         return Ok(0);
     }
     let raw = fs::read_to_string(&profiles_path)?;
-    let legacy: LegacyProfilesFile = serde_json::from_str(&raw)?;
+    let legacy: LegacyProfilesOnlyFile = serde_json::from_str(&raw)?;
     let secrets = load_legacy_secrets(&legacy_home)?;
     let mut imported = 0usize;
     for profile in legacy.profiles {

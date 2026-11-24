@@ -32,9 +32,49 @@ pub fn tail_chars(text: &str, max_chars: usize) -> &str {
     }
 }
 
+/// Return whether `value` is a non-empty ASCII path-safe identifier (`[A-Za-z0-9_-]`).
+pub fn is_safe_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// Truncate `value` safely on a UTF-8 boundary and append an ellipsis trailer if truncated.
+pub fn truncate_utf8_with_ellipsis(value: &str, max_bytes: usize) -> String {
+    let prefix = truncate_utf8(value, max_bytes);
+    if prefix.len() == value.len() {
+        value.to_string()
+    } else {
+        format!("{prefix}\n…[truncated]")
+    }
+}
+
+/// ASCII case-insensitive substring check without allocating lowercased copies.
+pub fn contains_ascii_ignore_case(value: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle = needle.as_bytes();
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_safe_identifier_rejects_traversal_and_empty() {
+        assert!(is_safe_identifier("task_01-abc"));
+        assert!(!is_safe_identifier(""));
+        assert!(!is_safe_identifier("../escape"));
+        assert!(!is_safe_identifier("foo/bar"));
+        assert!(!is_safe_identifier("foo\\bar"));
+        assert!(!is_safe_identifier("a.b"));
+    }
 
     #[test]
     fn truncate_utf8_respects_multibyte_boundaries() {

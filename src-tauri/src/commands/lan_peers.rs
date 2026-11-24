@@ -53,11 +53,11 @@ async fn build_lan_overview(app: &AppHandle, force_refresh: bool) -> AppResult<L
             let workspace_count = state
                 .gateway
                 .registry
-                .local_descriptors()
+                .descriptors()
                 .map(|items| items.len())
                 .unwrap_or_default();
             let mcp_running = state.with_runtime(|rt| {
-                rt.refresh_mcp();
+                rt.refresh();
                 Ok(rt.is_running())
             })?;
             let settings = state.with_settings(|store| Ok(store.settings()))?;

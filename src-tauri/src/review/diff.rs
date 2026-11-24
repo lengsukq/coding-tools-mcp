@@ -5,7 +5,8 @@ use std::path::Path;
 
 use similar::{ChangeTag, TextDiff};
 
-use crate::tools::io_util::is_default_excluded_os;
+use crate::util::fs::is_default_excluded_os;
+use crate::util::text::contains_ascii_ignore_case;
 
 use super::store::ChangeFile;
 
@@ -30,17 +31,6 @@ fn starts_with_ascii_ignore_case(value: &str, prefix: &str) -> bool {
 fn ends_with_ascii_ignore_case(value: &str, suffix: &str) -> bool {
     value.len() >= suffix.len()
         && value.as_bytes()[value.len() - suffix.len()..].eq_ignore_ascii_case(suffix.as_bytes())
-}
-
-fn contains_ascii_ignore_case(value: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    let needle = needle.as_bytes();
-    value
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 fn is_sensitive_component(part: &str) -> bool {
@@ -165,8 +155,9 @@ pub(super) fn unified_patch(path: &str, before: &str, after: &str) -> String {
     let diff = TextDiff::from_lines(before, after);
     let mut out = format!("--- a/{path}\n+++ b/{path}\n");
     for group in diff.grouped_ops(3) {
-        let first = group.first().unwrap();
-        let last = group.last().unwrap();
+        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+            continue;
+        };
         out.push_str(&format!(
             "@@ -{},{} +{},{} @@\n",
             first.old_range().start + 1,

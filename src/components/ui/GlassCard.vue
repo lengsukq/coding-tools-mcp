@@ -2,7 +2,7 @@
 withDefaults(
   defineProps<{
     padded?: boolean;
-    variant?: "default" | "focal" | "subtle";
+    variant?: "default" | "focal";
   }>(),
   {
     padded: true,
@@ -18,7 +18,6 @@ withDefaults(
       {
         'p-6': padded,
         'ui-surface--focal': variant === 'focal',
-        'ui-surface--subtle': variant === 'subtle',
       },
     ]"
   >

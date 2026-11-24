@@ -457,7 +457,7 @@ fn real_history_fixture_preserves_archives_when_opted_in() {
 
     let (workspace, _harness, ctx) = test_context();
     let target = workspace.path().join("docs/history-session");
-    copy_directory(source, &target);
+    common::copy_dir_all(source, &target).expect("copy history fixture");
     let before = archive_hashes(workspace.path());
     assert_eq!(before.len(), 40, "expected the 40-archive real fixture");
 
@@ -725,18 +725,5 @@ fn assert_existing_archives_unchanged(root: &std::path::Path, before: &BTreeMap<
     let after = archive_hashes(root);
     for (path, hash) in before {
         assert_eq!(after.get(path), Some(hash), "archive changed: {path}");
-    }
-}
-
-fn copy_directory(source: &Path, target: &Path) {
-    fs::create_dir_all(target).expect("create copied history directory");
-    for entry in fs::read_dir(source).expect("read fixture directory") {
-        let entry = entry.expect("fixture entry");
-        let destination = target.join(entry.file_name());
-        if entry.file_type().expect("fixture entry type").is_dir() {
-            copy_directory(&entry.path(), &destination);
-        } else {
-            fs::copy(entry.path(), destination).expect("copy fixture file");
-        }
     }
 }

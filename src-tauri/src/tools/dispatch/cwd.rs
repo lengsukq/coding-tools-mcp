@@ -70,9 +70,16 @@ fn prefix_patch_paths(base: &str, patch: &str) -> String {
     patch
         .lines()
         .map(|line| {
-            for marker in ["--- a/", "+++ b/"] {
+            for marker in [
+                "--- a/",
+                "+++ b/",
+                "*** Add File: ",
+                "*** Update File: ",
+                "*** Delete File: ",
+            ] {
                 if let Some(path) = line.strip_prefix(marker) {
-                    return format!("{marker}{base}/{path}");
+                    let prefixed = prefix_relative_path(base, path.trim());
+                    return format!("{marker}{prefixed}");
                 }
             }
             line.to_string()

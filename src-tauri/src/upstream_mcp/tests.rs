@@ -485,15 +485,15 @@ async fn legacy_sse_proxy_mode_and_audit_unwrapping_end_to_end() {
         Some("upstream:legacy (Legacy SSE)")
     );
 
-    let mut audit_call = ToolAuditCall::new(
-        &json!(4),
-        TOOL_UPSTREAM_CALL,
-        None,
-        "local_loopback",
-        Some("loopback"),
-        128,
-        &call_body,
-    );
+    let mut audit_call = ToolAuditCall::new(crate::tool_audit::ToolAuditInput {
+        request_id: &json!(4),
+        tool_name: TOOL_UPSTREAM_CALL,
+        session_id: None,
+        auth_method: "local_loopback",
+        client_id: Some("loopback"),
+        request_bytes: 128,
+        body: &call_body,
+    });
     audit_call.set_execution_host(call_resp.execution_host);
     let record = audit_call.finish(None, &call_resp.body);
     assert_eq!(record.tool_name, "legacy__lookup_doc");

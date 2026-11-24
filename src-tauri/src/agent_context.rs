@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::tools::io_util::{sha256_hex, truncate_utf8};
+use crate::util::hash::sha256_hex;
+use crate::util::text::truncate_utf8;
 
 mod discovery;
 mod presentation;
@@ -12,10 +13,9 @@ mod presentation;
 use discovery::{
     add_auto_instruction_candidates, add_instruction_candidates_for_provider, add_skill_root,
     add_skill_roots_for_provider, collect_auto_workspace_skills, collect_skill_candidates,
-    discover_global_instruction_files, discover_global_instruction_paths,
-    discover_global_skill_files, discover_global_skill_paths, display_home_path, display_path,
-    effective_sources, normalize_provider, normalized_source_list, resolve_config_path,
-    resolve_home_config_path, split_config_paths, InstructionCandidate,
+    discover_global_instruction_files, discover_global_skill_files, display_home_path,
+    display_path, effective_sources, normalize_provider, normalized_source_list,
+    resolve_config_path, resolve_home_config_path, split_config_paths, InstructionCandidate,
 };
 use presentation::parse_skill;
 pub use presentation::render_instruction_documents;
@@ -226,8 +226,14 @@ fn scan_global_agent_context_at(
     for provider in DISCOVERABLE_SOURCES {
         let instruction_files = discover_global_instruction_files(home, provider);
         let skill_files = discover_global_skill_files(home, provider);
-        let instruction_paths = discover_global_instruction_paths(home, provider);
-        let skill_paths = discover_global_skill_paths(home, provider);
+        let instruction_paths: Vec<String> = instruction_files
+            .iter()
+            .map(|path| display_home_path(home, path))
+            .collect();
+        let skill_paths: Vec<String> = skill_files
+            .iter()
+            .map(|path| display_home_path(home, path))
+            .collect();
 
         if !instruction_paths.is_empty() {
             detected_instruction_sources.push((*provider).to_string());

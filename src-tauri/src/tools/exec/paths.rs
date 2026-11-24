@@ -33,8 +33,10 @@ pub(crate) fn resolve_workdir(
 /// Literal-path policy guard for interpreter mutation arguments (excludes `args[0]` executable).
 pub(crate) fn contains_external_path(args: &[String], workspace: Option<&Workspace>) -> bool {
     static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
-    let tokens =
-        TOKENS.get_or_init(|| regex::Regex::new(r#""([^"]*)"|'([^']*)'|([^\s"'(),;=]+)"#).unwrap());
+    let tokens = TOKENS.get_or_init(|| {
+        regex::Regex::new(r#""([^"]*)"|'([^']*)'|([^\s"'(),;=]+)"#)
+            .expect("static path-token regex must be valid")
+    });
     args.iter().any(|arg| {
         let normalized = arg.replace('\\', "/");
         if normalized.contains("../") {
@@ -44,7 +46,15 @@ pub(crate) fn contains_external_path(args: &[String], workspace: Option<&Workspa
             return outside(&normalized, workspace);
         }
         tokens.captures_iter(&normalized).any(|capture| {
-            let token = capture.iter().skip(1).flatten().next().unwrap().as_str();
+            let Some(token) = capture
+                .iter()
+                .skip(1)
+                .flatten()
+                .next()
+                .map(|matched| matched.as_str())
+            else {
+                return false;
+            };
             looks_absolute(token) && outside(token, workspace)
         })
     })

@@ -55,17 +55,12 @@ pub async fn stop_runtime(
 pub async fn get_runtime_status(app: AppHandle) -> AppResult<RuntimeStatusDto> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>().with_runtime(|runtime| {
-            runtime.refresh_mcp();
-            Ok(runtime.mcp_status())
+            runtime.refresh();
+            Ok(runtime.status())
         })
     })
     .await
     .map_err(|err| AppError::Message(format!("查询运行状态失败: {err}")))?
-}
-
-#[tauri::command]
-pub async fn restart_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStatusDto> {
-    restart_global_mcp(&state).await
 }
 
 #[tauri::command]

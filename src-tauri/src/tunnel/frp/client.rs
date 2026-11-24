@@ -10,10 +10,10 @@ use tokio::time::{sleep, Duration};
 use crate::error::{AppError, AppResult};
 use crate::platform::platform;
 use crate::settings::{AppSettings, GlobalGatewayConfig};
-use crate::tunnel::cloudflare::stop_child;
 use crate::tunnel::log_dir_for_profile;
+use crate::tunnel::process::stop_child;
 
-use super::{build_frpc_toml, global_frp_server_config, FrpServerConfig, VERSION as FRP_VERSION};
+use super::{build_frpc_toml, global_frp_server_config, FrpServerConfig, FRP_VERSION};
 
 mod health;
 mod install;

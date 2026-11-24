@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::{input_schema, tool_definition, P0_TOOLS};
 
-const TOOL_PROFILE_COUNT: usize = 5;
+pub(crate) const TOOL_PROFILE_COUNT: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolProfile {
@@ -97,7 +97,6 @@ pub const CORE_TOOLS: &[&str] = &[
     "git_log",
     "git_show",
     "git_blame",
-    "request_permissions",
     "view_image",
 ];
 
@@ -147,64 +146,6 @@ pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "git_log",
     "git_show",
     "git_blame",
-    "request_permissions",
-    "view_image",
-];
-
-pub const ALLOWED_TOOLS: &[&str] = &[
-    "harness_status",
-    "operation_log",
-    "server_info",
-    "change_review",
-    "history_manage",
-    "planning_manage",
-    "task_manage",
-    "history_session_bootstrap",
-    "history_session_checkpoint",
-    "history_session_validate",
-    "history_session_search",
-    "history_session_read",
-    "planning_state",
-    "create_goal",
-    "update_goal",
-    "create_plan",
-    "update_plan",
-    "request_goal_review",
-    "request_plan_review",
-    "capability_health_check",
-    "check_exec_environment",
-    "exec_health_check",
-    "get_default_cwd",
-    "set_default_cwd",
-    "list_skills",
-    "get_skill",
-    "read_file",
-    "list_dir",
-    "list_files",
-    "search_text",
-    "grep_text",
-    "grep",
-    "apply_patch",
-    "patch_check",
-    "exec_command",
-    "write_stdin",
-    "kill_session",
-    "read_output",
-    "git_status",
-    "git_diff",
-    "git_log",
-    "git_show",
-    "git_blame",
-    "project_state",
-    "start_task",
-    "update_task",
-    "pause_task",
-    "resume_task",
-    "finish_task",
-    "task_context",
-    "list_task_events",
-    "change_summary",
-    "request_permissions",
     "view_image",
 ];
 
@@ -230,7 +171,7 @@ static TOOL_LIST_CACHE: [OnceLock<Vec<Value>>; TOOL_PROFILE_COUNT] = [
 ];
 
 pub fn is_allowed_tool(name: &str) -> bool {
-    ALLOWED_TOOLS.contains(&name)
+    super::tool_definition(name).is_some()
 }
 
 pub fn canonical_tool_name(name: &str) -> &str {
@@ -275,20 +216,6 @@ fn compact_description<'a>(name: &str, fallback: &'a str) -> &'a str {
         "history_manage" => "Manage project history through one stable action-based API.",
         "planning_manage" => {
             "Manage Goal and Plan state through one stable action-based API. Goal/Plan writes remain allowed in Plan mode."
-        }
-        "task_manage" => "Manage durable task state through one stable action-based API.",
-        "history_session_bootstrap" => {
-            "Create or resume a history archive when explicitly requested; returns bounded metadata only."
-        }
-        "history_session_checkpoint" => {
-            "Append a redacted checkpoint when session recording is enabled; session target may be omitted for lazy initialization."
-        }
-        "history_session_validate" => {
-            "Validate or rebuild history indexes without deleting archives."
-        }
-        "history_session_search" => "Search indexed session archives and return bounded matches.",
-        "history_session_read" => {
-            "Read a bounded UTF-8 page from one selected session archive."
         }
         "read_file" => "Read a bounded UTF-8 text range from a workspace file.",
         "search_text" | "grep_text" => "Search workspace text with bounded previews.",

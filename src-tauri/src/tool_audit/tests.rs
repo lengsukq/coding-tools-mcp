@@ -7,7 +7,8 @@ use serde_json::json;
 use super::sanitize::{classify_outcome, file_day, unix_time_ms};
 use super::store::ToolAuditStore;
 use super::{
-    AuditRuntime, ToolAuditCall, ToolAuditFilter, ToolAuditRecord, DAY_MS, DEFAULT_RETENTION_DAYS,
+    AuditRuntime, ToolAuditCall, ToolAuditFilter, ToolAuditInput, ToolAuditRecord, DAY_MS,
+    DEFAULT_RETENTION_DAYS,
 };
 
 #[test]
@@ -24,15 +25,15 @@ fn computer_audit_records_client_and_action_but_never_user_input_or_tokens() {
             }
         }
     });
-    let record = ToolAuditCall::new(
-        &json!(42),
-        "computer_action",
-        Some("opaque-server-session"),
-        "oauth",
-        Some("chatgpt-oauth-client"),
-        1234,
-        &body,
-    )
+    let record = ToolAuditCall::new(ToolAuditInput {
+        request_id: &json!(42),
+        tool_name: "computer_action",
+        session_id: Some("opaque-server-session"),
+        auth_method: "oauth",
+        client_id: Some("chatgpt-oauth-client"),
+        request_bytes: 1234,
+        body: &body,
+    })
     .finish(None, &json!({"result": {"isError": false}}));
     assert_eq!(record.tool_name, "computer_action");
     assert_eq!(record.action_name.as_deref(), Some("type"));
@@ -168,15 +169,16 @@ fn record(workspace_id: Option<&str>, timestamp_ms: u64, outcome: &str) -> ToolA
 #[test]
 fn writes_only_safe_metadata_and_reads_across_store_restarts() {
     let (dir, mut store) = test_store();
-    let call = ToolAuditCall::new(
-        &json!(7),
-        "patch",
-        Some("session-a"),
-        "shared_bearer",
-        None,
-        420,
-        &json!({"params":{"arguments":{"patch":"SECRET_PAYLOAD"}}}),
-    );
+    let call_body = json!({"params":{"arguments":{"patch":"SECRET_PAYLOAD"}}});
+    let call = ToolAuditCall::new(ToolAuditInput {
+        request_id: &json!(7),
+        tool_name: "patch",
+        session_id: Some("session-a"),
+        auth_method: "shared_bearer",
+        client_id: None,
+        request_bytes: 420,
+        body: &call_body,
+    });
     let response = json!({
         "result": {
             "isError": false,
@@ -363,15 +365,16 @@ fn records_success_tool_policy_runtime_and_global_outcomes() {
     for (index, (response, expected_outcome, expected_category, workspace_id)) in
         outcomes.into_iter().enumerate()
     {
-        let call = ToolAuditCall::new(
-            &json!(index + 1),
-            "read_file",
-            Some("session-a"),
-            "shared_bearer",
-            None,
-            200,
-            &json!({"params":{"arguments":{"path":"private request"}}}),
-        );
+        let call_body = json!({"params":{"arguments":{"path":"private request"}}});
+        let call = ToolAuditCall::new(ToolAuditInput {
+            request_id: &json!(index + 1),
+            tool_name: "read_file",
+            session_id: Some("session-a"),
+            auth_method: "shared_bearer",
+            client_id: None,
+            request_bytes: 200,
+            body: &call_body,
+        });
         let record = call.finish(workspace_id.map(str::to_string), &response);
         assert_eq!(record.outcome, expected_outcome);
         assert_eq!(record.error_category.as_deref(), expected_category);
@@ -415,15 +418,16 @@ fn finish_counts_response_bytes_identically_to_compact_json_serialization() {
         }
     });
     let expected = serde_json::to_vec(&response).unwrap().len() as u64;
-    let call = ToolAuditCall::new(
-        &json!(99),
-        "read_file",
-        Some("sess-bytes"),
-        "oauth",
-        None,
-        64,
-        &json!({}),
-    );
+    let call_body = json!({});
+    let call = ToolAuditCall::new(ToolAuditInput {
+        request_id: &json!(99),
+        tool_name: "read_file",
+        session_id: Some("sess-bytes"),
+        auth_method: "oauth",
+        client_id: None,
+        request_bytes: 64,
+        body: &call_body,
+    });
     let finished = call.finish(Some("ws-1".into()), &response);
     assert_eq!(finished.response_bytes, expected);
 }

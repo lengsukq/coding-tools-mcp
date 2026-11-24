@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use crate::tools::io_util::{acquire_file_lock, atomic_write_bytes, FileLock};
+use crate::util::fs::{atomic_write_bytes, lock_file as acquire_file_lock, FileLock};
 
 use super::model::{
     HarnessEvent, OperationRecord, TaskSession, WorkspaceHarnessState, SCHEMA_VERSION,
@@ -78,6 +78,7 @@ impl HarnessStore {
     }
 
     pub fn save_task(&self, task: &TaskSession) -> HarnessResult<()> {
+        validate_task_id(&task.id)?;
         let _lock = self.lock_workspace(&task.workspace_id)?;
         let path = self
             .tasks_dir(&task.workspace_id)
@@ -86,6 +87,7 @@ impl HarnessStore {
     }
 
     pub fn load_task(&self, workspace_id: &str, task_id: &str) -> HarnessResult<TaskSession> {
+        validate_task_id(task_id)?;
         read_json(&self.tasks_dir(workspace_id).join(format!("{task_id}.json")))
     }
 
@@ -130,15 +132,6 @@ impl HarnessStore {
         Ok(Some(state))
     }
 
-    pub fn save_workspace_state(
-        &self,
-        workspace_id: &str,
-        state: &WorkspaceHarnessState,
-    ) -> HarnessResult<()> {
-        let _lock = self.lock_workspace(workspace_id)?;
-        atomic_write_json(&self.workspace_state_path(workspace_id), state)
-    }
-
     pub(super) fn update_workspace_state(
         &self,
         workspace_id: &str,
@@ -173,6 +166,7 @@ impl HarnessStore {
         workspace_id: &str,
         event: &HarnessEvent,
     ) -> HarnessResult<()> {
+        validate_task_id(&event.task_id)?;
         let _lock = self.lock_workspace(workspace_id)?;
         let path = self
             .events_dir(workspace_id)
@@ -218,6 +212,7 @@ impl HarnessStore {
         offset: usize,
         limit: usize,
     ) -> HarnessResult<Vec<HarnessEvent>> {
+        validate_task_id(task_id)?;
         let path = self
             .events_dir(workspace_id)
             .join(format!("{task_id}.jsonl"));
@@ -235,6 +230,16 @@ impl HarnessStore {
         }
         Ok(events)
     }
+}
+
+fn validate_task_id(task_id: &str) -> HarnessResult<()> {
+    if !crate::util::text::is_safe_identifier(task_id) {
+        return Err(HarnessError::new(
+            "INVALID_ARGUMENT",
+            format!("invalid task_id: {task_id}"),
+        ));
+    }
+    Ok(())
 }
 
 fn io_error(error: std::io::Error) -> HarnessError {

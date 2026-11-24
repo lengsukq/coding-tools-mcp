@@ -26,6 +26,9 @@ fn port_to_dw(port: u16) -> u32 {
     ((port as u32) << 8) | ((port as u32) >> 8)
 }
 
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+const MAX_TCP_TABLE_RETRIES: usize = 4;
+
 fn listener_table() -> AppResult<Vec<MIB_TCPROW_OWNER_PID>> {
     let mut size = 0u32;
     unsafe {
@@ -39,27 +42,40 @@ fn listener_table() -> AppResult<Vec<MIB_TCPROW_OWNER_PID>> {
         );
     }
 
-    let mut buffer = vec![0u8; size as usize];
-    let status = unsafe {
-        GetExtendedTcpTable(
-            Some(buffer.as_mut_ptr().cast()),
-            &mut size,
-            false,
-            AF_INET.0.into(),
-            TCP_TABLE_OWNER_PID_LISTENER,
-            0,
-        )
-    };
-    if status != 0 {
-        return Err(AppError::Message(format!(
-            "GetExtendedTcpTable failed: status={status}"
-        )));
+    // Allocate as `Vec<u32>` so the buffer satisfies the 4-byte alignment requirement of
+    // `MIB_TCPTABLE_OWNER_PID`, and retry when concurrent socket churn grows the table.
+    let mut buffer: Vec<u32> = Vec::new();
+    for _ in 0..MAX_TCP_TABLE_RETRIES {
+        let words = (size as usize).div_ceil(std::mem::size_of::<u32>()).max(1);
+        buffer.resize(words, 0);
+        size = (buffer.len() * std::mem::size_of::<u32>()) as u32;
+        let status = unsafe {
+            GetExtendedTcpTable(
+                Some(buffer.as_mut_ptr().cast()),
+                &mut size,
+                false,
+                AF_INET.0.into(),
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        if status == 0 {
+            let table = unsafe { &*(buffer.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>()) };
+            let rows = unsafe {
+                std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize)
+            };
+            return Ok(rows.to_vec());
+        }
+        if status != ERROR_INSUFFICIENT_BUFFER {
+            return Err(AppError::Message(format!(
+                "GetExtendedTcpTable failed: status={status}"
+            )));
+        }
     }
 
-    let table = unsafe { &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID) };
-    let rows =
-        unsafe { std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize) };
-    Ok(rows.to_vec())
+    Err(AppError::Message(
+        "GetExtendedTcpTable exceeded retry limit due to buffer growth".into(),
+    ))
 }
 
 fn find_listener_row(port: u16) -> AppResult<Option<MIB_TCPROW_OWNER_PID>> {

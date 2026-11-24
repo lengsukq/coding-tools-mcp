@@ -11,7 +11,7 @@ export interface PaletteDef {
   preview: [string, string, string];
 }
 
-export const PALETTE_STORAGE_KEY = "coding-tools-palette";
+const PALETTE_STORAGE_KEY = "coding-tools-palette";
 
 export const PALETTES: PaletteDef[] = [
   {
@@ -52,9 +52,9 @@ export const PALETTES: PaletteDef[] = [
   },
 ];
 
-export const DEFAULT_PALETTE_ID = "ocean";
+const DEFAULT_PALETTE_ID = "ocean";
 
-export function getPalette(id: string | null | undefined): PaletteDef {
+function getPalette(id: string | null | undefined): PaletteDef {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[0];
 }
 

@@ -44,19 +44,12 @@ impl AppState {
         f(&mut guard)
     }
 
-    pub fn with_workspaces<R>(
-        &self,
-        f: impl FnOnce(&mut DataStore) -> AppResult<R>,
-    ) -> AppResult<R> {
-        self.with_data(f)
-    }
-
     pub fn with_settings<R>(&self, f: impl FnOnce(&mut DataStore) -> AppResult<R>) -> AppResult<R> {
         self.with_data(f)
     }
 
     pub fn workspace_profile(&self, id: &str) -> AppResult<WorkspaceProfile> {
-        self.with_workspaces(|store| {
+        self.with_data(|store| {
             store
                 .get(id)
                 .cloned()
@@ -65,7 +58,7 @@ impl AppState {
     }
 
     pub fn workspace_path(&self, id: &str) -> AppResult<PathBuf> {
-        self.with_workspaces(|store| {
+        self.with_data(|store| {
             store
                 .get(id)
                 .map(|profile| PathBuf::from(&profile.path))
