@@ -1,6 +1,6 @@
 [package]
 name = "coding-tools-mcp-desktop"
-version = "0.3.8"
+version = "0.3.9"
 description = "Coding Tools MCP desktop client and headless runtime"
 authors = ["Coding Tools MCP Contributors"]
 repository = "https://github.com/lengsukq/coding-tools-mcp"
