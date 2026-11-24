@@ -23,7 +23,7 @@ pub(super) async fn run_command(
     options: &CommandRunOptions,
 ) -> Result<Value, WorkspaceError> {
     let start = Instant::now();
-    let session = spawn_session(ctx, cmd, cwd, options.tty).await?;
+    let session = spawn_session(ctx, cmd, cwd, options.tty, &options.env_vars).await?;
     let deadline = start + options.limit;
 
     if options.yield_time.is_zero() {
@@ -47,6 +47,7 @@ async fn spawn_session(
     cmd: &str,
     cwd: &Path,
     tty: bool,
+    env_vars: &[(String, String)],
 ) -> Result<Arc<ExecSession>, WorkspaceError> {
     let search_path = ctx.executable_path_env();
     let (program, args) = parse_and_resolve(
@@ -59,6 +60,9 @@ async fn spawn_session(
     let mut command = command_for_program(&program, &args);
     if let Some(path) = search_path.as_ref() {
         command.env("PATH", path);
+    }
+    for (key, value) in env_vars {
+        command.env(key, value);
     }
     command
         .current_dir(platform_command_path(cwd))
@@ -326,6 +330,7 @@ mod tests {
             max_output: 4096,
             tty: false,
             stdin_text: String::new(),
+            env_vars: Vec::new(),
         };
         let started = Instant::now();
         let result = run_command(&ctx, cmd, workspace.path(), &options)
@@ -357,7 +362,7 @@ mod tests {
         #[cfg(not(windows))]
         let cmd = r#"sh -c "exit 0""#;
 
-        let session = spawn_session(&ctx, cmd, workspace.path(), false)
+        let session = spawn_session(&ctx, cmd, workspace.path(), false, &[])
             .await
             .expect("spawn session");
         let monitor = spawn_timeout_monitor(

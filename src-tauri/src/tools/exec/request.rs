@@ -21,6 +21,7 @@ pub(super) struct CommandRunOptions {
     pub max_output: usize,
     pub tty: bool,
     pub stdin_text: String,
+    pub env_vars: Vec<(String, String)>,
 }
 
 impl ExecRequest {
@@ -32,13 +33,13 @@ impl ExecRequest {
             cmd,
             workdir,
             filesystem_scope,
-            options: CommandRunOptions::from_args(args),
+            options: CommandRunOptions::from_args(args, ctx.policy.skip_permission_gates()),
         })
     }
 }
 
 impl CommandRunOptions {
-    fn from_args(args: &Value) -> Self {
+    fn from_args(args: &Value, allow_env: bool) -> Self {
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(Value::as_u64)
@@ -61,8 +62,30 @@ impl CommandRunOptions {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
+            env_vars: if allow_env {
+                parse_env_vars(args)
+            } else {
+                Vec::new()
+            },
         }
     }
+}
+
+fn parse_env_vars(args: &Value) -> Vec<(String, String)> {
+    args.get("env")
+        .and_then(Value::as_object)
+        .map(|env| {
+            env.iter()
+                .filter_map(|(key, value)| {
+                    let value = value.as_str()?;
+                    if key.is_empty() || key.contains('=') || key.contains('\0') {
+                        return None;
+                    }
+                    Some((key.clone(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn required_command(args: &Value) -> Result<String, WorkspaceError> {
@@ -78,7 +101,7 @@ pub(super) fn resolve_workdir(ctx: &ToolContext, args: &Value) -> Result<PathBuf
         .or_else(|| args.get("cwd"))
         .and_then(Value::as_str)
         .unwrap_or(".");
-    let resolved = ctx.workspace.resolve_existing(raw)?;
+    let resolved = super::paths::resolve_workdir(&ctx.workspace, raw)?;
     if !resolved.path.is_dir() {
         return Err(WorkspaceError::not_a_directory(
             "workdir is not a directory",

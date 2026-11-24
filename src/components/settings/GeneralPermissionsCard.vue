@@ -39,6 +39,12 @@ const emit = defineEmits<{
         :options="PERMISSION_OPTIONS"
         @update:model-value="emit('update-runtime', { permissionMode: $event })"
       />
+      <div
+        v-if="runtime.permissionMode === 'dangerous'"
+        class="ui-banner ui-banner--warning text-xs leading-5"
+      >
+        完全放开模式允许执行非白名单命令（如 <code>psql</code> / <code>mysql</code>）并通过 <code>env</code> 向子进程注入环境变量；仍保留工作区目录边界、<code>.git</code> 保护与 Shell 注入拦截。
+      </div>
       <TextAreaField
         :model-value="runtime.allowedCommands"
         label="默认允许的系统命令（逗号分隔）"

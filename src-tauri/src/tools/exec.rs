@@ -6,8 +6,10 @@ use serde_json::{json, Value};
 use crate::tools::context::ToolContext;
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 
+pub(crate) mod command_line;
 mod diagnostics;
 mod output;
+pub(crate) mod paths;
 mod platform;
 mod quality_gate;
 mod request;
@@ -99,6 +101,7 @@ pub fn exec_health_check(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         max_output: 16_384,
         tty: false,
         stdin_text: String::new(),
+        env_vars: Vec::new(),
     };
     let result = crate::async_rt::block_on(run_command(ctx, probe, &cwd, &options));
 
@@ -457,6 +460,110 @@ mod tests {
         assert!(
             stdout.contains("argument=[argument with spaces]"),
             "{output}"
+        );
+    }
+
+    #[test]
+    fn env_injection_respects_permission_mode_end_to_end() {
+        let workspace = tempdir().expect("workspace");
+        let harness = tempdir().expect("harness");
+        let python = if cfg!(windows) { "python" } else { "python3" };
+
+        let dangerous_policy = crate::tools::policy::PolicySettings {
+            permission_mode: crate::tools::policy::PermissionMode::from("dangerous"),
+            ..Default::default()
+        };
+        let dangerous_ctx = ToolContext::from_workspace_with_harness_root(
+            crate::tools::workspace::Workspace::new(workspace.path().to_path_buf())
+                .expect("workspace"),
+            crate::workspace::AuthConfig {
+                auth_type: "noauth".into(),
+                ..Default::default()
+            },
+            dangerous_policy,
+            crate::tools::registry::ToolProfile::Compact,
+            harness.path().to_path_buf(),
+        );
+
+        let out = call_tool(
+            &dangerous_ctx,
+            "exec_command",
+            &json!({
+                "cmd": format!("{python} -c \"import os; print(os.environ.get('CTM_TEST_TOKEN', ''))\""),
+                "env": { "CTM_TEST_TOKEN": "injected-ok-42" },
+                "timeout_ms": 10_000,
+                "yield_time_ms": 10_000
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["command_ok"], true, "{out}");
+        assert!(
+            out["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("injected-ok-42"),
+            "{out}"
+        );
+
+        let trusted_ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("trusted ctx");
+        let denied = call_tool(
+            &trusted_ctx,
+            "exec_command",
+            &json!({
+                "cmd": format!("{python} --version"),
+                "env": { "CTM_TEST_TOKEN": "blocked" }
+            }),
+        );
+        assert_eq!(denied["ok"], false, "{denied}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_venv_entry_preserves_entry_path_without_dereferencing() {
+        let workspace = tempdir().expect("workspace");
+        let venv_bin = workspace.path().join(".venv").join("bin");
+        std::fs::create_dir_all(&venv_bin).expect("venv bin");
+        let system_python = which::which("python3").expect("python3 on PATH");
+        let symlink_entry = venv_bin.join("python3");
+        std::os::unix::fs::symlink(&system_python, &symlink_entry).expect("symlink");
+
+        let resolved = resolve_program(
+            ".venv/bin/python3",
+            workspace.path(),
+            workspace.path(),
+            &crate::tools::policy::PolicySettings::default(),
+            None,
+        )
+        .expect("venv symlink resolves");
+
+        let expected = venv_bin.canonicalize().expect("canon").join("python3");
+        assert_eq!(std::path::Path::new(&resolved), expected);
+    }
+
+    #[test]
+    fn workspace_absolute_workdir_executes_identically_to_relative() {
+        let workspace = tempdir().expect("workspace");
+        let sub = workspace.path().join("nested");
+        std::fs::create_dir_all(&sub).expect("sub");
+        let harness = tempdir().expect("harness");
+        let ctx =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("ctx");
+
+        let out = call_tool(
+            &ctx,
+            "exec_command",
+            &json!({
+                "cmd": "pwd",
+                "workdir": sub.to_string_lossy()
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(
+            std::path::Path::new(out["resolved_cwd"].as_str().unwrap_or("")),
+            sub.canonicalize().unwrap()
         );
     }
 }

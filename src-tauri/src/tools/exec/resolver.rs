@@ -1,8 +1,10 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::tools::policy::PolicySettings;
+use crate::tools::policy::{is_allowlisted_program, PolicySettings};
 use crate::tools::workspace::WorkspaceError;
+
+use super::command_line::split_command;
 
 pub(super) fn parse_and_resolve(
     cmd: &str,
@@ -11,8 +13,7 @@ pub(super) fn parse_and_resolve(
     policy: &PolicySettings,
     search_path: Option<&OsStr>,
 ) -> Result<(String, Vec<String>), WorkspaceError> {
-    let parts = shell_words::split(cmd)
-        .map_err(|_| WorkspaceError::invalid_argument("Invalid command syntax"))?;
+    let parts = split_command(cmd).map_err(WorkspaceError::invalid_argument)?;
     if parts.is_empty() {
         return Err(WorkspaceError::invalid_argument("Empty command"));
     }
@@ -55,7 +56,23 @@ pub(super) fn resolve_program(
                     category: "runtime",
                     retryable: true,
                 })?;
-        if !resolved.starts_with(&canonical_workspace) {
+        let base_name = candidate
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let allowlisted = is_allowlisted_program(policy, base_name);
+        let is_path_entry = (allowlisted || policy.skip_permission_gates())
+            && (which_on_path(base_name, cwd, search_path)
+                .and_then(|path| path.canonicalize().ok())
+                .is_some_and(|path| path == resolved)
+                || (allowlisted
+                    && policy.allowed_commands.iter().any(|name| {
+                        which_on_path(name, cwd, search_path)
+                            .and_then(|path| path.canonicalize().ok())
+                            .is_some_and(|path| path == resolved)
+                    })));
+        let inside_workspace = resolved.starts_with(&canonical_workspace);
+        if !inside_workspace && !is_path_entry {
             return Err(WorkspaceError::Tool {
                 code: "EXECUTABLE_OUTSIDE_WORKSPACE",
                 message: format!("Workspace 外可执行文件被拒绝: {trimmed}"),
@@ -63,15 +80,26 @@ pub(super) fn resolve_program(
                 retryable: false,
             });
         }
-        let extension = resolved
+        let extension = candidate
             .extension()
             .and_then(|value| value.to_str())
             .map(|value| format!(".{}", value.to_ascii_lowercase()))
             .unwrap_or_default();
-        if policy.workspace_local_entries
-            && (extension.is_empty() || policy.workspace_script_extensions.contains(&extension))
-        {
-            return Ok(resolved.to_string_lossy().into_owned());
+        let entry_allowed = is_path_entry
+            || policy.skip_permission_gates()
+            || (policy.workspace_local_entries
+                && (allowlisted
+                    || extension.is_empty()
+                    || policy.workspace_script_extensions.contains(&extension)));
+        if entry_allowed {
+            // Canonicalize only the parent directory so symlinks like `.venv/bin/python`
+            // keep their original entry path and Python locates `pyvenv.cfg` correctly.
+            let entry = candidate
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .and_then(|parent| candidate.file_name().map(|name| parent.join(name)))
+                .unwrap_or(candidate);
+            return Ok(entry.to_string_lossy().into_owned());
         }
         return Err(WorkspaceError::Tool {
             code: "COMMAND_REJECTED",

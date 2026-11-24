@@ -12,8 +12,8 @@ pub(super) fn run_native_diagnostic(
     cmd: &str,
     cwd: &Path,
 ) -> Result<Option<Value>, WorkspaceError> {
-    let parts = shell_words::split(cmd)
-        .map_err(|_| WorkspaceError::invalid_argument("Invalid command syntax"))?;
+    let parts =
+        super::command_line::split_command(cmd).map_err(WorkspaceError::invalid_argument)?;
     if parts.is_empty() {
         return Ok(None);
     }

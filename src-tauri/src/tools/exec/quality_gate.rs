@@ -82,6 +82,7 @@ pub(super) fn quality_gate(ctx: &ToolContext, args: &Value) -> Result<Value, Wor
         max_output,
         tty: false,
         stdin_text: String::new(),
+        env_vars: Vec::new(),
     };
     let gate_start = Instant::now();
     let mut results = Vec::new();

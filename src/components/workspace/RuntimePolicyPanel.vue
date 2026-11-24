@@ -228,6 +228,12 @@ useUnsavedChanges("工作区执行策略", dirty, save);
             :hint="draft.inheritGlobalExecutionPolicy ? '当前由全局执行权限控制。' : undefined"
           />
         </div>
+        <div
+          v-if="!draft.inheritGlobalExecutionPolicy && draft.permissionMode === 'dangerous'"
+          class="ui-banner ui-banner--warning text-xs leading-5"
+        >
+          完全放开模式允许执行非白名单命令（如 <code>psql</code> / <code>mysql</code>）并通过 <code>env</code> 向子进程注入环境变量；仍保留工作区目录边界、<code>.git</code> 保护与 Shell 注入拦截。
+        </div>
         <TextField
           v-model="draft.allowedCommands"
           label="允许执行的系统命令（逗号分隔）"

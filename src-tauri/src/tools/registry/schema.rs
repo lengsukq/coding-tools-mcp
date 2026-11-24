@@ -480,6 +480,11 @@ fn exec_schema(name: &str) -> Option<Value> {
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
                 "tty": { "type": "boolean", "default": false },
                 "stdin": { "type": "string", "default": "" },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Optional child-process environment variables (such as database credentials). Only allowed when permission_mode is dangerous; rejected in safe and trusted modes."
+                },
                 "checks": { "type": "array", "items": { "type": "string" }, "description": "For quality_gate, filter discovered checks by id (for example package:test) or category (lint/check/typecheck/test/build/format)." },
                 "dry_run": { "type": "boolean", "default": false },
                 "stop_on_failure": { "type": "boolean", "default": true },
