@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://github.com/lengsukq/coding-tools-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/lengsukq/coding-tools-mcp?label=Release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-Universal-000000?logo=apple" alt="macOS Universal">
+  <img src="https://img.shields.io/badge/Linux-Desktop%20%26%20Headless%20(x64%2Farm64)-FCC624?logo=linux&logoColor=black" alt="Linux Desktop and Headless">
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
 </p>
 
@@ -27,8 +28,10 @@ Coding Tools MCP 是一个 Rust + Tauri 2 构建的 **local-first AI coding runt
 
 在“一个 Global MCP 管理所有隔离 Workspace”的基础底座上，近期版本重点补齐了 **主流 AI 零门槛接入、跨设备局域网协同、macOS 原生屏幕控制、全流程审计与 Vue 3 设计系统**：
 
+- **Linux 无头守护进程（Headless Daemon）与一键安装**：支持编译零 GTK / 零桌面依赖的独立二进制 `coding-tools-mcp`（x86_64 / ARM64），提供完整终端 CLI（`serve`、`workspace`、`lan`、`config`、`service`）、父目录 `.git` 自动发现、本地 `0600` Unix Socket 控制总线、普通用户 / root 系统级 `systemd` 开机常驻，以及一行命令一键安装脚本（详见 [Linux 无头模式与服务器部署指南](docs/linux-headless.md)）；同步提供 Linux 桌面端 `.deb` / `.AppImage` 安装包。
+- **本机 Skills / Agents 勾选过滤与开机轻量自启**：支持扫描并按需勾选暴露给 AI 的本机 Skills 与 Agents 上下文，支持开机自动启动并可选直接进入轻量后台模式。
 - **Gemini App 连接器与原生 `mcp-stdio` 桥接**：新增「Gemini App · MCP 连接」面板，支持 **Local MCP**（内置毫秒级 Rust `mcp-stdio` 本地桥接，不开公网、不依赖 Node.js，自动生成 `0600` 权限凭据）与 **Cloud MCP**（一键体检并复制公网地址，适配 Gemini 网页版/手机端）；同时基于 OAuth 2.1（PKCE S256 + DCR）和 Bearer 兼容 **ChatGPT、claude.ai、Grok、Gemini**。
-- **局域网对等配对与多设备联邦网关**：支持跨 macOS / Windows 局域网（及 EasyTier / Tailscale 等组网）设备发现与 **6 位配对码**双向握手；通过 HMAC 签名对等 RPC（`/api/lan/v1/*`）实现公网隧道硬隔离，支持 `{device_id}:{workspace_id}` 复合工作区路由、`device_list` 设备发现、跨设备 Computer Use 转发、变更审查代理（`/review/peer/{device_id}/{id}`）与双向审计。
+- **局域网对等配对与多设备联邦网关**：支持跨 macOS / Windows / Linux 局域网（及 EasyTier / Tailscale 等组网）设备发现与 **6 位配对码**双向握手（自动过滤 Docker 等容器虚拟网桥）；通过 HMAC 签名对等 RPC（`/api/lan/v1/*`）实现公网隧道硬隔离，支持 `{device_id}:{workspace_id}` 复合工作区路由、`device_list` 设备发现、跨设备 Computer Use 转发、变更审查代理（`/review/peer/{device_id}/{id}`）与双向审计。
 - **macOS 原生 Computer Use（受控屏幕观察与输入）**：基于 `ScreenCaptureKit` 实现按需截屏观察与目标应用受控鼠键输入；内置截图快照绑定防错位、高危动作单次确认、一键紧急暂停/恢复、macOS TCC 权限自检，以及独立的 **Computer Use** 设置页。
 - **工具调用审计与多主题调色盘**：新增工具调用审计中心（按天分区的 JSONL 日志、自动过期轮转、筛选统计与详情抽屉）；推出统一毛玻璃设计系统、6 大设置分类与草稿保护，以及 **6 套全站主题调色盘**（海洋蓝、珊瑚橙、葡萄紫、翡翠绿、琥珀金、樱花粉）。
 - **Tunnel 控制、健康监控与轻量运行态**：支持强制重启 Cloudflare Quick Tunnel 与全局健康状态实时汇总；新增 macOS **轻量菜单栏模式**、每 5 分钟空闲会话/命令内存回收，并优化任务验收与分栏 Diff 行对齐。
@@ -225,21 +228,39 @@ MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registr
 第一次使用只需要记住两件事：**桌面端负责把项目变成 MCP 工作区（并支持本机 `mcp-stdio` 桥接、局域网多设备联邦或公网 `/mcp` 入口），AI 客户端负责连上它并按 Workspace 边界开发。**
 
 - [查看完整安装和桌面端启动步骤](#五分钟开始使用)
+- [查看 Linux 服务器无头模式一键安装与 CLI 指南](docs/linux-headless.md)
 - [直接查看 ChatGPT 插件配置](#mcp-connector)
 - [查看 Gemini / claude.ai / Grok 接入矩阵](docs/web-chat-connectors.md)
 
 ## 五分钟开始使用
 
-### 1. 安装桌面客户端
+### 1. 安装客户端（桌面端或 Linux 无头服务器）
 
-打开 [Releases](https://github.com/lengsukq/coding-tools-mcp/releases/latest) 并下载对应安装包：
+打开 [Releases](https://github.com/lengsukq/coding-tools-mcp/releases/latest) 并下载对应安装包，或直接在 Linux 服务器上使用一键安装脚本：
 
-| 系统 | 安装包 |
+| 系统与形态 | 安装方式 / 安装包 |
 | --- | --- |
 | Windows 10/11 x64 | `Coding.Tools.MCP_*_x64-setup.exe` |
-| macOS Apple Silicon | `Coding Tools MCP_*_aarch64.dmg` |
+| macOS（Intel + Apple Silicon） | `Coding.Tools.MCP_*_universal.dmg` |
+| Linux 桌面端（x64） | `*.deb` / `*.AppImage` |
+| Linux 无头服务器（x64 / ARM64，零 GTK 依赖） | `coding-tools-mcp-v*-linux-*-headless.tar.gz` 或下方一键脚本 |
 
 macOS 安装包目前未签名。如果系统阻止首次打开，请在“系统设置 → 隐私与安全性”中确认打开。
+
+#### Linux 服务器一键安装（无头模式）
+
+```bash
+# 1) 一键安装无头二进制（自动识别 x86_64 / aarch64）
+curl -fsSL https://raw.githubusercontent.com/lengsukq/coding-tools-mcp/main/scripts/install-linux.sh | bash
+
+# 2) 一键安装 + systemd 开机常驻 + 开启跨设备联邦 + 自动纳管 ~/code 下全部 .git 仓库 + 打印 6 位配对码
+curl -fsSL https://raw.githubusercontent.com/lengsukq/coding-tools-mcp/main/scripts/install-linux.sh | \
+  bash -s -- --service --lan --auto-root ~/code --pair-pin
+```
+
+- 以 `sudo bash -s -- --service ...` 执行时自动安装 **root 系统级 systemd**（`/etc/systemd/system/coding-tools-mcp.service`）；普通用户自动安装 **`systemd --user`**。
+- 国内网络可附加 `--mirror https://gh-proxy.com/`；如需从最新源码直接编译可附加 `--from-source`。
+- 完整 CLI 子命令、systemd 日志、跨网段组网与排障说明见：[Linux 无头模式与服务器部署指南](docs/linux-headless.md)。
 
 ### 2. 添加项目工作区
 
@@ -455,6 +476,8 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 
 | 路径 | 作用 |
 | --- | --- |
+| `src-tauri/src/cli/` & `src-tauri/src/bin/coding-tools-mcp.rs` | 零 GTK 无头守护进程 `serve`、终端联邦配对、工作区自动发现与 `systemd` 服务管理 CLI |
+| `scripts/install-linux.sh` | Linux 无头版一键安装、升级、systemd 集成与卸载脚本 |
 | `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、文件/Git/Exec/History/Planning/Skill |
 | `src-tauri/src/mcp/` | Global MCP Streamable HTTP 服务、OAuth/Review 路由与 `mcp-stdio` 无头桥接 |
 | `src-tauri/src/lan_peer/` & `lan_peer.rs` | 跨平台局域网设备发现、6 位配对码握手、HMAC 对等 RPC 与公网隔离 |

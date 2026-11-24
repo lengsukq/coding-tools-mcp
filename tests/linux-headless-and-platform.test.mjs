@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const source = (path) => readFile(new URL("../" + path, import.meta.url), "utf8");
 
 test("Cargo manifest separates desktop-ui feature from standalone zero-GTK headless binary", async () => {
@@ -64,4 +69,112 @@ test("CI and Release workflows validate and package both Linux Headless and Linu
   assert.match(release, /aarch64-unknown-linux-gnu/);
   assert.match(discoveryCard, /macOS \/ Windows \/ Linux/);
   assert.match(localCard, /macOS \/ Windows \/ Linux/);
+});
+
+test("Linux one-click installer script passes syntax checks and matches release asset naming", async () => {
+  const installerPath = join(repoRoot, "scripts/install-linux.sh");
+  const installer = await source("scripts/install-linux.sh");
+  const linuxDoc = await source("docs/linux-headless.md");
+  const readme = await source("README.md");
+  const readmeEn = await source("README.en.md");
+
+  assert.match(installer, /-linux-\$\{ARCH\}-headless\.tar\.gz/);
+  assert.match(installer, /--from-source/);
+  assert.match(installer, /--mirror/);
+  assert.match(installer, /--service/);
+  assert.match(installer, /--auto-root/);
+  assert.match(installer, /--uninstall/);
+  assert.match(linuxDoc, /scripts\/install-linux\.sh/);
+  assert.match(readme, /scripts\/install-linux\.sh/);
+  assert.match(readme, /docs\/linux-headless\.md/);
+  assert.match(readmeEn, /scripts\/install-linux\.sh/);
+  assert.match(readmeEn, /docs\/linux-headless\.md/);
+
+  if (process.platform !== "win32") {
+    execFileSync("bash", ["-n", installerPath], { stdio: "pipe" });
+    const helpOutput = execFileSync("bash", [installerPath, "--help"], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    assert.match(helpOutput, /--service/);
+    assert.match(helpOutput, /--pair-pin/);
+  }
+});
+
+test("Linux one-click installer supports local archive install, config flags, and uninstall", async () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const installerPath = join(repoRoot, "scripts/install-linux.sh");
+  const sandbox = await mkdtemp(join(tmpdir(), "ct-mcp-install-test-"));
+  try {
+    const stageDir = join(sandbox, "stage");
+    const installDir = join(sandbox, "bin");
+    const logFile = join(sandbox, "invocations.log");
+    const fakeBin = join(stageDir, "coding-tools-mcp");
+    const archivePath = join(sandbox, "coding-tools-mcp-v0.3.8-linux-x86_64-headless.tar.gz");
+
+    await mkdir(stageDir, { recursive: true });
+    await writeFile(
+      fakeBin,
+      `#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then
+  echo "coding-tools-mcp 0.3.8-test"
+  exit 0
+fi
+printf '%s\\n' "$*" >> "${logFile}"
+`,
+      "utf8",
+    );
+    await chmod(fakeBin, 0o755);
+    execFileSync("tar", ["-C", stageDir, "-czf", archivePath, "coding-tools-mcp"], {
+      stdio: "pipe",
+    });
+
+    const env = {
+      ...process.env,
+      CODING_TOOLS_MCP_OS: "Linux",
+      CODING_TOOLS_MCP_ARCH: "x86_64",
+    };
+
+    execFileSync(
+      "bash",
+      [
+        installerPath,
+        "--archive",
+        archivePath,
+        "--install-dir",
+        installDir,
+        "--device-name",
+        "lab-linux",
+        "--port",
+        "28766",
+        "--lan",
+        "--auto-root",
+        "/srv/code",
+      ],
+      { env, stdio: "pipe" },
+    );
+
+    const installedStat = await stat(join(installDir, "coding-tools-mcp"));
+    assert.equal(installedStat.isFile(), true);
+    const invocations = (await readFile(logFile, "utf8")).trim().split("\n");
+    assert.deepEqual(invocations, [
+      "config set device-name lab-linux",
+      "config set port 28766",
+      "lan enable",
+      "workspace auto-root add /srv/code",
+    ]);
+
+    execFileSync(
+      "bash",
+      [installerPath, "--uninstall", "--install-dir", installDir],
+      { env, stdio: "pipe" },
+    );
+    await assert.rejects(stat(join(installDir, "coding-tools-mcp")));
+    const afterUninstall = (await readFile(logFile, "utf8")).trim().split("\n");
+    assert.equal(afterUninstall.at(-1), "service uninstall");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
 });

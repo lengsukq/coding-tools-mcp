@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://github.com/lengsukq/coding-tools-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/lengsukq/coding-tools-mcp?label=Release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-Universal-000000?logo=apple" alt="macOS Universal">
+  <img src="https://img.shields.io/badge/Linux-Desktop%20%26%20Headless%20(x64%2Farm64)-FCC624?logo=linux&logoColor=black" alt="Linux Desktop and Headless">
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
 </p>
 
@@ -27,8 +28,10 @@ It is closer to a long-lived AI development workbench than a separate MCP server
 
 Building on the single-Global-MCP multi-workspace foundation, recent releases add **zero-friction AI client connectors, LAN multi-device federation, native macOS Computer Use, full tool-call auditing, and a Vue 3 design system**:
 
+- **Linux Headless Daemon, CLI & One-Click Installer**: Builds a standalone zero-GTK binary `coding-tools-mcp` (`x86_64` / `aarch64`) with full CLI controls (`serve`, `workspace`, `lan`, `config`, `service`), parent-directory `.git` auto-discovery, `0600` Unix Domain Socket local IPC, user & root system-level `systemd` service management, and a one-line installer (`scripts/install-linux.sh`); Linux desktop `.deb` / `.AppImage` packages are built alongside it.
+- **Local Skills / Agents Picker & Lightweight Autostart**: Selectively filter which local Skills and Agents are exposed to AI clients, with launch-at-login and optional lightweight background startup.
 - **Gemini App Connector & Native `mcp-stdio` Bridge**: Added the **Gemini App · MCP Connection** card supporting both **Local MCP** (native Rust `mcp-stdio` bridge with sub-10ms cold start, no Node.js/`npx` or public tunnel needed, and `0600` local OAuth credentials) and **Cloud MCP** (preflight checks + public HTTPS URL for Gemini web/mobile), alongside unified OAuth 2.1 (PKCE S256 + DCR) and Bearer support for **ChatGPT, claude.ai, Grok, and Gemini**.
-- **LAN Peer Pairing & Multi-Device Federation**: Supports cross-platform (macOS / Windows) LAN and overlay-network device discovery with a **6-digit one-time PIN** handshake, HMAC-SHA256 signed peer RPC (`/api/lan/v1/*`) strictly isolated from public tunnels, `{device_id}:{workspace_id}` composite routing, `device_list`, cross-device Computer Use forwarding, peer change review proxying (`/review/peer/{device_id}/{id}`), and bidirectional auditing.
+- **LAN Peer Pairing & Multi-Device Federation**: Supports cross-platform (macOS / Windows / Linux) LAN and overlay-network device discovery with a **6-digit one-time PIN** handshake (filtering container virtual bridges on Linux), HMAC-SHA256 signed peer RPC (`/api/lan/v1/*`) strictly isolated from public tunnels, `{device_id}:{workspace_id}` composite routing, `device_list`, cross-device Computer Use forwarding, peer change review proxying (`/review/peer/{device_id}/{id}`), and bidirectional auditing.
 - **Native macOS Computer Use**: Opt-in `ScreenCaptureKit` screen observation and target-app guarded pointer/keyboard input with snapshot-bound pointer safety, one-time confirmation for sensitive actions, instant local emergency pause/resume, macOS TCC diagnostics, and dedicated **Computer Use** settings.
 - **Tool-Call Auditing & Multi-Theme Design System**: Added privacy-safe tool-call auditing (daily partitioned JSONL logs with retention rotation, filters, and detail drawer), unified 3-layer glassmorphism tokens, 6 organized settings sections with draft protection, and **6 site-wide theme palettes** (Ocean Blue, Coral Orange, Grape Purple, Emerald Green, Amber Gold, Sakura Pink).
 - **Tunnel Controls, Health Monitoring & Lightweight Runtime**: Added forced Cloudflare Quick Tunnel restart, a global health-monitoring store, macOS **Lightweight Menubar Mode** with 5-minute idle session/command reaping, and improved planning acceptance and split-diff alignment.
@@ -225,21 +228,37 @@ Install the desktop app
 For a first connection, remember only this: **the desktop app turns local projects into isolated MCP workspaces (reachable via local `mcp-stdio`, LAN federation, or a public `/mcp` URL), and your AI client connects to it with clear Workspace boundaries.**
 
 - [See the complete desktop setup](#get-started-in-five-minutes)
+- [See the Linux headless server one-click install & CLI guide (Chinese)](docs/linux-headless.md)
 - [Go directly to the ChatGPT plugin setup](#mcp-connector)
 - [See Gemini / claude.ai / Grok connector matrix](docs/web-chat-connectors.md)
 
 ## Get started in five minutes
 
-### 1. Install the desktop client
+### 1. Install the client (Desktop or Linux Headless Server)
 
-Open [Releases](https://github.com/lengsukq/coding-tools-mcp/releases/latest) and download the package for your platform:
+Open [Releases](https://github.com/lengsukq/coding-tools-mcp/releases/latest) and download the package for your platform, or use the one-line installer on Linux servers:
 
-| Platform | Package |
+| Platform | Package / Installer |
 | --- | --- |
 | Windows 10/11 x64 | `Coding.Tools.MCP_*_x64-setup.exe` |
-| macOS Apple Silicon | `Coding Tools MCP_*_aarch64.dmg` |
+| macOS (Intel + Apple Silicon) | `Coding.Tools.MCP_*_universal.dmg` |
+| Linux Desktop (x64) | `*.deb` / `*.AppImage` |
+| Linux Headless Server (x64 / ARM64, zero GTK) | `coding-tools-mcp-v*-linux-*-headless.tar.gz` or one-line script below |
 
 The macOS build is currently unsigned. If macOS blocks the first launch, allow it from System Settings → Privacy & Security.
+
+#### One-line Linux headless install
+
+```bash
+# Install the headless binary (auto-detects x86_64 / aarch64)
+curl -fsSL https://raw.githubusercontent.com/lengsukq/coding-tools-mcp/main/scripts/install-linux.sh | bash
+
+# Install + enable systemd daemon + LAN federation + auto-discover ~/code repos + print 6-digit PIN
+curl -fsSL https://raw.githubusercontent.com/lengsukq/coding-tools-mcp/main/scripts/install-linux.sh | \
+  bash -s -- --service --lan --auto-root ~/code --pair-pin
+```
+
+Run with `sudo bash -s -- --service ...` for a system-level `systemd` unit (`/etc/systemd/system/coding-tools-mcp.service`), pass `--from-source` to build the zero-GTK binary from `main`, or pass `--mirror <URL>` to use a GitHub download mirror. See [docs/linux-headless.md](docs/linux-headless.md) for the complete CLI and deployment reference.
 
 ### 2. Add a project workspace
 
@@ -447,6 +466,8 @@ On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone t
 
 | Path | Purpose |
 | --- | --- |
+| `src-tauri/src/cli/` & `src-tauri/src/bin/coding-tools-mcp.rs` | Zero-GTK headless daemon (`serve`), terminal LAN pairing, `.git` auto-discovery, and `systemd` CLI |
+| `scripts/install-linux.sh` | One-line Linux headless installer, in-place upgrader, systemd integration, and uninstaller |
 | `src-tauri/src/tools/` | Shared file, Patch, Exec, Git, Planning, History, and Skill tool kernel |
 | `src-tauri/src/mcp/` | Global MCP Streamable HTTP server, OAuth/Review routes, and `mcp-stdio` bridge |
 | `src-tauri/src/lan_peer/` & `lan_peer.rs` | Cross-platform LAN discovery, 6-digit PIN pairing, HMAC peer RPC, and tunnel isolation |

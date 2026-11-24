@@ -16,7 +16,8 @@
 
 ## 当前核心能力
 
-- 单一 Global MCP 连接管理多个隔离 Workspace，并支持跨 macOS / Windows 局域网对等配对与单跳联邦路由（`{device_id}:{workspace_id}` 复合作用域与 `device_list` 设备发现）；
+- 单一 Global MCP 连接管理多个隔离 Workspace，并支持跨 macOS / Windows / Linux 局域网对等配对与单跳联邦路由（`{device_id}:{workspace_id}` 复合作用域与 `device_list` 设备发现）；
+- 零 GTK 依赖 Linux 无头二进制目标 `coding-tools-mcp`（`--no-default-features`），内置 `serve`/`status`/`reload`/`stop`/`workspace`/`lan`/`config`/`service` CLI、父目录 `.git` 自动发现、`0600` Unix Socket 本地控制总线、用户级/root 系统级 `systemd` 服务管理及一键安装脚本 `scripts/install-linux.sh`；
 - request-scoped `workspace_id` 路由，并兼容持久 MCP session 的 `workspace_select`；
 - MCP Streamable HTTP 与本机回环 `mcp-stdio` 无头桥接（供桌面端 Gemini / Claude 等本地 MCP 宿主直连）；
 - Bearer / OAuth、PKCE S256、Dynamic Client Registration、Refresh Token；
@@ -31,6 +32,8 @@
 
 ## 文档导航
 
+- [Linux 无头模式与服务器部署指南](./linux-headless.md)
+- [网页 Chat 客户端接入矩阵](./web-chat-connectors.md)
 - [技术栈](./project-context/tech-stack.md)
 - [架构设计](./project-context/architecture.md)
 - [如何开发](./project-context/how-to-develop.md)
