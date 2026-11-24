@@ -371,6 +371,7 @@ mod desktop_shell {
                 platform::register_show_window_handle(app.handle());
                 let restore_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    crate::global_gateway::cleanup_orphaned_tunnels_on_startup().await;
                     let state = restore_app.state::<AppState>();
                     let _ = commands::runtime::restore_runtime_state_inner(&state).await;
                     update_tray_dashboard(&restore_app);
@@ -477,6 +478,9 @@ mod desktop_shell {
                     if commands::ui_memory::should_prevent_exit() {
                         api.prevent_exit();
                     }
+                }
+                tauri::RunEvent::Exit => {
+                    crate::global_gateway::terminate_children_sync();
                 }
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     if label != "main" {

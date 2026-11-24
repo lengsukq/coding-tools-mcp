@@ -25,10 +25,12 @@ const GATEWAY_CONFIG_KEYS: ReadonlyArray<keyof GlobalGatewayConfigDto> = [
   "tunnelType",
   "publicUrl",
   "cloudflareMode",
+  "cloudflareHttp2",
   "frpProfileId",
   "frpServer",
   "frpSubdomain",
   "frpServerPort",
+  "frpTls",
   "useProxy",
 ];
 
@@ -37,10 +39,12 @@ const TUNNEL_CONFIG_KEYS: ReadonlyArray<keyof GlobalGatewayConfigDto> = [
   "tunnelType",
   "publicUrl",
   "cloudflareMode",
+  "cloudflareHttp2",
   "frpProfileId",
   "frpServer",
   "frpSubdomain",
   "frpServerPort",
+  "frpTls",
   "useProxy",
 ];
 

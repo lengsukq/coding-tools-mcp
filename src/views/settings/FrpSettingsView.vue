@@ -6,6 +6,7 @@ import ConfirmDialog from "$src/components/ui/ConfirmDialog.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
 import SaveBar from "$src/components/ui/SaveBar.vue";
 import TextField from "$src/components/ui/TextField.vue";
+import ToggleSwitch from "$src/components/ui/ToggleSwitch.vue";
 import {
   deleteFrpProfile,
   listFrpProfiles,
@@ -22,6 +23,7 @@ interface FrpFormSnapshot {
   name: string;
   server: string;
   serverPort: number;
+  tlsEnable: boolean;
   token: string;
 }
 
@@ -32,6 +34,7 @@ const editingId = ref<string | null>(null);
 const name = ref("");
 const server = ref("");
 const serverPort = ref(DEFAULT_FRP_PORT);
+const tlsEnable = ref(false);
 const token = ref("");
 const pendingDelete = ref<FrpProfileDto | null>(null);
 const deleteBusy = ref(false);
@@ -42,6 +45,7 @@ const baseline = ref<FrpFormSnapshot>({
   name: "",
   server: "",
   serverPort: DEFAULT_FRP_PORT,
+  tlsEnable: false,
   token: "",
 });
 
@@ -50,6 +54,7 @@ const dirty = computed(
     name.value !== baseline.value.name ||
     server.value !== baseline.value.server ||
     serverPort.value !== baseline.value.serverPort ||
+    tlsEnable.value !== baseline.value.tlsEnable ||
     token.value !== baseline.value.token,
 );
 
@@ -58,6 +63,7 @@ function syncBaseline() {
     name: name.value,
     server: server.value,
     serverPort: serverPort.value,
+    tlsEnable: tlsEnable.value,
     token: token.value,
   };
 }
@@ -79,6 +85,7 @@ function resetForm() {
   name.value = "";
   server.value = "";
   serverPort.value = DEFAULT_FRP_PORT;
+  tlsEnable.value = false;
   token.value = "";
   syncBaseline();
   error.value = "";
@@ -90,6 +97,7 @@ function edit(profile: FrpProfileDto) {
   name.value = profile.name;
   server.value = profile.server;
   serverPort.value = profile.serverPort;
+  tlsEnable.value = !!profile.tlsEnable;
   token.value = "";
   syncBaseline();
   error.value = "";
@@ -114,6 +122,7 @@ async function save() {
         name: name.value.trim(),
         server: server.value.trim(),
         serverPort: Number(serverPort.value),
+        tlsEnable: tlsEnable.value,
       },
       token.value.trim() || undefined,
     );
@@ -168,6 +177,13 @@ onMounted(() => void refresh());
             <TextField v-model="server" label="服务器域名" placeholder="frp.example.com" />
             <TextField :model-value="String(serverPort)" label="端口" type="number" @update:model-value="serverPort = Number($event)" />
             <TextField v-model="token" :label="`Token ${editingId ? '（留空保持不变）' : '（可选）'}`" type="password" placeholder="frp auth token" />
+            <div class="ui-inset p-3">
+              <ToggleSwitch
+                v-model="tlsEnable"
+                label="启用 TLS 加密传输"
+                description="校园网或企业网拦截明文 FRP 控制连接时建议开启。"
+              />
+            </div>
             <SaveBar :dirty="dirty" :busy="saving" :error="error" :label="editingId ? '更新配置' : '添加配置'" @save="save" />
             <BaseButton v-if="editingId || dirty" variant="ghost" :disabled="saving" @click="resetForm">
               {{ editingId ? "取消编辑" : "放弃草稿" }}
@@ -192,7 +208,7 @@ onMounted(() => void refresh());
             <div class="min-w-0">
               <p class="truncate text-sm font-medium">{{ profile.name }}</p>
               <p class="mt-1 truncate font-mono text-xs text-[var(--ui-text-muted)]">
-                {{ profile.server }}:{{ profile.serverPort }} · Token {{ profile.hasToken ? "已配置" : "未配置" }}
+                {{ profile.server }}:{{ profile.serverPort }} · Token {{ profile.hasToken ? "已配置" : "未配置" }}{{ profile.tlsEnable ? " · TLS" : "" }}
               </p>
             </div>
             <div class="flex gap-1">

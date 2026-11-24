@@ -11,6 +11,7 @@ pub struct FrpProfileDto {
     pub name: String,
     pub server: String,
     pub server_port: u16,
+    pub tls_enable: bool,
     pub has_token: bool,
 }
 
@@ -32,6 +33,7 @@ pub async fn list_frp_profiles(app: AppHandle) -> AppResult<Vec<FrpProfileDto>> 
                         name: profile.name.clone(),
                         server: profile.server.clone(),
                         server_port: profile.server_port,
+                        tls_enable: profile.tls_enable,
                         has_token,
                     }
                 })
@@ -69,6 +71,7 @@ pub async fn save_frp_profile(
             name: saved.name,
             server: saved.server,
             server_port: saved.server_port,
+            tls_enable: saved.tls_enable,
             has_token,
         })
     })

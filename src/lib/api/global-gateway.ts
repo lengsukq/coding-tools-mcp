@@ -6,10 +6,12 @@ export interface GlobalGatewayConfigDto {
   tunnelType: string;
   publicUrl: string;
   cloudflareMode: string;
+  cloudflareHttp2: boolean;
   frpProfileId: string;
   frpServer: string;
   frpSubdomain: string;
   frpServerPort: number;
+  frpTls: boolean;
   useProxy: boolean;
 }
 
@@ -43,10 +45,12 @@ export const DEFAULT_GLOBAL_GATEWAY: GlobalGatewayConfigDto = {
   tunnelType: "none",
   publicUrl: "",
   cloudflareMode: "quick",
+  cloudflareHttp2: true,
   frpProfileId: "",
   frpServer: "",
   frpSubdomain: "",
   frpServerPort: 7000,
+  frpTls: false,
   useProxy: true,
 };
 

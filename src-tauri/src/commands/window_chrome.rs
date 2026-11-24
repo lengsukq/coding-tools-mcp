@@ -203,6 +203,7 @@ pub fn show_main_window(app: AppHandle) -> AppResult<()> {
 #[tauri::command]
 pub fn quit_app(app: AppHandle) -> AppResult<()> {
     arm_allow_exit();
+    crate::global_gateway::terminate_children_sync();
     app.exit(0);
     Ok(())
 }

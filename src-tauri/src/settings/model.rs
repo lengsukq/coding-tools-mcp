@@ -11,6 +11,8 @@ pub struct FrpProfile {
     pub server: String,
     #[serde(default = "default_frp_server_port", alias = "serverPort")]
     pub server_port: u16,
+    #[serde(default, alias = "tlsEnable")]
+    pub tls_enable: bool,
 }
 
 pub(crate) fn default_global_mcp_auth_type() -> String {
@@ -90,8 +92,12 @@ pub struct GlobalGatewayConfig {
     pub frp_subdomain: String,
     #[serde(default = "default_frp_server_port")]
     pub frp_server_port: u16,
+    #[serde(default)]
+    pub frp_tls: bool,
     #[serde(default = "default_global_gateway_use_proxy")]
     pub use_proxy: bool,
+    #[serde(default = "default_cloudflare_http2")]
+    pub cloudflare_http2: bool,
 }
 
 impl Default for GlobalGatewayConfig {
@@ -106,9 +112,15 @@ impl Default for GlobalGatewayConfig {
             frp_server: String::new(),
             frp_subdomain: String::new(),
             frp_server_port: default_frp_server_port(),
+            frp_tls: false,
             use_proxy: default_global_gateway_use_proxy(),
+            cloudflare_http2: default_cloudflare_http2(),
         }
     }
+}
+
+fn default_cloudflare_http2() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

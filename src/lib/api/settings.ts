@@ -5,6 +5,7 @@ export interface FrpProfileDto {
   name: string;
   server: string;
   serverPort: number;
+  tlsEnable: boolean;
   hasToken: boolean;
 }
 
@@ -13,6 +14,7 @@ export interface FrpProfileInput {
   name: string;
   server: string;
   serverPort: number;
+  tlsEnable?: boolean;
 }
 
 export async function listFrpProfiles(): Promise<FrpProfileDto[]> {

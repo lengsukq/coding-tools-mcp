@@ -23,6 +23,7 @@ pub(crate) struct FrpServerConfig {
     pub server_addr: String,
     pub server_port: u16,
     pub token: Option<String>,
+    pub tls_enable: bool,
     pub proxy: FrpProxyConfig,
 }
 
@@ -51,11 +52,15 @@ pub(crate) fn global_frp_server_config(
     let profile_id = gateway.frp_profile_id.as_str();
     let inline_server = gateway.frp_server.clone();
     let inline_port = gateway.frp_server_port;
-    let (server_addr, server_port) =
+    let (server_addr, server_port, tls_enable) =
         if let Some(frp_profile) = settings.find_frp_profile(profile_id) {
-            (frp_profile.server.clone(), frp_profile.server_port)
+            (
+                frp_profile.server.clone(),
+                frp_profile.server_port,
+                frp_profile.tls_enable,
+            )
         } else {
-            (inline_server, inline_port)
+            (inline_server, inline_port, gateway.frp_tls)
         };
     let token =
         token_override.or_else(|| resolve_global_frp_token(profile_id, &server_addr, settings));
@@ -64,6 +69,7 @@ pub(crate) fn global_frp_server_config(
         server_addr,
         server_port,
         token,
+        tls_enable,
         proxy,
     }
 }
@@ -105,7 +111,6 @@ pub(crate) fn build_frpc_toml(config: &FrpServerConfig) -> String {
     let mut lines = vec![
         format!("serverAddr = \"{}\"", config.server_addr.trim()),
         format!("serverPort = {}", config.server_port),
-        "loginFailExit = false".to_string(),
         String::new(),
     ];
     if let Some(token) = config
@@ -117,6 +122,17 @@ pub(crate) fn build_frpc_toml(config: &FrpServerConfig) -> String {
         lines.push(format!("auth.token = \"{}\"", token.trim()));
         lines.push(String::new());
     }
+    // Keep retrying through overnight router outages and keep control channel alive.
+    lines.push("loginFailExit = false".to_string());
+    lines.push("transport.heartbeatInterval = 30".to_string());
+    lines.push("transport.heartbeatTimeout = 90".to_string());
+    if config.tls_enable {
+        // Campus/corp networks often require TLS to the frps control port.
+        lines.push("transport.protocol = \"tcp\"".to_string());
+        lines.push("transport.tls.enable = true".to_string());
+        lines.push("transport.tls.disableCustomTLSFirstByte = true".to_string());
+    }
+    lines.push(String::new());
     lines.push(build_proxy_snippet(&config.proxy));
     lines.join("\n")
 }
@@ -154,6 +170,7 @@ mod tests {
                 name: "Main".into(),
                 server: "frp.example.com".into(),
                 server_port: 7000,
+                tls_enable: false,
             }],
             ..AppSettings::default()
         }
@@ -169,6 +186,7 @@ mod tests {
         assert_eq!(config.server_addr, "frp.example.com");
         assert_eq!(config.server_port, 7000);
         assert_eq!(config.token.as_deref(), Some("secret"));
+        assert!(!config.tls_enable);
     }
 
     #[test]
@@ -180,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn global_frpc_toml_contains_one_proxy_for_the_global_endpoint() {
+    fn global_frpc_toml_contains_one_proxy_and_heartbeat_without_tls_by_default() {
         let config = global_frp_server_config(&global_config(), &settings(), Some("secret".into()));
         let toml = build_frpc_toml(&config);
 
@@ -188,5 +206,33 @@ mod tests {
         assert!(toml.contains("name = \"global-mcp\""));
         assert!(toml.contains("localPort = 28765"));
         assert!(toml.contains("auth.token = \"secret\""));
+        assert!(toml.contains("loginFailExit = false"));
+        assert!(toml.contains("transport.heartbeatInterval = 30"));
+        assert!(toml.contains("transport.heartbeatTimeout = 90"));
+        assert!(!toml.contains("transport.tls.enable"));
+    }
+
+    #[test]
+    fn global_frpc_toml_includes_tls_when_profile_or_inline_enables_it() {
+        let mut tls_settings = settings();
+        tls_settings.frp_profiles[0].tls_enable = true;
+        let config =
+            global_frp_server_config(&global_config(), &tls_settings, Some("secret".into()));
+        let toml = build_frpc_toml(&config);
+
+        assert!(toml.contains("transport.protocol = \"tcp\""));
+        assert!(toml.contains("transport.tls.enable = true"));
+        assert!(toml.contains("transport.tls.disableCustomTLSFirstByte = true"));
+
+        let inline_gateway = GlobalGatewayConfig {
+            local_port: 28765,
+            frp_server: "inline.example.com".into(),
+            frp_subdomain: "demo".into(),
+            frp_tls: true,
+            ..GlobalGatewayConfig::default()
+        };
+        let inline_cfg = global_frp_server_config(&inline_gateway, &AppSettings::default(), None);
+        assert!(inline_cfg.tls_enable);
+        assert!(build_frpc_toml(&inline_cfg).contains("transport.tls.enable = true"));
     }
 }

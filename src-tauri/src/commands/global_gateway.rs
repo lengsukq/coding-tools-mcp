@@ -54,10 +54,12 @@ pub async fn set_global_gateway_config(
             let tunnel_diff = prev.enabled != config.enabled
                 || prev.tunnel_type != config.tunnel_type
                 || prev.cloudflare_mode != config.cloudflare_mode
+                || prev.cloudflare_http2 != config.cloudflare_http2
                 || prev.frp_profile_id != config.frp_profile_id
                 || prev.frp_server != config.frp_server
                 || prev.frp_subdomain != config.frp_subdomain
                 || prev.frp_server_port != config.frp_server_port
+                || prev.frp_tls != config.frp_tls
                 || prev.use_proxy != config.use_proxy;
             settings.global_gateway = config;
             store.update_settings(settings)?;

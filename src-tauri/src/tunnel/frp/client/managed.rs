@@ -1,6 +1,6 @@
 use super::*;
 
-fn managed_frpc_dir(workspace_id: &str) -> AppResult<PathBuf> {
+pub(crate) fn managed_frpc_dir(workspace_id: &str) -> AppResult<PathBuf> {
     Ok(platform()
         .app_config_dir()?
         .join("frpc")

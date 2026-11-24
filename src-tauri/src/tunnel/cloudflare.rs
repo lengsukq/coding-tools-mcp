@@ -214,14 +214,129 @@ pub(crate) fn apply_proxy_env(cmd: &mut Command, proxy: &ProxyConfig) {
     }
 }
 
-/// Spawn a Cloudflare Quick Tunnel (`cloudflared tunnel --url http://127.0.0.1:{port}`).
+/// Directory used as cwd and PID storage for managed `cloudflared` processes.
+pub(crate) fn managed_cloudflared_dir(scope_id: &str) -> AppResult<PathBuf> {
+    let sanitized: String = scope_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let folder = if sanitized.is_empty() {
+        "global-mcp".to_string()
+    } else {
+        sanitized
+    };
+    Ok(platform()
+        .app_config_dir()?
+        .join("cloudflared")
+        .join(folder))
+}
+
+pub(crate) fn managed_cloudflared_pid_path(scope_id: &str) -> AppResult<PathBuf> {
+    Ok(managed_cloudflared_dir(scope_id)?.join("cloudflared.pid"))
+}
+
+fn write_managed_cloudflared_pid(scope_id: &str, pid: u32, image_path: &Path) -> AppResult<()> {
+    let path = managed_cloudflared_pid_path(scope_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{pid}\n{}\n", image_path.to_string_lossy()))?;
+    Ok(())
+}
+
+pub(crate) fn clear_managed_cloudflared_pid(scope_id: &str) {
+    if let Ok(path) = managed_cloudflared_pid_path(scope_id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+pub(crate) async fn stop_recorded_cloudflared_instance(scope_id: &str) -> AppResult<bool> {
+    let path = managed_cloudflared_pid_path(scope_id)?;
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let mut lines = contents.lines();
+    let pid = lines
+        .next()
+        .and_then(|value| value.trim().parse::<u32>().ok());
+    let recorded_image = lines
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let (Some(pid), Some(recorded_image)) = (pid, recorded_image) else {
+        clear_managed_cloudflared_pid(scope_id);
+        return Ok(false);
+    };
+
+    if !platform().is_process_alive(pid) {
+        clear_managed_cloudflared_pid(scope_id);
+        return Ok(false);
+    }
+    let Some(actual_image) = platform().process_image_path(pid)? else {
+        clear_managed_cloudflared_pid(scope_id);
+        return Ok(false);
+    };
+    let left =
+        std::fs::canonicalize(recorded_image).unwrap_or_else(|_| PathBuf::from(recorded_image));
+    let right =
+        std::fs::canonicalize(&actual_image).unwrap_or_else(|_| PathBuf::from(&actual_image));
+    let same = {
+        #[cfg(windows)]
+        {
+            left.to_string_lossy()
+                .trim_start_matches("\\\\?\\")
+                .eq_ignore_ascii_case(right.to_string_lossy().trim_start_matches("\\\\?\\"))
+        }
+        #[cfg(not(windows))]
+        {
+            left == right
+        }
+    };
+    if !same {
+        clear_managed_cloudflared_pid(scope_id);
+        return Ok(false);
+    }
+
+    let _ = platform().terminate_process_tree(pid);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while platform().is_process_alive(pid) && tokio::time::Instant::now() < deadline {
+        time::sleep(Duration::from_millis(50)).await;
+    }
+    clear_managed_cloudflared_pid(scope_id);
+    Ok(true)
+}
+
+pub(crate) fn cloudflared_command_args(port: u16, http2: bool) -> Vec<String> {
+    let mut args = vec!["tunnel".to_string()];
+    if http2 {
+        // Prefer HTTP/2 over QUIC to avoid frequent 1033/502 drops on restrictive networks.
+        args.push("--protocol".to_string());
+        args.push("http2".to_string());
+        args.push("--post-quantum=false".to_string());
+    }
+    args.push("--url".to_string());
+    args.push(format!("http://127.0.0.1:{port}"));
+    args
+}
+
+/// Spawn a Cloudflare Quick Tunnel (`cloudflared tunnel [--protocol http2 ...] --url http://127.0.0.1:{port}`).
 pub async fn spawn_cloudflare_tunnel(
     port: u16,
     cwd: &Path,
     log_path: &Path,
     use_proxy: bool,
+    http2: bool,
 ) -> AppResult<CloudflareTunnelHandle> {
     let cloudflared = resolve_cloudflared()?;
+    std::fs::create_dir_all(cwd)?;
 
     let mut cmd = Command::new(&cloudflared);
     cmd.current_dir(cwd);
@@ -234,12 +349,15 @@ pub async fn spawn_cloudflare_tunnel(
         apply_proxy_env(&mut cmd, &settings.proxy);
     }
 
-    cmd.args(["tunnel", "--url", &format!("http://127.0.0.1:{port}")]);
+    cmd.args(cloudflared_command_args(port, http2));
 
     let mut child = cmd
         .spawn()
         .map_err(|err| AppError::Message(format!("启动 cloudflared 失败: {err}")))?;
     let pid = child.id();
+    if let Some(pid) = pid {
+        let _ = write_managed_cloudflared_pid("global-mcp", pid, &cloudflared);
+    }
 
     if let Some(parent) = log_path.parent() {
         if let Err(error) = std::fs::create_dir_all(parent) {
@@ -292,7 +410,9 @@ pub async fn spawn_cloudflare_tunnel(
 }
 
 async fn cleanup_spawned_child(child: Child, pid: Option<u32>, start_error: AppError) -> AppError {
-    match force_stop_child(child, pid).await {
+    let stop_result = force_stop_child(child, pid).await;
+    clear_managed_cloudflared_pid("global-mcp");
+    match stop_result {
         Ok(()) => start_error,
         Err(cleanup_error) => AppError::Message(format!(
             "{start_error}; 清理 cloudflared 子进程失败：{cleanup_error}"
@@ -432,6 +552,32 @@ mod tests {
     fn ignores_invalid_hosts() {
         let line = "https://bad_host.trycloudflare.com";
         assert!(extract_trycloudflare_url(line).is_none());
+    }
+
+    #[test]
+    fn command_args_include_http2_flags_when_enabled() {
+        assert_eq!(
+            super::cloudflared_command_args(28765, true),
+            vec![
+                "tunnel",
+                "--protocol",
+                "http2",
+                "--post-quantum=false",
+                "--url",
+                "http://127.0.0.1:28765",
+            ]
+        );
+        assert_eq!(
+            super::cloudflared_command_args(28765, false),
+            vec!["tunnel", "--url", "http://127.0.0.1:28765"]
+        );
+    }
+
+    #[test]
+    fn managed_cloudflared_dir_lives_outside_workspace() {
+        let dir = super::managed_cloudflared_dir("global-mcp").expect("dir");
+        assert!(dir.is_absolute());
+        assert!(dir.ends_with(std::path::Path::new("cloudflared").join("global-mcp")));
     }
 
     #[tokio::test]

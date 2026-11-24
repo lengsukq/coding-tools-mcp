@@ -28,7 +28,7 @@ pub use install::{ensure_frpc, resolve_frpc};
 use managed::managed_frpc_pid_path;
 pub(crate) use managed::{
     acquire_frpc_operation_lock, clear_managed_frpc_pid, managed_frpc_config_path,
-    stop_recorded_frpc_instance,
+    managed_frpc_dir, stop_recorded_frpc_instance,
 };
 pub use runtime::spawn_global_frpc;
 

@@ -327,6 +327,15 @@ pub fn spawn_gateway_maintenance(gateway: Arc<crate::mcp::gateway::GatewayState>
             run_maintenance_pass(&gateway).await;
         }
     });
+    crate::async_rt::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            global_gateway::heal_tunnel_if_needed().await;
+        }
+    });
 }
 
 #[cfg(test)]

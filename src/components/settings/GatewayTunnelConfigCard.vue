@@ -82,26 +82,46 @@ const emit = defineEmits<{
           placeholder="coding-tools"
           @update:model-value="emit('update-config', { frpSubdomain: $event })"
         />
-        <div v-if="!config.frpProfileId" class="settings-two-col">
-          <TextField
-            :model-value="config.frpServer"
-            label="FRP 服务器"
-            placeholder="frp.example.com"
-            @update:model-value="emit('update-config', { frpServer: $event })"
-          />
-          <TextField
-            :model-value="String(config.frpServerPort)"
-            label="端口"
-            :error="error && !isValidPort(config.frpServerPort) ? error : undefined"
-            type="number"
-            @update:model-value="emit('update-config', { frpServerPort: Number($event) })"
+        <template v-if="!config.frpProfileId">
+          <div class="settings-two-col">
+            <TextField
+              :model-value="config.frpServer"
+              label="FRP 服务器"
+              placeholder="frp.example.com"
+              @update:model-value="emit('update-config', { frpServer: $event })"
+            />
+            <TextField
+              :model-value="String(config.frpServerPort)"
+              label="端口"
+              :error="error && !isValidPort(config.frpServerPort) ? error : undefined"
+              type="number"
+              @update:model-value="emit('update-config', { frpServerPort: Number($event) })"
+            />
+          </div>
+          <div class="ui-inset p-3">
+            <ToggleSwitch
+              :model-value="config.frpTls"
+              label="启用 FRP TLS 加密传输"
+              description="适用于校园网/企业网限制明文 FRP 控制端口的环境。"
+              @update:model-value="emit('update-config', { frpTls: $event })"
+            />
+          </div>
+        </template>
+      </template>
+
+      <template v-if="config.tunnelType === 'cloudflare'">
+        <div class="ui-banner text-xs leading-5">
+          Cloudflare Quick Tunnel 会分配临时公网地址；地址变化后，需要把新的 `/mcp` 地址重新填入外部 Connector。
+        </div>
+        <div class="ui-inset p-3">
+          <ToggleSwitch
+            :model-value="config.cloudflareHttp2"
+            label="使用 HTTP/2 协议（推荐）"
+            description="默认开启，通过 HTTP/2 建立隧道以缓解国内网络 QUIC 丢包与 1033/502 断连。"
+            @update:model-value="emit('update-config', { cloudflareHttp2: $event })"
           />
         </div>
       </template>
-
-      <div v-if="config.tunnelType === 'cloudflare'" class="ui-banner text-xs leading-5">
-        Cloudflare Quick Tunnel 会分配临时公网地址；地址变化后，需要把新的 `/mcp` 地址重新填入外部 Connector。
-      </div>
 
       <div v-if="canForceRestartCloudflare" class="tunnel-action-row ui-inset p-3">
         <div class="min-w-0 flex-1">

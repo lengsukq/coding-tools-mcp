@@ -11,6 +11,56 @@ use crate::settings::{AppSettings, GlobalGatewayConfig};
 use crate::tunnel::{cloudflare, frp};
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+const OFFLINE_DEBOUNCE_THRESHOLD: u8 = 2;
+
+#[derive(Debug, Default)]
+struct TunnelHealthTracker {
+    consecutive_offline: u8,
+    was_offline: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealDecision {
+    NoOp,
+    RestartTunnel,
+}
+
+impl TunnelHealthTracker {
+    /// Debounce transient network blips: require `OFFLINE_DEBOUNCE_THRESHOLD`
+    /// consecutive offline observations before entering outage state, never
+    /// kill a live process during an outage (so `loginFailExit = false` can
+    /// self-recover), and trigger a heal once connectivity returns if the
+    /// child exited or remained unhealthy.
+    fn evaluate(
+        &mut self,
+        child_alive: bool,
+        network_online: bool,
+        public_healthy: bool,
+    ) -> HealDecision {
+        if !network_online {
+            self.consecutive_offline = self.consecutive_offline.saturating_add(1);
+            if self.consecutive_offline >= OFFLINE_DEBOUNCE_THRESHOLD {
+                self.was_offline = true;
+            }
+            return HealDecision::NoOp;
+        }
+
+        self.consecutive_offline = 0;
+        let recovering = self.was_offline;
+        self.was_offline = false;
+
+        if !child_alive {
+            return HealDecision::RestartTunnel;
+        }
+        if recovering && !public_healthy {
+            return HealDecision::RestartTunnel;
+        }
+        HealDecision::NoOp
+    }
+}
+
+static HEALTH_TRACKER: LazyLock<std::sync::Mutex<TunnelHealthTracker>> =
+    LazyLock::new(|| std::sync::Mutex::new(TunnelHealthTracker::default()));
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +220,127 @@ pub async fn stop() -> AppResult<()> {
     Ok(())
 }
 
+/// Synchronous last-resort cleanup invoked from Tauri exit hooks when Tokio may
+/// already be shutting down. Prevents orphaned `frpc` / `cloudflared` processes.
+pub fn terminate_children_sync() {
+    if let Ok(mut guard) = RUNTIME.try_lock() {
+        if let Some(mut runtime) = guard.take() {
+            if let Some(tunnel) = runtime.tunnel.take() {
+                match tunnel {
+                    TunnelChild::Cloudflare { mut child, pid } => {
+                        if let Some(pid) = pid {
+                            let _ = crate::platform::platform().terminate_process_tree(pid);
+                        }
+                        let _ = child.start_kill();
+                        cloudflare::clear_managed_cloudflared_pid("global-mcp");
+                    }
+                    TunnelChild::Frp { mut child, pid } => {
+                        if let Some(pid) = pid {
+                            let _ = crate::platform::platform().terminate_process_tree(pid);
+                        }
+                        let _ = child.start_kill();
+                        frp::clear_managed_frpc_pid("global-mcp");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Clean up any tunnel child left behind by a previous abnormal exit.
+pub async fn cleanup_orphaned_tunnels_on_startup() {
+    let _ = frp::stop_recorded_frpc_instance("global-mcp").await;
+    let _ = cloudflare::stop_recorded_cloudflared_instance("global-mcp").await;
+}
+
+/// Periodic self-healing check for the managed global tunnel (especially FRP
+/// overnight router outages). Never kills a live tunnel while the host is offline.
+pub async fn heal_tunnel_if_needed() {
+    let (config, child_alive, public_url) = {
+        let mut guard = RUNTIME.lock().await;
+        let Some(runtime) = guard.as_mut() else {
+            return;
+        };
+        if !runtime.config.enabled || runtime.config.tunnel_type != "frp" {
+            return;
+        }
+        let child_alive = match runtime.tunnel.as_mut() {
+            Some(TunnelChild::Frp { child, .. }) => child.try_wait().ok().flatten().is_none(),
+            _ => false,
+        };
+        (
+            runtime.config.clone(),
+            child_alive,
+            runtime.public_url.clone(),
+        )
+    };
+
+    let settings = AppSettings::load_or_default();
+    let frp_cfg = frp::global_frp_server_config(&config, &settings, None);
+    let network_online =
+        probe_frp_server_reachable(&frp_cfg.server_addr, frp_cfg.server_port).await;
+    let public_healthy = if network_online && !public_url.trim().is_empty() {
+        check_url(&HEALTH_CLIENT, &public_mcp_url(&public_url))
+            .await
+            .0
+    } else {
+        false
+    };
+
+    let decision = HEALTH_TRACKER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .evaluate(child_alive, network_online, public_healthy);
+    if decision != HealDecision::RestartTunnel {
+        return;
+    }
+
+    let mut guard = RUNTIME.lock().await;
+    let Some(runtime) = guard.as_ref() else {
+        return;
+    };
+    if runtime.config != config {
+        return;
+    }
+    if let Some(old_runtime) = guard.take() {
+        let _ = stop_runtime(old_runtime, false).await;
+    }
+    match start_tunnel(&config, &settings).await {
+        Ok((next_url, tunnel)) => {
+            *guard = Some(GatewayRuntime {
+                config,
+                public_url: next_url,
+                tunnel,
+            });
+            eprintln!("[global-gateway] auto-healed FRP tunnel after outage/exit");
+        }
+        Err(error) => {
+            eprintln!("[global-gateway] FRP auto-heal failed (will retry): {error}");
+            *guard = Some(GatewayRuntime {
+                config,
+                public_url,
+                tunnel: None,
+            });
+        }
+    }
+}
+
+async fn probe_frp_server_reachable(server_addr: &str, server_port: u16) -> bool {
+    let host = server_addr.trim();
+    if host.is_empty() || server_port == 0 {
+        return false;
+    }
+    let target = format!("{host}:{server_port}");
+    matches!(
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            tokio::net::TcpStream::connect(&target)
+        )
+        .await,
+        Ok(Ok(_))
+    )
+}
+
 pub async fn status() -> GlobalGatewayStatusDto {
     {
         let guard = RUNTIME.lock().await;
@@ -254,11 +425,14 @@ async fn stop_runtime(mut runtime: GatewayRuntime, confirm_cloudflare_stop: bool
 async fn stop_tunnel_child(tunnel: TunnelChild, confirm_cloudflare_stop: bool) -> AppResult<()> {
     match tunnel {
         TunnelChild::Cloudflare { child, pid } => {
-            if confirm_cloudflare_stop {
-                cloudflare::force_stop_child(child, pid).await?;
+            let result = if confirm_cloudflare_stop {
+                cloudflare::force_stop_child(child, pid).await
             } else {
                 let _ = cloudflare::stop_child(child, pid).await;
-            }
+                Ok(())
+            };
+            cloudflare::clear_managed_cloudflared_pid("global-mcp");
+            result?;
         }
         TunnelChild::Frp { mut child, pid } => {
             if let Some(pid) = pid {
@@ -285,7 +459,9 @@ async fn start_tunnel(
                         .into(),
                 ));
             }
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let _ = cloudflare::stop_recorded_cloudflared_instance("global-mcp").await;
+            let cwd = cloudflare::managed_cloudflared_dir("global-mcp")?;
+            std::fs::create_dir_all(&cwd)?;
             let log = crate::platform::platform()
                 .app_config_dir()?
                 .join("global-mcp-cloudflared.log");
@@ -294,6 +470,7 @@ async fn start_tunnel(
                 &cwd,
                 &log,
                 config.use_proxy,
+                config.cloudflare_http2,
             )
             .await?;
             let public_url = handle.public_url.clone();
@@ -372,5 +549,31 @@ mod tests {
         let mut named = quick_tunnel_config();
         named.cloudflare_mode = "named".into();
         assert!(validate_cloudflare_quick_restart(&named).is_err());
+    }
+
+    #[test]
+    fn health_tracker_debounces_outages_and_heals_on_recovery() {
+        let mut tracker = TunnelHealthTracker::default();
+        // Single transient blip does not trigger restart or mark prolonged outage.
+        assert_eq!(tracker.evaluate(true, false, false), HealDecision::NoOp);
+        assert_eq!(tracker.evaluate(true, true, false), HealDecision::NoOp);
+
+        // Two consecutive offline checks enter outage, never killing live process.
+        assert_eq!(tracker.evaluate(true, false, false), HealDecision::NoOp);
+        assert_eq!(tracker.evaluate(true, false, false), HealDecision::NoOp);
+        // Once back online, unhealthy live process heals once; healthy process does not thrash.
+        assert_eq!(
+            tracker.evaluate(true, true, false),
+            HealDecision::RestartTunnel
+        );
+        assert_eq!(tracker.evaluate(true, true, true), HealDecision::NoOp);
+
+        // Dead child while online immediately triggers recovery.
+        assert_eq!(
+            tracker.evaluate(false, true, false),
+            HealDecision::RestartTunnel
+        );
+        // Dead child while offline waits until network returns.
+        assert_eq!(tracker.evaluate(false, false, false), HealDecision::NoOp);
     }
 }

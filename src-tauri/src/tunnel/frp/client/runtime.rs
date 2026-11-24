@@ -24,11 +24,16 @@ pub async fn spawn_global_frpc(
     std::fs::write(&config_path, &config_text)?;
     let log_offset = log_file_len(&log_path);
 
+    let frpc_dir = managed_frpc_dir(scope_id)?;
+    std::fs::create_dir_all(&frpc_dir)?;
+
     let mut cmd = Command::new(&frpc);
     cmd.args(["-c", config_path.to_string_lossy().as_ref()]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    cmd.current_dir(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // Keep frpc cwd inside the app's own config dir so macOS TCC never attributes
+    // long-lived tunnel processes to ~/Documents or a user workspace folder.
+    cmd.current_dir(&frpc_dir);
     // frpc 是控制台程序，放入独立进程组并在 Windows 禁止闪出黑色窗口。
     configure_tunnel_command(&mut cmd);
 
