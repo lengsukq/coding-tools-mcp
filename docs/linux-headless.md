@@ -7,7 +7,11 @@ Coding Tools MCP 在 Linux 上提供两种运行形态：
 | **Linux 无头模式（Headless CLI / Daemon）** | 云服务器、家庭实验室（NAS / Home Lab）、SSH 开发机、CI/容器宿主机 | **零 GTK / 零 WebKit / 零 X11 依赖**，单文件独立二进制 `coding-tools-mcp` | 一键安装脚本 / Release `tar.gz` / 源码编译 |
 | **Linux 桌面端（Desktop GUI）** | Ubuntu / Debian 等带桌面环境的开发工作站 | `libwebkit2gtk-4.1-0`、`libgtk-3-0`、`libayatana-appindicator3-1` | Release `.deb` / `.AppImage` |
 
-无头守护进程与桌面端共用同一套 Rust 工具内核、Global MCP 网关、局域网/组网联邦协议（HMAC-SHA256 + 6 位配对码）以及配置文件格式。你可以将多台 Linux 服务器无头常驻，然后通过你手头的 macOS / Windows 桌面端（或唯一公网 MCP 入口）在一个 AI 对话中统一调度它们上面的全部 Git 项目。
+无头守护进程与桌面端共用同一套 Rust 工具内核、Global MCP 网关、局域网/组网联邦协议（HMAC-SHA256 + 6 位配对码）以及配置文件格式。你可以将多台 Linux 服务器无头常驻，通过一台已配对的 macOS / Windows 或 Linux 入口设备，让兼容 MCP 的 Harness 访问已注册且授权共享的 Git 项目。实际任务编排仍由上层 AI 客户端负责。
+
+![统一网关与 Linux 无头节点](./images/mcp-federation.svg)
+
+本地 Harness 可经 stdio 或回环 HTTP 连接入口，远程网页 AI 可经 HTTPS 连接入口；云服务器作为配对节点时不需要为每台服务器单独开启公网 MCP。见 [通用 Harness 接入指南](./harness-connectors.md)。建议使用最小权限的专用系统账号运行服务；root 部署会扩大命令执行权限。
 
 ---
 
@@ -121,11 +125,11 @@ coding-tools-mcp serve --lan --pair-pin
 ### 第 3 步：在 Mac / Windows 桌面端输入配对码
 
 1. 打开桌面端 **「应用设置 → MCP 连接 → 局域网多设备配对」**，开启局域网联邦。
-2. 在发现列表中点击该 Linux 节点（或在跨网段时输入 Linux 的局域网 / EasyTier / Tailscale IP 与端口），填入 6 位配对码完成双向加密握手。
+2. 在发现列表中点击该 Linux 节点（或在跨网段时输入 Linux 的局域网 / EasyTier / Tailscale IP 与端口），填入 6 位配对码完成双向配对握手。
 3. 回到已连接主设备的 AI 客户端（ChatGPT / Claude / Gemini），即可调用：
    - `device_list` 查看所有已配对设备；
    - `workspace_list` 列出本机与 Linux 节点上的工作区（形如 `{device_id}:{workspace_id}`）；
-   - `workspace_select` 选中 Linux 节点上的项目直接读代码、改 Patch、跑命令与看 Git！
+   - 支持持久 Session 时用 `workspace_select` 选中 Linux 项目；否则在工具调用中显式传入复合 `workspace_id`。先执行 `git_status` 等只读检查，再按权限读代码、应用 Patch 或运行命令。
 
 > 也可以在 Linux 端主动发起配对：先在桌面端点击「生成配对码」，再在 Linux 终端执行：
 > ```bash

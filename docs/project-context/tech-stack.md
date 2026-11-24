@@ -6,7 +6,7 @@
 
 | 属性 | 当前值 |
 | --- | --- |
-| 应用版本 | `0.3.0` |
+| 应用版本 | `0.3.9`（以 `package.json` 与 `src-tauri/Cargo.toml` 为准） |
 | Rust Edition | 2021 |
 | 前端语言 | TypeScript |
 | 桌面框架 | Tauri 2 |
@@ -32,6 +32,16 @@
 | `windows` / `libc` | 平台特定能力 |
 
 当前 MCP 协议和 Tool Schema 由项目自己的 Rust 实现维护，仓库没有使用 `rmcp` 或 `git2` 作为当前核心依赖；Git 工具通过受控 Git 命令实现。
+
+## 连接与运行形态
+
+| 组件 | 用途 |
+| --- | --- |
+| MCP Streamable HTTP / 原生 Rust `mcp-stdio` | 统一接入兼容 MCP 的本地及远程 Harness，桥接使用回环 HTTP |
+| `sha2` / HMAC-SHA256 | 对等设备签名 RPC 与防重放校验 |
+| Linux `--no-default-features` | 独立 Headless CLI / Daemon，无 Tauri GUI、GTK 或 WebKit 依赖 |
+| Unix Domain Socket / systemd | Linux 本地控制总线与常驻服务管理 |
+| ScreenCaptureKit / macOS 原生 FFI | 经授权的屏幕观察与输入；非 macOS 不提供同等原生能力 |
 
 ## Frontend
 

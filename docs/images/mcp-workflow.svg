@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 258" width="960" height="258" role="img" aria-labelledby="title desc">
+  <title id="title">From intent to delivery</title>
+  <desc id="desc">Select an authorized workspace, plan, execute, verify and save history for later conversations.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101d32"/><stop offset="1" stop-color="#142c3b"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#65d6c5"/></marker>
+  </defs>
+  <rect width="960" height="258" rx="22" fill="url(#bg)"/>
+  <g font-family="system-ui, -apple-system, Segoe UI, sans-serif" text-anchor="middle">
+    <text x="480" y="35" font-size="25" font-weight="700" fill="#edf5ff">From intent to delivery</text>
+    <text x="480" y="62" font-size="17" font-weight="500" fill="#a5fae9">Direct  /  Plan  /  Goal</text>
+    <rect x="22" y="84" width="166" height="105" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="105" y="108" font-size="14" font-weight="700" fill="#a5fae9">01</text>
+    <text x="105" y="138" font-size="19" font-weight="700" fill="#edf5ff">Workspace</text>
+    <text x="105" y="163" font-size="15" font-weight="500" fill="#c2d5e8">Select target</text>
+    <path d="M188 136H203" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="207" y="84" width="166" height="105" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="290" y="108" font-size="14" font-weight="700" fill="#a5fae9">02</text>
+    <text x="290" y="138" font-size="19" font-weight="700" fill="#edf5ff">Planning</text>
+    <text x="290" y="163" font-size="15" font-weight="500" fill="#c2d5e8">Goal / Plan</text>
+    <path d="M373 136H388" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="392" y="84" width="166" height="105" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="475" y="108" font-size="14" font-weight="700" fill="#a5fae9">03</text>
+    <text x="475" y="138" font-size="19" font-weight="700" fill="#edf5ff">Execution</text>
+    <text x="475" y="163" font-size="15" font-weight="500" fill="#c2d5e8">Tools / Task</text>
+    <path d="M558 136H573" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="577" y="84" width="166" height="105" rx="12" fill="#183e48" stroke="#65d6c5"/>
+    <text x="660" y="108" font-size="14" font-weight="700" fill="#a5fae9">04</text>
+    <text x="660" y="138" font-size="19" font-weight="700" fill="#edf5ff">Verification</text>
+    <text x="660" y="163" font-size="15" font-weight="500" fill="#c2d5e8">Quality Gate</text>
+    <path d="M743 136H758" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="762" y="84" width="166" height="105" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="845" y="108" font-size="14" font-weight="700" fill="#a5fae9">05</text>
+    <text x="845" y="138" font-size="19" font-weight="700" fill="#edf5ff">History</text>
+    <text x="845" y="163" font-size="15" font-weight="500" fill="#c2d5e8">Save context</text>
+    <path d="M845 190V222H105V192" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="480" y="246" font-size="16" font-weight="500" fill="#c2d5e8">Resume in the next conversation · context stays with the project</text>
+  </g>
+</svg>

@@ -4,7 +4,11 @@
 
 ## 总体定位
 
-Coding Tools MCP 是一个 **Workspace-first 的 AI 开发运行时 + Tauri 桌面控制面**。桌面端负责工作区、认证、公网入口、运行时和可视化配置；Rust Core 在本机直接提供 MCP，并通过统一工具内核访问代码、Git、命令、Planning、History 与 Harness。
+Coding Tools MCP 是一个 **本地优先、跨设备、与模型及上层 Agent Harness 解耦的 AI 开发运行时**。Tauri 桌面端提供控制面，Linux Headless 提供无桌面依赖的服务形态；两者复用 Rust Core、Global MCP、工作区路由和统一工具内核。
+
+![跨设备执行架构](../images/mcp-federation.svg)
+
+上层 Harness（如兼容 MCP 的 Codex、Claude Code、Gemini 或自研客户端）负责推理与工具选择；本项目负责经授权的工具执行、状态持久化、验证和审计。连接方式见 [通用 Harness 接入指南](../harness-connectors.md)。
 
 ```text
 ┌──────────────────────────────────────────────┐
@@ -148,6 +152,16 @@ MCP 使用统一 OAuth runtime：
 ## Runtime 与网络
 
 应用只运行一个 Global MCP listener，固定提供 `/mcp`（同时支持桌面端通过 `coding-tools-mcp mcp-stdio` 桥接到回环 `/mcp`）。`workspace_list` 返回注册 Workspace；普通工具 schema 统一接受可选 `workspace_id`，推荐客户端在每次 project-scoped 调用中显式携带该 id，因此即使宿主不保持同一个 transport session，也能稳定路由到同一 Workspace。支持持久 MCP session 的客户端仍可通过 `workspace_select` 绑定 active Workspace 并省略后续 `workspace_id`。只有一个 Workspace 时允许安全自动选择。无论采用哪种方式，每个请求都会在执行开始前冻结不可变 `WorkspaceRequestContext`，文件、命令、Planning、History、输出缓存和策略继续受 Workspace root 隔离；不同请求和 session 不会通过桌面 UI 当前选中项隐式串线。FRP 与 Cloudflare Tunnel 只负责暴露这个唯一 Endpoint，由 Rust supervisor 管理，不要求外部 Python Runtime。
+
+### 多设备联邦与执行语义
+
+- 通过局域网或可信 overlay 网络（如 EasyTier / Tailscale）发现或显式指定对等节点，完成配对后共享 Workspace；云服务器也可以作为 Linux Headless 节点加入。
+- Gateway 解析本机 ID 或 `{device_id}:{workspace_id}`，对远程目标执行单跳、带签名的 peer RPC；真实文件与命令执行发生在目标设备，不复制项目到入口设备。
+- 多个 MCP 客户端可共享一个入口，但 Session 和请求上下文独立。会话隔离不等同于同一仓库的并发写入隔离；也不提供任务自动调度、设备自动故障转移或通用第三方 MCP 聚合。
+- 本地 stdio、回环 HTTP 和公网 HTTPS 复用相同的 Gateway；上层 Harness 自带的 Shell 或文件工具不会自动转为远程执行。
+- Computer Use 的原生执行能力限 macOS 且需显式授权；Linux Headless 不需要 GUI，也不提供 macOS 屏幕能力。
+
+![执行与历史恢复](../images/mcp-workflow.svg)
 
 ## 安全边界
 

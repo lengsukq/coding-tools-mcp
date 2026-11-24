@@ -11,8 +11,12 @@
 | 桌面端 | Tauri 2 |
 | 前端 | Vue 3 + Vue Router 4 + Tailwind CSS 4 + TypeScript |
 | 后端 | Rust 2021 + Tokio + Axum |
-| 类型 | AI Coding Workspace Desktop + 内嵌 MCP Runtime |
-| 核心定位 | 把本地项目变成可被 AI 安全开发、跨会话恢复、可视化管理的持久 Workspace |
+| 类型 | Local-first Cross-device AI Development Runtime + Desktop / Headless |
+| 核心定位 | 让兼容 MCP 的模型与 Harness 共享本机、对等设备和云服务器上的授权 Workspace、执行工具及持久上下文 |
+
+![统一 MCP 与跨设备执行架构](./images/mcp-federation.svg)
+
+上层 AI 客户端负责推理、工具选择与任务调度；本项目提供统一的执行、路由、状态与审计能力，不内置模型推理或自主多 Agent 调度。
 
 ## 当前核心能力
 
@@ -33,6 +37,7 @@
 ## 文档导航
 
 - [Linux 无头模式与服务器部署指南](./linux-headless.md)
+- [通用 Harness 与本地 MCP 接入指南](./harness-connectors.md)
 - [网页 Chat 客户端接入矩阵](./web-chat-connectors.md)
 - [技术栈](./project-context/tech-stack.md)
 - [架构设计](./project-context/architecture.md)
@@ -59,4 +64,4 @@ Agent 的分析与交付前置要求以当前 `AGENTS.md` 和 `.agents/skills/mc
 原 `old/` Python / Actions / Desktop Client 参考实现已从当前仓库删除；仍被 Rust 安全与契约测试使用的 fixture 已迁入 `src-tauri/tests/fixtures/compliance/`。
 
 ---
-*当前事实更新: 2026-11-18*
+*当前事实更新: 2026-11-24*

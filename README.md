@@ -5,7 +5,7 @@
 <h1 align="center">Coding Tools MCP</h1>
 
 <p align="center">
-  把本地项目变成 AI 可直接开发、能够跨会话延续上下文的持久工作区。
+  一次连接，让任意兼容 MCP 的 AI Harness 开发你的多台设备。
 </p>
 
 <p align="center">
@@ -20,217 +20,73 @@
   <a href="README.md">中文</a> · <a href="README.en.md">English</a> · <a href="https://github.com/lengsukq/coding-tools-mcp/releases/latest">下载最新版</a>
 </p>
 
-Coding Tools MCP 是一个 Rust + Tauri 2 构建的 **local-first AI coding runtime**。桌面端只需要启动一个 Global MCP Endpoint，多个本地项目作为彼此隔离的 Workspace 注册进去；每个 Chat Session 再选择自己要操作的 Workspace。AI Agent 可以通过 MCP 读取和修改代码、运行命令与测试、检查 Git、维护 Goal / Plan，并把关键进度保存为项目内的历史会话。
+Coding Tools MCP 是一个 **本地优先、跨设备、与模型及 Agent Harness 解耦的 AI 开发运行时**。连接一次 MCP，即可让兼容的 AI 客户端访问本机、其他电脑和云服务器上的授权工作区，并持续完成真实软件工程任务。
 
-它更接近一个“给 AI 用的长期开发工作台”，而不是为每个项目重复启动一套 MCP 服务：**Workspace 负责项目边界，Planning 负责意图与进度，Execution / Verification 负责执行证据，History 负责跨会话恢复。**
+<p align="center">
+  <img src="docs/images/mcp-federation.svg" alt="多个 AI Harness 通过统一 MCP 网关访问本机、远程电脑与 Linux 服务器" width="920">
+</p>
 
-## v0.3.4 – v0.3.8+：近期核心更新
+**一个 MCP 入口 · 多个 Harness · 多台设备 · 持久化项目上下文**
 
-在“一个 Global MCP 管理所有隔离 Workspace”的基础底座上，近期版本重点补齐了 **主流 AI 零门槛接入、跨设备局域网协同、macOS 原生屏幕控制、全流程审计与 Vue 3 设计系统**：
+[快速开始](#五分钟开始使用) · [Linux 无头部署](docs/linux-headless.md) · [Harness 接入指南](docs/harness-connectors.md) · [网页 AI 接入指南](docs/web-chat-connectors.md) · [架构文档](docs/project-context/architecture.md)
 
-- **Linux 无头守护进程（Headless Daemon）与一键安装**：支持编译零 GTK / 零桌面依赖的独立二进制 `coding-tools-mcp`（x86_64 / ARM64），提供完整终端 CLI（`serve`、`workspace`、`lan`、`config`、`service`）、父目录 `.git` 自动发现、本地 `0600` Unix Socket 控制总线、普通用户 / root 系统级 `systemd` 开机常驻，以及一行命令一键安装脚本（详见 [Linux 无头模式与服务器部署指南](docs/linux-headless.md)）；同步提供 Linux 桌面端 `.deb` / `.AppImage` 安装包。
-- **本机 Skills / Agents 勾选过滤与开机轻量自启**：支持扫描并按需勾选暴露给 AI 的本机 Skills 与 Agents 上下文，支持开机自动启动并可选直接进入轻量后台模式。
-- **Gemini App 连接器与原生 `mcp-stdio` 桥接**：新增「Gemini App · MCP 连接」面板，支持 **Local MCP**（内置毫秒级 Rust `mcp-stdio` 本地桥接，不开公网、不依赖 Node.js，自动生成 `0600` 权限凭据）与 **Cloud MCP**（一键体检并复制公网地址，适配 Gemini 网页版/手机端）；同时基于 OAuth 2.1（PKCE S256 + DCR）和 Bearer 兼容 **ChatGPT、claude.ai、Grok、Gemini**。
-- **局域网对等配对与多设备联邦网关**：支持跨 macOS / Windows / Linux 局域网（及 EasyTier / Tailscale 等组网）设备发现与 **6 位配对码**双向握手（自动过滤 Docker 等容器虚拟网桥）；通过 HMAC 签名对等 RPC（`/api/lan/v1/*`）实现公网隧道硬隔离，支持 `{device_id}:{workspace_id}` 复合工作区路由、`device_list` 设备发现、跨设备 Computer Use 转发、变更审查代理（`/review/peer/{device_id}/{id}`）与双向审计。
-- **macOS 原生 Computer Use（受控屏幕观察与输入）**：基于 `ScreenCaptureKit` 实现按需截屏观察与目标应用受控鼠键输入；内置截图快照绑定防错位、高危动作单次确认、一键紧急暂停/恢复、macOS TCC 权限自检，以及独立的 **Computer Use** 设置页。
-- **工具调用审计与多主题调色盘**：新增工具调用审计中心（按天分区的 JSONL 日志、自动过期轮转、筛选统计与详情抽屉）；推出统一毛玻璃设计系统、6 大设置分类与草稿保护，以及 **6 套全站主题调色盘**（海洋蓝、珊瑚橙、葡萄紫、翡翠绿、琥珀金、樱花粉）。
-- **Tunnel 控制、健康监控与轻量运行态**：支持强制重启 Cloudflare Quick Tunnel 与全局健康状态实时汇总；新增 macOS **轻量菜单栏模式**、每 5 分钟空闲会话/命令内存回收，并优化任务验收与分栏 Diff 行对齐。
-- **架构与界面全面重构**：前端全面迁移至 Vue 3 + TypeScript + Tailwind CSS 4，并完成网关、Computer Use、Stdio 桥接、Review、Audit 与调度器的模块化拆分。
+## 核心能力
 
-这意味着现在推荐的使用路径更加立体：**连接一次 Global MCP（本机 `mcp-stdio`、局域网联邦或公网 `/mcp`）→ 选择本地或对等设备 Workspace → 维护 Goal / Plan → 执行与审计验收 → History 留档。**
+| 功能 | 你能做什么 |
+| --- | --- |
+| **任意兼容 MCP 的 Harness** | 通过原生 Rust `mcp-stdio` 或 Streamable HTTP 接入 Codex、Claude Code、Gemini 等兼容客户端；网页 AI 可走 HTTPS MCP。 |
+| **跨设备联邦** | 一个 Global MCP 入口发现配对设备，跨 macOS、Windows、Linux 和已组网的云服务器读取代码、修改文件、运行命令及测试。 |
+| **多工作区与多会话** | 一次连接管理多个项目；每个 MCP Session 独立选择 Workspace，也可通过 `workspace_id` 显式指定目标。 |
+| **Agent 执行框架** | Direct / Plan / Goal 三种模式，统一管理目标、计划、任务、执行证据与人工验收。 |
+| **持久化项目记忆** | History 保存在项目目录，支持摘要恢复、历史搜索及分页读取；切换 AI 客户端也能继续开发。 |
+| **真实工程验证** | 文件、Patch、Terminal、Git、Skills 与 Quality Gate 共用工具内核，支持代码审查与执行记录。 |
+| **原生 Computer Use** | macOS 按需屏幕观察、受控键鼠输入、跨设备转发、高风险操作确认和紧急暂停。 |
+| **Linux Headless** | 无 GTK 桌面依赖的 x64 / ARM64 独立二进制，支持 CLI、一键安装、systemd 常驻和仓库自动发现。 |
+| **连接与安全治理** | OAuth、PKCE、DCR、Bearer、HMAC 配对，FRP / Cloudflare 隧道，以及工具审计、健康检查与全局 Dashboard。 |
 
-## 功能全景：特点与优势
+## 一次连接，开发所有设备上的项目
 
-Coding Tools MCP 不只是一个 MCP 地址转发器，而是一个以 **Workspace-first** 为核心的 AI 开发运行时：桌面端管理项目和服务，统一工具运行时负责安全执行，并通过 MCP 为本地、局域网与公网 AI 客户端提供开发能力。
+本地 Harness 可以直接连接 `http://127.0.0.1:<port>/mcp`，或通过原生 `mcp-stdio` 桥接，无需 Node.js 或公网隧道。远程 AI 客户端可使用 HTTPS MCP。配对设备通过局域网或 EasyTier / Tailscale 等组网连接，不需要为每台设备单独配置 AI 客户端。
 
-| 功能 | 主要特点 | 带来的优势 |
-| --- | --- | --- |
-| 工作区管理 | 每个项目有独立目录、执行策略、Planning 与 History；侧边栏直接展示分支、变更和当前 Goal / Plan | 多项目切换更清晰，降低把命令执行到错误项目的风险 |
-| MCP 工具运行时 | 文件、Patch、命令、Git、图片、Skill 和状态管理共用一套工具内核 | 单一协议入口减少重复状态机和兼容分支，策略、错误和权限更容易保持一致 |
-| 连接、桥接与联邦网关 | 支持本机 `mcp-stdio` 桥接、Global Gateway、FRP、Cloudflare Quick Tunnel 及局域网多设备联邦 | 本机 Gemini/Claude、局域网跨机协同和远程网页 AI 可共用同一套工作区模型 |
-| 身份认证 | OAuth Authorization Code、PKCE S256、DCR、Refresh Token，并兼容 Bearer、静态 Client 与 LAN HMAC 配对 | 既能满足现代网页端 OAuth 流程，也能兼顾本机桥接、旧客户端与局域网安全通信 |
-| macOS Computer Use | 基于 `ScreenCaptureKit` 的按需截屏与目标应用受控输入，含快照绑定、紧急暂停与 TCC 诊断 | 需要界面操作时 AI 可安全代劳，同时通过多重边界锁定权限、防止误操作 |
-| Planning / Goal / Task | Direct、Plan、Goal 三种约束模式，Execution Ledger 统一记录执行状态与人工验收 | 复杂任务可拆分、可恢复、可验收，减少 AI 在中途偏离目标的情况 |
-| 历史会话 | 项目内保存无损 Markdown 档案，并提供有界状态、搜索、分页读取和启动提示词 | 上下文跟着仓库走，不依赖某一个聊天窗口，也不会每次注入全部历史 |
-| 审计、日志与健康检查 | 提供工具调用审计（筛选/轮转）、请求日志、OAuth 元数据与连接健康汇总 | AI 每次调用都透明可查，出现连接、权限或授权问题时能快速定位根因 |
-| Workspace-first 安全边界 | 工作区外默认只读，`.git` 永久保护；`.github`、依赖清单/锁文件、构建配置等高风险文件默认保护，可按 Workspace 显式放开 Patch 写入 | 权限范围明确、修改可控，适合把 AI 接入真实项目而不是临时演示目录 |
+### 日常使用场景：一台主力电脑，整个开发环境
 
-### 桌面端全局 Dashboard：不进入工作区也能掌握全局状态
+假设你有一台日常办公的 MacBook、一台家里常驻的 Mac mini、一台 Windows 测试机，以及一台 Linux 云服务器。
 
-全局 Dashboard 把多个 Workspace 的运行与执行状态汇总到一个控制面板中。它不要求先进入某个项目，就能查看当前 AI Execution、验证证据、Global MCP 状态、Chat Session 路由、Planning 焦点和需要人工关注的异常。
+你只需要在 MacBook 上配置一次自己喜欢的 AI Harness（例如 Codex、Claude Code 或 Gemini CLI），连接 Coding Tools MCP。其他设备只需运行 Coding Tools MCP（Linux 可使用 Headless 模式）、完成配对并共享项目，无需重复安装和配置 Harness、模型 API Key 或 MCP 客户端。
 
-Dashboard 还会持续刷新 MCP Token 估算，并提供 Token Flow、请求成功率、Planning 完成度、Workspace Token Distribution、最近 History Session 与系统健康状态。Token 统计来自本地服务请求大小估算，不保存请求正文。
+| 设备 | 日常用途 |
+| --- | --- |
+| MacBook · 主力机 | 运行 Harness，统一发出开发指令 |
+| Mac mini · 家庭开发机 | 修改项目、构建 macOS / iOS 应用 |
+| Windows · 测试机 | 编译 Windows 应用、运行平台测试 |
+| Linux · 云服务器 | 开发后端、查看日志、维护服务 |
 
-### 1. 工作区管理：把项目变成长期可识别的开发上下文
+在同一个 AI 对话中，你可以说：“先修改 Mac mini 上的项目，再去 Windows 上运行测试，最后检查 Linux 服务器上的服务日志。” AI 通过 MCP 选择对应设备的 Workspace，文件和命令操作在目标设备上执行。
 
-工作区是 Coding Tools MCP 的项目上下文单位。它绑定一个本地项目目录，同时维护自己的执行策略、Planning 与 History。MCP Listener、认证和公网入口属于应用级 Global MCP；桌面端可以保存多个项目，而 Chat Session 的 Workspace 选择彼此隔离。
+**只配置一次 Harness，新增设备只需配对。换模型或换 Harness，也无需重新配置每一台执行设备。** 多个兼容客户端也可连接同一网关，各自保持工作区上下文。
 
-**特点**
+> 前提：客户端支持相应 MCP 传输和认证方式，设备在线且已授权共享 Workspace。只有经由 MCP 的工具调用才会路由到目标设备；Harness 自带的 Shell、编辑器等工具不会自动变成远程工具。不同客户端的实际兼容性可能有所差异。
 
-- 项目目录是事实来源，工作区名称和项目配置分离维护。
-- MCP session 在全局连接内选择 Workspace，规划状态和历史会话仍围绕所选工作区组织。
-- 侧边栏直接展示当前分支、clean / changed、当前 Goal / Plan、完成进度和执行状态。
-- Workspace Overview 支持主仓库与一级子 Git 状态、7 天修改趋势、执行质量、整个工作区 Diff / Review 和 IDE 快速打开。
-- 后台空闲内存自动维护每 5 分钟执行：MCP Session 空闲 30 分钟过期（进行中的 RPC 受保护）；完成并且 30 分钟未访问的命令从内存回收，但完整输出仍按原磁盘缓存规则保留。运行中命令、MCP 服务和隧道不会被清理。菜单栏显示定时回收的累计会话数。
-- 远程 AI Change Review 支持 Unified / Split 切换；Split 使用左右独立横向滚动的代码栏、单侧行号、对齐的差异行和自动截断的文件标题，避免长代码覆盖相邻栏位。
+## 从需求到交付，跨会话持续开发
 
-**优势**
+<p align="center">
+  <img src="docs/images/mcp-workflow.svg" alt="工作区选择、目标规划、工具执行、质量验证和历史归档工作流" width="920">
+</p>
 
-- 多项目并行时不容易混淆目录、当前 Plan 和执行上下文。
-- AI 每次连接都能获得明确的项目边界，减少“对错仓库执行命令”的风险。
-- 状态读取采用缓存优先并在后台刷新，频繁切换 Workspace 时减少重复加载造成的卡顿。
+- **Direct**：快速修改、小型任务；**Plan**：先规划再执行；**Goal**：目标驱动、验收约束与长期开发。
+- 使用 Execution Ledger、Quality Gate、Git Diff / Review 和工具审计检查结果，而不只是相信 AI 的完成声明。
+- 使用项目内 History 保存进度和决策，下一次对话按需恢复上下文。
 
-### 2. MCP 工具运行时：一套内核覆盖真实开发动作
-
-Rust 工具内核统一提供文件读取、搜索、Patch、命令执行、Git、图片、Skill 和状态管理能力。所有远程工具调用都通过 MCP Streamable HTTP 进入同一个分发入口。
-
-**特点**
-
-- Stable Tool API v2 用 `history_manage`、`planning_manage`、`task_manage` 等聚合入口承载生命周期操作，同时保留兼容 profile。
-- 文件、命令和 Patch 会经过统一的路径边界、命令策略、确认和错误结构处理。
-- Patch 支持预检和失败恢复，减少半写入状态。
-
-**优势**
-
-- 不同客户端得到一致的工具行为，维护成本和兼容风险更低。
-- AI 可以完成从理解代码、修改文件、运行测试到检查 Git 的完整闭环。
-- 复杂操作的权限与失败原因更容易解释、审计和恢复。
-
-### 3. 连接、本地桥接与公网入口：从本机直连平滑走向远程开发
-
-整个应用只保留一个 Global MCP Endpoint（`/mcp`）。本地或远程 AI 客户端先建立 MCP session，再用 `workspace_list` / `workspace_select` 选择项目；支持本机回环桥接、局域网多设备联邦和公网隧道三种接入形态。
-
-**特点**
-
-- **本机无头桥接（`mcp-stdio`）**：内置原生 Rust `mcp-stdio` 子命令与「Gemini App · MCP 连接」向导，冷启动小于 10ms，无需 Node.js/`npx` 与公网隧道即可直连本地桌面 AI 客户端。
-- **公网隧道监督与重启**：支持 FRP 和 Cloudflare Quick Tunnel（含面板一键强制重启），隧道进程由桌面端统一监督；服务停止时关联隧道同步断开。
-- **会话隔离**：每个 Chat session 的 Workspace 选择彼此隔离，请求开始前固定项目上下文。
-
-**优势**
-
-- 本机 Gemini/Claude、局域网跨机协同和远程网页 AI（ChatGPT、claude.ai、Grok、Gemini）共用同一套工作区模型。
-- 多个项目不必为每个工作区都单独维护一套公网基础设施。
-- 端点、隧道、健康检查与服务状态集中可见，排查网络问题更直接。
-
-### 4. OAuth 与认证：兼顾安全流程和客户端兼容
-
-MCP OAuth runtime 支持 Authorization Code、PKCE S256、Dynamic Client Registration 和 Refresh Token；同时保留 Bearer 及静态 Client ID / Secret，方便旧客户端或简单环境继续接入。
-
-**特点**
-
-- 动态注册的客户端可以根据服务端 metadata 自助完成 Client 注册。
-- PKCE S256 降低授权码被截获后的滥用风险。
-- Access Token 与 Refresh Token 类型区分，并绑定已注册的 redirect URI。
-
-**优势**
-
-- 新客户端可以使用更完整的 OAuth 流程，减少手工复制凭据。
-- 旧客户端仍有清晰的兼容路径，不需要为了升级一次性重做接入。
-- 认证设置和健康检查集中在桌面端，授权失败更容易定位。
-
-### 5. Planning、Goal、Task：让复杂任务可控、可恢复、可验收
-
-规划页面把“目标”“计划”和“执行任务”分开管理。Direct 适合小改动，Plan 适合需要拆步骤的任务，Goal 适合需要长期推进和明确验收标准的工作。AI 可以在对话中创建和维护计划，桌面端负责显示约束、状态和最终验收归档。
-
-**特点**
-
-- Goal 表达要达成的结果和约束，Plan 表达步骤，Harness Task 表达可恢复的执行过程。
-- 写操作可以要求绑定当前激活 Goal，并遵守当前 Plan。
-- Execution Ledger 统一投影当前步骤、最近工具、错误、变更文件、历史检查点和验证结果。
-
-**优势**
-
-- 大任务不会只依赖聊天上下文，暂停后能从明确状态继续。
-- 计划、执行和验收分层，既保留灵活性，又能对高风险修改增加约束。
-- 开发者可以在桌面端快速看到“现在做到了哪一步、还差什么、是否已验证”。
-
-### 6. 历史会话：让上下文跟着仓库走
-
-每个项目的长期开发记录保存在 `docs/history-session/`。Markdown 档案保留完整事实，`memory/state.json` 和 `memory/manifest.json` 只提供有界的当前状态与索引；新对话可以通过启动提示词、搜索和分页读取恢复需要的上下文。
-
-**特点**
-
-- 支持初始化、检查点、校验、搜索和无损分页读取。
-- 当前会话可默认记录，旧会话则由工作区面板按需选择注入。
-- 只注入有界快照和精选片段，不把全部历史一次性塞进新对话。
-
-**优势**
-
-- 项目可以独立备份、审阅和提交历史档案，不被某个聊天平台锁定。
-- 新 Agent 能快速获得当前状态，再按需精读旧决策，节省上下文和时间。
-- 重要的修改、测试、风险和下一步可以形成可追溯的交接记录。
-
-### 7. 日志、健康检查与安全边界：让问题可见，让权限有边界
-
-桌面端提供服务日志、端点检查、OAuth 元数据检查和运行状态展示。统一工具内核则把工作区路径、命令策略、仓库保护和危险操作确认放在同一套 Policy 中处理。
-
-通用设置还集中管理应用版本与 Releases 入口、界面内存释放、全局 Agent Runtime、启动时恢复运行状态和局域网访问开关。涉及网络暴露的选项默认关闭，并明确提示启用后的影响。
-
-**macOS 轻量驻留（菜单栏）**：主界面侧栏点击「轻量驻留」，或关闭窗口时选择「轻量驻留」，会卸载主 WebView、隐藏 Dock 图标（仅保留右上角菜单栏入口），降低界面内存占用，同时保持全局 MCP、工作区会话及已启动的隧道继续运行。点击 macOS 右上角菜单栏图标可查看约每 15 秒更新的主进程/界面内存估算、WebView 进程数、MCP 状态、工作区与活跃会话，并可恢复主窗口、刷新信息或完全退出。恢复界面时 Dock 图标也会恢复；页面重新加载并保留窗口尺寸与位置。未保存的表单修改会在进入轻量模式前要求确认。Windows 暂保留原有托盘隐藏模式，不声称释放 WebView 内存。
-
-**特点**
-
-- 工作区内允许按策略读写和执行；工作区外默认只读。
-- `.git` 永久不可写；`.github`、依赖清单/锁文件、构建配置、README/LICENSE 等高风险文件默认受保护，可在 Workspace 设置中显式允许 Patch 修改，删除高风险文件仍需确认。
-- 健康检查分别报告本地服务、公网入口和认证元数据的状态。
-- Windows 当前是 `policy_only` 执行边界，项目不会把静态策略夸大为完整 OS Sandbox。
-
-**优势**
-
-- AI 能力可以接近真实开发流程，同时保持清晰的最小权限范围。
-- 连接失败、授权失败和工具调用失败有明确的排查入口。
-- 对安全能力的边界如实呈现，方便团队根据部署环境补充系统级隔离。
-
-### 8. 局域网对等配对与多设备联邦：一个入口协同多台电脑
-
-当开发者同时拥有多台设备（如 macOS 笔记本与 Windows 台式机）时，可通过「应用设置 → MCP 连接 → 局域网多设备配对」建立点对点联邦，在同一个 AI 会话中跨设备访问共享工作区。
-
-**特点**
-
-- 支持 UDP 多播/广播、虚拟网卡单播扫描及 HTTP 直连探测，并通过 **6 位一次性配对码**完成双向安全握手。
-- 对等通信采用 HMAC-SHA256 签名与防重放校验，局域网接口（`/api/lan/v1/*`）与公网隧道硬隔离，不暴露给公网。
-- AI 可调用 `device_list` 发现已配对设备，并通过 `{device_id}:{workspace_id}` 复合作用域路由工具调用、转发 Computer Use 操作或通过 `/review/peer/{device_id}/{id}` 查看跨设备变更审查。
-
-**优势**
-
-- 只需连接一台主设备的 MCP 入口，即可安全调度局域网或组网内多台主机上的项目与算力。
-- 跨设备调用记录双向审计，共享工作区范围可按设备独立勾选与随时停用。
-
-### 9. macOS 原生 Computer Use 与审计/主题系统：安全可控、全程留痕
-
-针对需要查看界面或模拟点击的桌面操作场景，提供 opt-in 的 macOS 原生 Computer Use 能力；同时在应用层补全工具调用审计与多主题界面体验。
-
-**特点**
-
-- **macOS 原生 Computer Use**：基于 `ScreenCaptureKit` 按需截图观察并执行受控鼠键输入；支持在「应用设置 → Computer Use」配置持久化本地授权与**目标应用白名单**，内置操作绑定快照防错位、高危动作单次确认、一键紧急暂停/恢复与 macOS TCC 权限诊断。
-- **工具调用审计中心**：记录每次已认证 MCP 工具调用的摘要、脱敏结果与耗时（按日期与工作区分区的 JSONL 存储，支持过期自动轮转），可在桌面端筛选统计与查看详情。
-- **多主题与设置防护**：提供 6 套全站主题调色盘（海洋蓝/珊瑚橙/葡萄紫/翡翠绿/琥珀金/樱花粉）与三层毛玻璃设计系统，并为设置页提供草稿保护与分组串行保存。
-
-**优势**
-
-- 需要界面操作时 AI 可安全代劳，遇到风险或屏幕变化可立即阻断或由人工拍板。
-- 每一次工具调用均有账可查，长时间跨项目开发也能保持清晰的可追溯性。
+项目运行环境与上层模型、Harness 分离；任务推理和调度仍由接入的 AI 客户端负责。本项目不提供独立模型推理或自动分布式多 Agent 调度。
 
 ## 30 秒看懂怎么用
 
-```text
-下载安装桌面端
-  → 添加项目目录
-  → 启动 MCP 和公网隧道
-  → 复制“公网 MCP 地址”
-  → ChatGPT 开启开发人员模式
-  → 新建 MCP 插件并粘贴地址
-  → 完成授权
-  → workspace_list / workspace_select 选择项目
-  → 在新对话中开始开发
-```
+1. 安装桌面端或 Linux 无头服务，添加项目目录。
+2. 启动 Global MCP；如需跨设备开发，配对并共享目标工作区。
+3. 选择本地 stdio / HTTP 或公网 HTTPS MCP 接入 AI 客户端。
+4. 调用 `workspace_list`，用 `workspace_select` 或显式 `workspace_id` 选择项目，然后开始开发。
 
-第一次使用只需要记住两件事：**桌面端负责把项目变成 MCP 工作区（并支持本机 `mcp-stdio` 桥接、局域网多设备联邦或公网 `/mcp` 入口），AI 客户端负责连上它并按 Workspace 边界开发。**
-
-- [查看完整安装和桌面端启动步骤](#五分钟开始使用)
-- [查看 Linux 服务器无头模式一键安装与 CLI 指南](docs/linux-headless.md)
-- [直接查看 ChatGPT 插件配置](#mcp-connector)
-- [查看 Gemini / claude.ai / Grok 接入矩阵](docs/web-chat-connectors.md)
+[完整安装步骤](#五分钟开始使用) · [ChatGPT 配置](#mcp-connector) · [Linux 服务器部署](docs/linux-headless.md) · [详细功能与技术架构](docs/project-context.md)
 
 ## 五分钟开始使用
 
