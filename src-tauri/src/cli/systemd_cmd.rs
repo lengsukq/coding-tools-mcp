@@ -15,6 +15,7 @@ fn is_root_user() -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn render_systemd_user_unit(exe_path: &Path) -> String {
     render_systemd_unit(exe_path, false)
 }
