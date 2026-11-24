@@ -42,6 +42,100 @@ fn computer_audit_records_client_and_action_but_never_user_input_or_tokens() {
     assert!(!serialized.contains(private_token));
 }
 
+#[test]
+fn benign_grep_exit_code_1_classifies_as_success_while_real_failures_remain_error() {
+    let benign_grep = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "ok": true,
+                "transport_ok": true,
+                "command_ok": false,
+                "command": "grep -rn needle src",
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "stderr_truncated": false
+            }
+        }
+    });
+    assert_eq!(classify_outcome(&benign_grep), ("success".into(), None));
+
+    let benign_rg = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "ok": true,
+                "transport_ok": true,
+                "command_ok": false,
+                "command": "/usr/local/bin/rg -n needle src",
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "stderr_truncated": false
+            }
+        }
+    });
+    assert_eq!(classify_outcome(&benign_rg), ("success".into(), None));
+
+    let grep_stderr = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "ok": true,
+                "transport_ok": true,
+                "command_ok": false,
+                "command": "grep -rn needle missing.txt",
+                "exit_code": 1,
+                "stderr": "grep: missing.txt: No such file or directory",
+                "stderr_truncated": false
+            }
+        }
+    });
+    assert_eq!(
+        classify_outcome(&grep_stderr),
+        ("error".into(), Some("runtime".into()))
+    );
+
+    let grep_exit_2 = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "ok": true,
+                "transport_ok": true,
+                "command_ok": false,
+                "command": "grep --bad-flag",
+                "exit_code": 2,
+                "stderr": "",
+                "stderr_truncated": false
+            }
+        }
+    });
+    assert_eq!(
+        classify_outcome(&grep_exit_2),
+        ("error".into(), Some("runtime".into()))
+    );
+
+    let cargo_fail = json!({
+        "result": {
+            "isError": false,
+            "structuredContent": {
+                "ok": true,
+                "transport_ok": true,
+                "command_ok": false,
+                "command": "cargo test",
+                "exit_code": 1,
+                "stderr": "",
+                "stderr_truncated": false
+            }
+        }
+    });
+    assert_eq!(
+        classify_outcome(&cargo_fail),
+        ("error".into(), Some("runtime".into()))
+    );
+}
+
 fn test_store() -> (tempfile::TempDir, ToolAuditStore) {
     let dir = tempfile::tempdir().expect("audit temp dir");
     let store = ToolAuditStore::new(dir.path().to_path_buf());

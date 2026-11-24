@@ -109,7 +109,21 @@ fn should_visit_entry(entry: &DirEntry, root: &Path) -> bool {
 fn is_harness_excluded_os(name: &OsStr) -> bool {
     matches!(
         name.to_str(),
-        Some(".coding-tools" | ".mcp-probe-kit" | ".svelte-kit")
+        Some(
+            ".coding-tools"
+                | ".mcp-probe-kit"
+                | ".svelte-kit"
+                | "Library"
+                | "OneDrive"
+                | "OneDriveTemp"
+                | "AppData"
+                | "Windows"
+                | "Program Files"
+                | "Program Files (x86)"
+                | "ProgramData"
+                | "$Recycle.Bin"
+                | "System Volume Information"
+        )
     )
 }
 

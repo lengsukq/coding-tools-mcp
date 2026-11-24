@@ -16,6 +16,10 @@ pub const DEFAULT_EXCLUDED_NAMES: &[&str] = &[
     ".pytest_cache",
     ".ruff_cache",
     "__pycache__",
+    ".cache",
+    ".next",
+    ".turbo",
+    "coverage",
 ];
 
 #[derive(Debug, Clone)]

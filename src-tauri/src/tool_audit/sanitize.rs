@@ -30,13 +30,19 @@ pub(super) fn classify_outcome(response: &Value) -> (String, Option<String>) {
     }
 
     let result = response.get("result");
+    let structured = result.and_then(|value| value.get("structuredContent"));
+    if let Some(content) = structured {
+        if is_benign_grep_no_match(content) {
+            return ("success".into(), None);
+        }
+    }
+
     if result
         .and_then(|value| value.get("isError"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        let raw = result
-            .and_then(|value| value.get("structuredContent"))
+        let raw = structured
             .and_then(|value| value.get("error"))
             .and_then(|value| value.get("category"))
             .and_then(Value::as_str)
@@ -44,7 +50,67 @@ pub(super) fn classify_outcome(response: &Value) -> (String, Option<String>) {
         return ("error".into(), Some(safe_error_category(raw)));
     }
 
+    if structured
+        .and_then(|value| value.get("command_ok"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        let raw = structured
+            .and_then(|value| value.get("error"))
+            .and_then(|value| value.get("category"))
+            .and_then(Value::as_str)
+            .unwrap_or("runtime");
+        return ("error".into(), Some(safe_error_category(raw)));
+    }
+
     ("success".into(), None)
+}
+
+/// Standard `grep` / `rg` returns exit code 1 when zero lines match without an error.
+/// Classify that clean no-match result as `success` in the audit trail while preserving
+/// exit code 2, non-empty stderr, truncated stderr, or transport/tool errors as `error`.
+fn is_benign_grep_no_match(structured: &Value) -> bool {
+    if structured.get("transport_ok").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    if structured.get("exit_code").and_then(Value::as_i64) != Some(1) {
+        return false;
+    }
+    if structured
+        .get("error")
+        .is_some_and(|error| !error.is_null())
+    {
+        return false;
+    }
+    if structured
+        .get("stderr_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    if structured
+        .get("stderr")
+        .and_then(Value::as_str)
+        .is_some_and(|stderr| !stderr.trim().is_empty())
+    {
+        return false;
+    }
+    let Some(command) = structured.get("command").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(parts) = crate::tools::exec::command_line::split_command(command) else {
+        return false;
+    };
+    let Some(first) = parts.first() else {
+        return false;
+    };
+    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    let stem = base
+        .strip_suffix(".exe")
+        .unwrap_or(base)
+        .to_ascii_lowercase();
+    matches!(stem.as_str(), "grep" | "egrep" | "fgrep" | "rg")
 }
 
 pub(super) fn safe_error_category(value: &str) -> String {

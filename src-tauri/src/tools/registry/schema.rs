@@ -415,7 +415,8 @@ fn file_schema(name: &str) -> Option<Value> {
                 "exclude_patterns": { "type": "array", "items": { "type": "string" } },
                 "include_hidden": { "type": "boolean", "default": false },
                 "include_ignored": { "type": "boolean", "default": false },
-                "max_results": { "type": "integer", "minimum": 1, "maximum": 50000, "default": 5000 }
+                "max_results": { "type": "integer", "minimum": 1, "maximum": 50000, "default": 5000 },
+                "max_visited_entries": { "type": "integer", "minimum": 1, "maximum": 500000, "default": 100000 }
             },
             "additionalProperties": false
         })),
@@ -429,9 +430,11 @@ fn file_schema(name: &str) -> Option<Value> {
                 "exclude_globs": { "type": "array", "items": { "type": "string" } },
                 "regex": { "type": "boolean", "default": false },
                 "case_sensitive": { "type": "boolean", "default": false },
+                "include_ignored": { "type": "boolean", "default": false },
                 "context_lines": { "type": "integer", "minimum": 0, "maximum": 20, "default": 0 },
                 "max_preview_bytes": { "type": "integer", "minimum": 64, "maximum": 4096, "default": 256 },
                 "max_results": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 100 },
+                "max_visited_entries": { "type": "integer", "minimum": 1, "maximum": 500000, "default": 100000 },
                 "max_file_bytes": {
                     "type": "integer",
                     "minimum": 1,
