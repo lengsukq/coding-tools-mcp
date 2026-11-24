@@ -12,6 +12,7 @@ use crate::settings::PairedPeerConfig;
 use crate::tools::context::{merge_ai_instructions, merge_executable_paths};
 use crate::tools::policy::PolicySettings;
 use crate::tools::{SharedToolContext, ToolContext, Workspace};
+use crate::upstream_mcp::UpstreamHub;
 use crate::usage::ServiceUsage;
 use crate::workspace::{AuthConfig, WorkspaceProfile};
 
@@ -73,6 +74,7 @@ pub struct WorkspaceRequestContext {
 pub struct GatewayState {
     pub registry: WorkspaceRegistry,
     pub sessions: Arc<GatewaySessionStore>,
+    pub upstream: Arc<UpstreamHub>,
     usage: Mutex<HashMap<String, Arc<ServiceUsage>>>,
     settings_override: Arc<Mutex<Option<AppSettings>>>,
 }
@@ -82,6 +84,7 @@ impl Default for GatewayState {
         Self {
             registry: WorkspaceRegistry::default(),
             sessions: Arc::new(GatewaySessionStore::default()),
+            upstream: Arc::new(UpstreamHub::default()),
             usage: Mutex::new(HashMap::new()),
             settings_override: Arc::new(Mutex::new(None)),
         }
@@ -97,6 +100,7 @@ impl GatewayState {
         Self {
             registry: WorkspaceRegistry::from_profiles(profiles),
             sessions: Arc::new(GatewaySessionStore::default()),
+            upstream: Arc::new(UpstreamHub::new_in_memory()),
             usage: Mutex::new(HashMap::new()),
             settings_override: Arc::new(Mutex::new(Some(settings))),
         }
@@ -108,6 +112,7 @@ impl GatewayState {
         Self {
             registry: self.registry.clone(),
             sessions: self.sessions.clone(),
+            upstream: Arc::clone(&self.upstream),
             usage: Mutex::new(usage_snapshot),
             settings_override: self.settings_override.clone(),
         }

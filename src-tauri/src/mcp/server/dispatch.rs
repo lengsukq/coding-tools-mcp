@@ -89,6 +89,12 @@ pub fn handle_gateway_request(
             let mut tools = gateway_scoped_tool_catalog();
             tools.extend(gateway_tool_definitions());
             tools.extend(crate::computer::tool_definitions());
+            let override_snap = state.settings_snapshot();
+            tools.extend(
+                state
+                    .upstream
+                    .exposed_tool_definitions(override_snap.as_ref()),
+            );
             Ok(json!({ "tools": tools }))
         }
         "tools/call" => match handle_gateway_tools_call(state, session_id, &id, &params) {
@@ -127,7 +133,20 @@ fn gateway_initialize_result(state: &GatewayState, protocol_version: &str) -> Va
     let server_name = crate::settings::resolved_mcp_server_name(&configured_name);
     let server_title = crate::settings::resolved_mcp_server_title(&configured_name);
     let instructions = "Coding Tools MCP is a local-first coding runtime exposed through one Global MCP connection with optional LAN peer federation across multiple computers (macOS / Windows / Linux). The user-facing workflow is Device/Workspace → Goal/Plan → Execution → History. Workspace data is isolated per device and per workspace: call workspace_list (and device_list when checking connected computers) when the target is unknown, then workspace_select for stateful clients that preserve the same MCP transport session. Remote paired workspaces use composite IDs of the form {device_id}:{workspace_id}; always verify the device metadata before mutating when multiple computers share identical project names. Do not infer a filesystem root or use the desktop UI selection as routing authority. If the client does not preserve MCP session state, or an ordinary tool reports WORKSPACE_NOT_SELECTED after selection, use workspace_invoke or pass explicit workspace_id for that operation instead of guessing or repeatedly selecting. For Computer Use tools (computer_session, computer_observe, computer_action) in a multi-device LAN setup, pass device_id from device_list to target a specific computer's screen. Keep Planning as the durable source of intent and progress, Execution Ledger/checkpoints as the source of runtime progress and failures, Verification evidence as the completion gate, and History as the cross-session recovery record. When resuming existing work, continue the active Goal/Plan and its current execution checkpoint before creating duplicate work. workspace_invoke is one-off and never changes another request or Chat session. When a successful mutation returns review_url, surface that exact URL as the preferred inspection link; never reconstruct it or expose review_token separately. When the user asks for all current workspace changes, a PR-style overall diff, or all changes from the current chat/session, call change_review with scope=workspace or scope=session and surface the returned review_url.";
-    let instructions = format!("{instructions} For a workspace where server_info reports history_recording=true, call history_manage with action=checkpoint at the end of every user-requested development task. Include the user's verbatim current request as raw_user_input, plus actual findings, changed files and tests. The first checkpoint can lazily create the history archive; bootstrap is optional. Do not claim a task was archived unless the tool confirms recorded=true. Never checkpoint when history recording is disabled; the server cannot recover text that was never sent to it.");
+    let mut instructions = format!("{instructions} For a workspace where server_info reports history_recording=true, call history_manage with action=checkpoint at the end of every user-requested development task. Include the user's verbatim current request as raw_user_input, plus actual findings, changed files and tests. The first checkpoint can lazily create the history archive; bootstrap is optional. Do not claim a task was archived unless the tool confirms recorded=true. Never checkpoint when history recording is disabled; the server cannot recover text that was never sent to it.");
+    let override_snap = state.settings_snapshot();
+    let (direct_upstreams, proxy_upstreams) =
+        state.upstream.enabled_mode_counts(override_snap.as_ref());
+    if direct_upstreams > 0 || proxy_upstreams > 0 {
+        instructions
+            .push_str(" Aggregated external MCP servers are also mounted behind this endpoint.");
+        if direct_upstreams > 0 {
+            instructions.push_str(" Direct-mode upstream tools are exposed with `{alias}__{tool}` names and do not accept a Coding Tools `workspace_id`.");
+        }
+        if proxy_upstreams > 0 {
+            instructions.push_str(" For lazy proxy-mode upstream servers, call mcp_upstream_list to discover servers, mcp_upstream_tools to inspect exact tool names and inputSchema, and mcp_upstream_call to invoke them.");
+        }
+    }
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
@@ -168,6 +187,24 @@ fn handle_gateway_tools_call(
 
     if is_gateway_tool(name) {
         return handle_workspace_tool(state, session_id, request_id, name, &args);
+    }
+
+    let override_snap = state.settings_snapshot();
+    if state
+        .upstream
+        .is_upstream_tool_name(name, override_snap.as_ref())
+    {
+        let outcome = crate::async_rt::block_on(state.upstream.handle_tool_call(
+            name,
+            &args,
+            override_snap.as_ref(),
+        ))?;
+        return Ok(DispatchOutcome {
+            result: outcome.result,
+            workspace: None,
+            federated_workspace_id: None,
+            execution_host: Some(outcome.execution_host),
+        });
     }
 
     let resolved = resolve_tool_workspace(state, session_id, &mut args)?;
@@ -743,6 +780,70 @@ fn handle_workspace_invoke(
                 true,
             )
         }
+    }
+}
+
+/// Pure-async dispatch path for aggregated upstream MCP `tools/call` requests,
+/// avoiding holding a `spawn_blocking` worker thread while awaiting external I/O.
+pub async fn handle_gateway_upstream_tool_call_async(
+    state: &GatewayState,
+    session_id: Option<&str>,
+    body: &Value,
+) -> GatewayResponse {
+    if let Some(session_id) = session_id {
+        if !state.sessions.touch_existing(session_id) {
+            return GatewayResponse {
+                body: json!({
+                    "jsonrpc": "2.0",
+                    "id": body.get("id").cloned().unwrap_or(Value::Null),
+                    "error": GatewayError::invalid(
+                        "MCP_SESSION_INVALID",
+                        "MCP session 不存在或已过期。请重新建立 MCP 连接并使用服务端返回的 session 标识。",
+                    )
+                    .to_rpc_error()
+                }),
+                workspace: None,
+                federated_workspace_id: None,
+                execution_host: None,
+            };
+        }
+    }
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let params = body.get("params").cloned().unwrap_or(Value::Null);
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
+        return GatewayResponse {
+            body: json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "Missing tool name" }
+            }),
+            workspace: None,
+            federated_workspace_id: None,
+            execution_host: None,
+        };
+    };
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let override_snap = state.settings_snapshot();
+    match state
+        .upstream
+        .handle_tool_call(name, &args, override_snap.as_ref())
+        .await
+    {
+        Ok(outcome) => GatewayResponse {
+            body: json!({ "jsonrpc": "2.0", "id": id, "result": outcome.result }),
+            workspace: None,
+            federated_workspace_id: None,
+            execution_host: Some(outcome.execution_host),
+        },
+        Err(error) => GatewayResponse {
+            body: json!({ "jsonrpc": "2.0", "id": id, "error": error }),
+            workspace: None,
+            federated_workspace_id: None,
+            execution_host: None,
+        },
     }
 }
 

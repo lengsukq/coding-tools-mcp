@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::data::AppData;
+use crate::upstream_mcp::UpstreamMcpConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrpProfile {
@@ -307,6 +308,8 @@ pub struct AppSettings {
     pub global_gateway: GlobalGatewayConfig,
     #[serde(default)]
     pub lan_federation: LanFederationConfig,
+    #[serde(default)]
+    pub upstream_mcp: UpstreamMcpConfig,
     /// Shared secrets indexed by key name (e.g. "bearer_token").
     /// Persisted alongside other app settings in app_settings.json.
     #[serde(default)]
@@ -543,6 +546,7 @@ impl AppSettings {
             restore_mcp_workspace_ids: data.restore_mcp_workspace_ids.clone(),
             global_gateway: data.global_gateway.clone(),
             lan_federation: data.lan_federation.clone(),
+            upstream_mcp: data.upstream_mcp.clone(),
             shared_secrets: data.shared_secrets.clone(),
             workspace_secrets: data.workspace_secrets.clone(),
             app_secrets: data.app_secrets.clone(),
@@ -577,6 +581,7 @@ impl AppSettings {
         data.restore_mcp_workspace_ids = self.restore_mcp_workspace_ids.clone();
         data.global_gateway = self.global_gateway.clone();
         data.lan_federation = self.lan_federation.clone();
+        data.upstream_mcp = self.upstream_mcp.clone();
     }
 
     pub fn load_or_default() -> Self {

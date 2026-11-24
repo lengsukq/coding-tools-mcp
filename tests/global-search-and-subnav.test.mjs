@@ -41,11 +41,12 @@ test("global search indexes all split settings subpages, workspaces, workspace t
   } = await loadTsModule("src/lib/global-search.ts");
 
   const allSettingsItems = SETTINGS_SIDEBAR_GROUPS.flatMap((g) => g.items);
-  assert.equal(allSettingsItems.length, 15);
-  assert.equal(new Set(allSettingsItems.map((i) => i.id)).size, 15);
+  assert.equal(allSettingsItems.length, 16);
+  assert.equal(new Set(allSettingsItems.map((i) => i.id)).size, 16);
   assert.equal(WORKSPACE_SIDEBAR_GROUPS.flatMap((g) => g.items).length, 8);
 
   assert.equal(resolveActiveSettingsItemId("connection", "health"), "gateway");
+  assert.equal(resolveActiveSettingsItemId("connection", "upstream-mcp"), "upstream-mcp");
   assert.equal(resolveActiveSettingsItemId("connection", "gemini-connector"), "gemini");
   assert.equal(resolveActiveSettingsItemId("connection", "auth-scope"), "auth");
   assert.equal(resolveActiveSettingsItemId("connection", "lan-peers"), "lan-peers");
@@ -73,6 +74,9 @@ test("global search indexes all split settings subpages, workspaces, workspace t
 
   const nameHits = filterGlobalSearchEntries(entries, "允许局域网访问");
   assert.equal(nameHits[0]?.id, "settings-auth");
+
+  const upstreamHits = filterGlobalSearchEntries(entries, "mcp 聚合");
+  assert.equal(upstreamHits[0]?.id, "settings-upstream-mcp");
 
   const wsDiffHits = filterGlobalSearchEntries(entries, "alpha diff");
   assert.equal(wsDiffHits[0]?.id, "ws-ws-alpha-changes");

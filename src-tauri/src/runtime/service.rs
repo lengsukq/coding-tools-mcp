@@ -167,6 +167,7 @@ async fn stop_mcp_service_locked(
     _gate: &AsyncMutexGuard<'_, ()>,
 ) -> AppResult<RuntimeStatusDto> {
     global_gateway::stop().await?;
+    state.gateway.upstream.shutdown_all().await;
     let port = state.with_settings(|store| Ok(store.settings().global_gateway.local_port))?;
     let handle = state.with_runtime(|runtime| Ok(runtime.begin_stop()))?;
     await_listener_shutdown(handle, port).await;
@@ -303,16 +304,17 @@ pub async fn restore_runtime_state_inner(state: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-/// Run one periodic maintenance pass (session expiry, idle command reaping, LAN cache prune).
+/// Run one periodic maintenance pass (session expiry, idle command reaping, idle upstream MCP reaping, LAN cache prune).
 pub async fn run_maintenance_pass(gateway: &crate::mcp::gateway::GatewayState) {
     let (sessions, capabilities) = gateway.sessions.maintenance_sweep();
     let completed_commands = crate::tools::session::reap_idle_command_sessions().await;
+    let reaped_upstreams = gateway.upstream.reap_idle_clients(None).await;
     crate::lan_peer::prune_caches();
     #[cfg(target_os = "macos")]
     crate::platform::macos::process::trim_process_heap();
-    if sessions > 0 || capabilities > 0 || completed_commands > 0 {
+    if sessions > 0 || capabilities > 0 || completed_commands > 0 || reaped_upstreams > 0 {
         eprintln!(
-            "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands}"
+            "[memory-maintenance] expired_sessions={sessions} expired_capabilities={capabilities} completed_commands={completed_commands} reaped_upstreams={reaped_upstreams}"
         );
     }
 }

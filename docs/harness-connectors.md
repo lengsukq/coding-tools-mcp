@@ -65,7 +65,15 @@ Codex、Claude Code、Gemini CLI、OpenCode 等属于可按其 MCP 能力接入�
 
 ![开发工作流](./images/mcp-workflow.svg)
 
-## 6. 能力边界与安全
+## 6. 聚合外部 MCP（Upstream MCP Hub）
+
+无需在每个上层 AI 客户端中重复维护一套 `mcpServers`：在桌面端「应用设置 → 连接与多机互联 → MCP 聚合中心」或 Linux CLI（`coding-tools-mcp upstream add / import / test`）挂载其他 Stdio / Streamable HTTP / Legacy SSE MCP 后，所有连入本入口的客户端均可统一使用：
+
+- **直出模式（`direct`）**：上游工具自动带 `{alias}__{tool}` 前缀并归一化为跨模型兼容的 ≤64 字符名称直接进入 `tools/list`，适合少量高频工具；
+- **懒加载代理模式（`proxy`）**：不平铺上游工具，仅暴露 `mcp_upstream_list`、`mcp_upstream_tools`、`mcp_upstream_call` 三个固定元工具，避免撑爆上下文或触达网页端工具数量上限，且配置变更即时生效；
+- 两种模式均支持按单工具细粒度禁用，并统一记录到 Tool Audit（标注 `upstream:<alias>`）与隔离存储敏感凭据。
+
+## 7. 能力边界与安全
 
 - 本项目提供 MCP 执行基础设施，不替代上层 Harness 的模型推理或 Agent Loop，也不自动接管其内置编辑器与 Shell。
 - 请求级 Workspace 路由可避免会话切换串线，但不等同于多 Agent 并发写入隔离；同一仓库的并行修改仍需要协调。

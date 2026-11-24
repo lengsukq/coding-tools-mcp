@@ -136,14 +136,40 @@ impl ToolAuditCall {
         execution_host: Option<String>,
         source_peer: Option<String>,
     ) -> Self {
-        let delegated_tool = if tool_name == "workspace_invoke" {
-            body.get("params")
+        let (delegated_tool, wrapper_tool_name) = if tool_name == "workspace_invoke" {
+            let inner = body
+                .get("params")
                 .and_then(|params| params.get("arguments"))
                 .and_then(|arguments| arguments.get("tool"))
                 .and_then(Value::as_str)
-                .map(safe_label)
+                .map(safe_label);
+            let wrapper = inner.as_ref().map(|_| "workspace_invoke".to_string());
+            (inner, wrapper)
+        } else if tool_name == crate::upstream_mcp::TOOL_UPSTREAM_CALL {
+            let arguments = body
+                .get("params")
+                .and_then(|params| params.get("arguments"));
+            let srv = arguments
+                .and_then(|a| a.get("server"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            let inner_tool = arguments
+                .and_then(|a| a.get("tool"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            let label = match (srv, inner_tool) {
+                (Some(s), Some(t)) => Some(safe_label(&format!("{s}__{t}"))),
+                (None, Some(t)) => Some(safe_label(t)),
+                _ => None,
+            };
+            let wrapper = label
+                .as_ref()
+                .map(|_| crate::upstream_mcp::TOOL_UPSTREAM_CALL.to_string());
+            (label, wrapper)
         } else {
-            None
+            (None, None)
         };
 
         Self {
@@ -151,9 +177,7 @@ impl ToolAuditCall {
             started: Instant::now(),
             request_id: bounded_identifier(request_id, 128),
             session_id: session_id.map(|value| bounded_identifier_text(value, 256)),
-            tool_name: delegated_tool
-                .clone()
-                .unwrap_or_else(|| safe_label(tool_name)),
+            tool_name: delegated_tool.unwrap_or_else(|| safe_label(tool_name)),
             action_name: tool_name
                 .starts_with("computer_")
                 .then(|| {
@@ -163,7 +187,7 @@ impl ToolAuditCall {
                         .map(str::to_string)
                 })
                 .flatten(),
-            wrapper_tool_name: delegated_tool.map(|_| "workspace_invoke".to_string()),
+            wrapper_tool_name,
             auth_method: safe_auth_method(auth_method),
             client_id: client_id.map(|value| bounded_visible_text(value, 128)),
             request_bytes: request_bytes as u64,

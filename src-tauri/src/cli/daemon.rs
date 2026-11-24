@@ -233,6 +233,10 @@ pub async fn cmd_status() -> Result<(), String> {
             status.overview.workspace_count, status.overview.session_count
         );
         println!(
+            "MCP 聚合   : {} 个已启用上游（直出 {} 工具）",
+            status.upstream_enabled_count, status.upstream_direct_tools_count
+        );
+        println!(
             "局域网联邦 : {}（{} [{}] · 已配对 {} 台 · IP: {}）",
             if status.lan_enabled {
                 "开启"

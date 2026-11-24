@@ -21,7 +21,8 @@
 ## 当前核心能力
 
 - 单一 Global MCP 连接管理多个隔离 Workspace，并支持跨 macOS / Windows / Linux 局域网对等配对与单跳联邦路由（`{device_id}:{workspace_id}` 复合作用域与 `device_list` 设备发现）；
-- 零 GTK 依赖 Linux 无头二进制目标 `coding-tools-mcp`（`--no-default-features`），内置 `serve`/`status`/`reload`/`stop`/`workspace`/`lan`/`config`/`service` CLI、父目录 `.git` 自动发现、`0600` Unix Socket 本地控制总线、用户级/root 系统级 `systemd` 服务管理及一键安装脚本 `scripts/install-linux.sh`；
+- **全局 MCP 聚合中心（Upstream MCP Hub）**：支持将外部 Stdio / Streamable HTTP / Legacy SSE MCP 服务聚合至同一入口，单上游可切换「直出前缀（`{alias}__{tool}`）」或「懒加载代理（`mcp_upstream_list` / `mcp_upstream_tools` / `mcp_upstream_call`）」，提供单工具过滤、敏感凭据隔离存储、本机主流客户端一键扫描与 `mcpServers` JSON 导入，以及 `coding-tools-mcp upstream ...` 无头 CLI；
+- 零 GTK 依赖 Linux 无头二进制目标 `coding-tools-mcp`（`--no-default-features`），内置 `serve`/`status`/`reload`/`stop`/`workspace`/`upstream`/`lan`/`config`/`service` CLI、父目录 `.git` 自动发现、`0600` Unix Socket 本地控制总线、用户级/root 系统级 `systemd` 服务管理及一键安装脚本 `scripts/install-linux.sh`；
 - request-scoped `workspace_id` 路由，并兼容持久 MCP session 的 `workspace_select`；
 - MCP Streamable HTTP 与本机回环 `mcp-stdio` 无头桥接（供桌面端 Gemini / Claude 等本地 MCP 宿主直连）；
 - Bearer / OAuth、PKCE S256、Dynamic Client Registration、Refresh Token；

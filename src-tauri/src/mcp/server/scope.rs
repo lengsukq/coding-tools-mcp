@@ -58,6 +58,12 @@ pub fn audit_workspace_hint(
     }
 
     let (settings, self_id) = self_device_id(state);
+    if state
+        .upstream
+        .is_upstream_tool_name(tool_name, Some(&settings))
+    {
+        return None;
+    }
     let explicit_workspace = params
         .get("arguments")
         .and_then(|arguments| arguments.get("workspace_id"))

@@ -3,6 +3,7 @@
 mod daemon;
 mod lan_config_cmd;
 mod systemd_cmd;
+mod upstream_cmd;
 mod workspace_cmd;
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub fn is_cli_subcommand(arg: &str) -> bool {
             | "reload"
             | "workspace"
             | "ws"
+            | "upstream"
             | "lan"
             | "config"
             | "service"
@@ -73,6 +75,9 @@ COMMANDS:
   config set <KEY> <VALUE>  修改配置项（port|auth|server-name|allow-local-noauth|
                             allow-lan-mcp|lan-trust|extra-subnets|proxy-mode|proxy-url）
 
+  upstream list | add | remove | enable | disable | mode | test | sync | tools | import
+                            管理聚合的上游 MCP 服务（Stdio / Streamable HTTP / SSE）
+
   service install | uninstall | status | print
                             管理 Linux systemd --user 开机常驻后台服务
 
@@ -125,6 +130,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             "stop" => daemon::cmd_stop().await,
             "reload" => daemon::cmd_reload().await,
             "workspace" | "ws" => workspace_cmd::cmd_workspace(rest).await,
+            "upstream" => upstream_cmd::cmd_upstream(rest).await,
             "lan" => lan_config_cmd::cmd_lan(rest).await,
             "config" => lan_config_cmd::cmd_config(rest).await,
             "service" => systemd_cmd::cmd_service(rest),

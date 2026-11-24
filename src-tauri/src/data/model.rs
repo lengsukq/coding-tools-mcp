@@ -6,6 +6,7 @@ use crate::computer::ManualComputerAccess;
 use crate::settings::{
     DownloadConfig, FrpProfile, GlobalGatewayConfig, LanFederationConfig, ProxyConfig,
 };
+use crate::upstream_mcp::UpstreamMcpConfig;
 use crate::workspace::WorkspaceProfile;
 
 /// Unified on-disk payload stored in `data/profiles.json`.
@@ -71,6 +72,8 @@ pub struct AppData {
     pub global_gateway: GlobalGatewayConfig,
     #[serde(default)]
     pub lan_federation: LanFederationConfig,
+    #[serde(default)]
+    pub upstream_mcp: UpstreamMcpConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_audit_retention_days: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

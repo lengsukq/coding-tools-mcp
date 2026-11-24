@@ -11,6 +11,7 @@ import {
   MonitorUp,
   Network,
   Palette,
+  PlugZap,
   Radar,
   Search,
   Server,
@@ -29,6 +30,7 @@ import {
 } from "$lib/global-search";
 
 const GeneralSettingsView = defineAsyncComponent(() => import("./GeneralSettingsView.vue"));
+const UpstreamMcpSettingsView = defineAsyncComponent(() => import("./UpstreamMcpSettingsView.vue"));
 const LanPeersSettingsView = defineAsyncComponent(() => import("./LanPeersSettingsView.vue"));
 const ComputerSettingsView = defineAsyncComponent(() => import("./ComputerSettingsView.vue"));
 const KeysSettingsView = defineAsyncComponent(() => import("./KeysSettingsView.vue"));
@@ -48,6 +50,8 @@ const activeViewGroup = computed(() => {
     case "gateway":
     case "gemini":
       return "gateway";
+    case "upstream-mcp":
+      return "upstream-mcp";
     case "lan":
     case "lan-peers":
       return "lan";
@@ -105,6 +109,8 @@ function itemIcon(id: string) {
   switch (id) {
     case "gateway":
       return Globe2;
+    case "upstream-mcp":
+      return PlugZap;
     case "gemini":
       return Sparkles;
     case "auth":
@@ -202,6 +208,7 @@ function itemIcon(id: string) {
 
           <div :key="activeViewGroup" class="ui-stack animate-fade-in-up">
             <GatewaySettingsView v-if="activeViewGroup === 'gateway'" :panel="activeItemId === 'gemini' ? 'gemini' : 'gateway'" />
+            <UpstreamMcpSettingsView v-else-if="activeViewGroup === 'upstream-mcp'" />
             <LanPeersSettingsView v-else-if="activeViewGroup === 'lan'" :panel="activeItemId === 'lan-peers' ? 'lan-peers' : 'lan'" />
             <ComputerSettingsView v-else-if="activeViewGroup === 'computer'" :panel="activeItemId === 'computer-audit' ? 'audit' : 'control'" />
             <KeysSettingsView v-else-if="activeViewGroup === 'keys'" />

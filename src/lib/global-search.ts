@@ -64,6 +64,14 @@ export const SETTINGS_SIDEBAR_GROUPS: SettingsNavGroup[] = [
         keywords: ["mcp", "gateway", "port", "端口", "公网", "隧道", "cloudflare", "健康检查", "health", "endpoint", "端点"],
       },
       {
+        id: "upstream-mcp",
+        section: "connection",
+        panel: "upstream-mcp",
+        label: "MCP 聚合中心",
+        subtitle: "挂载其他 Stdio / HTTP / SSE MCP 服务，通过单一入口直出或懒加载代理调用",
+        keywords: ["mcp", "聚合", "hub", "upstream", "proxy", "stdio", "sse", "http", "代理", "导入", "mcpServers", "第三方"],
+      },
+      {
         id: "gemini",
         section: "connection",
         panel: "gemini",
@@ -225,7 +233,7 @@ export const WORKSPACE_SIDEBAR_GROUPS: Array<{ group: string; items: WorkspaceSu
 export function resolveActiveSettingsItemId(section: string, panel?: string): string {
   if (section === "connection") {
     if (panel === "health" || !panel || panel === "gateway") return "gateway";
-    if (["gemini", "auth", "lan", "lan-peers", "keys", "frp"].includes(panel)) return panel;
+    if (["upstream-mcp", "gemini", "auth", "lan", "lan-peers", "keys", "frp"].includes(panel)) return panel;
     if (panel === "auth-scope") return "auth";
     if (panel === "gemini-connector") return "gemini";
     return "gateway";
@@ -353,6 +361,7 @@ export function buildGlobalSearchEntries(
 
 const DEFAULT_FEATURED_SETTINGS_IDS = new Set([
   "settings-gateway",
+  "settings-upstream-mcp",
   "settings-gemini",
   "settings-lan",
   "settings-auth",

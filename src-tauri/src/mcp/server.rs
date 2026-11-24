@@ -70,6 +70,7 @@ mod dispatch;
 mod scope;
 
 pub use dispatch::handle_gateway_request;
+pub use dispatch::handle_gateway_upstream_tool_call_async;
 pub use scope::audit_workspace_hint;
 use scope::*;
 

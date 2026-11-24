@@ -27,6 +27,7 @@ mod tool_audit;
 pub mod tools;
 mod tunnel;
 mod update;
+pub mod upstream_mcp;
 pub(crate) mod usage;
 pub mod util;
 mod workspace;
@@ -45,29 +46,34 @@ mod desktop_shell {
         cancel_lan_pairing_pin, check_app_update, check_global_gateway_health,
         clear_tool_audit_records, create_lan_pairing_pin, create_session_review_url,
         create_workspace, create_workspace_review_url, decide_computer_sensitive_action,
-        delete_frp_profile, delete_plan, delete_workspace, delete_workspace_review,
-        detect_installed_ides, enable_computer_access, enter_compact_mode,
+        delete_frp_profile, delete_plan, delete_upstream_mcp_server, delete_workspace,
+        delete_workspace_review, detect_installed_ides, enable_computer_access, enter_compact_mode,
         get_computer_screen_status, get_download_config, get_gemini_local_bridge_status,
         get_global_gateway_config, get_global_gateway_status, get_global_mcp_overview,
         get_global_runtime_settings, get_lan_peers_overview, get_last_workspace_id,
         get_planning_state, get_proxy, get_runtime_status, get_service_usage_stats,
-        get_shared_secret, get_webview_memory_sample, get_workspace_activity_metrics,
-        get_workspace_git_summary, hide_to_tray, install_software, issue_workspace_review_url,
+        get_shared_secret, get_upstream_mcp_overview, get_webview_memory_sample,
+        get_workspace_activity_metrics, get_workspace_git_summary, hide_to_tray,
+        import_upstream_mcp_candidates, install_software, issue_workspace_review_url,
         list_computer_available_apps, list_frp_profiles, list_history_sessions, list_software,
         list_tool_audit_records, list_workspace_reviews, list_workspaces, open_url,
-        open_workspace_directory, open_workspace_in_ide, pair_lan_peer, pause_computer_access,
-        prepare_gemini_local_bridge, probe_lan_peer_address, quit_app, read_workspace_logs,
-        recreate_ui_webview, regenerate_shared_secret, reject_goal_review, reject_plan_review,
-        remove_lan_paired_peer, rename_lan_paired_peer, request_computer_accessibility_permission,
-        request_computer_screen_permission, reset_planning_state, restart_global_cloudflare_tunnel,
-        restart_runtime, restore_runtime_state, resume_computer_access,
-        revoke_computer_screen_access, run_global_health_checks, save_frp_profile,
-        save_lan_federation_settings, scan_agent_context, scan_global_agent_context,
-        scan_lan_peers, set_download_config, set_global_gateway_config,
+        open_workspace_directory, open_workspace_in_ide, pair_lan_peer, parse_upstream_mcp_json,
+        pause_computer_access, prepare_gemini_local_bridge, probe_lan_peer_address, quit_app,
+        read_workspace_logs, recreate_ui_webview, regenerate_shared_secret, reject_goal_review,
+        reject_plan_review, remove_lan_paired_peer, rename_lan_paired_peer,
+        request_computer_accessibility_permission, request_computer_screen_permission,
+        reset_planning_state, restart_global_cloudflare_tunnel, restart_runtime,
+        restore_runtime_state, resume_computer_access, revoke_computer_screen_access,
+        run_global_health_checks, save_frp_profile, save_lan_federation_settings,
+        save_upstream_mcp_server, scan_agent_context, scan_global_agent_context, scan_lan_peers,
+        scan_local_upstream_mcp_clients, set_download_config, set_global_gateway_config,
         set_global_runtime_settings, set_lan_paired_peer_enabled, set_last_workspace,
         set_planning_mode, set_proxy, set_shared_secret, set_shared_secrets,
-        set_tool_audit_retention_days, start_global_gateway, start_runtime, stop_global_gateway,
-        stop_runtime, uninstall_software, update_workspace,
+        set_tool_audit_retention_days, set_upstream_mcp_global_settings,
+        set_upstream_mcp_server_enabled, set_upstream_mcp_server_mode, start_global_gateway,
+        start_runtime, stop_global_gateway, stop_runtime, sync_all_upstream_mcp_servers,
+        test_and_sync_upstream_mcp_server, uninstall_software, update_upstream_mcp_disabled_tools,
+        update_workspace,
     };
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -465,6 +471,18 @@ mod desktop_shell {
                 remove_lan_paired_peer,
                 set_lan_paired_peer_enabled,
                 rename_lan_paired_peer,
+                get_upstream_mcp_overview,
+                set_upstream_mcp_global_settings,
+                save_upstream_mcp_server,
+                delete_upstream_mcp_server,
+                set_upstream_mcp_server_enabled,
+                set_upstream_mcp_server_mode,
+                update_upstream_mcp_disabled_tools,
+                test_and_sync_upstream_mcp_server,
+                sync_all_upstream_mcp_servers,
+                scan_local_upstream_mcp_clients,
+                parse_upstream_mcp_json,
+                import_upstream_mcp_candidates,
                 get_webview_memory_sample,
                 recreate_ui_webview,
                 enter_compact_mode,
@@ -481,6 +499,7 @@ mod desktop_shell {
                 }
                 tauri::RunEvent::Exit => {
                     crate::global_gateway::terminate_children_sync();
+                    crate::upstream_mcp::terminate_all_managed_children_sync();
                 }
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     if label != "main" {

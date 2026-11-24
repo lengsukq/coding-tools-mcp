@@ -23,7 +23,9 @@ use crate::mcp::audit::{log_request, record_response, RpcRequestMeta};
 use crate::mcp::gateway::{
     session_id_from_metadata, session_id_from_request, GatewayState, MCP_SESSION_HEADER,
 };
-use crate::mcp::server::{audit_workspace_hint, handle_gateway_request};
+use crate::mcp::server::{
+    audit_workspace_hint, handle_gateway_request, handle_gateway_upstream_tool_call_async,
+};
 use crate::secret::SecretStore;
 use crate::settings::AppSettings;
 use crate::tool_audit::{record_tool_call, ToolAuditCall};
@@ -414,6 +416,36 @@ async fn mcp_post(
         Err(response) => return *response,
     };
 
+    // Anti-self-loop guard: reject upstream requests originating from this exact instance.
+    if let Some(origin) = headers
+        .get(crate::upstream_mcp::UPSTREAM_ORIGIN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        let own_device_id = state
+            .gateway
+            .settings_snapshot()
+            .unwrap_or_else(AppSettings::load_or_default)
+            .lan_federation
+            .device_id;
+        if !own_device_id.is_empty() && origin == own_device_id {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": body.get("id").cloned().unwrap_or(Value::Null),
+                    "error": {
+                        "code": -32602,
+                        "message": "UPSTREAM_SELF_LOOP_BLOCKED: 检测到上游 MCP 聚合自环调用当前 Coding Tools MCP 实例，已强制拦截。",
+                        "data": { "reason": "UPSTREAM_SELF_LOOP_BLOCKED", "retryable": false }
+                    }
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let meta = RpcRequestMeta::from_body(&body);
     let computer_tool = meta.is_tool_call()
         && matches!(
@@ -452,6 +484,50 @@ async fn mcp_post(
             .pointer("/params/arguments/action")
             .and_then(Value::as_str)
             == Some("stop");
+
+    // Warm any unsynced direct-mode upstream servers concurrently (bounded 4s) before `tools/list`.
+    if meta.method == "tools/list" {
+        let override_snap = state.gateway.settings_snapshot();
+        state
+            .gateway
+            .upstream
+            .warm_unsynced_direct_servers_arc(override_snap)
+            .await;
+    }
+
+    // Pure async path for aggregated upstream MCP calls so slow external servers
+    // never starve the bounded `spawn_blocking` worker pool.
+    let is_upstream_call = meta.is_tool_call()
+        && state
+            .gateway
+            .upstream
+            .is_upstream_tool_name(&meta.tool_name, state.gateway.settings_snapshot().as_ref());
+    if is_upstream_call {
+        let gateway = Arc::clone(&state.gateway);
+        let scope_id = state.scope_id.clone();
+        log_request(&scope_id, effective_session_id.as_deref(), &meta);
+        let audit_call = ToolAuditCall::new(
+            &meta.request_id,
+            &meta.tool_name,
+            effective_session_id.as_deref(),
+            auth.method,
+            auth.client_id.as_deref(),
+            meta.request_bytes,
+            &body,
+        );
+        let gateway_response = handle_gateway_upstream_tool_call_async(
+            &gateway,
+            effective_session_id.as_deref(),
+            &body,
+        )
+        .await;
+        let response = gateway_response.body;
+        let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
+        let mut call = audit_call;
+        call.set_execution_host(gateway_response.execution_host);
+        record_tool_call(call, None, &response);
+        return build_json_bytes_response(bytes, response_session_id);
+    }
 
     let gateway = Arc::clone(&state.gateway);
     let scope_id = state.scope_id.clone();

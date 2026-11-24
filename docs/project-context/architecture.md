@@ -46,6 +46,8 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及上层 Agent
 | `src-tauri/src/mcp/listener/` | `oauth_http.rs`（OAuth/DCR 端点）、`review_http.rs` & `review_page.html`（只读 Review 页面、API 及跨设备 `/review/peer/{device_id}/{id}` 代理） |
 | `src-tauri/src/lan_peer.rs` | 跨平台（macOS / Windows / Linux）局域网与异地组网（EasyTier / Tailscale 等）对等发现、6 位一次性配对码双向握手与单跳联邦门面 |
 | `src-tauri/src/lan_peer/` | `crypto.rs`（HMAC-SHA256 与防重放）、`identity.rs`（设备身份与 `{device_id}:{workspace_id}` 命名空间）、`discovery.rs`（UDP 多播/广播、虚拟网卡单播扫描与 HTTP 跨子网并发探测）、`pairing.rs`（双向 PIN 握手）、`client.rs` & `server.rs`（多地址选路故障切换、签名对等 RPC 与公网隧道硬隔离） |
+| `src-tauri/src/upstream_mcp.rs` | 上游第三方 MCP 聚合中心（Upstream MCP Hub）门面，将外部 Stdio / Streamable HTTP / Legacy SSE MCP 服务聚合至唯一 Global MCP 入口 |
+| `src-tauri/src/upstream_mcp/` | `model.rs`（配置、密钥分区、防自环检测与磁盘工具缓存）、`naming.rs`（64 字符防碰撞命名归一化）、`transport_stdio.rs` / `transport_http.rs` / `transport_sse.rs`（三大传输层）、`client.rs`（握手与分页）、`manager.rs`（单服务隔离连接池、懒加载与空闲回收）、`proxy_tools.rs`（`mcp_upstream_list` / `mcp_upstream_tools` / `mcp_upstream_call` 元工具）、`import.rs`（多客户端扫描与 `mcpServers` JSON 导入） |
 | `src-tauri/src/computer.rs` | macOS Computer Use 授权控制面、租约状态机与 MCP 调用编排 |
 | `src-tauri/src/computer/` | `geometry.rs`（Retina 截图坐标映射）、`action_policy.rs`（参数校验与敏感操作识别）、`schema.rs`（MCP 工具定义）、`native.rs`（macOS 原生 FFI） |
 | `src-tauri/src/review.rs` | 工作区/会话/单次操作级变更快照编排门面 |
@@ -79,6 +81,7 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及上层 Agent
 - **工具调用审计页（`ToolAuditView.vue`）**：由 `src/lib/audit/use-tool-audit.ts` 管理过滤、分页、保留策略与清理，视图组合 `AuditFilterBar.vue`、`AuditRecordRow.vue` 与 `AuditOverviewAndRetention.vue`；子组件不直接访问 API。
 - **Computer Use 设置页（`ComputerSettingsView.vue`）**：由 `src/lib/computer/use-computer-settings.ts` 管理本机授权、轮询、TCC 排障建议与审批，组合 `ComputerDiagnosticsBanner.vue` 与 `ComputerAuditPanel.vue`。
 - **MCP 网关设置页（`GatewaySettingsView.vue`）**：页面管理网关配置草稿与服务启停，组合 `GeminiAppConnector.vue`、`GatewayTunnelConfigCard.vue` 与 `GatewayHealthCard.vue`。
+- **MCP 聚合中心页（`UpstreamMcpSettingsView.vue`）**：由 `src/lib/upstream-mcp/use-upstream-mcp.ts` 管理上游配置、连通同步、多客户端扫描/JSON 导入与单工具过滤，组合 `UpstreamServerListCard.vue`、`UpstreamServerEditorModal.vue`、`UpstreamImportModal.vue` 与 `UpstreamToolsModal.vue`。
 
 工作区 Tauri Command 名称和参数不变；`src-tauri/src/commands/workspace.rs` 仅聚合导出，具体实现分别位于 `workspace/crud.rs`、`workspace/git.rs`、`workspace/ide.rs` 和 `workspace/reviews.rs`。
 
@@ -157,7 +160,8 @@ MCP 使用统一 OAuth runtime：
 
 - 通过局域网或可信 overlay 网络（如 EasyTier / Tailscale）发现或显式指定对等节点，完成配对后共享 Workspace；云服务器也可以作为 Linux Headless 节点加入。
 - Gateway 解析本机 ID 或 `{device_id}:{workspace_id}`，对远程目标执行单跳、带签名的 peer RPC；真实文件与命令执行发生在目标设备，不复制项目到入口设备。
-- 多个 MCP 客户端可共享一个入口，但 Session 和请求上下文独立。会话隔离不等同于同一仓库的并发写入隔离；也不提供任务自动调度、设备自动故障转移或通用第三方 MCP 聚合。
+- 多个 MCP 客户端可共享一个入口，但 Session 和请求上下文独立。会话隔离不等同于同一仓库的并发写入隔离；也不提供任务自动调度或设备自动故障转移。
+- **全局 MCP 聚合（Upstream MCP Hub）**：支持将第三方 Stdio / Streamable HTTP / Legacy SSE MCP 服务聚合到单一 Global MCP 入口下；单上游可选「直出加前缀（`{alias}__{tool}`）」或「懒加载代理（固定 3 个 `mcp_upstream_*` 元工具按需检索与调用）」，并支持单工具级过滤、敏感凭据隔离存储（`app_secrets`）、防自环拦截、空闲子进程回收与统一 `ToolAudit` 审计（`executionHost = upstream:...`）。
 - 本地 stdio、回环 HTTP 和公网 HTTPS 复用相同的 Gateway；上层 Harness 自带的 Shell 或文件工具不会自动转为远程执行。
 - Computer Use 的原生执行能力限 macOS 且需显式授权；Linux Headless 不需要 GUI，也不提供 macOS 屏幕能力。
 

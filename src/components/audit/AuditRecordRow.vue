@@ -73,9 +73,16 @@ const emit = defineEmits<{
                   变更 {{ record.changedFileCount ?? 0 }} 文件
                 </span>
 
-                <!-- Cross-device federation pill -->
+                <!-- Upstream MCP / Cross-device federation pill -->
                 <span
-                  v-if="record.executionHost && record.executionHost !== 'local'"
+                  v-if="record.executionHost && record.executionHost.startsWith('upstream:')"
+                  class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-accent)]/30 bg-[var(--ui-accent-soft)] px-2 py-0.5 text-xs text-[var(--ui-accent)]"
+                  title="经 MCP 聚合网关转发至上游外部 MCP 服务执行"
+                >
+                  上游 MCP → {{ record.executionHost.replace(/^upstream:/, '') }}
+                </span>
+                <span
+                  v-else-if="record.executionHost && record.executionHost !== 'local'"
                   class="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface-subtle)] px-2 py-0.5 text-xs text-[var(--ui-text-secondary)]"
                   title="通过局域网联邦单跳转发至配对电脑执行"
                 >

@@ -432,4 +432,121 @@ mod tests {
         );
         assert!(!workspace.contains_key("actions_oauth_dynamic_clients"));
     }
+
+    #[test]
+    fn unrelated_settings_update_preserves_newer_upstream_mcp_config() {
+        use crate::upstream_mcp::{
+            UpstreamExposeMode, UpstreamServerConfig, UpstreamTransportConfig,
+        };
+        let base = AppData::default();
+        let mut latest = base.clone();
+        latest.upstream_mcp.servers.push(UpstreamServerConfig {
+            id: "up-1".into(),
+            alias: "demo".into(),
+            name: "Demo".into(),
+            description: String::new(),
+            enabled: true,
+            expose_mode: UpstreamExposeMode::Proxy,
+            transport: UpstreamTransportConfig::StreamableHttp {
+                url: "https://demo.example.com/mcp".into(),
+                headers: Default::default(),
+                secret_header_keys: Vec::new(),
+                has_bearer_token: false,
+                use_proxy: false,
+            },
+            disabled_tools: Vec::new(),
+            call_timeout_secs: 60,
+            idle_timeout_secs: 900,
+            source: "manual".into(),
+        });
+
+        let mut settings = AppSettings::from_data(&base);
+        settings.last_workspace_id = "workspace-9".into();
+        apply_settings_update(&base, &mut latest, settings);
+
+        assert_eq!(latest.last_workspace_id, "workspace-9");
+        assert_eq!(latest.upstream_mcp.servers.len(), 1);
+        assert_eq!(latest.upstream_mcp.servers[0].alias, "demo");
+    }
+
+    #[test]
+    fn save_and_delete_upstream_server_atomically_manage_secrets() {
+        use crate::upstream_mcp::{
+            env_secret_item_id, UpstreamExposeMode, UpstreamSecretPatch, UpstreamServerConfig,
+            UpstreamTransportConfig, UPSTREAM_ENV_SECRETS_SCOPE,
+        };
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("data").join("profiles.json");
+        let initial = AppData::default();
+        write_data(&path, &initial).expect("seed file");
+        cache_put(&path, Arc::new(initial.clone()));
+
+        let mut store = DataStore {
+            path: path.clone(),
+            data: initial,
+        };
+        let server = UpstreamServerConfig {
+            id: "up-secret-test".into(),
+            alias: "gh".into(),
+            name: "GitHub".into(),
+            description: String::new(),
+            enabled: true,
+            expose_mode: UpstreamExposeMode::Direct,
+            transport: UpstreamTransportConfig::Stdio {
+                command: "npx".into(),
+                args: vec!["-y".into(), "demo".into()],
+                cwd: None,
+                env: std::collections::BTreeMap::from([
+                    ("PLAIN".into(), "1".into()),
+                    ("GITHUB_TOKEN".into(), "must-be-stripped-from-plain".into()),
+                ]),
+                secret_env_keys: Vec::new(),
+            },
+            disabled_tools: Vec::new(),
+            call_timeout_secs: 60,
+            idle_timeout_secs: 900,
+            source: "manual".into(),
+        };
+        let mut patch = UpstreamSecretPatch::default();
+        patch
+            .set_env_secrets
+            .insert("GITHUB_TOKEN".into(), "ghp_real_secret".into());
+
+        let saved = store.save_upstream_server(server, patch).expect("save");
+        match &saved.transport {
+            UpstreamTransportConfig::Stdio {
+                env,
+                secret_env_keys,
+                ..
+            } => {
+                assert_eq!(env.get("PLAIN").map(String::as_str), Some("1"));
+                assert!(
+                    !env.contains_key("GITHUB_TOKEN"),
+                    "secret key must never duplicate in plaintext env"
+                );
+                assert_eq!(secret_env_keys, &vec!["GITHUB_TOKEN".to_string()]);
+            }
+            _ => panic!("expected stdio"),
+        }
+        assert_eq!(
+            store
+                .get_app_secret(
+                    UPSTREAM_ENV_SECRETS_SCOPE,
+                    &env_secret_item_id("up-secret-test", "GITHUB_TOKEN")
+                )
+                .as_deref(),
+            Some("ghp_real_secret")
+        );
+
+        assert!(store
+            .delete_upstream_server("up-secret-test")
+            .expect("delete"));
+        assert!(store.data.upstream_mcp.servers.is_empty());
+        assert!(store
+            .get_app_secret(
+                UPSTREAM_ENV_SECRETS_SCOPE,
+                &env_secret_item_id("up-secret-test", "GITHUB_TOKEN")
+            )
+            .is_none());
+    }
 }

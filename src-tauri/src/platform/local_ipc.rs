@@ -26,6 +26,7 @@ pub enum LocalDaemonRequest {
         #[serde(default)]
         tunnel_changed: bool,
     },
+    ReloadUpstream,
     Stop,
 }
 
@@ -40,6 +41,10 @@ pub struct DaemonStatusPayload {
     pub device_name: String,
     pub addresses: Vec<String>,
     pub paired_peers_count: usize,
+    #[serde(default)]
+    pub upstream_enabled_count: usize,
+    #[serde(default)]
+    pub upstream_direct_tools_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -428,6 +433,16 @@ async fn handle_daemon_request(
             .into_iter()
             .map(|ip| ip.to_string())
             .collect();
+            let upstream_overview = state.gateway.upstream.overview(None);
+            let upstream_enabled_count = if upstream_overview.enabled {
+                upstream_overview
+                    .servers
+                    .iter()
+                    .filter(|s| s.config.enabled)
+                    .count()
+            } else {
+                0
+            };
             LocalDaemonResponse::Status {
                 status: Box::new(DaemonStatusPayload {
                     pid: std::process::id(),
@@ -438,6 +453,8 @@ async fn handle_daemon_request(
                     device_name: lan_cfg.device_name,
                     addresses,
                     paired_peers_count: settings.lan_federation.paired_peers.len(),
+                    upstream_enabled_count,
+                    upstream_direct_tools_count: upstream_overview.direct_exposed_tool_count,
                 }),
             }
         }
@@ -489,6 +506,7 @@ async fn handle_daemon_request(
         }
         LocalDaemonRequest::Reload { tunnel_changed } => {
             crate::lan_peer::sync_discovery_daemon();
+            state.gateway.upstream.reload_config(None).await;
             match crate::runtime::service::apply_live_runtime_changes(state, tunnel_changed).await {
                 Ok(rebound) => LocalDaemonResponse::Ack {
                     message: if rebound {
@@ -500,6 +518,12 @@ async fn handle_daemon_request(
                 Err(err) => LocalDaemonResponse::Error {
                     message: err.to_string(),
                 },
+            }
+        }
+        LocalDaemonRequest::ReloadUpstream => {
+            state.gateway.upstream.reload_config(None).await;
+            LocalDaemonResponse::Ack {
+                message: "已热更新运行中聚合 MCP 配置".into(),
             }
         }
         LocalDaemonRequest::Stop => {
