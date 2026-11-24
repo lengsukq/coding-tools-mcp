@@ -129,9 +129,49 @@ export interface ImportSelectionItem {
   enabled?: boolean;
 }
 
+export type TakeoverConnectMode = "auto" | "http" | "stdio";
+
+export interface HarnessTakeoverPlanItem {
+  sourceClient: string;
+  sourceLabel: string;
+  displayPath: string;
+  effectiveMode: "http" | "stdio";
+  removedKeys: string[];
+  injectedKey: string;
+  alreadyHasCodingTools: boolean;
+  entryPreview: string;
+  warning: string | null;
+}
+
+export interface HarnessTakeoverBackupRecord {
+  id: string;
+  createdAtMs: number;
+  sourceClient: string;
+  sourceLabel: string;
+  targetPath: string;
+  displayPath: string;
+  backupFile: string;
+  removedKeys: string[];
+  injectedKey: string;
+  connectMode: "http" | "stdio" | string;
+  restoredAtMs?: number | null;
+}
+
+export interface HarnessTakeoverAppliedDto {
+  backupId: string;
+  sourceClient: string;
+  sourceLabel: string;
+  displayPath: string;
+  effectiveMode: "http" | "stdio";
+  removedKeys: string[];
+  injectedKey: string;
+}
+
 export interface UpstreamImportResultDto {
   importedCount: number;
   skipped: string[];
+  replacedFiles: HarnessTakeoverAppliedDto[];
+  replaceErrors: string[];
   overview: UpstreamMcpOverviewDto;
 }
 
@@ -209,12 +249,40 @@ export function parseUpstreamMcpJson(rawJson: string): Promise<ImportedUpstreamC
   return invoke<ImportedUpstreamCandidate[]>("parse_upstream_mcp_json", { rawJson });
 }
 
+export function previewUpstreamMcpTakeover(
+  selections: ImportSelectionItem[],
+  connectMode: TakeoverConnectMode = "auto",
+): Promise<HarnessTakeoverPlanItem[]> {
+  return invoke<HarnessTakeoverPlanItem[]>("preview_upstream_mcp_takeover", {
+    selections,
+    connectMode,
+  });
+}
+
+export function listUpstreamMcpTakeoverBackups(): Promise<HarnessTakeoverBackupRecord[]> {
+  return invoke<HarnessTakeoverBackupRecord[]>("list_upstream_mcp_takeover_backups");
+}
+
+export function restoreUpstreamMcpTakeoverBackup(
+  backupId: string,
+): Promise<HarnessTakeoverBackupRecord> {
+  return invoke<HarnessTakeoverBackupRecord>("restore_upstream_mcp_takeover_backup", {
+    backupId,
+  });
+}
+
 export function importUpstreamMcpCandidates(
   rawJson: string | null,
   selections: ImportSelectionItem[],
+  options?: {
+    replaceSourceConfigs?: boolean;
+    connectMode?: TakeoverConnectMode;
+  },
 ): Promise<UpstreamImportResultDto> {
   return invoke<UpstreamImportResultDto>("import_upstream_mcp_candidates", {
     rawJson,
     selections,
+    replaceSourceConfigs: options?.replaceSourceConfigs ?? false,
+    connectMode: options?.connectMode ?? "auto",
   });
 }

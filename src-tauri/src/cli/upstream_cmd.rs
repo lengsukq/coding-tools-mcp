@@ -3,12 +3,15 @@ use std::io::Read;
 use std::sync::Arc;
 
 use crate::data::DataStore;
+use crate::mcp::stdio_bridge::gemini_stdio_bin_path;
 use crate::platform::local_ipc::LocalDaemonRequest;
 use crate::settings::AppSettings;
 use crate::upstream_mcp::{
-    is_sensitive_key, parse_mcp_servers_json, scan_local_mcp_clients,
-    validate_and_normalize_server, SelfLoopContext, UpstreamExposeMode, UpstreamHub,
-    UpstreamSecretPatch, UpstreamServerConfig, UpstreamTransportConfig, DEFAULT_CALL_TIMEOUT_SECS,
+    apply_harness_takeovers, default_backup_dir, ensure_local_stdio_bridge_ready, is_sensitive_key,
+    list_takeover_backups_at, parse_mcp_servers_json, restore_takeover_backup_at,
+    scan_local_mcp_clients, validate_and_normalize_server, ResolvedConnectMode, SelfLoopContext,
+    TakeoverConnectMode, UpstreamExposeMode, UpstreamHub, UpstreamSecretPatch,
+    UpstreamServerConfig, UpstreamTransportConfig, DEFAULT_CALL_TIMEOUT_SECS,
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
 
@@ -31,6 +34,8 @@ pub async fn cmd_upstream(args: &[String]) -> Result<(), String> {
         "sync" => cmd_sync(rest).await,
         "tools" => cmd_tools(rest).await,
         "import" => cmd_import(rest).await,
+        "backups" => cmd_backups(),
+        "restore" => cmd_restore(rest),
         "-h" | "--help" | "help" => {
             print_upstream_help();
             Ok(())
@@ -60,7 +65,10 @@ USAGE:
   coding-tools-mcp upstream test <ALIAS_OR_ID>
   coding-tools-mcp upstream sync [ALIAS_OR_ID]
   coding-tools-mcp upstream tools <ALIAS_OR_ID> [--enable <TOOL> | --disable <TOOL>]
-  coding-tools-mcp upstream import --scan [--yes] | --file <PATH> | --stdin"
+  coding-tools-mcp upstream import --scan [--yes] [--replace] [--connect-mode auto|http|stdio]
+  coding-tools-mcp upstream import --file <PATH> | --stdin
+  coding-tools-mcp upstream backups
+  coding-tools-mcp upstream restore <BACKUP_ID>"
     );
 }
 
@@ -531,6 +539,8 @@ async fn cmd_tools(args: &[String]) -> Result<(), String> {
 async fn cmd_import(args: &[String]) -> Result<(), String> {
     let mut scan = false;
     let mut yes = false;
+    let mut replace = false;
+    let mut connect_mode = TakeoverConnectMode::Auto;
     let mut file_path: Option<String> = None;
     let mut from_stdin = false;
 
@@ -544,6 +554,17 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
             "--yes" | "-y" => {
                 yes = true;
                 idx += 1;
+            }
+            "--replace" => {
+                replace = true;
+                idx += 1;
+            }
+            "--connect-mode" => {
+                let raw = args
+                    .get(idx + 1)
+                    .ok_or("`--connect-mode` 需要指定 auto / http / stdio")?;
+                connect_mode = TakeoverConnectMode::parse_str(raw)?;
+                idx += 2;
             }
             "--file" | "-f" => {
                 let p = args.get(idx + 1).ok_or("`--file` 需要指定 JSON 文件路径")?;
@@ -597,7 +618,7 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
 
     if scan && !yes {
         println!(
-            "扫描到 {} 个候选上游 MCP（加 `--yes` 确认写入导入）：",
+            "扫描到 {} 个候选上游 MCP（加 `--yes` 导入，或加 `--yes --replace` 聚合并替换原客户端配置）：",
             candidates.len()
         );
         for item in &candidates {
@@ -622,6 +643,7 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
 
     let mut imported = 0usize;
     let mut skipped = 0usize;
+    let mut imported_by_client: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut current_servers = settings.upstream_mcp.servers.clone();
     for mut item in candidates {
         if let Some(reason) = item.blocked_reason {
@@ -636,6 +658,8 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
+        let source_client = item.source_client.clone();
+        let original_key = item.original_key.clone();
         let saved = DataStore::save_upstream_server_file(item.config, item.secret_patch)
             .map_err(|e| e.to_string())?;
         println!(
@@ -643,6 +667,10 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
             saved.alias,
             saved.transport.kind_label()
         );
+        imported_by_client
+            .entry(source_client)
+            .or_default()
+            .push(original_key);
         current_servers.push(saved);
         imported += 1;
     }
@@ -651,6 +679,97 @@ async fn cmd_import(args: &[String]) -> Result<(), String> {
         notify_daemon_upstream_reload().await;
     }
     println!("导入完成：成功 {imported} 个，跳过 {skipped} 个。");
+
+    if scan && replace && !imported_by_client.is_empty() {
+        let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+        let backup_dir = default_backup_dir().map_err(|e| e.to_string())?;
+        let latest_settings = AppSettings::load_or_default();
+        let needs_stdio = imported_by_client.keys().any(|client| {
+            let (eff, _) = crate::upstream_mcp::takeover::resolve_client_connect_mode(
+                client,
+                connect_mode,
+                &latest_settings,
+            );
+            eff == ResolvedConnectMode::Stdio
+        });
+        let stdio_bin = if needs_stdio {
+            ensure_local_stdio_bridge_ready(&latest_settings)?
+        } else {
+            gemini_stdio_bin_path()?
+        };
+        let (applied, errs) = apply_harness_takeovers(
+            &home,
+            &backup_dir,
+            &imported_by_client,
+            connect_mode,
+            &latest_settings,
+            &stdio_bin,
+        );
+        for item in &applied {
+            println!(
+                "  ✓ 已接管 {} ({}) · 移除 {} 项 · 注入 `{}` ({}) · 备份 ID: {}",
+                item.source_label,
+                item.display_path,
+                item.removed_keys.len(),
+                item.injected_key,
+                item.effective_mode.as_str(),
+                item.backup_id
+            );
+        }
+        for err in &errs {
+            eprintln!("  ✗ 替换失败: {err}");
+        }
+        if !applied.is_empty() {
+            println!("提示：如需恢复原配置文件，随时运行 `coding-tools-mcp upstream restore <BACKUP_ID>`。");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_backups() -> Result<(), String> {
+    let backup_dir = default_backup_dir().map_err(|e| e.to_string())?;
+    let records = list_takeover_backups_at(&backup_dir);
+    if records.is_empty() {
+        println!("暂无客户端接管备份记录。");
+        return Ok(());
+    }
+    println!(
+        "{:<28} {:<15} {:<8} {:<10} FILE",
+        "BACKUP ID", "CLIENT", "MODE", "STATUS"
+    );
+    for rec in records {
+        let status = if rec.restored_at_ms.is_some() {
+            "已还原"
+        } else {
+            "可还原"
+        };
+        println!(
+            "{:<28} {:<15} {:<8} {:<10} {} (移除: {})",
+            rec.id,
+            rec.source_label,
+            rec.connect_mode,
+            status,
+            rec.display_path,
+            rec.removed_keys.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn cmd_restore(args: &[String]) -> Result<(), String> {
+    let Some(backup_id) = args.first().map(String::as_str) else {
+        return Err(
+            "请指定要还原的 <BACKUP_ID>（运行 `coding-tools-mcp upstream backups` 查看）".into(),
+        );
+    };
+    let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+    let backup_dir = default_backup_dir().map_err(|e| e.to_string())?;
+    let restored = restore_takeover_backup_at(&home, &backup_dir, backup_id)?;
+    println!(
+        "已将 {} ({}) 完整还原为接管前的原配置文件（备份 ID: {}）。",
+        restored.source_label, restored.display_path, restored.id
+    );
     Ok(())
 }
 

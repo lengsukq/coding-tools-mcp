@@ -3,6 +3,7 @@ import { AlertTriangle, Download, Plus, RefreshCw } from "@lucide/vue";
 import UpstreamImportModal from "$src/components/settings/UpstreamImportModal.vue";
 import UpstreamServerEditorModal from "$src/components/settings/UpstreamServerEditorModal.vue";
 import UpstreamServerListCard from "$src/components/settings/UpstreamServerListCard.vue";
+import UpstreamTakeoverBackupsCard from "$src/components/settings/UpstreamTakeoverBackupsCard.vue";
 import UpstreamToolsModal from "$src/components/settings/UpstreamToolsModal.vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import GlassCard from "$src/components/ui/GlassCard.vue";
@@ -34,7 +35,14 @@ const {
   importJsonText,
   activeImportCandidates,
   candidateSelections,
+  replaceSourceConfigs,
+  takeoverConnectMode,
+  takeoverPreview,
+  loadingTakeoverPreview,
+  takeoverBackups,
+  restoringBackupId,
   refresh,
+  restoreBackup,
   updateGlobalSettings,
   openCreateModal,
   openEditModal,
@@ -170,6 +178,13 @@ const {
         @test-sync="testAndSyncServer"
         @open-tools="openToolsModal"
       />
+
+      <!-- Harness Takeover Backups & One-Click Restore -->
+      <UpstreamTakeoverBackupsCard
+        :backups="takeoverBackups"
+        :restoring-backup-id="restoringBackupId"
+        @restore="restoreBackup"
+      />
     </template>
 
     <!-- Modals -->
@@ -192,9 +207,15 @@ const {
       :json-text="importJsonText"
       :candidates="activeImportCandidates"
       :selections="candidateSelections"
+      :replace-source-configs="replaceSourceConfigs"
+      :connect-mode="takeoverConnectMode"
+      :takeover-preview="takeoverPreview"
+      :loading-takeover-preview="loadingTakeoverPreview"
       @close="importOpen = false"
       @update:tab="importTab = $event"
       @update:json-text="importJsonText = $event"
+      @update:replace-source-configs="replaceSourceConfigs = $event"
+      @update:connect-mode="takeoverConnectMode = $event"
       @rescan="runLocalScan"
       @parse-json="runParseJson"
       @submit-import="submitImport"

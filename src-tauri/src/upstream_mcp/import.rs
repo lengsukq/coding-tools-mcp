@@ -165,7 +165,7 @@ pub fn scan_local_mcp_clients_at(
     all
 }
 
-fn local_json_client_sources(home: &Path) -> Vec<(&'static str, &'static str, PathBuf)> {
+pub(crate) fn local_json_client_sources(home: &Path) -> Vec<(&'static str, &'static str, PathBuf)> {
     let mut sources = vec![
         ("claude_code", "Claude Code", home.join(".claude.json")),
         ("cursor", "Cursor", home.join(".cursor/mcp.json")),
@@ -676,7 +676,7 @@ fn parse_codex_toml_servers(
     out
 }
 
-fn strip_toml_comment(line: &str) -> &str {
+pub(crate) fn strip_toml_comment(line: &str) -> &str {
     let mut in_single = false;
     let mut in_double = false;
     let mut escaped = false;
@@ -722,7 +722,7 @@ fn parse_toml_string_array(val: &str) -> Vec<String> {
         .collect()
 }
 
-fn display_home_path(home: &Path, path: &Path) -> String {
+pub(crate) fn display_home_path(home: &Path, path: &Path) -> String {
     path.strip_prefix(home)
         .map(|rel| format!("~/{}", rel.to_string_lossy().replace('\\', "/")))
         .unwrap_or_else(|_| path.to_string_lossy().into_owned())

@@ -1,14 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
+use crate::mcp::stdio_bridge::gemini_stdio_bin_path;
 use crate::upstream_mcp::{
-    parse_mcp_servers_json, scan_local_mcp_clients, validate_and_normalize_server,
-    ImportSelectionItem, ImportedUpstreamCandidate, SelfLoopContext, UpstreamExposeMode,
-    UpstreamMcpOverviewDto, UpstreamSecretPatch, UpstreamServerConfig, UpstreamTestSyncResultDto,
+    apply_harness_takeovers, default_backup_dir, ensure_local_stdio_bridge_ready,
+    list_takeover_backups_at, parse_mcp_servers_json, preview_harness_takeover,
+    restore_takeover_backup_at, scan_local_mcp_clients, validate_and_normalize_server,
+    HarnessTakeoverAppliedDto, HarnessTakeoverBackupRecord, HarnessTakeoverPlanItem,
+    ImportSelectionItem, ImportedUpstreamCandidate, ResolvedConnectMode, SelfLoopContext,
+    TakeoverConnectMode, UpstreamExposeMode, UpstreamMcpOverviewDto, UpstreamSecretPatch,
+    UpstreamServerConfig, UpstreamTestSyncResultDto,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -16,6 +21,8 @@ use crate::upstream_mcp::{
 pub struct UpstreamImportResultDto {
     pub imported_count: usize,
     pub skipped: Vec<String>,
+    pub replaced_files: Vec<HarnessTakeoverAppliedDto>,
+    pub replace_errors: Vec<String>,
     pub overview: UpstreamMcpOverviewDto,
 }
 
@@ -291,85 +298,218 @@ pub async fn parse_upstream_mcp_json(
     .map_err(|err| AppError::Message(format!("解析 JSON 配置失败: {err}")))?
 }
 
+#[tauri::command]
+pub async fn preview_upstream_mcp_takeover(
+    app: AppHandle,
+    selections: Vec<ImportSelectionItem>,
+    connect_mode: Option<TakeoverConnectMode>,
+) -> AppResult<Vec<HarnessTakeoverPlanItem>> {
+    let app_handle = app.clone();
+    let mode = connect_mode.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = app_handle
+            .state::<AppState>()
+            .with_settings(|store| Ok(store.settings()))?;
+        let existing_aliases: HashSet<String> = settings
+            .upstream_mcp
+            .servers
+            .iter()
+            .map(|s| s.alias.to_ascii_lowercase())
+            .collect();
+        let loop_ctx = SelfLoopContext::from_settings(&settings);
+        let scanned = scan_local_mcp_clients(&existing_aliases, &loop_ctx);
+        let by_id: HashMap<String, ImportedUpstreamCandidate> = scanned
+            .into_iter()
+            .map(|item| (item.candidate_id.clone(), item))
+            .collect();
+
+        let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for sel in selections {
+            if let Some(cand) = by_id.get(&sel.candidate_id) {
+                if cand.blocked_reason.is_none() {
+                    grouped
+                        .entry(cand.source_client.clone())
+                        .or_default()
+                        .push(cand.original_key.clone());
+                }
+            }
+        }
+        let home = dirs::home_dir()
+            .ok_or_else(|| AppError::Message("无法定位用户主目录以预览配置文件替换".into()))?;
+        let stdio_bin = gemini_stdio_bin_path().map_err(AppError::Message)?;
+        Ok(preview_harness_takeover(
+            &home, &grouped, mode, &settings, &stdio_bin,
+        ))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("生成接管预览失败: {err}")))?
+}
+
+#[tauri::command]
+pub async fn list_upstream_mcp_takeover_backups() -> AppResult<Vec<HarnessTakeoverBackupRecord>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = default_backup_dir()?;
+        Ok(list_takeover_backups_at(&dir))
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("读取接管备份记录失败: {err}")))?
+}
+
+#[tauri::command]
+pub async fn restore_upstream_mcp_takeover_backup(
+    backup_id: String,
+) -> AppResult<HarnessTakeoverBackupRecord> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir()
+            .ok_or_else(|| AppError::Message("无法定位用户主目录以执行还原".into()))?;
+        let dir = default_backup_dir()?;
+        restore_takeover_backup_at(&home, &dir, &backup_id).map_err(AppError::Message)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("还原备份失败: {err}")))?
+}
+
 /// Confirm and persist selected candidates from either a local client scan (`raw_json == None`)
-/// or a pasted JSON payload (`raw_json == Some(...)`). Secrets are re-extracted in Rust and
-/// written directly to `app_secrets` without ever transiting raw values through WebView state.
+/// or a pasted JSON payload (`raw_json == Some(...)`). When `replace_source_configs` is true
+/// (scan mode), atomically backs up each source harness config and replaces only the imported
+/// entries with a single Coding Tools MCP entry.
 #[tauri::command]
 pub async fn import_upstream_mcp_candidates(
     app: AppHandle,
     state: State<'_, AppState>,
     raw_json: Option<String>,
     selections: Vec<ImportSelectionItem>,
+    replace_source_configs: Option<bool>,
+    connect_mode: Option<TakeoverConnectMode>,
 ) -> AppResult<UpstreamImportResultDto> {
     if selections.is_empty() {
         return Err(AppError::Message(
             "请至少勾选一个要导入的上游 MCP 服务".into(),
         ));
     }
+    let do_replace = replace_source_configs.unwrap_or(false)
+        && raw_json
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_none();
+    let mode = connect_mode.unwrap_or_default();
     let app_for_save = app.clone();
-    let (imported_count, skipped) =
-        tauri::async_runtime::spawn_blocking(move || -> AppResult<(usize, Vec<String>)> {
-            app_for_save.state::<AppState>().with_settings(|store| {
-                let settings = store.settings();
-                let existing_aliases: HashSet<String> = settings
-                    .upstream_mcp
-                    .servers
-                    .iter()
-                    .map(|s| s.alias.to_ascii_lowercase())
-                    .collect();
-                let loop_ctx = SelfLoopContext::from_settings(&settings);
-                let all_candidates =
-                    match raw_json.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                        Some(raw) => parse_mcp_servers_json(
-                            raw,
-                            "json",
-                            "粘贴 JSON",
-                            "",
-                            &existing_aliases,
+    let (imported_count, skipped, replaced_files, replace_errors) =
+        tauri::async_runtime::spawn_blocking(move || -> AppResult<_> {
+            let (imported, skipped, imported_by_client, settings_after) =
+                app_for_save.state::<AppState>().with_settings(|store| {
+                    let settings = store.settings();
+                    let existing_aliases: HashSet<String> = settings
+                        .upstream_mcp
+                        .servers
+                        .iter()
+                        .map(|s| s.alias.to_ascii_lowercase())
+                        .collect();
+                    let loop_ctx = SelfLoopContext::from_settings(&settings);
+                    let all_candidates =
+                        match raw_json.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                            Some(raw) => parse_mcp_servers_json(
+                                raw,
+                                "json",
+                                "粘贴 JSON",
+                                "",
+                                &existing_aliases,
+                                &loop_ctx,
+                            )
+                            .map_err(AppError::Message)?,
+                            None => scan_local_mcp_clients(&existing_aliases, &loop_ctx),
+                        };
+
+                    let mut by_id: HashMap<String, ImportedUpstreamCandidate> = all_candidates
+                        .into_iter()
+                        .map(|item| (item.candidate_id.clone(), item))
+                        .collect();
+                    let mut current_servers = settings.upstream_mcp.servers.clone();
+                    let mut imported = 0usize;
+                    let mut skipped = Vec::new();
+                    let mut imported_by_client: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+                    for sel in selections {
+                        let Some(mut cand) = by_id.remove(&sel.candidate_id) else {
+                            skipped.push(format!("{}: 候选条目已失效", sel.candidate_id));
+                            continue;
+                        };
+                        if let Some(reason) = cand.blocked_reason {
+                            skipped.push(format!("{}: {reason}", cand.original_key));
+                            continue;
+                        }
+                        if let Some(alias) = sel.alias_override.filter(|v| !v.trim().is_empty()) {
+                            cand.config.alias = alias;
+                        }
+                        if let Some(mode) = sel.expose_mode {
+                            cand.config.expose_mode = mode;
+                        }
+                        if let Some(enabled) = sel.enabled {
+                            cand.config.enabled = enabled;
+                        }
+                        if let Err(err) = validate_and_normalize_server(
+                            &mut cand.config,
+                            &current_servers,
                             &loop_ctx,
-                        )
-                        .map_err(AppError::Message)?,
-                        None => scan_local_mcp_clients(&existing_aliases, &loop_ctx),
-                    };
+                        ) {
+                            skipped.push(format!("{}: {err}", cand.original_key));
+                            continue;
+                        }
+                        let source_client = cand.source_client.clone();
+                        let original_key = cand.original_key.clone();
+                        let saved = store.save_upstream_server(cand.config, cand.secret_patch)?;
+                        current_servers.push(saved);
+                        imported_by_client
+                            .entry(source_client)
+                            .or_default()
+                            .push(original_key);
+                        imported += 1;
+                    }
+                    Ok((imported, skipped, imported_by_client, store.settings()))
+                })?;
 
-                let mut by_id: HashMap<String, ImportedUpstreamCandidate> = all_candidates
-                    .into_iter()
-                    .map(|item| (item.candidate_id.clone(), item))
-                    .collect();
-                let mut current_servers = settings.upstream_mcp.servers.clone();
-                let mut imported = 0usize;
-                let mut skipped = Vec::new();
-
-                for sel in selections {
-                    let Some(mut cand) = by_id.remove(&sel.candidate_id) else {
-                        skipped.push(format!("{}: 候选条目已失效", sel.candidate_id));
-                        continue;
-                    };
-                    if let Some(reason) = cand.blocked_reason {
-                        skipped.push(format!("{}: {reason}", cand.original_key));
-                        continue;
+            let mut replaced_files = Vec::new();
+            let mut replace_errors = Vec::new();
+            if do_replace && !imported_by_client.is_empty() {
+                let home = dirs::home_dir().ok_or_else(|| {
+                    AppError::Message("无法定位用户主目录，跳过替换源客户端配置".into())
+                })?;
+                let backup_dir = default_backup_dir()?;
+                let needs_stdio = imported_by_client.keys().any(|client| {
+                    let (eff, _) = crate::upstream_mcp::takeover::resolve_client_connect_mode(
+                        client,
+                        mode,
+                        &settings_after,
+                    );
+                    eff == ResolvedConnectMode::Stdio
+                });
+                let stdio_bin = if needs_stdio {
+                    match ensure_local_stdio_bridge_ready(&settings_after) {
+                        Ok(bin) => bin,
+                        Err(err) => {
+                            replace_errors.push(format!("准备 mcp-stdio 桥接入口失败: {err}"));
+                            gemini_stdio_bin_path().map_err(AppError::Message)?
+                        }
                     }
-                    if let Some(alias) = sel.alias_override.filter(|v| !v.trim().is_empty()) {
-                        cand.config.alias = alias;
-                    }
-                    if let Some(mode) = sel.expose_mode {
-                        cand.config.expose_mode = mode;
-                    }
-                    if let Some(enabled) = sel.enabled {
-                        cand.config.enabled = enabled;
-                    }
-                    if let Err(err) =
-                        validate_and_normalize_server(&mut cand.config, &current_servers, &loop_ctx)
-                    {
-                        skipped.push(format!("{}: {err}", cand.original_key));
-                        continue;
-                    }
-                    let saved = store.save_upstream_server(cand.config, cand.secret_patch)?;
-                    current_servers.push(saved);
-                    imported += 1;
+                } else {
+                    gemini_stdio_bin_path().map_err(AppError::Message)?
+                };
+                if replace_errors.is_empty() {
+                    let (applied, errs) = apply_harness_takeovers(
+                        &home,
+                        &backup_dir,
+                        &imported_by_client,
+                        mode,
+                        &settings_after,
+                        &stdio_bin,
+                    );
+                    replaced_files = applied;
+                    replace_errors = errs;
                 }
-                Ok((imported, skipped))
-            })
+            }
+
+            Ok((imported, skipped, replaced_files, replace_errors))
         })
         .await
         .map_err(|err| AppError::Message(format!("导入上游 MCP 失败: {err}")))??;
@@ -379,6 +519,8 @@ pub async fn import_upstream_mcp_candidates(
     Ok(UpstreamImportResultDto {
         imported_count,
         skipped,
+        replaced_files,
+        replace_errors,
         overview,
     })
 }

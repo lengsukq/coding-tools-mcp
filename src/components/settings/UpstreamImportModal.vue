@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { AlertTriangle, FileJson, Lock, Radar } from "@lucide/vue";
+import { computed, ref } from "vue";
+import { AlertTriangle, ArrowRightLeft, ChevronDown, ChevronRight, FileJson, Lock, Radar } from "@lucide/vue";
 import BaseButton from "$src/components/ui/BaseButton.vue";
 import ModalDialog from "$src/components/ui/ModalDialog.vue";
 import SegmentedControl from "$src/components/ui/SegmentedControl.vue";
 import TextAreaField from "$src/components/ui/TextAreaField.vue";
-import type { ImportedUpstreamCandidate, UpstreamExposeMode } from "$lib/api/upstream-mcp";
+import ToggleSwitch from "$src/components/ui/ToggleSwitch.vue";
+import type {
+  HarnessTakeoverPlanItem,
+  ImportedUpstreamCandidate,
+  TakeoverConnectMode,
+  UpstreamExposeMode,
+} from "$lib/api/upstream-mcp";
 import {
   transportLabel,
   type ImportCandidateSelectionDraft,
@@ -21,12 +27,18 @@ const props = defineProps<{
   jsonText: string;
   candidates: ImportedUpstreamCandidate[];
   selections: Record<string, ImportCandidateSelectionDraft>;
+  replaceSourceConfigs: boolean;
+  connectMode: TakeoverConnectMode;
+  takeoverPreview: HarnessTakeoverPlanItem[];
+  loadingTakeoverPreview: boolean;
 }>();
 
 const emit = defineEmits<{
   close: [];
   "update:tab": [tab: "scan" | "json"];
   "update:jsonText": [value: string];
+  "update:replaceSourceConfigs": [value: boolean];
+  "update:connectMode": [value: TakeoverConnectMode];
   rescan: [];
   "parse-json": [];
   "submit-import": [];
@@ -37,11 +49,26 @@ const TAB_ITEMS = [
   { value: "json", label: "粘贴 mcpServers JSON" },
 ];
 
+const CONNECT_MODE_ITEMS = [
+  { value: "auto", label: "自动最佳" },
+  { value: "http", label: "本机 HTTP" },
+  { value: "stdio", label: "mcp-stdio 桥接" },
+];
+
+const expandedPreviewKey = ref<string | null>(null);
+
 const selectedCount = computed(
   () =>
     props.candidates.filter(
       (c) => !c.blockedReason && props.selections[c.candidateId]?.selected,
     ).length,
+);
+
+const hasBlockingPreviewWarning = computed(
+  () =>
+    props.tab === "scan" &&
+    props.replaceSourceConfigs &&
+    props.takeoverPreview.some((p) => p.effectiveMode === "http" && Boolean(p.warning)),
 );
 
 function setSelectionField<K extends keyof ImportCandidateSelectionDraft>(
@@ -203,17 +230,105 @@ function setSelectionField<K extends keyof ImportCandidateSelectionDraft>(
         </div>
       </div>
 
+      <!-- Aggregate & Replace (Harness Takeover) Option -->
+      <div
+        v-if="tab === 'scan' && candidates.length"
+        class="space-y-3 rounded-[var(--ui-radius-control)] border p-3.5 transition"
+        :class="
+          replaceSourceConfigs
+            ? 'border-[var(--ui-accent)]/45 bg-[var(--ui-accent-soft)]/25'
+            : 'border-[var(--ui-line)] bg-[var(--ui-surface-subtle)]'
+        "
+      >
+        <ToggleSwitch
+          :model-value="replaceSourceConfigs"
+          :disabled="importing"
+          label="聚合并替换原客户端配置（自动备份，可一键还原）"
+          description="从所选客户端移除上述被接管的旧 MCP（保留未勾选 MCP 与其他所有配置/注释），并写入统一的 Coding Tools MCP 入口"
+          @update:model-value="emit('update:replaceSourceConfigs', $event)"
+        />
+
+        <template v-if="replaceSourceConfigs">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-line)] pt-2.5">
+            <span class="flex items-center gap-1.5 text-xs font-medium text-[var(--ui-text-secondary)]">
+              <ArrowRightLeft :size="13" class="text-[var(--ui-accent)]" />
+              替换写入的接入方式
+            </span>
+            <SegmentedControl
+              :items="CONNECT_MODE_ITEMS"
+              :model-value="connectMode"
+              :disabled="importing"
+              aria-label="选择替换写入的接入方式"
+              @update:model-value="emit('update:connectMode', $event as TakeoverConnectMode)"
+            />
+          </div>
+
+          <p v-if="loadingTakeoverPreview" class="text-xs text-[var(--ui-text-muted)]">
+            正在生成原配置文件变更预览…
+          </p>
+
+          <div v-else-if="takeoverPreview.length" class="space-y-2">
+            <div
+              v-for="plan in takeoverPreview"
+              :key="plan.sourceClient"
+              class="rounded-md border border-[var(--ui-line)] bg-[var(--ui-surface-raised)] p-2.5 text-xs"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="font-semibold text-[var(--ui-text)]">{{ plan.sourceLabel }}</span>
+                  <span class="font-mono text-[11px] text-[var(--ui-text-muted)]">{{ plan.displayPath }}</span>
+                  <span class="rounded-full bg-[var(--ui-accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ui-accent)]">
+                    {{ plan.effectiveMode === 'http' ? '本机 HTTP 直连' : 'mcp-stdio 桥接' }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="flex items-center gap-0.5 text-[11px] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+                  @click="expandedPreviewKey = expandedPreviewKey === plan.sourceClient ? null : plan.sourceClient"
+                >
+                  <span>配置片段</span>
+                  <ChevronDown v-if="expandedPreviewKey === plan.sourceClient" :size="12" />
+                  <ChevronRight v-else :size="12" />
+                </button>
+              </div>
+
+              <div class="mt-1.5 space-y-0.5 font-mono text-[11px]">
+                <div class="text-[var(--ui-danger)]">
+                  - 移除：{{ plan.removedKeys.join(', ') }}
+                </div>
+                <div class="text-[var(--ui-success)]">
+                  + {{ plan.alreadyHasCodingTools ? `保留已有入口：${plan.injectedKey}` : `写入统一入口：${plan.injectedKey}` }}
+                </div>
+              </div>
+
+              <div
+                v-if="plan.warning"
+                class="mt-1.5 flex items-start gap-1.5 rounded bg-[var(--ui-warning-soft)] px-2 py-1 text-[11px] text-[var(--ui-warning)]"
+              >
+                <AlertTriangle :size="12" class="mt-0.5 shrink-0" />
+                <span>{{ plan.warning }}</span>
+              </div>
+
+              <pre
+                v-if="expandedPreviewKey === plan.sourceClient"
+                class="mt-2 max-h-36 overflow-auto rounded bg-[var(--ui-surface-subtle)] p-2 font-mono text-[11px] text-[var(--ui-text-secondary)]"
+              >{{ plan.entryPreview }}</pre>
+            </div>
+          </div>
+        </template>
+      </div>
+
       <div class="flex items-center justify-between gap-2 border-t border-[var(--ui-line)] pt-4">
         <span class="text-xs text-[var(--ui-text-muted)]">已选 {{ selectedCount }} 项</span>
         <div class="flex items-center gap-2">
           <BaseButton variant="secondary" :disabled="importing" @click="emit('close')">取消</BaseButton>
           <BaseButton
             variant="primary"
-            :disabled="selectedCount === 0"
+            :disabled="selectedCount === 0 || hasBlockingPreviewWarning"
             :busy="importing"
             @click="emit('submit-import')"
           >
-            确认导入 ({{ selectedCount }})
+            {{ tab === 'scan' && replaceSourceConfigs ? `聚合并替换 (${selectedCount})` : `确认导入 (${selectedCount})` }}
           </BaseButton>
         </div>
       </div>

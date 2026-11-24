@@ -47,7 +47,7 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及上层 Agent
 | `src-tauri/src/lan_peer.rs` | 跨平台（macOS / Windows / Linux）局域网与异地组网（EasyTier / Tailscale 等）对等发现、6 位一次性配对码双向握手与单跳联邦门面 |
 | `src-tauri/src/lan_peer/` | `crypto.rs`（HMAC-SHA256 与防重放）、`identity.rs`（设备身份与 `{device_id}:{workspace_id}` 命名空间）、`discovery.rs`（UDP 多播/广播、虚拟网卡单播扫描与 HTTP 跨子网并发探测）、`pairing.rs`（双向 PIN 握手）、`client.rs` & `server.rs`（多地址选路故障切换、签名对等 RPC 与公网隧道硬隔离） |
 | `src-tauri/src/upstream_mcp.rs` | 上游第三方 MCP 聚合中心（Upstream MCP Hub）门面，将外部 Stdio / Streamable HTTP / Legacy SSE MCP 服务聚合至唯一 Global MCP 入口 |
-| `src-tauri/src/upstream_mcp/` | `model.rs`（配置、密钥分区、防自环检测与磁盘工具缓存）、`naming.rs`（64 字符防碰撞命名归一化）、`transport_stdio.rs` / `transport_http.rs` / `transport_sse.rs`（三大传输层）、`client.rs`（握手与分页）、`manager.rs`（单服务隔离连接池、懒加载与空闲回收）、`proxy_tools.rs`（`mcp_upstream_list` / `mcp_upstream_tools` / `mcp_upstream_call` 元工具）、`import.rs`（多客户端扫描与 `mcpServers` JSON 导入） |
+| `src-tauri/src/upstream_mcp/` | `model.rs`（配置、密钥分区、防自环检测与磁盘工具缓存）、`naming.rs`（64 字符防碰撞命名归一化）、`transport_stdio.rs` / `transport_http.rs` / `transport_sse.rs`（三大传输层）、`client.rs`（握手与分页）、`manager.rs`（单服务隔离连接池、懒加载与空闲回收）、`proxy_tools.rs`（`mcp_upstream_list` / `mcp_upstream_tools` / `mcp_upstream_call` 元工具）、`import.rs`（多客户端扫描与 `mcpServers` JSON 导入）、`takeover.rs`（聚合并替换无损 JSON/TOML 改写、自动备份与一键还原） |
 | `src-tauri/src/computer.rs` | macOS Computer Use 授权控制面、租约状态机与 MCP 调用编排 |
 | `src-tauri/src/computer/` | `geometry.rs`（Retina 截图坐标映射）、`action_policy.rs`（参数校验与敏感操作识别）、`schema.rs`（MCP 工具定义）、`native.rs`（macOS 原生 FFI） |
 | `src-tauri/src/review.rs` | 工作区/会话/单次操作级变更快照编排门面 |

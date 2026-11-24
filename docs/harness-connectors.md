@@ -71,7 +71,8 @@ Codex、Claude Code、Gemini CLI、OpenCode 等属于可按其 MCP 能力接入�
 
 - **直出模式（`direct`）**：上游工具自动带 `{alias}__{tool}` 前缀并归一化为跨模型兼容的 ≤64 字符名称直接进入 `tools/list`，适合少量高频工具；
 - **懒加载代理模式（`proxy`）**：不平铺上游工具，仅暴露 `mcp_upstream_list`、`mcp_upstream_tools`、`mcp_upstream_call` 三个固定元工具，避免撑爆上下文或触达网页端工具数量上限，且配置变更即时生效；
-- 两种模式均支持按单工具细粒度禁用，并统一记录到 Tool Audit（标注 `upstream:<alias>`）与隔离存储敏感凭据。
+- 两种模式均支持按单工具细粒度禁用，并统一记录到 Tool Audit（标注 `upstream:<alias>`）与隔离存储敏感凭据；
+- **聚合并替换（一键接管）**：在扫描本机客户端（Claude Desktop / Claude Code / Cursor / Antigravity / Gemini CLI / Codex / OpenCode）导入时，可勾选「聚合并替换原客户端配置」（CLI：`coding-tools-mcp upstream import --scan --yes --replace`）。执行前自动保存原文件快照到 `data/harness-backups/`，仅移除本次接管的旧 MCP 并写入统一的 `coding-tools` 入口（按客户端自动选择本机 HTTP 或 `mcp-stdio` 桥接，也可手动切换），随时支持一键还原原配置（CLI：`coding-tools-mcp upstream backups` / `restore <BACKUP_ID>`）。
 
 ## 7. 能力边界与安全
 

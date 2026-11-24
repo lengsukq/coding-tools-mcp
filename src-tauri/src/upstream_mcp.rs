@@ -7,6 +7,7 @@ mod manager;
 mod model;
 pub mod naming;
 pub mod proxy_tools;
+pub mod takeover;
 mod transport_http;
 mod transport_sse;
 mod transport_stdio;
@@ -31,6 +32,12 @@ pub use model::{
 pub use proxy_tools::{
     is_proxy_meta_tool, proxy_meta_tool_definitions, TOOL_UPSTREAM_CALL, TOOL_UPSTREAM_LIST,
     TOOL_UPSTREAM_TOOLS,
+};
+pub use takeover::{
+    apply_harness_takeovers, default_backup_dir, ensure_local_stdio_bridge_ready,
+    list_takeover_backups_at, preview_harness_takeover, restore_takeover_backup_at,
+    HarnessTakeoverAppliedDto, HarnessTakeoverBackupRecord, HarnessTakeoverPlanItem,
+    ResolvedConnectMode, TakeoverConnectMode,
 };
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ test("Upstream MCP hub follows modular facade architecture across Rust, CLI, and
   assert.match(facade, /mod model;/);
   assert.match(facade, /pub mod naming;/);
   assert.match(facade, /pub mod proxy_tools;/);
+  assert.match(facade, /pub mod takeover;/);
   assert.match(facade, /mod transport_http;/);
   assert.match(facade, /mod transport_sse;/);
   assert.match(facade, /mod transport_stdio;/);
@@ -23,17 +24,20 @@ test("Upstream MCP hub follows modular facade architecture across Rust, CLI, and
   const editorModal = await source("src/components/settings/UpstreamServerEditorModal.vue");
   const importModal = await source("src/components/settings/UpstreamImportModal.vue");
   const toolsModal = await source("src/components/settings/UpstreamToolsModal.vue");
+  const backupsCard = await source("src/components/settings/UpstreamTakeoverBackupsCard.vue");
 
   assert.match(view, /useUpstreamMcp\(\)/);
   assert.match(view, /<UpstreamServerListCard/);
   assert.match(view, /<UpstreamServerEditorModal/);
   assert.match(view, /<UpstreamImportModal/);
   assert.match(view, /<UpstreamToolsModal/);
+  assert.match(view, /<UpstreamTakeoverBackupsCard/);
   assert.doesNotMatch(view, /invoke\(|saveUpstreamMcpServer\(/);
   assert.match(composable, /export function useUpstreamMcp\(\)/);
+  assert.match(importModal, /聚合并替换原客户端配置/);
 
   // Pure presentation subcomponents must never call Tauri IPC directly.
-  for (const child of [listCard, editorModal, importModal, toolsModal]) {
+  for (const child of [listCard, editorModal, importModal, toolsModal, backupsCard]) {
     assert.doesNotMatch(child, /@tauri-apps\/api|invoke\(/);
   }
 });

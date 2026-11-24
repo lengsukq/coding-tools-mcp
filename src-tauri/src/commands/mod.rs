@@ -65,10 +65,11 @@ pub use tool_audit::{
 pub use ui_memory::{get_webview_memory_sample, recreate_ui_webview};
 pub use upstream_mcp::{
     delete_upstream_mcp_server, get_upstream_mcp_overview, import_upstream_mcp_candidates,
-    parse_upstream_mcp_json, save_upstream_mcp_server, scan_local_upstream_mcp_clients,
-    set_upstream_mcp_global_settings, set_upstream_mcp_server_enabled,
-    set_upstream_mcp_server_mode, sync_all_upstream_mcp_servers, test_and_sync_upstream_mcp_server,
-    update_upstream_mcp_disabled_tools,
+    list_upstream_mcp_takeover_backups, parse_upstream_mcp_json, preview_upstream_mcp_takeover,
+    restore_upstream_mcp_takeover_backup, save_upstream_mcp_server,
+    scan_local_upstream_mcp_clients, set_upstream_mcp_global_settings,
+    set_upstream_mcp_server_enabled, set_upstream_mcp_server_mode, sync_all_upstream_mcp_servers,
+    test_and_sync_upstream_mcp_server, update_upstream_mcp_disabled_tools,
 };
 pub use usage::get_service_usage_stats;
 pub use window_chrome::{enter_compact_mode, hide_to_tray, quit_app};

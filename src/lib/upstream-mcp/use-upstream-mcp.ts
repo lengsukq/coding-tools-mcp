@@ -1,10 +1,13 @@
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   deleteUpstreamMcpServer,
   getUpstreamMcpOverview,
   importUpstreamMcpCandidates,
+  listUpstreamMcpTakeoverBackups,
   parseUpstreamMcpJson,
+  previewUpstreamMcpTakeover,
+  restoreUpstreamMcpTakeoverBackup,
   saveUpstreamMcpServer,
   scanLocalUpstreamMcpClients,
   setUpstreamMcpGlobalSettings,
@@ -13,8 +16,11 @@ import {
   syncAllUpstreamMcpServers,
   testAndSyncUpstreamMcpServer,
   updateUpstreamMcpDisabledTools,
+  type HarnessTakeoverBackupRecord,
+  type HarnessTakeoverPlanItem,
   type ImportedUpstreamCandidate,
   type ImportSelectionItem,
+  type TakeoverConnectMode,
   type UpstreamExposeMode,
   type UpstreamMcpOverviewDto,
   type UpstreamSecretPatch,
@@ -330,8 +336,75 @@ export function useUpstreamMcp() {
   const parsedCandidates = ref<ImportedUpstreamCandidate[]>([]);
   const candidateSelections = ref<Record<string, ImportCandidateSelectionDraft>>({});
 
+  // Aggregate & Replace (Harness takeover) state
+  const replaceSourceConfigs = ref(false);
+  const takeoverConnectMode = ref<TakeoverConnectMode>("auto");
+  const takeoverPreview = ref<HarnessTakeoverPlanItem[]>([]);
+  const loadingTakeoverPreview = ref(false);
+  const takeoverBackups = ref<HarnessTakeoverBackupRecord[]>([]);
+  const restoringBackupId = ref<string | null>(null);
+
   const activeImportCandidates = computed(() =>
     importTab.value === "scan" ? scannedCandidates.value : parsedCandidates.value,
+  );
+
+  function buildCurrentImportSelections(): ImportSelectionItem[] {
+    const out: ImportSelectionItem[] = [];
+    for (const item of activeImportCandidates.value) {
+      if (item.blockedReason) continue;
+      const sel = candidateSelections.value[item.candidateId];
+      if (!sel?.selected) continue;
+      out.push({
+        candidateId: item.candidateId,
+        aliasOverride: sel.alias.trim() || item.suggestedAlias,
+        exposeMode: sel.exposeMode,
+        enabled: true,
+      });
+    }
+    return out;
+  }
+
+  let previewSeq = 0;
+  async function refreshTakeoverPreview() {
+    if (!importOpen.value || importTab.value !== "scan" || !replaceSourceConfigs.value) {
+      takeoverPreview.value = [];
+      return;
+    }
+    const selections = buildCurrentImportSelections();
+    if (!selections.length) {
+      takeoverPreview.value = [];
+      return;
+    }
+    const seq = ++previewSeq;
+    loadingTakeoverPreview.value = true;
+    try {
+      const plans = await previewUpstreamMcpTakeover(selections, takeoverConnectMode.value);
+      if (seq === previewSeq) {
+        takeoverPreview.value = plans;
+      }
+    } catch (error) {
+      if (seq === previewSeq) {
+        takeoverPreview.value = [];
+        importError.value = String(error);
+      }
+    } finally {
+      if (seq === previewSeq) {
+        loadingTakeoverPreview.value = false;
+      }
+    }
+  }
+
+  watch(
+    () => [
+      importOpen.value,
+      importTab.value,
+      replaceSourceConfigs.value,
+      takeoverConnectMode.value,
+      JSON.stringify(candidateSelections.value),
+    ],
+    () => {
+      void refreshTakeoverPreview();
+    },
   );
 
   const directToolsOverLimit = computed(() => {
@@ -355,11 +428,34 @@ export function useUpstreamMcp() {
     loading.value = true;
     loadError.value = "";
     try {
-      overview.value = await getUpstreamMcpOverview();
+      const [ov, backups] = await Promise.all([
+        getUpstreamMcpOverview(),
+        listUpstreamMcpTakeoverBackups().catch(() => [] as HarnessTakeoverBackupRecord[]),
+      ]);
+      overview.value = ov;
+      takeoverBackups.value = backups;
     } catch (error) {
       loadError.value = String(error);
     } finally {
       loading.value = false;
+    }
+  }
+
+  async function restoreBackup(record: HarnessTakeoverBackupRecord) {
+    const confirmed = await ask(
+      `确定将 ${record.sourceLabel}（${record.displayPath}）还原到接管前的原始配置文件吗？这会覆盖当前该文件中的更改。`,
+      { title: "还原客户端原配置", kind: "warning" },
+    );
+    if (!confirmed) return;
+    restoringBackupId.value = record.id;
+    try {
+      await restoreUpstreamMcpTakeoverBackup(record.id);
+      takeoverBackups.value = await listUpstreamMcpTakeoverBackups();
+      showToast(`已将 ${record.sourceLabel} 配置完整还原至接管前版本`, { kind: "success" });
+    } catch (error) {
+      showToast(`还原失败：${String(error)}`, { kind: "error" });
+    } finally {
+      restoringBackupId.value = null;
     }
   }
 
@@ -522,6 +618,8 @@ export function useUpstreamMcp() {
   async function openImportModal(tab: "scan" | "json" = "scan") {
     importTab.value = tab;
     importError.value = "";
+    replaceSourceConfigs.value = false;
+    takeoverPreview.value = [];
     importOpen.value = true;
     if (tab === "scan") {
       await runLocalScan();
@@ -562,33 +660,49 @@ export function useUpstreamMcp() {
   }
 
   async function submitImport() {
-    const candidates = activeImportCandidates.value;
-    const selections: ImportSelectionItem[] = [];
-    for (const item of candidates) {
-      if (item.blockedReason) continue;
-      const sel = candidateSelections.value[item.candidateId];
-      if (!sel?.selected) continue;
-      selections.push({
-        candidateId: item.candidateId,
-        aliasOverride: sel.alias.trim() || item.suggestedAlias,
-        exposeMode: sel.exposeMode,
-        enabled: true,
-      });
-    }
+    const selections = buildCurrentImportSelections();
     if (selections.length === 0) {
       importError.value = "请至少勾选一个有效条目再导入";
       return;
+    }
+    const shouldReplace = importTab.value === "scan" && replaceSourceConfigs.value;
+    if (shouldReplace) {
+      const targetNames = takeoverPreview.value.map((p) => `${p.sourceLabel} (${p.displayPath})`).join("、");
+      const confirmed = await ask(
+        `即将导入 ${selections.length} 个上游 MCP，并自动备份后改写以下客户端配置：${targetNames || "所选客户端"}。\n\n被接管的旧 MCP 条目将替换为统一的 Coding Tools MCP 入口，且随时可在“MCP 聚合中心”一键还原。确定继续？`,
+        { title: "确认聚合并替换客户端配置", kind: "warning" },
+      );
+      if (!confirmed) return;
     }
     importingBusy.value = true;
     importError.value = "";
     try {
       const rawJson = importTab.value === "json" ? importJsonText.value : null;
-      const res = await importUpstreamMcpCandidates(rawJson, selections);
+      const res = await importUpstreamMcpCandidates(rawJson, selections, {
+        replaceSourceConfigs: shouldReplace,
+        connectMode: takeoverConnectMode.value,
+      });
       overview.value = res.overview;
+      if (shouldReplace) {
+        takeoverBackups.value = await listUpstreamMcpTakeoverBackups().catch(() => takeoverBackups.value);
+      }
       importOpen.value = false;
       importJsonText.value = "";
       parsedCandidates.value = [];
-      if (res.skipped.length > 0) {
+      replaceSourceConfigs.value = false;
+      takeoverPreview.value = [];
+
+      if (shouldReplace && res.replaceErrors.length > 0) {
+        showToast(
+          `已导入 ${res.importedCount} 项、接管 ${res.replacedFiles.length} 个客户端，但部分替换失败：${res.replaceErrors[0]}`,
+          { kind: "warning" },
+        );
+      } else if (shouldReplace && res.replacedFiles.length > 0) {
+        showToast(
+          `聚合并替换完成：已导入 ${res.importedCount} 项并接管 ${res.replacedFiles.length} 个客户端（原配置已自动备份，可随时还原）`,
+          { kind: "success" },
+        );
+      } else if (res.skipped.length > 0) {
         showToast(
           `成功导入 ${res.importedCount} 个上游 MCP，跳过 ${res.skipped.length} 个`,
           { kind: "warning" },
@@ -632,7 +746,14 @@ export function useUpstreamMcp() {
     importJsonText,
     activeImportCandidates,
     candidateSelections,
+    replaceSourceConfigs,
+    takeoverConnectMode,
+    takeoverPreview,
+    loadingTakeoverPreview,
+    takeoverBackups,
+    restoringBackupId,
     refresh,
+    restoreBackup,
     updateGlobalSettings,
     openCreateModal,
     openEditModal,
