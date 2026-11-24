@@ -5,7 +5,7 @@
 <h1 align="center">Coding Tools MCP</h1>
 
 <p align="center">
-  一次连接，让任意兼容 MCP 的 AI Harness 开发你的多台设备。
+  一次连接，让任意兼容 MCP 的 AI Harness 开发你的多台设备，并统一聚合所有外部 MCP。
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及 Agent Harne
   <img src="docs/images/mcp-federation.svg" alt="多个 AI Harness 通过统一 MCP 网关访问本机、远程电脑与 Linux 服务器" width="920">
 </p>
 
-**一个 MCP 入口 · 多个 Harness · 多台设备 · 持久化项目上下文**
+**一个 MCP 入口 · 多个 Harness · 多台设备 · 外部 MCP 聚合与接管 · 持久化项目上下文**
 
-[快速开始](#五分钟开始使用) · [Linux 无头部署](docs/linux-headless.md) · [Harness 接入指南](docs/harness-connectors.md) · [网页 AI 接入指南](docs/web-chat-connectors.md) · [架构文档](docs/project-context/architecture.md)
+[快速开始](#五分钟开始使用) · [MCP 聚合与一键接管](#一个入口聚合所有外部-mcp支持一键接管) · [Linux 无头部署](docs/linux-headless.md) · [Harness 接入指南](docs/harness-connectors.md) · [网页 AI 接入指南](docs/web-chat-connectors.md) · [架构文档](docs/project-context/architecture.md)
 
 ## 核心能力
 
@@ -36,6 +36,7 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及 Agent Harne
 | --- | --- |
 | **任意兼容 MCP 的 Harness** | 通过原生 Rust `mcp-stdio` 或 Streamable HTTP 接入 Codex、Claude Code、Gemini 等兼容客户端；网页 AI 可走 HTTPS MCP。 |
 | **跨设备联邦** | 一个 Global MCP 入口发现配对设备，跨 macOS、Windows、Linux 和已组网的云服务器读取代码、修改文件、运行命令及测试。 |
+| **MCP 聚合与一键接管** | 统一挂载第三方 Stdio / Streamable HTTP / Legacy SSE MCP；支持直出（`{alias}__{tool}`）与 3 元工具懒加载代理混排、单工具过滤、凭据隔离存储、7 类客户端扫描及带自动备份还原的「聚合并替换」。 |
 | **多工作区与多会话** | 一次连接管理多个项目；每个 MCP Session 独立选择 Workspace，也可通过 `workspace_id` 显式指定目标。 |
 | **Agent 执行框架** | Direct / Plan / Goal 三种模式，统一管理目标、计划、任务、执行证据与人工验收。 |
 | **持久化项目记忆** | History 保存在项目目录，支持摘要恢复、历史搜索及分页读取；切换 AI 客户端也能继续开发。 |
@@ -66,6 +67,50 @@ Coding Tools MCP 是一个 **本地优先、跨设备、与模型及 Agent Harne
 **只配置一次 Harness，新增设备只需配对。换模型或换 Harness，也无需重新配置每一台执行设备。** 多个兼容客户端也可连接同一网关，各自保持工作区上下文。
 
 > 前提：客户端支持相应 MCP 传输和认证方式，设备在线且已授权共享 Workspace。只有经由 MCP 的工具调用才会路由到目标设备；Harness 自带的 Shell、编辑器等工具不会自动变成远程工具。不同客户端的实际兼容性可能有所差异。
+
+## 一个入口，聚合所有外部 MCP（支持一键接管）
+
+不想在 Codex、Claude Code、Cursor、Claude Desktop、Gemini CLI、OpenCode 或网页 AI 里反复维护同一套 `mcpServers`？通过内置的 **MCP 聚合中心（Upstream MCP Hub）**，只需将第三方 MCP 统一挂载到 Coding Tools MCP，所有上层客户端连这一个入口即可调用全部工具。
+
+<p align="center">
+  <img src="docs/images/mcp-aggregation.svg" alt="一个 Coding Tools MCP 网关统一聚合 Stdio、Streamable HTTP 与 Legacy SSE 外部 MCP" width="920">
+</p>
+
+- **全协议接入**：原生支持 **Stdio**（`npx` / `uvx` / 本地可执行文件，带全局 `PATH` 合并与空闲进程回收）、**Streamable HTTP**（自动维护 Session 与 404 重握手）及 **Legacy SSE**，每个上游独立连接池，单点故障互不阻塞。
+- **直出 + 代理混合编排（按服务切换）**：
+  - **直出模式（`direct`）**：上游工具自动带 `{alias}__{tool}` 前缀并归一化为跨模型安全的 ≤64 字符名称，高频工具一步调用；
+  - **懒加载代理模式（`proxy`）**：仅暴露 `mcp_upstream_list`、`mcp_upstream_tools`、`mcp_upstream_call` 三个固定元工具，避免撑爆上下文或触达网页端工具上限，配置更新即时生效。
+- **安全与可观测**：支持单工具细粒度禁用、敏感环境变量 / Header / Bearer Token 隔离写入 `SecretStore`（永不回显明文）、防自环拦截，以及统一写入工具审计（标注 `upstream:<alias>`）。
+
+### 聚合并替换：一键接管 7 类本地 Harness 配置
+
+在桌面端 **应用设置 → 连接与多机互联 → MCP 聚合中心 → 扫描 / JSON 导入**（或命令行）扫描本机已有 MCP 配置时，可勾选 **「聚合并替换原客户端配置」**，安全完成迁移与收口：
+
+<p align="center">
+  <img src="docs/images/mcp-takeover-flow.svg" alt="扫描 7 类本地客户端、预览 Diff、自动备份并无损重写为统一 MCP 入口，支持一键还原" width="920">
+</p>
+
+| 已支持扫描与接管的 Harness | 配置文件格式 | 默认接管方式（`auto`，可切换 `http` / `stdio`） |
+| --- | --- | --- |
+| **Codex** | `~/.codex/config.toml`（逐段无损改写，保留用户注释） | 本机免鉴权时优先 HTTP，否则自动降级 `mcp-stdio` |
+| **Cursor** / **Claude Code** / **OpenCode** | 各自 JSON 配置（自动适配 `mcpServers` / `mcp`） | 本机免鉴权时优先 HTTP，否则自动降级 `mcp-stdio` |
+| **Claude Desktop** / **Antigravity** / **Gemini CLI** | 各自 JSON `mcpServers` 配置 | 优先原生 `mcp-stdio` 桥接 |
+
+- **透明预览与无损改写**：执行前展示逐文件 Diff 与精确配置片段；仅移除本次勾选导入的条目，完整保留同文件中的其他设置与未勾选 MCP；若原配置已指向本机 Coding Tools MCP 自动去重。
+- **自动全量备份与一键还原**：写入前自动保存原文件完整字节至 `data/harness-backups/`（最多保留 40 份），桌面端底部卡片或 CLI 均可随时一键还原。
+
+```bash
+# 扫描本机 7 类客户端配置；加 --yes 导入，加 --replace 自动备份并接管为统一入口
+coding-tools-mcp upstream import --scan --yes --replace --connect-mode auto
+
+# 查看接管备份并随时一键还原指定配置文件
+coding-tools-mcp upstream backups
+coding-tools-mcp upstream restore <BACKUP_ID>
+
+# Linux 无头服务器或脚本化管理单个上游服务
+coding-tools-mcp upstream add github --http https://api.githubcopilot.com/mcp/ --bearer "$TOKEN" --mode proxy
+coding-tools-mcp upstream list
+```
 
 ## 从需求到交付，跨会话持续开发
 
@@ -270,6 +315,7 @@ git_status
 | Workspace 路由 | `workspace_list`、`workspace_current`、`workspace_select`、`workspace_invoke` |
 | 运行时 | `server_info` |
 | 状态管理 | `history_manage`、`planning_manage`；Stable Tool API v2 继续提供聚合式生命周期接口 |
+| 上游 MCP 聚合 | 直出 `{alias}__{tool}` 或懒加载代理元工具 `mcp_upstream_list`、`mcp_upstream_tools`、`mcp_upstream_call` |
 
 聚合工具通过 `action` 参数完成生命周期操作，例如 `history_manage(action=search)` 或 `planning_manage(action=update_plan)`。这样新增生命周期行为时不需要持续扩大顶层 MCP Tool Schema；兼容 profile 仍可保留旧工具名。
 
@@ -336,6 +382,7 @@ Windows 也可以双击 `dev-desktop.cmd`。不要只用 `npm run dev` 验证桌
 | `scripts/install-linux.sh` | Linux 无头版一键安装、升级、systemd 集成与卸载脚本 |
 | `src-tauri/src/tools/` | 统一 Tool 内核、Schema、Policy、文件/Git/Exec/History/Planning/Skill |
 | `src-tauri/src/mcp/` | Global MCP Streamable HTTP 服务、OAuth/Review 路由与 `mcp-stdio` 无头桥接 |
+| `src-tauri/src/upstream_mcp/` & `upstream_mcp.rs` | 全局 MCP 聚合引擎（Stdio / Streamable HTTP / Legacy SSE 客户端、直出/代理混合网关、客户端扫描与「聚合并替换」无损接管/备份还原） |
 | `src-tauri/src/lan_peer/` & `lan_peer.rs` | 跨平台局域网设备发现、6 位配对码握手、HMAC 对等 RPC 与公网隔离 |
 | `src-tauri/src/computer/` & `computer.rs` | macOS 原生 Computer Use（ScreenCaptureKit 截图观察、受控输入与权限门控） |
 | `src-tauri/src/tool_audit/` & `tool_audit.rs` | 工具调用隐私安全审计、日期分区 JSONL 存储与过期轮转 |

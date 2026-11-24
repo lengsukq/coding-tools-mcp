@@ -5,7 +5,7 @@
 <h1 align="center">Coding Tools MCP</h1>
 
 <p align="center">
-  Connect once. Let any compatible MCP harness develop across your devices.
+  Connect once. Develop across all your devices and aggregate every external MCP behind one gateway.
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@ Coding Tools MCP is a **local-first, cross-device AI development runtime, indepe
   <img src="docs/images/mcp-federation.svg" alt="Multiple AI harnesses access local, peer and Linux server workspaces through a single MCP gateway" width="920">
 </p>
 
-**One MCP endpoint · Multiple harnesses · Multiple devices · Persistent project context**
+**One MCP endpoint · Multiple harnesses · Multiple devices · MCP aggregation & takeover · Persistent project context**
 
-[Quick start](#get-started-in-five-minutes) · [Linux headless deployment](docs/linux-headless.md) · [Harness setup (Chinese)](docs/harness-connectors.md) · [Web AI connectors](docs/web-chat-connectors.md) · [Architecture](docs/project-context/architecture.md)
+[Quick start](#get-started-in-five-minutes) · [MCP aggregation & takeover](#aggregate-all-external-mcps-behind-one-endpoint) · [Linux headless deployment](docs/linux-headless.md) · [Harness setup (Chinese)](docs/harness-connectors.md) · [Web AI connectors](docs/web-chat-connectors.md) · [Architecture](docs/project-context/architecture.md)
 
 ## Core capabilities
 
@@ -36,6 +36,7 @@ Coding Tools MCP is a **local-first, cross-device AI development runtime, indepe
 | --- | --- |
 | **MCP-compatible harnesses** | Connect compatible clients such as Codex, Claude Code and Gemini using the native Rust `mcp-stdio` bridge or Streamable HTTP; web AI clients can use HTTPS MCP. |
 | **Multi-device federation** | Discover paired devices from one Global MCP endpoint and read, edit, run commands and test across macOS, Windows, Linux and network-connected cloud servers. |
+| **MCP aggregation & takeover** | Mount third-party Stdio, Streamable HTTP and Legacy SSE MCP servers behind one endpoint with mixed Direct (`{alias}__{tool}`) and 3-meta-tool Lazy Proxy modes, per-tool filtering, isolated secrets, 7-harness scanning, and backup-protected Aggregate & Replace. |
 | **Multiple workspaces and sessions** | Manage many projects through one connection, with independent workspace selection per MCP session and explicit `workspace_id` routing. |
 | **Agent execution framework** | Direct / Plan / Goal modes with goals, plans, tasks, execution evidence and human acceptance. |
 | **Persistent project memory** | Project-local History with state recovery, search and paginated reading; continue work across AI conversations and clients. |
@@ -66,6 +67,50 @@ In a single AI conversation, you can ask: “Update the project on my Mac mini, 
 **Configure your harness once. Pair new devices as needed. Change models or harnesses without reconfiguring every execution device.** Multiple compatible clients can also connect to the same gateway with independent workspace context.
 
 > Clients must support the relevant MCP transport and authentication. Target devices must be online and share authorized workspaces. Only calls through MCP are routed remotely; a harness's built-in shell and editor do not automatically become remote tools. Compatibility can vary by client.
+
+## Aggregate all external MCPs behind one endpoint
+
+Stop maintaining duplicate `mcpServers` blocks across Codex, Claude Code, Cursor, Claude Desktop, Gemini CLI, OpenCode and web AI connectors. Mount your external MCP servers once inside the built-in **Upstream MCP Aggregation Hub**, and every client connected to Coding Tools MCP can use them through a single endpoint.
+
+<p align="center">
+  <img src="docs/images/mcp-aggregation.svg" alt="Single Coding Tools MCP gateway aggregating Stdio, Streamable HTTP and Legacy SSE upstream MCP servers" width="920">
+</p>
+
+- **All three transports**: Native support for **Stdio** (`npx` / `uvx` / local binaries with global `PATH` merge and idle cleanup), **Streamable HTTP** (session tracking and HTTP 404 auto-rehandshake), and **Legacy SSE**, with isolated per-server pools so one slow upstream never blocks built-in or sibling tools.
+- **Hybrid Direct + Lazy Proxy exposure (per server)**:
+  - **Direct mode (`direct`)**: Exposes tools directly with normalized `{alias}__{tool}` names (≤64 chars, cross-model safe) for one-step calls;
+  - **Lazy Proxy mode (`proxy`)**: Exposes only 3 constant meta-tools (`mcp_upstream_list`, `mcp_upstream_tools`, `mcp_upstream_call`) to avoid context bloat and web-client tool limits while reflecting changes immediately.
+- **Security and observability**: Per-tool disable toggles, isolated credential storage in `SecretStore` (env secrets, headers and bearer tokens are never echoed back), self-loop blocking, and unified Tool Audit attribution (`upstream:<alias>`).
+
+### Aggregate & Replace: one-click takeover for 7 local harnesses
+
+In **Settings → Connection & Federation → MCP Aggregation Hub → Scan / JSON Import** (or via CLI), you can scan existing local client configs and opt into **Aggregate & Replace** to consolidate them safely:
+
+<p align="center">
+  <img src="docs/images/mcp-takeover-flow.svg" alt="Scan 7 local harnesses, preview diffs, back up original files, rewrite losslessly to one Coding Tools MCP entry, and restore with one click" width="920">
+</p>
+
+| Supported harnesses for scan & takeover | Config format | Default takeover mode (`auto`, switchable to `http` / `stdio`) |
+| --- | --- | --- |
+| **Codex** | `~/.codex/config.toml` (lossless section rewrite keeping comments) | Local HTTP when local no-auth is enabled, else `mcp-stdio` |
+| **Cursor** / **Claude Code** / **OpenCode** | Respective JSON configs (`mcpServers` / `mcp`) | Local HTTP when local no-auth is enabled, else `mcp-stdio` |
+| **Claude Desktop** / **Antigravity** / **Gemini CLI** | Respective JSON `mcpServers` configs | Native `mcp-stdio` bridge |
+
+- **Transparent diff preview & lossless edits**: Shows per-file removals, exact injected snippets and auth preflight warnings before writing; removes only the selected imported entries while preserving unrelated settings and unchecked MCPs, and skips duplicate injection if a Coding Tools MCP entry already exists.
+- **Automatic full-file backup & 1-click restore**: Saves exact original bytes to `data/harness-backups/` (retaining up to 40 backups) so any file can be restored with one click in the UI or via CLI.
+
+```bash
+# Scan 7 local harnesses; add --yes to import and --replace to back up & rewrite to one unified entry
+coding-tools-mcp upstream import --scan --yes --replace --connect-mode auto
+
+# List takeover backups and restore any original client config anytime
+coding-tools-mcp upstream backups
+coding-tools-mcp upstream restore <BACKUP_ID>
+
+# Manage upstream MCP servers on Linux headless servers or scripts
+coding-tools-mcp upstream add github --http https://api.githubcopilot.com/mcp/ --bearer "$TOKEN" --mode proxy
+coding-tools-mcp upstream list
+```
 
 ## From intent to delivery, across conversations
 
@@ -260,6 +305,7 @@ The default `compact` profile provides a stable, composable development tool set
 | Workspace routing | `workspace_list`, `workspace_current`, `workspace_select`, `workspace_invoke` |
 | Runtime | `server_info` |
 | State management | `history_manage`, `planning_manage`; Stable Tool API v2 continues to provide aggregate lifecycle interfaces |
+| Upstream MCP Hub | Direct `{alias}__{tool}` or lazy proxy meta-tools `mcp_upstream_list`, `mcp_upstream_tools`, `mcp_upstream_call` |
 
 Aggregate tools use an `action` field, for example `history_manage(action=search)` or `planning_manage(action=update_plan)`. This keeps the top-level MCP schema stable as lifecycle behavior grows while compatibility profiles can retain legacy tool names.
 
@@ -326,6 +372,7 @@ On Windows, you can also run `dev-desktop.cmd`. Do not use `npm run dev` alone t
 | `scripts/install-linux.sh` | One-line Linux headless installer, in-place upgrader, systemd integration, and uninstaller |
 | `src-tauri/src/tools/` | Shared file, Patch, Exec, Git, Planning, History, and Skill tool kernel |
 | `src-tauri/src/mcp/` | Global MCP Streamable HTTP server, OAuth/Review routes, and `mcp-stdio` bridge |
+| `src-tauri/src/upstream_mcp/` & `upstream_mcp.rs` | Global MCP aggregation hub (Stdio / Streamable HTTP / Legacy SSE clients, Direct/Proxy hybrid gateway, 7-client scanner & Aggregate & Replace takeover/backup/restore) |
 | `src-tauri/src/lan_peer/` & `lan_peer.rs` | Cross-platform LAN discovery, 6-digit PIN pairing, HMAC peer RPC, and tunnel isolation |
 | `src-tauri/src/computer/` & `computer.rs` | Native macOS Computer Use (`ScreenCaptureKit` capture, guarded input, and policy gates) |
 | `src-tauri/src/tool_audit/` & `tool_audit.rs` | Privacy-safe tool-call auditing, daily JSONL storage, and retention rotation |

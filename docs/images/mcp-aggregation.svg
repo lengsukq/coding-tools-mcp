@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 564" width="960" height="564" role="img" aria-labelledby="title desc">
+  <title id="title">One Gateway. Every External MCP.</title>
+  <desc id="desc">AI harnesses connect to one Coding Tools MCP gateway that aggregates Stdio, Streamable HTTP, and Legacy SSE upstream MCP servers using hybrid Direct and Lazy Proxy modes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101d32"/><stop offset="1" stop-color="#142c3b"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#65d6c5"/></marker>
+  </defs>
+  <rect width="960" height="564" rx="22" fill="url(#bg)"/>
+  <g font-family="system-ui, -apple-system, Segoe UI, sans-serif" text-anchor="middle">
+    <text x="480" y="36" font-size="24" font-weight="700" fill="#edf5ff">One Gateway. Every External MCP.</text>
+
+    <rect x="34" y="58" width="196" height="54" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="132" y="81" font-size="16" font-weight="700" fill="#edf5ff">Codex · Claude Code</text>
+    <text x="132" y="101" font-size="13" font-weight="500" fill="#bcd1e6">Cursor · OpenCode</text>
+
+    <rect x="266" y="58" width="196" height="54" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="364" y="81" font-size="16" font-weight="700" fill="#edf5ff">Claude Desktop</text>
+    <text x="364" y="101" font-size="13" font-weight="500" fill="#bcd1e6">Antigravity · Gemini CLI</text>
+
+    <rect x="498" y="58" width="196" height="54" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="596" y="81" font-size="16" font-weight="700" fill="#edf5ff">Web AI Clients</text>
+    <text x="596" y="101" font-size="13" font-weight="500" fill="#bcd1e6">ChatGPT · claude.ai · Grok</text>
+
+    <rect x="730" y="58" width="196" height="54" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="828" y="81" font-size="16" font-weight="700" fill="#edf5ff">Headless CLI</text>
+    <text x="828" y="101" font-size="13" font-weight="500" fill="#bcd1e6">Linux server &amp; scripts</text>
+
+    <path d="M132 112V128H828V112" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M364 112V128" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round"/>
+    <path d="M596 112V128" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round"/>
+    <path d="M480 128V180" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <rect x="206" y="140" width="548" height="24" rx="12" fill="#122437" stroke="#2f566b"/>
+    <text x="480" y="157" font-size="13.5" font-weight="500" fill="#c2d5e8">Single Coding Tools MCP entry  ·  mcp-stdio  /  Streamable HTTP  /  HTTPS</text>
+
+    <rect x="56" y="186" width="848" height="176" rx="14" fill="#183e48" stroke="#65d6c5"/>
+    <text x="480" y="216" font-size="22" font-weight="700" fill="#a5fae9">UPSTREAM MCP AGGREGATION HUB</text>
+    <text x="480" y="240" font-size="14.5" font-weight="500" fill="#edf5ff">Hybrid per-server exposure  ·  Self-loop guard  ·  Isolated SecretStore  ·  Unified Tool Audit</text>
+
+    <rect x="82" y="257" width="384" height="86" rx="12" fill="#214b57" stroke="#528f94"/>
+    <text x="274" y="283" font-size="16" font-weight="700" fill="#a5fae9">Direct Mode  ·  {alias}__{tool}</text>
+    <text x="274" y="306" font-size="13.5" font-weight="500" fill="#edf5ff">Auto-normalized ≤64 chars for cross-model safety</text>
+    <text x="274" y="327" font-size="13" font-weight="500" fill="#bcd1e6">Best for frequent tools · per-tool disable filter</text>
+
+    <rect x="494" y="257" width="384" height="86" rx="12" fill="#214b57" stroke="#528f94"/>
+    <text x="686" y="283" font-size="16" font-weight="700" fill="#a5fae9">Lazy Proxy Mode  ·  3 Meta-Tools</text>
+    <text x="686" y="306" font-size="13.5" font-weight="500" fill="#edf5ff">mcp_upstream_list  ·  tools  ·  call</text>
+    <text x="686" y="327" font-size="13" font-weight="500" fill="#bcd1e6">Zero context bloat · instant catalog updates</text>
+
+    <path d="M480 362V408" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round"/>
+    <path d="M173 408H787" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round"/>
+    <path d="M173 408V433" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <path d="M480 408V433" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <path d="M787 408V433" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <rect x="216" y="373" width="528" height="24" rx="12" fill="#122437" stroke="#2f566b"/>
+    <text x="480" y="390" font-size="13.5" font-weight="500" fill="#c2d5e8">Per-server isolated connection pools  ·  Secrets never leave SecretStore</text>
+
+    <rect x="34" y="440" width="278" height="84" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="173" y="468" font-size="18" font-weight="700" fill="#edf5ff">Stdio MCP</text>
+    <text x="173" y="491" font-size="14" font-weight="500" fill="#a5fae9">npx · uvx · local binaries</text>
+    <text x="173" y="511" font-size="13" font-weight="500" fill="#bcd1e6">PATH merge · idle process cleanup</text>
+
+    <rect x="341" y="440" width="278" height="84" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="480" y="468" font-size="18" font-weight="700" fill="#edf5ff">Streamable HTTP</text>
+    <text x="480" y="491" font-size="14" font-weight="500" fill="#a5fae9">Remote &amp; local /mcp endpoints</text>
+    <text x="480" y="511" font-size="13" font-weight="500" fill="#bcd1e6">Session ID · 404 auto-rehandshake</text>
+
+    <rect x="648" y="440" width="278" height="84" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="787" y="468" font-size="18" font-weight="700" fill="#edf5ff">Legacy SSE</text>
+    <text x="787" y="491" font-size="14" font-weight="500" fill="#a5fae9">GET /sse + POST message</text>
+    <text x="787" y="511" font-size="13" font-weight="500" fill="#bcd1e6">Proxy &amp; custom header support</text>
+
+    <text x="480" y="548" font-size="15" font-weight="500" fill="#a5fae9">Runs seamlessly alongside built-in Workspace, Git, Terminal, History &amp; Peer Federation tools</text>
+  </g>
+</svg>

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 278" width="960" height="278" role="img" aria-labelledby="title desc">
+  <title id="title">Aggregate and Replace Harness Takeover</title>
+  <desc id="desc">Scan 7 local AI harnesses, preview config diffs, back up original files, rewrite losslessly to a single Coding Tools MCP entry, and restore with one click anytime.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101d32"/><stop offset="1" stop-color="#142c3b"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#65d6c5"/></marker>
+  </defs>
+  <rect width="960" height="278" rx="22" fill="url(#bg)"/>
+  <g font-family="system-ui, -apple-system, Segoe UI, sans-serif" text-anchor="middle">
+    <text x="480" y="35" font-size="24" font-weight="700" fill="#edf5ff">Aggregate &amp; Replace · Safe Harness Takeover</text>
+    <text x="480" y="61" font-size="15" font-weight="500" fill="#a5fae9">Claude Desktop · Claude Code · Cursor · Antigravity · Gemini CLI · Codex · OpenCode</text>
+
+    <rect x="24" y="84" width="210" height="112" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="129" y="108" font-size="14" font-weight="700" fill="#a5fae9">01</text>
+    <text x="129" y="135" font-size="18" font-weight="700" fill="#edf5ff">Scan &amp; Select</text>
+    <text x="129" y="159" font-size="13.5" font-weight="500" fill="#c2d5e8">Discover 7 local configs</text>
+    <text x="129" y="179" font-size="13" font-weight="500" fill="#9bb6cf">JSON &amp; Codex TOML</text>
+
+    <path d="M234 140H252" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+    <rect x="258" y="84" width="210" height="112" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="363" y="108" font-size="14" font-weight="700" fill="#a5fae9">02</text>
+    <text x="363" y="135" font-size="18" font-weight="700" fill="#edf5ff">Diff Preview</text>
+    <text x="363" y="159" font-size="13.5" font-weight="500" fill="#c2d5e8">Auto HTTP / mcp-stdio</text>
+    <text x="363" y="179" font-size="13" font-weight="500" fill="#9bb6cf">Auth &amp; self-loop check</text>
+
+    <path d="M468 140H486" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+    <rect x="492" y="84" width="210" height="112" rx="12" fill="#183e48" stroke="#65d6c5"/>
+    <text x="597" y="108" font-size="14" font-weight="700" fill="#a5fae9">03</text>
+    <text x="597" y="135" font-size="18" font-weight="700" fill="#edf5ff">Backup &amp; Rewrite</text>
+    <text x="597" y="159" font-size="13.5" font-weight="500" fill="#c2d5e8">Save full original bytes</text>
+    <text x="597" y="179" font-size="13" font-weight="500" fill="#a5fae9">Lossless comments kept</text>
+
+    <path d="M702 140H720" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+    <rect x="726" y="84" width="210" height="112" rx="12" fill="#20344c" stroke="#42617d"/>
+    <text x="831" y="108" font-size="14" font-weight="700" fill="#a5fae9">04</text>
+    <text x="831" y="135" font-size="18" font-weight="700" fill="#edf5ff">Unified Entry</text>
+    <text x="831" y="159" font-size="13.5" font-weight="500" fill="#c2d5e8">Single coding-tools MCP</text>
+    <text x="831" y="179" font-size="13" font-weight="500" fill="#9bb6cf">Keep unchecked MCPs</text>
+
+    <path d="M831 196V230H129V202" fill="none" stroke="#65d6c5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="480" y="258" font-size="15" font-weight="500" fill="#c2d5e8">1-Click Restore anytime from UI or CLI  ·  coding-tools-mcp upstream restore &lt;BACKUP_ID&gt;</text>
+  </g>
+</svg>
