@@ -110,7 +110,43 @@ jobs:
         run: cargo test --locked
 
       - name: 仅构建通用版 macOS DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
         run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+
+      - name: 校验 macOS Universal 双架构、签名与 Info.plist 门禁
+        run: |
+          set -euo pipefail
+          DMG="$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)"
+          MOUNT_DIR="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$MOUNT_DIR" -force >/dev/null 2>&1 || true
+            rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_DIR" >/dev/null
+          APP="$(find "$MOUNT_DIR" -maxdepth 2 -name '*.app' | head -n 1)"
+          test -d "$APP"
+
+          BIN_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/$BIN_NAME")"
+          echo "Detected macOS architectures: $ARCHS"
+          echo "$ARCHS" | grep -qw x86_64
+          echo "$ARCHS" | grep -qw arm64
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          SIGN_INFO="$(codesign -dvv "$APP" 2>&1)"
+          echo "$SIGN_INFO"
+          echo "$SIGN_INFO" | grep -q "Identifier=com.codingtools.mcp.desktop"
+
+          for key in \
+            NSScreenCaptureUsageDescription \
+            NSDocumentsFolderUsageDescription \
+            NSDesktopFolderUsageDescription \
+            NSDownloadsFolderUsageDescription; do
+            /usr/libexec/PlistBuddy -c "Print :$key" "$APP/Contents/Info.plist" >/dev/null
+          done
 
       - name: 上传 macOS DMG
         uses: actions/upload-artifact@v4

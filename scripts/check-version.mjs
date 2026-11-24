@@ -11,6 +11,7 @@ function readJson(relativePath) {
 const packageJson = readJson("package.json");
 const packageLock = readJson("package-lock.json");
 const tauriConfig = readJson("src-tauri/tauri.conf.json");
+const serverJson = readJson("server.json");
 const cargoToml = readFileSync(resolve(projectRoot, "src-tauri/Cargo.toml"), "utf8");
 const cargoLock = readFileSync(resolve(projectRoot, "src-tauri/Cargo.lock"), "utf8");
 
@@ -26,6 +27,7 @@ const versions = {
   "src-tauri/Cargo.toml": cargoTomlVersion,
   "src-tauri/Cargo.lock": cargoLockVersion,
   "src-tauri/tauri.conf.json": tauriConfig.version,
+  "server.json": serverJson.version,
 };
 const uniqueVersions = new Set(Object.values(versions));
 const version = packageJson.version;

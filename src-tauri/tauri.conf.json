@@ -35,6 +35,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist",
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": false
+    },
     "linux": {
       "deb": {
         "depends": [

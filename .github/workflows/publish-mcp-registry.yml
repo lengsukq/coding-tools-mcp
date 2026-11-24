@@ -1,0 +1,59 @@
+# Manual publish to the official MCP Registry via GitHub OIDC (workflow_dispatch).
+
+name: Publish MCP Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable version to publish to MCP Registry (e.g. 0.3.9; prereleases are rejected)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-mcp-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync and validate server.json version
+        shell: bash
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${TARGET_VERSION#v}"
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "Prerelease ${VERSION} must not be published to the stable MCP Registry" >&2
+            exit 1
+          fi
+          export VERSION
+          node -e "
+            const fs = require('fs');
+            const j = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+            if (j.description.length > 100) {
+              throw new Error('server.json description exceeds 100 characters: ' + j.description.length);
+            }
+            j.version = process.env.VERSION;
+            if (Array.isArray(j.packages)) {
+              for (const pkg of j.packages) pkg.version = process.env.VERSION;
+            }
+            fs.writeFileSync('server.json', JSON.stringify(j, null, 2) + '\n');
+          "
+          echo "Publishing MCP Registry metadata for version ${VERSION}"
+
+      - name: Install MCP Publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Login to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish

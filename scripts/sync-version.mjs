@@ -31,6 +31,10 @@ const tauriConfig = readJson("src-tauri/tauri.conf.json");
 tauriConfig.version = version;
 writeJson("src-tauri/tauri.conf.json", tauriConfig);
 
+const serverJson = readJson("server.json");
+serverJson.version = version;
+writeJson("server.json", serverJson);
+
 const cargoTomlPath = resolve(projectRoot, "src-tauri/Cargo.toml");
 const cargoToml = readFileSync(cargoTomlPath, "utf8");
 const updatedCargoToml = cargoToml.replace(/^(version = ")[^"]+("$)/m, `$1${version}$2`);

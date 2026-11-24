@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.lengsukq/coding-tools-mcp",
+  "description": "Local-first AI workspace MCP gateway: code edits, commands, Git, LAN federation, Linux headless.",
+  "repository": {
+    "url": "https://github.com/lengsukq/coding-tools-mcp",
+    "source": "github"
+  },
+  "version": "0.3.9",
+  "websiteUrl": "https://github.com/lengsukq/coding-tools-mcp",
+  "licenses": [
+    {
+      "type": "Apache-2.0"
+    }
+  ]
+}
