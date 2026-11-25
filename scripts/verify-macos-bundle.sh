@@ -69,6 +69,14 @@ echo "Detected macOS architectures: ${ARCHS}"
 echo "${ARCHS}" | grep -qw x86_64
 echo "${ARCHS}" | grep -qw arm64
 
+CLI_BIN="${APP_PATH}/Contents/MacOS/coding-tools-mcp"
+if [[ -f "${CLI_BIN}" ]]; then
+  CLI_ARCHS="$(lipo -archs "${CLI_BIN}")"
+  echo "Detected bundled CLI architectures: ${CLI_ARCHS}"
+  echo "${CLI_ARCHS}" | grep -qw x86_64
+  echo "${CLI_ARCHS}" | grep -qw arm64
+fi
+
 codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 SIGN_INFO="$(codesign -dvv "${APP_PATH}" 2>&1)"
 echo "${SIGN_INFO}"

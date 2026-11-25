@@ -118,7 +118,7 @@ jobs:
       - name: 仅构建通用版 macOS DMG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-        run: pnpm run tauri build --target universal-apple-darwin --bundles dmg
+        run: node scripts/build-macos-universal.mjs --bundles dmg
 
       - name: 校验 macOS Universal 双架构、签名与 Info.plist 门禁
         run: |

@@ -29,7 +29,7 @@ const techStackMd = readFileSync(
 
 const cargoTomlVersion = readCargoPackageVersion(cargoToml);
 const cargoLockVersion = cargoLock.match(
-  /\[\[package\]\]\nname = "coding-tools-mcp-desktop"\nversion = "([^"]+)"/,
+  /\[\[package\]\]\r?\nname = "coding-tools-mcp-desktop"\r?\nversion = "([^"]+)"/,
 )?.[1];
 const projectContextVersion = projectContextMd.match(/^\|\s*版本\s*\|\s*`([^`]+)`\s*\|$/m)?.[1];
 const techStackVersion = techStackMd.match(/^\|\s*应用版本\s*\|\s*`([^`]+)`/m)?.[1];

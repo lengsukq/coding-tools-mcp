@@ -72,8 +72,8 @@ test("Local loopback Agent zero-OAuth direct access enforces anti-tunnel, anti-O
 
 test("parseExtraSubnetsText deduplicates comma and newline EasyTier CIDR / seed entries", async () => {
   const composableSrc = await source("src/lib/lan/use-lan-peers.ts");
-  // Extract pure helper for fast isolated verification
-  const match = composableSrc.match(/export function parseExtraSubnetsText[\s\S]*?return out;\n\}/);
+  // Extract pure helper for fast isolated verification (CRLF-safe on Windows checkouts)
+  const match = composableSrc.match(/export function parseExtraSubnetsText[\s\S]*?return out;\r?\n\}/);
   assert.ok(match, "parseExtraSubnetsText helper exists");
   const jsCode = ts.transpileModule(match[0], {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },

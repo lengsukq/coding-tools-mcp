@@ -61,8 +61,8 @@ test("Upstream MCP security guards: anti-loop header, audit unwrapping, and head
 
 test("buildSavePayloadFromDraft isolates secret env/headers and respects bearer token clearing", async () => {
   const draftSrc = await source("src/lib/upstream-mcp/upstream-draft.ts");
-  // Strip type-only alias imports so the pure helper module executes directly in Node ESM.
-  const pureTs = draftSrc.replace(/import type[\s\S]*?;\n/, "");
+  // Strip type-only alias imports so the pure helper module executes directly in Node ESM (CRLF-safe).
+  const pureTs = draftSrc.replace(/import type[\s\S]*?;\r?\n/, "");
   const jsCode = ts.transpileModule(pureTs, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
