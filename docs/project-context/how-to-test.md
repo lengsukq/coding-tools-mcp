@@ -79,7 +79,7 @@ cargo test --all-targets --locked
 
 ## CI
 
-`.github/workflows/ci.yml` 是 PR / main push 的强制质量门，安装 `rustfmt`、`clippy` 后执行 Rust fmt、Clippy `-D warnings`、locked build/test，以及前端 check/build。
+`.github/workflows/ci.yml` 采用手动触发（`workflow_dispatch`）运行，安装 `rustfmt`、`clippy` 后执行 Rust fmt、Clippy `-D warnings`、locked build/test，以及前端 check/build。
 
 旧 Python 合规套件仍可以作为迁移参考，但不应替代当前 Rust tests。
 

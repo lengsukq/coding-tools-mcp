@@ -83,3 +83,17 @@ test("macOS release workflows and bundle verifier handle universal coding-tools-
     execFileSync("bash", ["-n", verifyPath], { stdio: "pipe" });
   }
 });
+
+test("all GitHub Actions workflows trigger manually via workflow_dispatch only", async () => {
+  for (const workflow of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/macos-release.yml",
+    ".github/workflows/publish-mcp-registry.yml",
+  ]) {
+    const content = await source(workflow);
+    assert.match(content, /\bworkflow_dispatch:/, `${workflow} must keep workflow_dispatch trigger`);
+    assert.doesNotMatch(content, /^\s*push:/m, `${workflow} must not auto-trigger on push`);
+    assert.doesNotMatch(content, /^\s*pull_request:/m, `${workflow} must not auto-trigger on pull_request`);
+  }
+});

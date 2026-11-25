@@ -69,7 +69,7 @@ pnpm run desktop
 
 ## CI
 
-GitHub Actions 在 `push(main)`、`pull_request` 和手动触发时运行：
+GitHub Actions 当前采用手动触发（`workflow_dispatch`）运行：
 
 - Frontend check + production build；
 - Rust fmt；

@@ -1,13 +1,10 @@
 name: Desktop & Headless Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "要创建或更新的 Release 标签，例如 v0.3.9"
+        description: "要创建或更新的 Release 标签，例如 v0.3.10"
         required: true
         type: string
 
